@@ -1,0 +1,46 @@
+{
+  "mcpServers": {
+    "notion": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@notionhq/notion-mcp-server"
+      ],
+      "env": {
+        "OPENAPI_MCP_HEADERS": "${NOTION_MCP_HEADERS}"
+      }
+    },
+    "google-workspace": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@presto-ai/google-workspace-mcp"
+      ],
+      "env": {}
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "env": {}
+    },
+    "zoom": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@prathamesh0901/zoom-mcp-server"
+      ],
+      "env": {
+        "ZOOM_ACCOUNT_ID": "${ZOOM_ACCOUNT_ID}",
+        "ZOOM_CLIENT_ID": "${ZOOM_CLIENT_ID}",
+        "ZOOM_CLIENT_SECRET": "${ZOOM_CLIENT_SECRET}"
+      }
+    }
+  }
+}

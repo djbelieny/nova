@@ -7,10 +7,10 @@
  * Run: bun run src/relay.ts
  */
 
-import { Bot, Context } from "grammy";
+import { Bot, Context, InputFile } from "grammy";
 import { spawn } from "bun";
 import { writeFile, mkdir, readFile, unlink } from "fs/promises";
-import { join, dirname } from "path";
+import { join, dirname, basename, resolve } from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { transcribe } from "./transcribe.ts";
 import {
@@ -18,6 +18,8 @@ import {
   getMemoryContext,
   getRelevantContext,
 } from "./memory.ts";
+import { textToSpeech, isTTSEnabled } from "./tts.ts";
+import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -194,7 +196,7 @@ async function callClaude(
     args.push("--resume", session.sessionId);
   }
 
-  args.push("--output-format", "text");
+  args.push("--output-format", "text", "--permission-mode", "bypassPermissions");
 
   console.log(`Calling Claude: ${prompt.substring(0, 50)}...`);
 
@@ -205,7 +207,7 @@ async function callClaude(
       cwd: PROJECT_DIR || undefined,
       env: {
         ...process.env,
-        // Pass through any env vars Claude might need
+        CLAUDECODE: undefined, // Allow nested Claude sessions
       },
     });
 
@@ -243,6 +245,23 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
   console.log(`Message: ${text.substring(0, 50)}...`);
 
+  // Handle /voice toggle command
+  if (text.trim().toLowerCase() === "/voice") {
+    if (!isTTSEnabled()) {
+      await ctx.reply(
+        "Voice responses are not set up yet. Add ELEVENLABS_API_KEY to .env to enable."
+      );
+      return;
+    }
+    const enabled = await toggleVoiceResponses();
+    await ctx.reply(
+      enabled
+        ? "Voice responses enabled. I'll send audio with my replies."
+        : "Voice responses disabled. Text only."
+    );
+    return;
+  }
+
   await ctx.replyWithChatAction("typing");
 
   await saveMessage("user", text);
@@ -260,7 +279,7 @@ bot.on("message:text", async (ctx) => {
   const response = await processMemoryIntents(supabase, rawResponse);
 
   await saveMessage("assistant", response);
-  await sendResponse(ctx, response);
+  await sendResponseWithVoice(ctx, response);
 });
 
 // Voice messages
@@ -305,7 +324,8 @@ bot.on("message:voice", async (ctx) => {
     const claudeResponse = await processMemoryIntents(supabase, rawResponse);
 
     await saveMessage("assistant", claudeResponse);
-    await sendResponse(ctx, claudeResponse);
+    // Voice messages always get audio reply (if TTS is available)
+    await sendResponseWithVoice(ctx, claudeResponse, true);
   } catch (error) {
     console.error("Voice error:", error);
     await ctx.reply("Could not process voice message. Check logs for details.");
@@ -341,12 +361,12 @@ bot.on("message:photo", async (ctx) => {
 
     const claudeResponse = await callClaude(prompt, { resume: true });
 
-    // Cleanup after processing
-    await unlink(filePath).catch(() => {});
+    // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
+    setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
 
     const cleanResponse = await processMemoryIntents(supabase, claudeResponse);
     await saveMessage("assistant", cleanResponse);
-    await sendResponse(ctx, cleanResponse);
+    await sendResponseWithVoice(ctx, cleanResponse);
   } catch (error) {
     console.error("Image error:", error);
     await ctx.reply("Could not process image.");
@@ -362,8 +382,15 @@ bot.on("message:document", async (ctx) => {
   try {
     const file = await ctx.getFile();
     const timestamp = Date.now();
-    const fileName = doc.file_name || `file_${timestamp}`;
-    const filePath = join(UPLOADS_DIR, `${timestamp}_${fileName}`);
+    // Sanitize filename to prevent path traversal
+    const rawName = doc.file_name || `file_${timestamp}`;
+    const safeName = basename(rawName).replace(/[^a-zA-Z0-9._-]/g, "_").substring(0, 100);
+    const filePath = join(UPLOADS_DIR, `${timestamp}_${safeName}`);
+    // Verify path is within UPLOADS_DIR
+    if (!resolve(filePath).startsWith(resolve(UPLOADS_DIR))) {
+      await ctx.reply("Invalid file name.");
+      return;
+    }
 
     const response = await fetch(
       `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`
@@ -382,7 +409,7 @@ bot.on("message:document", async (ctx) => {
 
     const cleanResponse = await processMemoryIntents(supabase, claudeResponse);
     await saveMessage("assistant", cleanResponse);
-    await sendResponse(ctx, cleanResponse);
+    await sendResponseWithVoice(ctx, cleanResponse);
   } catch (error) {
     console.error("Document error:", error);
     await ctx.reply("Could not process document.");
@@ -439,6 +466,31 @@ function buildPrompt(
       "\n[DONE: search text for completed goal]"
   );
 
+  parts.push(
+    "\nCAPABILITIES — You have access to these tools and should use them when relevant:" +
+      "\n" +
+      "\n• Gmail & Google Calendar: Read, search, draft, and send emails. View, create, and update calendar events." +
+      "\n• Notion: Search pages, read content, create and update pages and databases." +
+      "\n• Zoom: Create, update, and delete Zoom meetings. Get meeting details and recordings. When scheduling meetings, create the Zoom meeting first to get the join link, then add it to Google Calendar with the Zoom link in the description/location." +
+      "\n• Web Browser (Playwright): Navigate to URLs, take screenshots, fill forms, click buttons. Use for any website interaction." +
+      "\n• Web Search: You have built-in web search. Use it to answer questions about current events, look up information, etc." +
+      "\n• Apple Notes: Read and create notes using osascript. Example: osascript -e 'tell application \"Notes\" to get name of every note'" +
+      "\n• Phone Calls & SMS (Twilio + ElevenLabs): Make voice calls and send text messages." +
+      `\n  - DJ's phone: ${process.env.USER_PHONE || "+18636047056"}. Use this when DJ says "call me", "text me", or when something is urgent enough to warrant a call.` +
+      `\n  - SMS: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts sms "${process.env.USER_PHONE || "+18636047056"}" "message"\`` +
+      `\n  - Call: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts call "${process.env.USER_PHONE || "+18636047056"}" "detailed context about why you're calling and what to discuss"\`` +
+      "\n  - Calls connect via Twilio, with Nova's voice powered by ElevenLabs. Nova will have a multi-turn voice conversation with DJ on the phone." +
+      "\n  - The call context you provide becomes Nova's briefing for the call. Include ALL relevant details, memory, and context so Nova can have an informed conversation." +
+      "\n  - Nova authenticates DJ with a PIN before discussing anything." +
+      "\n  - PROACTIVE CALLS: If something is genuinely urgent (time-sensitive deadline, important update DJ needs to act on NOW), you should proactively call DJ rather than waiting for him to check Telegram." +
+      "\n  - You can also call/text other numbers if DJ asks you to." +
+      "\n• File System: You can read, write, and manage files on the user's computer." +
+      "\n• Terminal: You can run any shell command the user needs." +
+      "\n" +
+      "\nUse the right tool for the job. If the user asks to send an email, use Gmail. If they ask to check their schedule, use Calendar. " +
+      "If they ask to call or text someone, use Twilio. Always confirm before taking consequential actions (sending emails, making calls, etc.)."
+  );
+
   parts.push(`\nUser: ${userMessage}`);
 
   return parts.join("\n");
@@ -475,6 +527,26 @@ async function sendResponse(ctx: Context, response: string): Promise<void> {
 
   for (const chunk of chunks) {
     await ctx.reply(chunk);
+  }
+}
+
+async function sendResponseWithVoice(
+  ctx: Context,
+  response: string,
+  forceAudio: boolean = false
+): Promise<void> {
+  // Always send text first
+  await sendResponse(ctx, response);
+
+  // Send audio if TTS is enabled and (voice toggle is on OR forceAudio for voice message replies)
+  if (isTTSEnabled()) {
+    const settings = await loadSettings();
+    if (settings.voiceResponses || forceAudio) {
+      const audio = await textToSpeech(response);
+      if (audio) {
+        await ctx.replyWithVoice(new InputFile(audio, "response.ogg"));
+      }
+    }
   }
 }
 

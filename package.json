@@ -11,10 +11,13 @@
     "test:voice": "bun run setup/test-voice.ts",
     "setup:launchd": "bun run setup/configure-launchd.ts",
     "setup:services": "bun run setup/configure-services.ts",
-    "setup:verify": "bun run setup/verify.ts"
+    "setup:verify": "bun run setup/verify.ts",
+    "voice": "bun run src/voice-server.ts",
+    "voice:dev": "bun run --watch src/voice-server.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^17.3.1",
     "grammy": "^1.21.1",
     "groq-sdk": "^0.8.0"
   },
