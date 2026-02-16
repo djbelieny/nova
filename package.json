@@ -13,7 +13,9 @@
     "setup:services": "bun run setup/configure-services.ts",
     "setup:verify": "bun run setup/verify.ts",
     "voice": "bun run src/voice-server.ts",
-    "voice:dev": "bun run --watch src/voice-server.ts"
+    "voice:dev": "bun run --watch src/voice-server.ts",
+    "dashboard": "bun run src/dashboard.ts",
+    "dashboard:dev": "bun run --watch src/dashboard.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

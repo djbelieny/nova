@@ -201,34 +201,14 @@ main();
 // ============================================================
 // SCHEDULING
 // ============================================================
-/*
-Run every 30 minutes:
-
-CRON (Linux):
-*/30 * * * * cd /path/to/relay && bun run examples/smart-checkin.ts
-
-LAUNCHD (macOS) - save as ~/Library/LaunchAgents/com.claude.smart-checkin.plist:
-
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "...">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.claude.smart-checkin</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOU/.bun/bin/bun</string>
-        <string>run</string>
-        <string>examples/smart-checkin.ts</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/path/to/relay</string>
-    <key>StartInterval</key>
-    <integer>1800</integer>  <!-- 30 minutes in seconds -->
-</dict>
-</plist>
-
-WINDOWS Task Scheduler:
-- Create task with "Daily" trigger
-- Set to repeat every 30 minutes
-*/
+//
+// Run every 30 minutes:
+//
+// CRON (Linux):
+//   0,30 * * * * cd /path/to/relay && bun run examples/smart-checkin.ts
+//
+// LAUNCHD (macOS):
+//   See ~/Library/LaunchAgents/com.claude.smart-checkin.plist
+//
+// WINDOWS Task Scheduler:
+//   Create task with "Daily" trigger, set to repeat every 30 minutes

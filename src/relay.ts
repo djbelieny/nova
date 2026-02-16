@@ -7,7 +7,7 @@
  * Run: bun run src/relay.ts
  */
 
-import { Bot, Context, InputFile } from "grammy";
+import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { spawn } from "bun";
 import { writeFile, mkdir, readFile, unlink } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
@@ -182,6 +182,53 @@ bot.use(async (ctx, next) => {
 });
 
 // ============================================================
+// INLINE BUTTON CALLBACKS
+// ============================================================
+
+bot.on("callback_query:data", async (ctx) => {
+  const data = ctx.callbackQuery.data;
+
+  // Handle button presses — format is "btn:Label Text"
+  if (data.startsWith("btn:")) {
+    const selection = data.substring(4);
+    console.log(`Button pressed: ${selection}`);
+
+    // Acknowledge the button press immediately
+    await ctx.answerCallbackQuery({ text: `Got it: ${selection}` });
+
+    // Update the original message to show the selection (remove buttons)
+    try {
+      const originalText = ctx.callbackQuery.message?.text || "";
+      await ctx.editMessageText(`${originalText}\n\n>> ${selection}`, {
+        reply_markup: undefined,
+      });
+    } catch {}
+
+    // Process the button selection as a new user message
+    await saveMessage("user", selection);
+
+    await ctx.replyWithChatAction("typing");
+
+    runTask(ctx, `Button: ${selection.substring(0, 40)}`, async () => {
+      const [relevantContext, memoryContext] = await Promise.all([
+        getRelevantContext(supabase, selection),
+        getMemoryContext(supabase),
+      ]);
+      return {
+        prompt: buildPrompt(
+          `[Button selected in response to a question]: ${selection}`,
+          relevantContext,
+          memoryContext
+        ),
+        resume: true,
+      };
+    }, {
+      postProcess: (raw) => processMemoryIntents(supabase, raw),
+    });
+  }
+});
+
+// ============================================================
 // CORE: Call Claude CLI
 // ============================================================
 
@@ -317,7 +364,7 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
   console.log(`Message: ${text.substring(0, 50)}...`);
 
-  // Handle /voice toggle command
+  // Handle /voice toggle command — enables "always voice" mode (e.g., when user can't read)
   if (text.trim().toLowerCase() === "/voice") {
     if (!isTTSEnabled()) {
       await ctx.reply(
@@ -328,8 +375,8 @@ bot.on("message:text", async (ctx) => {
     const enabled = await toggleVoiceResponses();
     await ctx.reply(
       enabled
-        ? "Voice responses enabled. I'll send audio with my replies."
-        : "Voice responses disabled. Text only."
+        ? "Voice mode on. I'll send audio with every reply until you turn it off."
+        : "Voice mode off. I'll only send audio when you send me a voice message."
     );
     return;
   }
@@ -562,6 +609,14 @@ function buildPrompt(
       "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
       "\n  - WRITE OPERATIONS (create payment links, create payments, etc.): Always ask " + USER_NAME + " which location to use BEFORE executing." +
       "\n• Cloudflare: Manage DNS records (create/update/delete subdomains and records), deploy and manage Cloudflare Workers." +
+      "\n• Task Scheduler: Create, list, and manage recurring scheduled tasks." +
+      `\n  - List tasks: \`bun run ${PROJECT_ROOT}/src/scheduler.ts list\`` +
+      `\n  - Create: \`bun run ${PROJECT_ROOT}/src/scheduler.ts create "<name>" "<schedule>" "<command>"\`` +
+      `\n  - Delete: \`bun run ${PROJECT_ROOT}/src/scheduler.ts delete "<name>"\`` +
+      `\n  - Run now: \`bun run ${PROJECT_ROOT}/src/scheduler.ts run-once "<name>"\`` +
+      "\n  - Schedule formats: daily:HH:MM, weekdays:HH:MM, weekly:DAY:HH:MM (0=Sun), interval:SECONDS, hourly:MM" +
+      `\n  - Example: \`bun run ${PROJECT_ROOT}/src/scheduler.ts create "weekly-metrics" "weekly:1:09:00" "bun run examples/smart-checkin.ts"\`` +
+      "\n  - Use this when " + USER_NAME + " asks for recurring reminders, periodic reports, or scheduled checks." +
       "\n• File System: You can read, write, and manage files on the user's computer." +
       "\n• Terminal: You can run any shell command the user needs." +
       "\n" +
@@ -571,7 +626,20 @@ function buildPrompt(
       "\nRESPONSE PROTOCOL:" +
       "\n" + USER_NAME + " can send you multiple requests at once — you handle them in parallel." +
       "\nJust do the work and deliver results. Keep responses focused and actionable." +
-      "\nWhen a task involves creating a file that " + USER_NAME + " needs, use the /telegram-file-sender skill to send it directly."
+      "\nWhen a task involves creating a file that " + USER_NAME + " needs, use the /telegram-file-sender skill to send it directly." +
+      "\n" +
+      "\nINLINE BUTTONS — Use buttons when asking for confirmation, selection, or quick input:" +
+      "\nWhen you need " + USER_NAME + " to choose between options, confirm an action, or approve something, " +
+      "add a button tag at the end of your message:" +
+      "\n  [BUTTONS: Option A | Option B | Option C]" +
+      "\nThis renders as tappable buttons in Telegram — much faster than typing." +
+      "\nExamples:" +
+      "\n  - Confirming an action: 'Ready to send the email?' [BUTTONS: Send it | Cancel]" +
+      "\n  - Choosing a location: 'Which Square location?' [BUTTONS: Open Source Mind | Zaarvy AI | Both]" +
+      "\n  - Yes/No: 'Should I proceed?' [BUTTONS: Yes | No]" +
+      "\n  - Multiple options: 'Which format?' [BUTTONS: PDF | DOCX | PPTX | XLSX]" +
+      "\nKeep labels short (1-3 words). Max 6 buttons. The tag is hidden from the user — they only see the buttons." +
+      "\nUse buttons whenever you would otherwise ask " + USER_NAME + " to type a simple choice."
   );
 
   parts.push(
@@ -646,22 +714,107 @@ async function sendResponse(ctx: Context, response: string): Promise<void> {
   }
 }
 
+/**
+ * Parse inline button markup from Claude's response.
+ * Format: [BUTTONS: Label 1 | Label 2 | Label 3]
+ * Each label becomes an inline keyboard button.
+ * Returns { text: cleaned response, keyboard: InlineKeyboard | null }
+ */
+function parseButtons(response: string): { text: string; keyboard: InlineKeyboard | null } {
+  const buttonPattern = /\[BUTTONS:\s*(.+?)\]/g;
+  let keyboard: InlineKeyboard | null = null;
+  let text = response;
+
+  const matches = [...response.matchAll(buttonPattern)];
+  if (matches.length > 0) {
+    // Use the last button block found
+    const match = matches[matches.length - 1];
+    const labels = match[1].split("|").map((l) => l.trim()).filter(Boolean);
+
+    if (labels.length > 0) {
+      keyboard = new InlineKeyboard();
+      // Up to 3 buttons per row
+      for (let i = 0; i < labels.length; i++) {
+        keyboard.text(labels[i], `btn:${labels[i]}`);
+        if ((i + 1) % 3 === 0 && i < labels.length - 1) {
+          keyboard.row();
+        }
+      }
+    }
+
+    // Remove all button tags from the text
+    text = response.replace(buttonPattern, "").trim();
+  }
+
+  return { text, keyboard };
+}
+
 async function sendResponseWithVoice(
   ctx: Context,
   response: string,
   forceAudio: boolean = false
 ): Promise<void> {
-  // Always send text first
-  await sendResponse(ctx, response);
+  // Parse any inline buttons from the response
+  const { text, keyboard } = parseButtons(response);
 
-  // Send audio if TTS is enabled and (voice toggle is on OR forceAudio for voice message replies)
+  // Send text (with keyboard if present)
+  if (keyboard) {
+    await sendResponseWithButtons(ctx, text, keyboard);
+  } else {
+    await sendResponse(ctx, text);
+  }
+
+  // Send voice only when:
+  // 1. forceAudio = true (user sent a voice message, so reply with voice)
+  // 2. /voice toggle is on (user said they can't read / wants all voice)
   if (isTTSEnabled()) {
     const settings = await loadSettings();
-    if (settings.voiceResponses || forceAudio) {
-      const audio = await textToSpeech(response);
+    if (forceAudio || settings.voiceResponses) {
+      const audio = await textToSpeech(text);
       if (audio) {
         await ctx.replyWithVoice(new InputFile(audio, "response.ogg"));
       }
+    }
+  }
+}
+
+async function sendResponseWithButtons(
+  ctx: Context,
+  response: string,
+  keyboard: InlineKeyboard
+): Promise<void> {
+  const MAX_LENGTH = 4000;
+
+  if (response.length <= MAX_LENGTH) {
+    await ctx.reply(response, { reply_markup: keyboard });
+    return;
+  }
+
+  // For long responses, split and put buttons on the last chunk
+  const chunks: string[] = [];
+  let remaining = response;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= MAX_LENGTH) {
+      chunks.push(remaining);
+      break;
+    }
+    let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
+    if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) {
+      splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
+    }
+    if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) {
+      splitIndex = MAX_LENGTH;
+    }
+    chunks.push(remaining.substring(0, splitIndex));
+    remaining = remaining.substring(splitIndex).trim();
+  }
+
+  for (let i = 0; i < chunks.length; i++) {
+    if (i === chunks.length - 1) {
+      await ctx.reply(chunks[i], { reply_markup: keyboard });
+    } else {
+      await ctx.reply(chunks[i]);
     }
   }
 }
