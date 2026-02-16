@@ -609,7 +609,21 @@ function buildPrompt(
       "include these tags in your response (they are processed automatically and hidden from the user):" +
       "\n[REMEMBER: fact to store]" +
       "\n[GOAL: goal text | DEADLINE: optional date]" +
-      "\n[DONE: search text for completed goal]"
+      "\n[DONE: search text for completed goal]" +
+      "\n" +
+      "\nWhat to REMEMBER (durable facts about the user's life, work, and preferences):" +
+      "\n- Personal info: names, relationships, contacts, birthdays, locations" +
+      "\n- Business info: company details, pricing, clients, partners, revenue" +
+      "\n- Preferences: communication style, tools, workflows, schedules" +
+      "\n- Decisions: choices made, strategies adopted, commitments" +
+      "\n- Key dates: deadlines, milestones, recurring events" +
+      "\n" +
+      "\nWhat NOT to remember (ephemeral conversation, not facts):" +
+      "\n- Debugging discussions, troubleshooting steps, or bug reports" +
+      "\n- Requests about tool access, file paths, or system configuration" +
+      "\n- Your own mistakes or corrections (e.g., fabricated data callouts)" +
+      "\n- Implementation details or technical conversations" +
+      "\n- Anything that is only relevant to the current conversation"
   );
 
   parts.push(
