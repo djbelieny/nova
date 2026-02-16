@@ -17,6 +17,7 @@ import {
   processMemoryIntents,
   getMemoryContext,
   getRelevantContext,
+  getRecentHistory,
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
@@ -36,33 +37,6 @@ const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".claud
 // Directories
 const TEMP_DIR = join(RELAY_DIR, "temp");
 const UPLOADS_DIR = join(RELAY_DIR, "uploads");
-
-// Session tracking for conversation continuity
-const SESSION_FILE = join(RELAY_DIR, "session.json");
-
-interface SessionState {
-  sessionId: string | null;
-  lastActivity: string;
-}
-
-// ============================================================
-// SESSION MANAGEMENT
-// ============================================================
-
-async function loadSession(): Promise<SessionState> {
-  try {
-    const content = await readFile(SESSION_FILE, "utf-8");
-    return JSON.parse(content);
-  } catch {
-    return { sessionId: null, lastActivity: new Date().toISOString() };
-  }
-}
-
-async function saveSession(state: SessionState): Promise<void> {
-  await writeFile(SESSION_FILE, JSON.stringify(state, null, 2));
-}
-
-let session = await loadSession();
 
 // ============================================================
 // LOCK FILE (prevent multiple instances)
@@ -210,17 +184,18 @@ bot.on("callback_query:data", async (ctx) => {
     await ctx.replyWithChatAction("typing");
 
     runTask(ctx, `Button: ${selection.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext] = await Promise.all([
+      const [relevantContext, memoryContext, recentHistory] = await Promise.all([
         getRelevantContext(supabase, selection),
         getMemoryContext(supabase),
+        getRecentHistory(supabase),
       ]);
       return {
         prompt: buildPrompt(
           `[Button selected in response to a question]: ${selection}`,
           relevantContext,
-          memoryContext
+          memoryContext,
+          recentHistory
         ),
-        resume: true,
       };
     }, {
       postProcess: (raw) => processMemoryIntents(supabase, raw),
@@ -242,18 +217,8 @@ interface ActiveTask {
 const activeTasks = new Map<string, ActiveTask>();
 let taskCounter = 0;
 
-async function callClaude(
-  prompt: string,
-  options?: { resume?: boolean; imagePath?: string }
-): Promise<string> {
-  const args = [CLAUDE_PATH, "-p", prompt];
-
-  // Only resume if no other tasks are running (avoid session conflicts)
-  if (options?.resume && session.sessionId && activeTasks.size === 0) {
-    args.push("--resume", session.sessionId);
-  }
-
-  args.push("--output-format", "text", "--permission-mode", "bypassPermissions");
+async function callClaude(prompt: string): Promise<string> {
+  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "text", "--permission-mode", "bypassPermissions"];
 
   console.log(`Calling Claude: ${prompt.substring(0, 50)}...`);
 
@@ -280,14 +245,6 @@ async function callClaude(
       return `Error: ${stderr || "Claude exited with code " + exitCode}`;
     }
 
-    // Extract session ID from output if present (for --resume)
-    const sessionMatch = output.match(/Session ID: ([a-f0-9-]+)/i);
-    if (sessionMatch) {
-      session.sessionId = sessionMatch[1];
-      session.lastActivity = new Date().toISOString();
-      await saveSession(session);
-    }
-
     return output.trim();
   } catch (error) {
     console.error("Spawn error:", error);
@@ -303,7 +260,7 @@ async function callClaude(
 function runTask(
   ctx: Context,
   taskDescription: string,
-  buildTask: () => Promise<{ prompt: string; resume: boolean }>,
+  buildTask: () => Promise<{ prompt: string }>,
   opts?: { postProcess?: (response: string) => Promise<string>; forceAudio?: boolean }
 ): void {
   const taskId = `task-${++taskCounter}`;
@@ -335,8 +292,8 @@ function runTask(
   // Fire and forget — run the task asynchronously
   (async () => {
     try {
-      const { prompt, resume } = await buildTask();
-      const rawResponse = await callClaude(prompt, { resume });
+      const { prompt } = await buildTask();
+      const rawResponse = await callClaude(prompt);
 
       const response = opts?.postProcess
         ? await opts.postProcess(rawResponse)
@@ -385,13 +342,13 @@ bot.on("message:text", async (ctx) => {
   await saveMessage("user", text);
 
   runTask(ctx, text.substring(0, 50), async () => {
-    const [relevantContext, memoryContext] = await Promise.all([
+    const [relevantContext, memoryContext, recentHistory] = await Promise.all([
       getRelevantContext(supabase, text),
       getMemoryContext(supabase),
+      getRecentHistory(supabase),
     ]);
     return {
-      prompt: buildPrompt(text, relevantContext, memoryContext),
-      resume: true,
+      prompt: buildPrompt(text, relevantContext, memoryContext, recentHistory),
     };
   }, {
     postProcess: (raw) => processMemoryIntents(supabase, raw),
@@ -427,17 +384,18 @@ bot.on("message:voice", async (ctx) => {
     await saveMessage("user", `[Voice ${voice.duration}s]: ${transcription}`);
 
     runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext] = await Promise.all([
+      const [relevantContext, memoryContext, recentHistory] = await Promise.all([
         getRelevantContext(supabase, transcription),
         getMemoryContext(supabase),
+        getRecentHistory(supabase),
       ]);
       return {
         prompt: buildPrompt(
           `[Voice message transcribed]: ${transcription}`,
           relevantContext,
-          memoryContext
+          memoryContext,
+          recentHistory
         ),
-        resume: true,
       };
     }, {
       postProcess: (raw) => processMemoryIntents(supabase, raw),
@@ -475,10 +433,15 @@ bot.on("message:photo", async (ctx) => {
     await saveMessage("user", `[Image]: ${caption}`);
 
     runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
+      const [memoryContext, recentHistory] = await Promise.all([
+        getMemoryContext(supabase),
+        getRecentHistory(supabase),
+      ]);
+      const contextPrefix = [memoryContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, `image_${timestamp}.jpg`, caption)
-        : `[Image: ${filePath}]\n\n${caption}`;
-      return { prompt, resume: true };
+        : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
+      return { prompt };
     }, {
       postProcess: async (raw) => {
         // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
@@ -522,10 +485,15 @@ bot.on("message:document", async (ctx) => {
     await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`);
 
     runTask(ctx, `Doc: ${doc.file_name}`, async () => {
+      const [memoryContext, recentHistory] = await Promise.all([
+        getMemoryContext(supabase),
+        getRecentHistory(supabase),
+      ]);
+      const contextPrefix = [memoryContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, doc.file_name || "document", caption)
-        : `[File: ${filePath}]\n\n${caption}`;
-      return { prompt, resume: true };
+        : (contextPrefix ? contextPrefix + "\n\n" : "") + `[File: ${filePath}]\n\n${caption}`;
+      return { prompt };
     }, {
       postProcess: async (raw) => {
         // Delay cleanup for memory ingestion — Claude may need the file longer
@@ -601,7 +569,8 @@ const USER_TIMEZONE = process.env.USER_TIMEZONE || Intl.DateTimeFormat().resolve
 function buildPrompt(
   userMessage: string,
   relevantContext?: string,
-  memoryContext?: string
+  memoryContext?: string,
+  recentHistory?: string
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -622,6 +591,7 @@ function buildPrompt(
   parts.push(`Current time: ${timeStr}`);
   if (profileContext) parts.push(`\nProfile:\n${profileContext}`);
   if (memoryContext) parts.push(`\n${memoryContext}`);
+  if (recentHistory) parts.push(`\n${recentHistory}`);
   if (relevantContext) parts.push(`\n${relevantContext}`);
 
   parts.push(

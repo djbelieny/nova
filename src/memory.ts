@@ -115,6 +115,47 @@ export async function getMemoryContext(
 }
 
 /**
+ * Get recent conversation history (chronological, last N messages).
+ * Provides immediate conversational context — "what were we just talking about?"
+ */
+export async function getRecentHistory(
+  supabase: SupabaseClient | null,
+  count: number = 12
+): Promise<string> {
+  if (!supabase) return "";
+
+  try {
+    const { data, error } = await supabase.rpc("get_recent_messages", {
+      limit_count: count,
+    });
+
+    if (error) {
+      console.warn("Recent history fetch error:", error.message);
+      return "";
+    }
+
+    if (!data?.length) return "";
+
+    // Data comes DESC from DB, reverse to chronological
+    const messages = [...data].reverse();
+
+    const lines = messages.map((m: any) => {
+      const time = new Date(m.created_at).toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+      return `[${time} ${m.role}]: ${m.content}`;
+    });
+
+    return "RECENT CONVERSATION:\n" + lines.join("\n");
+  } catch (error) {
+    console.warn("Recent history error:", error);
+    return "";
+  }
+}
+
+/**
  * Semantic search for relevant past messages via the search Edge Function.
  * The Edge Function handles embedding generation (OpenAI key stays in Supabase).
  */
@@ -129,7 +170,15 @@ export async function getRelevantContext(
       body: { query, match_count: 5, table: "messages" },
     });
 
-    if (error || !data?.length) return "";
+    if (error) {
+      console.warn("Semantic search error:", error.message || error);
+      return "";
+    }
+
+    if (!data?.length) {
+      console.warn("Semantic search returned no results for:", query.substring(0, 50));
+      return "";
+    }
 
     return (
       "RELEVANT PAST MESSAGES:\n" +
@@ -137,8 +186,8 @@ export async function getRelevantContext(
         .map((m: any) => `[${m.role}]: ${m.content}`)
         .join("\n")
     );
-  } catch {
-    // Search not available yet (Edge Functions not deployed) — that's fine
+  } catch (error) {
+    console.warn("Semantic search unavailable:", error);
     return "";
   }
 }
