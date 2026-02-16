@@ -62,16 +62,36 @@ CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
 
 -- ============================================================
+-- AGENT TASKS TABLE (Task Tracking)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  agent TEXT NOT NULL,           -- "Nova", "Research Agent", etc.
+  description TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','in_progress','done','blocked','cancelled')),
+  result TEXT,                   -- outcome summary when done/blocked
+  metadata JSONB DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_created ON agent_tasks(created_at DESC);
+
+-- ============================================================
 -- ROW LEVEL SECURITY
 -- ============================================================
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_tasks ENABLE ROW LEVEL SECURITY;
 
 -- Allow all for service role (your bot uses service key)
 CREATE POLICY "Allow all for service role" ON messages FOR ALL USING (true);
 CREATE POLICY "Allow all for service role" ON memory FOR ALL USING (true);
 CREATE POLICY "Allow all for service role" ON logs FOR ALL USING (true);
+CREATE POLICY "Allow all for service role" ON agent_tasks FOR ALL USING (true);
 
 -- ============================================================
 -- HELPER FUNCTIONS
@@ -189,3 +209,23 @@ BEGIN
   LIMIT match_count;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ============================================================
+-- AGENT TASK TRACKING RPCs
+-- ============================================================
+
+-- Active tasks (pending, in_progress, blocked)
+CREATE OR REPLACE FUNCTION get_active_tasks()
+RETURNS SETOF agent_tasks AS $$
+  SELECT * FROM agent_tasks
+  WHERE status IN ('pending','in_progress','blocked')
+  ORDER BY created_at DESC;
+$$ LANGUAGE sql;
+
+-- Recent tasks (all statuses, for dashboard)
+CREATE OR REPLACE FUNCTION get_recent_tasks(limit_count INTEGER DEFAULT 30)
+RETURNS SETOF agent_tasks AS $$
+  SELECT * FROM agent_tasks
+  ORDER BY updated_at DESC
+  LIMIT limit_count;
+$$ LANGUAGE sql;

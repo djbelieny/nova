@@ -67,6 +67,88 @@ export async function processMemoryIntents(
     clean = clean.replace(match[0], "");
   }
 
+  // [TASK: agent | description] — create a new task
+  for (const match of response.matchAll(/\[TASK:\s*(.+?)\s*\|\s*(.+?)\]/gi)) {
+    await supabase.from("agent_tasks").insert({
+      agent: match[1],
+      description: match[2],
+      status: "pending",
+    });
+    clean = clean.replace(match[0], "");
+  }
+
+  // [TASK_START: search text] — mark matching pending task as in_progress
+  for (const match of response.matchAll(/\[TASK_START:\s*(.+?)\]/gi)) {
+    const { data } = await supabase
+      .from("agent_tasks")
+      .select("id")
+      .eq("status", "pending")
+      .ilike("description", `%${match[1]}%`)
+      .limit(1);
+
+    if (data?.[0]) {
+      await supabase
+        .from("agent_tasks")
+        .update({ status: "in_progress", updated_at: new Date().toISOString() })
+        .eq("id", data[0].id);
+    }
+    clean = clean.replace(match[0], "");
+  }
+
+  // [TASK_DONE: search text | result] — mark matching active task as done
+  for (const match of response.matchAll(/\[TASK_DONE:\s*(.+?)\s*\|\s*(.+?)\]/gi)) {
+    const { data } = await supabase
+      .from("agent_tasks")
+      .select("id")
+      .in("status", ["pending", "in_progress"])
+      .ilike("description", `%${match[1]}%`)
+      .limit(1);
+
+    if (data?.[0]) {
+      await supabase
+        .from("agent_tasks")
+        .update({ status: "done", result: match[2], updated_at: new Date().toISOString() })
+        .eq("id", data[0].id);
+    }
+    clean = clean.replace(match[0], "");
+  }
+
+  // [TASK_BLOCKED: search text | reason] — mark matching active task as blocked
+  for (const match of response.matchAll(/\[TASK_BLOCKED:\s*(.+?)\s*\|\s*(.+?)\]/gi)) {
+    const { data } = await supabase
+      .from("agent_tasks")
+      .select("id")
+      .in("status", ["pending", "in_progress"])
+      .ilike("description", `%${match[1]}%`)
+      .limit(1);
+
+    if (data?.[0]) {
+      await supabase
+        .from("agent_tasks")
+        .update({ status: "blocked", result: match[2], updated_at: new Date().toISOString() })
+        .eq("id", data[0].id);
+    }
+    clean = clean.replace(match[0], "");
+  }
+
+  // [TASK_CANCEL: search text] — cancel a matching task
+  for (const match of response.matchAll(/\[TASK_CANCEL:\s*(.+?)\]/gi)) {
+    const { data } = await supabase
+      .from("agent_tasks")
+      .select("id")
+      .in("status", ["pending", "in_progress", "blocked"])
+      .ilike("description", `%${match[1]}%`)
+      .limit(1);
+
+    if (data?.[0]) {
+      await supabase
+        .from("agent_tasks")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("id", data[0].id);
+    }
+    clean = clean.replace(match[0], "");
+  }
+
   return clean.trim();
 }
 
@@ -110,6 +192,35 @@ export async function getMemoryContext(
     return parts.join("\n\n");
   } catch (error) {
     console.error("Memory context error:", error);
+    return "";
+  }
+}
+
+/**
+ * Get active agent tasks for prompt context.
+ */
+export async function getTaskContext(
+  supabase: SupabaseClient | null
+): Promise<string> {
+  if (!supabase) return "";
+
+  try {
+    const { data, error } = await supabase.rpc("get_active_tasks");
+
+    if (error) {
+      console.warn("Task context error:", error.message);
+      return "";
+    }
+
+    if (!data?.length) return "";
+
+    const lines = data.map(
+      (t: any) => `- [${t.agent}] ${t.description} (${t.status})`
+    );
+
+    return "ACTIVE TASKS:\n" + lines.join("\n");
+  } catch (error) {
+    console.warn("Task context error:", error);
     return "";
   }
 }

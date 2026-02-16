@@ -341,6 +341,21 @@ async function getSkills(): Promise<unknown> {
   return { mcp: mcpIntegrations, skills };
 }
 
+async function getAgentTasks(): Promise<unknown> {
+  if (!supabase) return { tasks: [], error: "Supabase not configured" };
+  try {
+    const { data, error } = await supabase
+      .from("agent_tasks")
+      .select("id, created_at, updated_at, agent, description, status, result, metadata")
+      .order("updated_at", { ascending: false })
+      .limit(30);
+    if (error) return { tasks: [], error: error.message };
+    return { tasks: data || [] };
+  } catch (e: any) {
+    return { tasks: [], error: e.message };
+  }
+}
+
 // ============================================================
 // HTML DASHBOARD
 // ============================================================
@@ -818,6 +833,17 @@ function renderDashboard(): string {
       </div>
     </div>
 
+    <!-- AGENT TASKS -->
+    <div class="panel full-width">
+      <div class="panel-header">
+        <span>Agent Tasks</span>
+        <span class="indicator"><span class="blink" style="color:var(--green)">●</span> 15s</span>
+      </div>
+      <div class="panel-body" id="agent-tasks-panel" style="max-height:400px">
+        <div style="color:var(--dim)">Loading...</div>
+      </div>
+    </div>
+
     <!-- SYSTEM RESOURCES -->
     <div class="panel">
       <div class="panel-header">
@@ -1057,6 +1083,46 @@ async function loadSkills() {
   } catch(e) { $('skills-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
 }
 
+// ---- AGENT TASKS ----
+let agentTaskFilter = 'all';
+async function loadAgentTasks() {
+  try {
+    const r = await fetch('/api/agent-tasks');
+    const d = await r.json();
+
+    let html = '<div class="tabs">';
+    for (const t of ['all','pending','in_progress','done','blocked','cancelled']) {
+      const label = t === 'in_progress' ? 'active' : t;
+      html += '<button class="tab' + (agentTaskFilter === t ? ' active' : '') + '" onclick="agentTaskFilter=\\'' + t + '\\';loadAgentTasks()">' + label + '</button>';
+    }
+    html += '</div>';
+
+    const tasks = (d.tasks || []).filter(function(t) {
+      return agentTaskFilter === 'all' || t.status === agentTaskFilter;
+    });
+
+    if (!tasks.length) {
+      html += '<div style="color:var(--dim)">No ' + (agentTaskFilter === 'all' ? '' : agentTaskFilter + ' ') + 'tasks</div>';
+    } else {
+      html += '<table class="data-table"><tr><th>Agent</th><th>Task</th><th>Status</th><th>Result</th><th>Updated</th></tr>';
+      for (const t of tasks) {
+        const statusColors = { in_progress: 'var(--green)', blocked: 'var(--amber)', done: 'var(--cyan)', pending: 'var(--dim)', cancelled: 'var(--dim)' };
+        const color = statusColors[t.status] || 'var(--dim)';
+        html += '<tr>'
+          + '<td style="color:var(--cyan)">' + esc(t.agent) + '</td>'
+          + '<td>' + esc((t.description || '').substring(0, 80)) + '</td>'
+          + '<td style="color:' + color + ';font-weight:700;text-transform:uppercase;font-size:10px">' + esc(t.status) + '</td>'
+          + '<td style="color:var(--dim);font-size:11px">' + esc((t.result || '—').substring(0, 60)) + '</td>'
+          + '<td style="color:var(--dim);font-size:10px;white-space:nowrap">' + timeAgo(t.updated_at) + '</td>'
+          + '</tr>';
+      }
+      html += '</table>';
+    }
+
+    $('agent-tasks-panel').innerHTML = html;
+  } catch(e) { $('agent-tasks-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+}
+
 // ---- RESOURCES ----
 async function loadResources() {
   try {
@@ -1111,10 +1177,12 @@ $('log-service').addEventListener('change', loadLogs);
 // ---- INIT & INTERVALS ----
 loadStatus();  loadMetrics();  loadMessages();  loadMemory();
 loadTasks();   loadVoice();    loadSkills();     loadResources();  loadLogs();
+loadAgentTasks();
 
 setInterval(loadStatus, 10000);
 setInterval(loadLogs, 10000);
 setInterval(loadMessages, 15000);
+setInterval(loadAgentTasks, 15000);
 setInterval(loadResources, 20000);
 setInterval(loadMetrics, 30000);
 setInterval(loadMemory, 30000);
@@ -1163,6 +1231,7 @@ const server = Bun.serve({
       return jsonResponse(await getLogs(service, Math.min(lines, 500)));
     }
     if (path === "/api/tasks") return jsonResponse(await getTasks());
+    if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks());
     if (path === "/api/resources") return jsonResponse(await getResources());
     if (path === "/api/voice") return jsonResponse(await getVoice());
     if (path === "/api/skills") return jsonResponse(await getSkills());
@@ -1181,6 +1250,7 @@ console.log("  GET  /api/memory    — Memory entries");
 console.log("  GET  /api/metrics   — Performance metrics");
 console.log("  GET  /api/logs      — Log viewer");
 console.log("  GET  /api/tasks     — Scheduled tasks");
+console.log("  GET  /api/agent-tasks — Agent task tracking");
 console.log("  GET  /api/resources — System resources");
 console.log("  GET  /api/voice     — Voice call activity");
 console.log("  GET  /api/skills    — Skills & integrations");

@@ -18,6 +18,7 @@ import {
   getMemoryContext,
   getRelevantContext,
   getRecentHistory,
+  getTaskContext,
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
@@ -184,17 +185,19 @@ bot.on("callback_query:data", async (ctx) => {
     await ctx.replyWithChatAction("typing");
 
     runTask(ctx, `Button: ${selection.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext, recentHistory] = await Promise.all([
+      const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
         getRelevantContext(supabase, selection),
         getMemoryContext(supabase),
         getRecentHistory(supabase),
+        getTaskContext(supabase),
       ]);
       return {
         prompt: buildPrompt(
           `[Button selected in response to a question]: ${selection}`,
           relevantContext,
           memoryContext,
-          recentHistory
+          recentHistory,
+          taskContext
         ),
       };
     }, {
@@ -342,13 +345,14 @@ bot.on("message:text", async (ctx) => {
   await saveMessage("user", text);
 
   runTask(ctx, text.substring(0, 50), async () => {
-    const [relevantContext, memoryContext, recentHistory] = await Promise.all([
+    const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
       getRelevantContext(supabase, text),
       getMemoryContext(supabase),
       getRecentHistory(supabase),
+      getTaskContext(supabase),
     ]);
     return {
-      prompt: buildPrompt(text, relevantContext, memoryContext, recentHistory),
+      prompt: buildPrompt(text, relevantContext, memoryContext, recentHistory, taskContext),
     };
   }, {
     postProcess: (raw) => processMemoryIntents(supabase, raw),
@@ -384,17 +388,19 @@ bot.on("message:voice", async (ctx) => {
     await saveMessage("user", `[Voice ${voice.duration}s]: ${transcription}`);
 
     runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext, recentHistory] = await Promise.all([
+      const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
         getRelevantContext(supabase, transcription),
         getMemoryContext(supabase),
         getRecentHistory(supabase),
+        getTaskContext(supabase),
       ]);
       return {
         prompt: buildPrompt(
           `[Voice message transcribed]: ${transcription}`,
           relevantContext,
           memoryContext,
-          recentHistory
+          recentHistory,
+          taskContext
         ),
       };
     }, {
@@ -432,11 +438,12 @@ bot.on("message:photo", async (ctx) => {
     await saveMessage("user", `[Image]: ${caption}`);
 
     runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
-      const [memoryContext, recentHistory] = await Promise.all([
+      const [memoryContext, recentHistory, taskContext] = await Promise.all([
         getMemoryContext(supabase),
         getRecentHistory(supabase),
+        getTaskContext(supabase),
       ]);
-      const contextPrefix = [memoryContext, recentHistory].filter(Boolean).join("\n\n");
+      const contextPrefix = [memoryContext, taskContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, `image_${timestamp}.jpg`, caption)
         : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
@@ -484,11 +491,12 @@ bot.on("message:document", async (ctx) => {
     await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`);
 
     runTask(ctx, `Doc: ${doc.file_name}`, async () => {
-      const [memoryContext, recentHistory] = await Promise.all([
+      const [memoryContext, recentHistory, taskContext] = await Promise.all([
         getMemoryContext(supabase),
         getRecentHistory(supabase),
+        getTaskContext(supabase),
       ]);
-      const contextPrefix = [memoryContext, recentHistory].filter(Boolean).join("\n\n");
+      const contextPrefix = [memoryContext, taskContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, doc.file_name || "document", caption)
         : (contextPrefix ? contextPrefix + "\n\n" : "") + `[File: ${filePath}]\n\n${caption}`;
@@ -569,7 +577,8 @@ function buildPrompt(
   userMessage: string,
   relevantContext?: string,
   memoryContext?: string,
-  recentHistory?: string
+  recentHistory?: string,
+  taskContext?: string
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -590,6 +599,7 @@ function buildPrompt(
   parts.push(`Current time: ${timeStr}`);
   if (profileContext) parts.push(`\nProfile:\n${profileContext}`);
   if (memoryContext) parts.push(`\n${memoryContext}`);
+  if (taskContext) parts.push(`\n${taskContext}`);
   if (recentHistory) parts.push(`\n${recentHistory}`);
   if (relevantContext) parts.push(`\n${relevantContext}`);
 
@@ -600,6 +610,20 @@ function buildPrompt(
       "\n[REMEMBER: fact to store]" +
       "\n[GOAL: goal text | DEADLINE: optional date]" +
       "\n[DONE: search text for completed goal]"
+  );
+
+  parts.push(
+    "\nTASK TRACKING:" +
+      "\nWhen you start a task or delegate to a specialist agent, log it:" +
+      "\n  [TASK: Agent Name | brief description]" +
+      "\nWhen you begin working on a pending task:" +
+      "\n  [TASK_START: search text matching description]" +
+      "\nWhen you complete a task:" +
+      "\n  [TASK_DONE: search text | brief result]" +
+      "\nWhen a task is blocked:" +
+      "\n  [TASK_BLOCKED: search text | what's blocking it]" +
+      "\nTo cancel a task:" +
+      "\n  [TASK_CANCEL: search text]"
   );
 
   parts.push(
