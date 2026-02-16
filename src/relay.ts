@@ -471,13 +471,14 @@ bot.on("message:photo", async (ctx) => {
     await writeFile(filePath, Buffer.from(buffer));
 
     const caption = ctx.message.caption || "Analyze this image.";
+    const memoryMode = isMemoryIntent(caption);
     await saveMessage("user", `[Image]: ${caption}`);
 
     runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
-      return {
-        prompt: `[Image: ${filePath}]\n\n${caption}`,
-        resume: true,
-      };
+      const prompt = memoryMode
+        ? buildMemoryExtractionPrompt(filePath, `image_${timestamp}.jpg`, caption)
+        : `[Image: ${filePath}]\n\n${caption}`;
+      return { prompt, resume: true };
     }, {
       postProcess: async (raw) => {
         // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
@@ -517,16 +518,23 @@ bot.on("message:document", async (ctx) => {
     await writeFile(filePath, Buffer.from(buffer));
 
     const caption = ctx.message.caption || `Analyze: ${doc.file_name}`;
+    const memoryMode = isMemoryIntent(caption);
     await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`);
 
     runTask(ctx, `Doc: ${doc.file_name}`, async () => {
-      return {
-        prompt: `[File: ${filePath}]\n\n${caption}`,
-        resume: true,
-      };
+      const prompt = memoryMode
+        ? buildMemoryExtractionPrompt(filePath, doc.file_name || "document", caption)
+        : `[File: ${filePath}]\n\n${caption}`;
+      return { prompt, resume: true };
     }, {
       postProcess: async (raw) => {
-        await unlink(filePath).catch(() => {});
+        // Delay cleanup for memory ingestion — Claude may need the file longer
+        const delay = memoryMode ? 2 * 60 * 1000 : 0;
+        if (delay > 0) {
+          setTimeout(() => unlink(filePath).catch(() => {}), delay);
+        } else {
+          await unlink(filePath).catch(() => {});
+        }
         return processMemoryIntents(supabase, raw);
       },
     });
@@ -539,6 +547,45 @@ bot.on("message:document", async (ctx) => {
 // ============================================================
 // HELPERS
 // ============================================================
+
+/**
+ * Detect if a caption/message signals the user wants to store the file contents to memory.
+ */
+function isMemoryIntent(text: string): boolean {
+  const lower = text.toLowerCase();
+  const phrases = [
+    "remember this",
+    "save to memory",
+    "store this",
+    "memorize",
+    "learn this",
+    "ingest this",
+    "save this",
+    "remember these",
+    "store these",
+    "memorize this",
+  ];
+  return phrases.some((p) => lower.includes(p));
+}
+
+/**
+ * Build a prompt that tells Claude to analyze the file AND extract discrete facts
+ * as [REMEMBER: ...] tags for memory storage.
+ */
+function buildMemoryExtractionPrompt(filePath: string, fileName: string, caption: string): string {
+  return (
+    `[File: ${filePath}]\n\n` +
+    `The user sent this file ("${fileName}") and wants its key information saved to memory.\n\n` +
+    `Instructions:\n` +
+    `1. Analyze the file thoroughly and give a brief summary to the user.\n` +
+    `2. Extract every discrete, self-contained fact from the document as [REMEMBER: From ${fileName}: fact] tags.\n` +
+    `3. Prioritize: names, dates, numbers, amounts, decisions, action items, key concepts, relationships, deadlines, terms, and conditions.\n` +
+    `4. Each [REMEMBER: ...] tag should contain ONE fact — not a summary paragraph.\n` +
+    `5. Include enough context in each tag so it's useful on its own (e.g., "From contract.pdf: Payment terms are Net 30" not just "Net 30").\n` +
+    `6. At the end, tell the user how many facts were stored.\n\n` +
+    `User's caption: ${caption}`
+  );
+}
 
 // Load profile once at startup
 let profileContext = "";
