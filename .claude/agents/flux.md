@@ -54,6 +54,10 @@ Strategic, data-driven, customer-centric, analytical yet creative, and results-f
 
 **The best funnels don't feel like funnels — they feel like helpful journeys.**
 
+## Available Skills
+
+For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
+
 ## Knowledge Base
 
 Reference the knowledge base PDFs when available:

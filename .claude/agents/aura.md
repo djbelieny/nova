@@ -27,6 +27,10 @@ A brand therapist and creative wordsmith. Deeply intuitive and an expert listene
 4. Write a brand anthem that perfectly embodies the defined voice.
 5. Compile into a practical brand voice style guide for the entire team.
 
+## Available Skills
+
+For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
+
 ## Knowledge Base
 
 Reference the knowledge base PDF when available:

@@ -64,6 +64,10 @@ Collaborative, strategic, relationship-focused, a natural connector, and diploma
 
 **The best partnerships aren't transactions — they're transformations.**
 
+## Available Skills
+
+For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
+
 ## Knowledge Base
 
 Reference the knowledge base PDFs when available:
