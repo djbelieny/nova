@@ -185,14 +185,24 @@ bot.use(async (ctx, next) => {
 // CORE: Call Claude CLI
 // ============================================================
 
+// Track active tasks for parallel execution
+interface ActiveTask {
+  id: string;
+  description: string;
+  startTime: number;
+  notified: boolean; // whether we sent a "still working" update
+}
+const activeTasks = new Map<string, ActiveTask>();
+let taskCounter = 0;
+
 async function callClaude(
   prompt: string,
   options?: { resume?: boolean; imagePath?: string }
 ): Promise<string> {
   const args = [CLAUDE_PATH, "-p", prompt];
 
-  // Resume previous session if available and requested
-  if (options?.resume && session.sessionId) {
+  // Only resume if no other tasks are running (avoid session conflicts)
+  if (options?.resume && session.sessionId && activeTasks.size === 0) {
     args.push("--resume", session.sessionId);
   }
 
@@ -211,8 +221,10 @@ async function callClaude(
       },
     });
 
-    const output = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
+    const [output, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
 
     const exitCode = await proc.exited;
 
@@ -234,6 +246,66 @@ async function callClaude(
     console.error("Spawn error:", error);
     return `Error: Could not run Claude CLI`;
   }
+}
+
+/**
+ * Run a Claude task asynchronously — sends typing indicator, handles long-running
+ * tasks with progress updates, and delivers the result when done.
+ * Does NOT block the message handler, so Nova can work on multiple tasks at once.
+ */
+function runTask(
+  ctx: Context,
+  taskDescription: string,
+  buildTask: () => Promise<{ prompt: string; resume: boolean }>,
+  opts?: { postProcess?: (response: string) => Promise<string>; forceAudio?: boolean }
+): void {
+  const taskId = `task-${++taskCounter}`;
+  const task: ActiveTask = {
+    id: taskId,
+    description: taskDescription,
+    startTime: Date.now(),
+    notified: false,
+  };
+  activeTasks.set(taskId, task);
+
+  // Keep typing indicator alive
+  const typingInterval = setInterval(() => {
+    ctx.replyWithChatAction("typing").catch(() => {});
+  }, 4000);
+
+  // Notify after 30 seconds that the task is still running
+  const progressTimer = setTimeout(async () => {
+    if (activeTasks.has(taskId)) {
+      task.notified = true;
+      const otherTasks = activeTasks.size - 1;
+      const msg = otherTasks > 0
+        ? `Still working on this (+ ${otherTasks} other task${otherTasks > 1 ? "s" : ""} in progress). I'll send the result when it's ready.`
+        : "Still working on this — it's a bigger task. I'll send the result when it's ready.";
+      await ctx.reply(msg).catch(() => {});
+    }
+  }, 30_000);
+
+  // Fire and forget — run the task asynchronously
+  (async () => {
+    try {
+      const { prompt, resume } = await buildTask();
+      const rawResponse = await callClaude(prompt, { resume });
+
+      const response = opts?.postProcess
+        ? await opts.postProcess(rawResponse)
+        : rawResponse;
+
+      await saveMessage("assistant", response);
+      await sendResponseWithVoice(ctx, response, opts?.forceAudio);
+    } catch (error) {
+      console.error(`Task ${taskId} error:`, error);
+      await ctx.reply("Something went wrong processing that. Check logs for details.").catch(() => {});
+    } finally {
+      clearTimeout(progressTimer);
+      clearInterval(typingInterval);
+      activeTasks.delete(taskId);
+    }
+  })();
 }
 
 // ============================================================
@@ -263,23 +335,20 @@ bot.on("message:text", async (ctx) => {
   }
 
   await ctx.replyWithChatAction("typing");
-
   await saveMessage("user", text);
 
-  // Gather context: semantic search + facts/goals
-  const [relevantContext, memoryContext] = await Promise.all([
-    getRelevantContext(supabase, text),
-    getMemoryContext(supabase),
-  ]);
-
-  const enrichedPrompt = buildPrompt(text, relevantContext, memoryContext);
-  const rawResponse = await callClaude(enrichedPrompt, { resume: true });
-
-  // Parse and save any memory intents, strip tags from response
-  const response = await processMemoryIntents(supabase, rawResponse);
-
-  await saveMessage("assistant", response);
-  await sendResponseWithVoice(ctx, response);
+  runTask(ctx, text.substring(0, 50), async () => {
+    const [relevantContext, memoryContext] = await Promise.all([
+      getRelevantContext(supabase, text),
+      getMemoryContext(supabase),
+    ]);
+    return {
+      prompt: buildPrompt(text, relevantContext, memoryContext),
+      resume: true,
+    };
+  }, {
+    postProcess: (raw) => processMemoryIntents(supabase, raw),
+  });
 });
 
 // Voice messages
@@ -310,22 +379,23 @@ bot.on("message:voice", async (ctx) => {
 
     await saveMessage("user", `[Voice ${voice.duration}s]: ${transcription}`);
 
-    const [relevantContext, memoryContext] = await Promise.all([
-      getRelevantContext(supabase, transcription),
-      getMemoryContext(supabase),
-    ]);
-
-    const enrichedPrompt = buildPrompt(
-      `[Voice message transcribed]: ${transcription}`,
-      relevantContext,
-      memoryContext
-    );
-    const rawResponse = await callClaude(enrichedPrompt, { resume: true });
-    const claudeResponse = await processMemoryIntents(supabase, rawResponse);
-
-    await saveMessage("assistant", claudeResponse);
-    // Voice messages always get audio reply (if TTS is available)
-    await sendResponseWithVoice(ctx, claudeResponse, true);
+    runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
+      const [relevantContext, memoryContext] = await Promise.all([
+        getRelevantContext(supabase, transcription),
+        getMemoryContext(supabase),
+      ]);
+      return {
+        prompt: buildPrompt(
+          `[Voice message transcribed]: ${transcription}`,
+          relevantContext,
+          memoryContext
+        ),
+        resume: true,
+      };
+    }, {
+      postProcess: (raw) => processMemoryIntents(supabase, raw),
+      forceAudio: true,
+    });
   } catch (error) {
     console.error("Voice error:", error);
     await ctx.reply("Could not process voice message. Check logs for details.");
@@ -353,20 +423,21 @@ bot.on("message:photo", async (ctx) => {
     const buffer = await response.arrayBuffer();
     await writeFile(filePath, Buffer.from(buffer));
 
-    // Claude Code can see images via file path
     const caption = ctx.message.caption || "Analyze this image.";
-    const prompt = `[Image: ${filePath}]\n\n${caption}`;
-
     await saveMessage("user", `[Image]: ${caption}`);
 
-    const claudeResponse = await callClaude(prompt, { resume: true });
-
-    // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
-    setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
-
-    const cleanResponse = await processMemoryIntents(supabase, claudeResponse);
-    await saveMessage("assistant", cleanResponse);
-    await sendResponseWithVoice(ctx, cleanResponse);
+    runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
+      return {
+        prompt: `[Image: ${filePath}]\n\n${caption}`,
+        resume: true,
+      };
+    }, {
+      postProcess: async (raw) => {
+        // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
+        setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
+        return processMemoryIntents(supabase, raw);
+      },
+    });
   } catch (error) {
     console.error("Image error:", error);
     await ctx.reply("Could not process image.");
@@ -399,17 +470,19 @@ bot.on("message:document", async (ctx) => {
     await writeFile(filePath, Buffer.from(buffer));
 
     const caption = ctx.message.caption || `Analyze: ${doc.file_name}`;
-    const prompt = `[File: ${filePath}]\n\n${caption}`;
-
     await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`);
 
-    const claudeResponse = await callClaude(prompt, { resume: true });
-
-    await unlink(filePath).catch(() => {});
-
-    const cleanResponse = await processMemoryIntents(supabase, claudeResponse);
-    await saveMessage("assistant", cleanResponse);
-    await sendResponseWithVoice(ctx, cleanResponse);
+    runTask(ctx, `Doc: ${doc.file_name}`, async () => {
+      return {
+        prompt: `[File: ${filePath}]\n\n${caption}`,
+        resume: true,
+      };
+    }, {
+      postProcess: async (raw) => {
+        await unlink(filePath).catch(() => {});
+        return processMemoryIntents(supabase, raw);
+      },
+    });
   } catch (error) {
     console.error("Document error:", error);
     await ctx.reply("Could not process document.");
@@ -484,11 +557,54 @@ function buildPrompt(
       "\n  - Nova authenticates DJ with a PIN before discussing anything." +
       "\n  - PROACTIVE CALLS: If something is genuinely urgent (time-sensitive deadline, important update DJ needs to act on NOW), you should proactively call DJ rather than waiting for him to check Telegram." +
       "\n  - You can also call/text other numbers if DJ asks you to." +
+      "\n• Square: Query orders and transactions by date range, view payment history, check account balances, create payment links, manage customers and catalog items." +
+      "\n  - LOCATIONS: Open Source Mind (Main) ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
+      "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
+      "\n  - WRITE OPERATIONS (create payment links, create payments, etc.): Always ask " + USER_NAME + " which location to use BEFORE executing." +
+      "\n• Cloudflare: Manage DNS records (create/update/delete subdomains and records), deploy and manage Cloudflare Workers." +
       "\n• File System: You can read, write, and manage files on the user's computer." +
       "\n• Terminal: You can run any shell command the user needs." +
       "\n" +
       "\nUse the right tool for the job. If the user asks to send an email, use Gmail. If they ask to check their schedule, use Calendar. " +
-      "If they ask to call or text someone, use Twilio. Always confirm before taking consequential actions (sending emails, making calls, etc.)."
+      "If they ask to call or text someone, use Twilio. Always confirm before taking consequential actions (sending emails, making calls, etc.)." +
+      "\n" +
+      "\nRESPONSE PROTOCOL:" +
+      "\n" + USER_NAME + " can send you multiple requests at once — you handle them in parallel." +
+      "\nJust do the work and deliver results. Keep responses focused and actionable." +
+      "\nWhen a task involves creating a file that " + USER_NAME + " needs, use the /telegram-file-sender skill to send it directly."
+  );
+
+  parts.push(
+    "\nSKILLS — Specialized slash commands you can invoke:" +
+      "\n• /canvas-design — Create visual designs, posters, and art as PNG/PDF" +
+      "\n• /competitive-ads-extractor — Extract and analyze competitor ads from ad libraries" +
+      "\n• /content-research-writer — Research-backed writing with citations and iterative feedback" +
+      "\n• /docx — Create, edit, and analyze Word documents with tracked changes" +
+      "\n• /file-organizer — Intelligently organize files and folders, find duplicates, suggest structures" +
+      "\n• /ghostwriter — Transform transcriptions into complete, formatted books (DOCX + PDF)" +
+      "\n• /lead-research-assistant — Identify and research high-quality business leads" +
+      "\n• /notebooklm — Query Google NotebookLM for source-grounded, citation-backed answers" +
+      "\n• /pdf — Extract text/tables, create, merge/split, and fill PDF forms" +
+      "\n• /platform-maker — Generate complete SaaS platforms from YAML configuration" +
+      "\n• /pptx — Create, edit, and analyze PowerPoint presentations" +
+      "\n• /xlsx — Create, edit, and analyze spreadsheets with formulas and formatting" +
+      "\n• /skill-creator — Create new skills to extend your own capabilities. Use this when " + USER_NAME + " asks you to create a skill, or when you detect a recurring task that should become one." +
+      "\n• /telegram-file-sender — Send files as document attachments via Telegram. Use when " + USER_NAME + " asks you to send, share, or deliver any file."
+  );
+
+  parts.push(
+    "\nSELF-IMPROVEMENT — You learn and evolve over time:" +
+      "\nYou can improve yourself by detecting patterns and creating reusable skills." +
+      "\n" +
+      "\n• PATTERN DETECTION: When you notice " + USER_NAME + " repeatedly asks you to do the same kind of task " +
+      "(e.g., 'research X and summarize', 'format data as Y', 'draft email in Z style'), note the pattern." +
+      "\n• SKILL CREATION: When you detect a recurring workflow or " + USER_NAME + " asks you to create a skill, " +
+      "use the /skill-creator skill to build it. Skills are your preferred way to package repeatable workflows — " +
+      "they're more powerful than raw slash commands and include proper structure, tool access, and documentation." +
+      "\n• PROFILE UPDATES: When you learn new preferences, habits, or context about " + USER_NAME + " that would help future interactions, " +
+      "update `config/profile.md` to reflect this. Examples: communication preferences, common contacts, project names, recurring meetings." +
+      "\n• MEMORY TAGS: Continue using [REMEMBER: ...] tags for facts and context. Use [GOAL: ...] and [DONE: ...] for goal tracking." +
+      "\n• PROACTIVE SUGGESTIONS: If you see an opportunity to automate something " + USER_NAME + " does manually, suggest creating a skill for it."
   );
 
   parts.push(`\nUser: ${userMessage}`);

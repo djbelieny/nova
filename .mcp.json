@@ -29,6 +29,19 @@
       ],
       "env": {}
     },
+    "cloudflare": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@cloudflare/mcp-server-cloudflare",
+        "run",
+        "${CLOUDFLARE_ACCOUNT_ID}"
+      ],
+      "env": {
+        "CLOUDFLARE_API_TOKEN": "${CLOUDFLARE_API_TOKEN}"
+      }
+    },
     "zoom": {
       "type": "stdio",
       "command": "npx",
@@ -40,6 +53,19 @@
         "ZOOM_ACCOUNT_ID": "${ZOOM_ACCOUNT_ID}",
         "ZOOM_CLIENT_ID": "${ZOOM_CLIENT_ID}",
         "ZOOM_CLIENT_SECRET": "${ZOOM_CLIENT_SECRET}"
+      }
+    },
+    "square": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "square-mcp-server",
+        "start"
+      ],
+      "env": {
+        "ACCESS_TOKEN": "${SQUARE_ACCESS_TOKEN}",
+        "PRODUCTION": "true"
       }
     }
   }
