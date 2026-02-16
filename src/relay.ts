@@ -226,7 +226,7 @@ async function callClaude(prompt: string): Promise<string> {
     const proc = spawn(args, {
       stdout: "pipe",
       stderr: "pipe",
-      cwd: PROJECT_DIR || undefined,
+      cwd: PROJECT_ROOT,
       env: {
         ...process.env,
         CLAUDECODE: undefined, // Allow nested Claude sessions
