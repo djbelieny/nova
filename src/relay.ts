@@ -261,7 +261,7 @@ function runTask(
   ctx: Context,
   taskDescription: string,
   buildTask: () => Promise<{ prompt: string }>,
-  opts?: { postProcess?: (response: string) => Promise<string>; forceAudio?: boolean }
+  opts?: { postProcess?: (response: string) => Promise<string> }
 ): void {
   const taskId = `task-${++taskCounter}`;
   const task: ActiveTask = {
@@ -300,7 +300,7 @@ function runTask(
         : rawResponse;
 
       await saveMessage("assistant", response);
-      await sendResponseWithVoice(ctx, response, opts?.forceAudio);
+      await sendResponseWithVoice(ctx, response);
     } catch (error) {
       console.error(`Task ${taskId} error:`, error);
       await ctx.reply("Something went wrong processing that. Check logs for details.").catch(() => {});
@@ -399,7 +399,6 @@ bot.on("message:voice", async (ctx) => {
       };
     }, {
       postProcess: (raw) => processMemoryIntents(supabase, raw),
-      forceAudio: true,
     });
   } catch (error) {
     console.error("Voice error:", error);
@@ -768,8 +767,7 @@ function parseButtons(response: string): { text: string; keyboard: InlineKeyboar
 
 async function sendResponseWithVoice(
   ctx: Context,
-  response: string,
-  forceAudio: boolean = false
+  response: string
 ): Promise<void> {
   // Parse any inline buttons from the response
   const { text, keyboard } = parseButtons(response);
@@ -781,12 +779,11 @@ async function sendResponseWithVoice(
     await sendResponse(ctx, text);
   }
 
-  // Send voice only when:
-  // 1. forceAudio = true (user sent a voice message, so reply with voice)
-  // 2. /voice toggle is on (user said they can't read / wants all voice)
+  // Send voice ONLY when /voice toggle is on (user explicitly wants all replies as audio).
+  // Voice messages from the user get a text reply — they can toggle /voice if they want audio back.
   if (isTTSEnabled()) {
     const settings = await loadSettings();
-    if (forceAudio || settings.voiceResponses) {
+    if (settings.voiceResponses) {
       const audio = await textToSpeech(text);
       if (audio) {
         await ctx.replyWithVoice(new InputFile(audio, "response.ogg"));
