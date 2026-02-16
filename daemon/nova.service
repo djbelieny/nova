@@ -1,5 +1,5 @@
 [Unit]
-Description=Claude Code Telegram Relay
+Description=Nova
 After=network.target
 
 [Service]
@@ -7,7 +7,7 @@ Type=simple
 # UPDATE THIS: Your username
 User=YOUR_USERNAME
 # UPDATE THIS: Path to relay directory
-WorkingDirectory=/home/YOUR_USERNAME/claude-telegram-relay
+WorkingDirectory=/home/YOUR_USERNAME/nova
 # UPDATE THIS: Path to bun
 ExecStart=/home/YOUR_USERNAME/.bun/bin/bun run src/relay.ts
 Restart=always
@@ -18,12 +18,12 @@ Environment=HOME=/home/YOUR_USERNAME
 Environment=PATH=/home/YOUR_USERNAME/.bun/bin:/usr/local/bin:/usr/bin:/bin
 
 # Optional: Load .env file
-# EnvironmentFile=/home/YOUR_USERNAME/claude-telegram-relay/.env
+# EnvironmentFile=/home/YOUR_USERNAME/nova/.env
 
 # Logging
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=claude-relay
+SyslogIdentifier=nova
 
 [Install]
 WantedBy=multi-user.target
@@ -33,25 +33,25 @@ WantedBy=multi-user.target
 # 1. Replace all YOUR_USERNAME with your actual Linux username
 #
 # 2. Copy to systemd:
-#    sudo cp daemon/claude-relay.service /etc/systemd/system/
+#    sudo cp daemon/nova.service /etc/systemd/system/
 #
 # 3. Reload systemd:
 #    sudo systemctl daemon-reload
 #
 # 4. Enable (start on boot):
-#    sudo systemctl enable claude-relay
+#    sudo systemctl enable nova
 #
 # 5. Start:
-#    sudo systemctl start claude-relay
+#    sudo systemctl start nova
 #
 # 6. Check status:
-#    sudo systemctl status claude-relay
+#    sudo systemctl status nova
 #
 # 7. View logs:
-#    journalctl -u claude-relay -f
+#    journalctl -u nova -f
 #
 # 8. Stop:
-#    sudo systemctl stop claude-relay
+#    sudo systemctl stop nova
 #
 # 9. Disable:
-#    sudo systemctl disable claude-relay
+#    sudo systemctl disable nova

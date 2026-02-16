@@ -1,11 +1,11 @@
-# Claude Telegram Relay — Setup Guide
+# Nova — Setup Guide
 
 > Claude Code reads this file automatically. Walk the user through setup one phase at a time.
 > Ask for what you need, configure everything yourself, and confirm each step works before moving on.
 
 ## How This Works
 
-This project turns Telegram into a personal AI assistant powered by Claude.
+Nova is a personal AI assistant on Telegram powered by Claude.
 
 The user cloned this repo (or gave you the link). Your job: guide them through setup conversationally. Ask questions, save their answers to `.env`, test each step, move on.
 
@@ -164,7 +164,7 @@ bun run setup:services -- --service relay
 ```
 Uses PM2 for process management.
 
-**Verify:** `launchctl list | grep com.claude` (macOS) or `npx pm2 status` (Linux/Windows)
+**Verify:** `launchctl list | grep com.nova` (macOS) or `npx pm2 status` (Linux/Windows)
 
 **Done when:** Bot runs in the background and survives a terminal close.
 

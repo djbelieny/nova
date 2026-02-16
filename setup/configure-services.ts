@@ -1,5 +1,5 @@
 /**
- * Claude Telegram Relay — Configure Services (Windows/Linux)
+ * Nova — Configure Services (Windows/Linux)
  *
  * Sets up PM2 for process management on non-macOS systems.
  *
@@ -42,18 +42,18 @@ interface ServiceDef {
 
 const SERVICES: Record<string, ServiceDef> = {
   relay: {
-    name: "claude-telegram-relay",
+    name: "nova",
     script: "src/relay.ts",
     description: "Main bot (always running)",
   },
   checkin: {
-    name: "claude-smart-checkin",
+    name: "nova-smart-checkin",
     script: "examples/smart-checkin.ts",
     cron: "*/30 9-18 * * *",
     description: "Smart check-ins (every 30 min, 9am-6pm)",
   },
   briefing: {
-    name: "claude-morning-briefing",
+    name: "nova-morning-briefing",
     script: "examples/morning-briefing.ts",
     cron: "0 9 * * *",
     description: "Morning briefing (daily at 9am)",

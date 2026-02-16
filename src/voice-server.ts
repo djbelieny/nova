@@ -32,7 +32,7 @@ const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
 const USER_NAME = process.env.USER_NAME || "DJ";
 const USER_TIMEZONE = process.env.USER_TIMEZONE || "America/New_York";
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".claude-relay");
+const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const CALL_CONTEXTS_DIR = join(RELAY_DIR, "call-contexts");
 
 // Audio files stored in /tmp with cleanup

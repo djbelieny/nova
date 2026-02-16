@@ -29,7 +29,7 @@ import { join } from "path";
 import { spawn } from "bun";
 
 const PLIST_DIR = join(process.env.HOME || "~", "Library", "LaunchAgents");
-const PROJECT_ROOT = "/Users/djbelieny/Projects/claude-telegram-relay";
+const PROJECT_ROOT = "/Users/djbelieny/Projects/nova";
 const LOGS_DIR = join(PROJECT_ROOT, "logs");
 const BUN_PATH = "/Users/djbelieny/.bun/bin/bun";
 const NODE_PATH = "/Users/djbelieny/.nvm/versions/node/v23.11.1/bin";
@@ -222,7 +222,7 @@ async function listTasks() {
   const proc = spawn(["launchctl", "list"], { stdout: "pipe", stderr: "pipe" });
   const output = await new Response(proc.stdout).text();
 
-  const novaLines = output.split("\n").filter((l) => l.includes(PREFIX) || l.includes("com.claude."));
+  const novaLines = output.split("\n").filter((l) => l.includes(PREFIX) || l.includes("com.nova."));
 
   if (novaLines.length === 0) {
     console.log("No scheduled tasks found.");

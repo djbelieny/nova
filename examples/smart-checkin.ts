@@ -305,7 +305,7 @@ main();
 //   0,30 * * * * cd /path/to/relay && bun run examples/smart-checkin.ts
 //
 // LAUNCHD (macOS):
-//   See ~/Library/LaunchAgents/com.claude.smart-checkin.plist
+//   See ~/Library/LaunchAgents/com.nova.smart-checkin.plist
 //
 // WINDOWS Task Scheduler:
 //   Create task with "Daily" trigger, set to repeat every 30 minutes

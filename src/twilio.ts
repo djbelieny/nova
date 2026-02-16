@@ -20,7 +20,7 @@ const TWILIO_API = `https://api.twilio.com/2010-04-01/Accounts/${ACCOUNT_SID}`;
 
 // Voice server
 const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL || "https://nova.1osm.com";
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".claude-relay");
+const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const CALL_CONTEXTS_DIR = join(RELAY_DIR, "call-contexts");
 
 function twilioAuth(): string {

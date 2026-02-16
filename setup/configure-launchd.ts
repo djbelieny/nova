@@ -1,5 +1,5 @@
 /**
- * Claude Telegram Relay — Configure launchd (macOS)
+ * Nova — Configure launchd (macOS)
  *
  * Generates and loads launchd plist files with correct paths
  * for the current user and project location.
@@ -126,13 +126,13 @@ interface ServiceConfig {
 
 const SERVICES: Record<string, ServiceConfig> = {
   relay: {
-    label: "com.claude.telegram-relay",
+    label: "com.nova.relay",
     script: "src/relay.ts",
     keepAlive: true,
     description: "Main bot (always running, restarts on crash)",
   },
   checkin: {
-    label: "com.claude.smart-checkin",
+    label: "com.nova.smart-checkin",
     script: "examples/smart-checkin.ts",
     keepAlive: false,
     calendarIntervals: [
@@ -146,7 +146,7 @@ const SERVICES: Record<string, ServiceConfig> = {
     description: "Smart check-ins (runs during work hours)",
   },
   briefing: {
-    label: "com.claude.morning-briefing",
+    label: "com.nova.morning-briefing",
     script: "examples/morning-briefing.ts",
     keepAlive: false,
     calendarIntervals: [{ Hour: 9, Minute: 0 }],
@@ -231,8 +231,8 @@ async function main() {
   if (allOk) {
     console.log(`  ${green("Done!")} Services are running.`);
     console.log("");
-    console.log(`  ${dim("Check status:")}  launchctl list | grep com.claude`);
-    console.log(`  ${dim("View logs:")}     tail -f ${LOGS_DIR}/com.claude.telegram-relay.log`);
+    console.log(`  ${dim("Check status:")}  launchctl list | grep com.nova`);
+    console.log(`  ${dim("View logs:")}     tail -f ${LOGS_DIR}/com.nova.relay.log`);
     console.log(`  ${dim("Stop all:")}      bun run setup/configure-launchd.ts --unload`);
   }
   console.log("");

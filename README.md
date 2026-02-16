@@ -1,6 +1,6 @@
-# Claude Telegram Relay
+# Nova
 
-A personal AI assistant on Telegram powered by Claude Code.
+A personal AI assistant powered by Claude Code.
 
 You message it. Claude responds. Text, photos, documents, voice. It remembers across sessions, checks in proactively, and runs in the background.
 
@@ -33,8 +33,8 @@ You ──▶ Telegram ──▶ Relay ──▶ Claude Code CLI ──▶ Respo
 ### Option A: Guided Setup (Recommended)
 
 ```bash
-git clone https://github.com/godagoo/claude-telegram-relay.git
-cd claude-telegram-relay
+git clone https://github.com/djbelieny/nova.git
+cd nova
 claude
 ```
 
@@ -51,8 +51,8 @@ Claude Code reads `CLAUDE.md` and walks you through setup conversationally:
 ### Option B: Manual Setup
 
 ```bash
-git clone https://github.com/godagoo/claude-telegram-relay.git
-cd claude-telegram-relay
+git clone https://github.com/djbelieny/nova.git
+cd nova
 bun run setup          # Install deps, create .env
 # Edit .env with your API keys
 bun run test:telegram  # Verify bot token
@@ -112,7 +112,7 @@ setup/
   verify.ts                  # Full health check
 daemon/
   launchagent.plist          # macOS daemon template
-  claude-relay.service       # Linux systemd template
+  nova.service               # Linux systemd template
   README-WINDOWS.md          # Windows options
 ```
 

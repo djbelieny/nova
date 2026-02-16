@@ -1,7 +1,7 @@
 /**
- * Claude Code Telegram Relay
+ * Nova — Personal AI Assistant
  *
- * Minimal relay that connects Telegram to Claude Code CLI.
+ * Relay that connects Telegram to Claude Code CLI.
  * Customize this for your own needs.
  *
  * Run: bun run src/relay.ts
@@ -32,7 +32,7 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const ALLOWED_USER_ID = process.env.TELEGRAM_USER_ID || "";
 const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".claude-relay");
+const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 
 // Directories
 const TEMP_DIR = join(RELAY_DIR, "temp");
@@ -837,7 +837,7 @@ async function sendResponseWithButtons(
 // START
 // ============================================================
 
-console.log("Starting Claude Telegram Relay...");
+console.log("Starting Nova...");
 console.log(`Authorized user: ${ALLOWED_USER_ID || "ANY (not recommended)"}`);
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
 

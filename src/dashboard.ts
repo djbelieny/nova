@@ -17,7 +17,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
 const PORT = 3033;
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".claude-relay");
+const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const LOGS_DIR = join(PROJECT_ROOT, "logs");
 
 // Supabase (optional)
@@ -68,7 +68,7 @@ function formatBytes(bytes: number): string {
 
 async function getStatus(): Promise<unknown> {
   const services = [
-    { name: "telegram-relay", label: "Telegram Relay" },
+    { name: "relay", label: "Relay" },
     { name: "voice-server", label: "Voice Server" },
     { name: "smart-checkin", label: "Smart Check-in" },
     { name: "morning-briefing", label: "Morning Briefing" },
@@ -77,7 +77,7 @@ async function getStatus(): Promise<unknown> {
 
   const results = [];
   for (const svc of services) {
-    const id = `com.claude.${svc.name}`;
+    const id = `com.nova.${svc.name}`;
     try {
       const proc = Bun.spawn(["launchctl", "list", id], { stdout: "pipe", stderr: "pipe" });
       const out = await new Response(proc.stdout).text();
@@ -210,7 +210,7 @@ async function getTasks(): Promise<unknown> {
 
   const results = [];
   for (const svc of services) {
-    const plistPath = join(process.env.HOME || "~", "Library", "LaunchAgents", `com.claude.${svc.name}.plist`);
+    const plistPath = join(process.env.HOME || "~", "Library", "LaunchAgents", `com.nova.${svc.name}.plist`);
     try {
       const content = await readFile(plistPath, "utf-8");
       const calendarMatch = content.match(/<key>StartCalendarInterval<\/key>[\s\S]*?<dict>([\s\S]*?)<\/dict>/);
@@ -839,7 +839,7 @@ function renderDashboard(): string {
         <div class="filter-row">
           <select id="log-service">
             <option value="all">All Services</option>
-            <option value="telegram-relay">Telegram Relay</option>
+            <option value="relay">Relay</option>
             <option value="voice-server">Voice Server</option>
             <option value="smart-checkin">Smart Check-in</option>
             <option value="morning-briefing">Morning Briefing</option>

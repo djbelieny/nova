@@ -1,5 +1,5 @@
 /**
- * Claude Telegram Relay — Verify Setup
+ * Nova — Verify Setup
  *
  * Runs all health checks in sequence: env, Telegram, Supabase,
  * services, and reports overall status.
@@ -51,7 +51,7 @@ async function loadEnv(): Promise<Record<string, string>> {
 
 async function main() {
   console.log("");
-  console.log(bold("  Claude Telegram Relay — Health Check"));
+  console.log(bold("  Nova — Health Check"));
   console.log("");
 
   const env = await loadEnv();
@@ -111,7 +111,7 @@ async function main() {
   // 4. Services (macOS only)
   if (process.platform === "darwin") {
     console.log(`\n${bold("  Services (launchd)")}`);
-    for (const label of ["com.claude.telegram-relay", "com.claude.smart-checkin", "com.claude.morning-briefing"]) {
+    for (const label of ["com.nova.relay", "com.nova.smart-checkin", "com.nova.morning-briefing"]) {
       const proc = Bun.spawn(["launchctl", "list", label], { stdout: "pipe", stderr: "pipe" });
       const code = await proc.exited;
       code === 0 ? pass(`${label} loaded`) : warn(`${label} not loaded`);

@@ -217,14 +217,14 @@ main();
 // LAUNCHD PLIST FOR SCHEDULING (macOS)
 // ============================================================
 /*
-Save this as ~/Library/LaunchAgents/com.claude.morning-briefing.plist:
+Save this as ~/Library/LaunchAgents/com.nova.morning-briefing.plist:
 
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.claude.morning-briefing</string>
+    <string>com.nova.morning-briefing</string>
     <key>ProgramArguments</key>
     <array>
         <string>/Users/YOUR_USERNAME/.bun/bin/bun</string>
@@ -232,7 +232,7 @@ Save this as ~/Library/LaunchAgents/com.claude.morning-briefing.plist:
         <string>examples/morning-briefing.ts</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/path/to/claude-telegram-relay</string>
+    <string>/path/to/nova</string>
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -247,7 +247,7 @@ Save this as ~/Library/LaunchAgents/com.claude.morning-briefing.plist:
 </dict>
 </plist>
 
-Load with: launchctl load ~/Library/LaunchAgents/com.claude.morning-briefing.plist
+Load with: launchctl load ~/Library/LaunchAgents/com.nova.morning-briefing.plist
 */
 
 // ============================================================
@@ -257,5 +257,5 @@ Load with: launchctl load ~/Library/LaunchAgents/com.claude.morning-briefing.pli
 Add to crontab with: crontab -e
 
 # Run at 9:00 AM every day
-0 9 * * * cd /path/to/claude-telegram-relay && /home/USER/.bun/bin/bun run examples/morning-briefing.ts >> /tmp/morning-briefing.log 2>&1
+0 9 * * * cd /path/to/nova && /home/USER/.bun/bin/bun run examples/morning-briefing.ts >> /tmp/morning-briefing.log 2>&1
 */

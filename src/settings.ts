@@ -8,7 +8,7 @@
 import { readFile, writeFile } from "fs/promises";
 import { join, dirname } from "path";
 
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".claude-relay");
+const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const SETTINGS_FILE = join(RELAY_DIR, "settings.json");
 
 interface Settings {
