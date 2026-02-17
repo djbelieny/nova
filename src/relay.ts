@@ -699,6 +699,10 @@ function buildPrompt(
       "\n• Web Browser (Playwright): Navigate to URLs, take screenshots, fill forms, click buttons. Use for any website interaction." +
       "\n• Web Search: You have built-in web search. Use it to answer questions about current events, look up information, etc." +
       "\n• Apple Notes: Read and create notes using osascript. Example: osascript -e 'tell application \"Notes\" to get name of every note'" +
+      "\n• Apple Contacts: Search and look up contacts synced from DJ's iPhone via iCloud (1,500+ contacts)." +
+      "\n  - Search by name: osascript -e 'tell application \"Contacts\" to get {name, value of phones, value of emails} of (every person whose name contains \"John\")'" +
+      "\n  - Get all details for a contact: osascript -e 'tell application \"Contacts\" to tell (first person whose name contains \"John Smith\") to return {name, organization, value of phones, value of emails, formatted address of addresses}'" +
+      "\n  - Always look up a contact before calling or texting someone DJ mentions by name — get their number from Contacts first." +
       "\n• Phone Calls & SMS (Twilio + ElevenLabs): Make voice calls and send text messages." +
       `\n  - DJ's phone: ${process.env.USER_PHONE || "+18636047056"}. Use this when DJ says "call me", "text me", or when something is urgent enough to warrant a call.` +
       `\n  - SMS: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts sms "${process.env.USER_PHONE || "+18636047056"}" "message"\`` +

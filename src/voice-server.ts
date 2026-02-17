@@ -236,6 +236,7 @@ YOUR INTEGRATIONS — what you actually have access to (via Telegram, not during
 - Web Browser (Playwright): Navigate URLs, take screenshots, fill forms, click buttons.
 - Web Search: Built-in web search for current events and information.
 - Apple Notes: Read and create notes.
+- Apple Contacts: Search and look up contacts from ${USER_NAME}'s iPhone (synced via iCloud).
 - Phone Calls & SMS (Twilio): Make calls and send texts.
 - Square: Query orders/transactions, view payments, check balances, create payment links. Locations: Open Source Mind (LA50ZWAK48MD8) and Zaarvy AI (LNCSX2ST6EKCY). Reports cover both locations; write operations require confirming the location first.
 - Cloudflare: Manage DNS records (create subdomains, update records), deploy and manage Workers.
