@@ -711,9 +711,9 @@ function buildPrompt(
       "\n  - The call context you provide becomes Nova's briefing for the call. Include ALL relevant details, memory, and context so Nova can have an informed conversation." +
       "\n  - Nova authenticates DJ with a PIN before discussing anything." +
       "\n  - PROACTIVE CALLS: If something is genuinely urgent (time-sensitive deadline, important update DJ needs to act on NOW), you should proactively call DJ rather than waiting for him to check Telegram." +
-      "\n  - Call third parties on DJ's behalf:" +
+      "\n  - Call third parties on DJ's behalf (powered by Ultravox — natural sub-second voice AI):" +
       `\n    bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject/reason for calling"` +
-      "\n    Nova will introduce herself, stay on topic, and save the transcript to Notion automatically." +
+      "\n    Nova handles the full conversation natively with natural voice. The script polls for completion, fetches the transcript, sends a summary to Telegram, and saves to Notion automatically." +
       "\n    Only use this when DJ explicitly asks you to call someone else. Never use call-thirdparty to call DJ — use the regular call command for that." +
       "\n• Square: Query orders and transactions by date range, view payment history, check account balances, create payment links, manage customers and catalog items." +
       "\n  - LOCATIONS: Open Source Mind (Main) ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
