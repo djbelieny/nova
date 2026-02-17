@@ -138,6 +138,7 @@ Time: ${getTimeStr()}
 ${langInstruction}
 
 BEHAVIOR:
+- The callee will answer first (e.g., "hello?"). Respond with a warm greeting introducing yourself and why you're calling.
 - Be warm, natural, and conversational — like a real person on the phone.
 - Keep responses short — 1-3 sentences max.
 - Only discuss topics related to the objective. Politely steer back if the conversation drifts.
@@ -216,13 +217,10 @@ async function makeThirdPartyCall(to: string, calleeName: string, subject: strin
     temperature: 0.4,
     maxDuration: "600s",
     recordingEnabled: true,
-    firstSpeaker: "FIRST_SPEAKER_AGENT",
+    firstSpeaker: "FIRST_SPEAKER_USER",
     initialOutputMedium: "MESSAGE_MEDIUM_VOICE",
     firstSpeakerSettings: {
-      agent: {
-        uninterruptible: true,
-        text: greeting,
-      },
+      user: {},
     },
     medium: {
       twilio: {
