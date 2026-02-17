@@ -35,6 +35,15 @@ const CALL_CONTEXTS_DIR = join(RELAY_DIR, "call-contexts");
 const USER_NAME = process.env.USER_NAME || "DJ";
 const USER_TIMEZONE = process.env.USER_TIMEZONE || "America/New_York";
 
+// Telegram (direct API for guaranteed message delivery)
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_USER_ID = process.env.TELEGRAM_USER_ID || "";
+
+// Notion (direct API for guaranteed transcript saving)
+const NOTION_API_KEY = process.env.NOTION_API_KEY || "";
+const NOTION_VERSION = "2022-06-28";
+const NOTION_BASE = "https://api.notion.com/v1";
+
 function twilioAuth(): string {
   return "Basic " + Buffer.from(`${ACCOUNT_SID}:${AUTH_TOKEN}`).toString("base64");
 }
@@ -119,6 +128,183 @@ function getTimeStr(): string {
 /** Log to stderr (visible in logs but doesn't pollute stdout for the caller) */
 function log(msg: string): void {
   process.stderr.write(msg + "\n");
+}
+
+// ============================================================
+// TELEGRAM (direct Bot API)
+// ============================================================
+
+async function sendTelegram(text: string): Promise<void> {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_USER_ID) {
+    log("Telegram not configured — skipping notification");
+    return;
+  }
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: TELEGRAM_USER_ID,
+          text,
+          parse_mode: "Markdown",
+        }),
+      }
+    );
+    if (!res.ok) {
+      const err = await res.json();
+      log(`Telegram send error: ${JSON.stringify(err)}`);
+    }
+  } catch (error) {
+    log(`Telegram send failed: ${error}`);
+  }
+}
+
+// ============================================================
+// NOTION (direct REST API — guaranteed transcript saving)
+// ============================================================
+
+const notionHeaders = {
+  Authorization: `Bearer ${NOTION_API_KEY}`,
+  "Notion-Version": NOTION_VERSION,
+  "Content-Type": "application/json",
+};
+
+async function notionFetch(path: string, options: RequestInit = {}): Promise<{ ok: boolean; data: any }> {
+  const res = await fetch(`${NOTION_BASE}${path}`, { ...options, headers: notionHeaders });
+  const data = await res.json();
+  if (!res.ok) log(`Notion API error [${res.status}]: ${JSON.stringify(data).slice(0, 200)}`);
+  return { ok: res.ok, data };
+}
+
+async function findNovaCallsDb(): Promise<string | null> {
+  const { ok, data } = await notionFetch("/search", {
+    method: "POST",
+    body: JSON.stringify({
+      query: "Nova Calls",
+      filter: { property: "object", value: "database" },
+    }),
+  });
+  if (!ok) return null;
+  const db = data.results?.find(
+    (r: any) => r.object === "database" && r.title?.some((t: any) => t.plain_text === "Nova Calls")
+  );
+  return db?.id ?? null;
+}
+
+async function createNovaCallsDb(): Promise<string | null> {
+  // Find a parent page
+  const { ok, data } = await notionFetch("/search", {
+    method: "POST",
+    body: JSON.stringify({ query: "", filter: { property: "object", value: "page" }, page_size: 10 }),
+  });
+  if (!ok || !data.results?.length) {
+    log("No parent page found in Notion — cannot create database");
+    return null;
+  }
+  const parentPageId = data.results[0].id;
+
+  const { ok: createOk, data: createData } = await notionFetch("/databases", {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { type: "page_id", page_id: parentPageId },
+      title: [{ type: "text", text: { content: "Nova Calls" } }],
+      properties: {
+        Title: { title: {} },
+        Date: { date: {} },
+        "Phone Number": { rich_text: {} },
+        Callee: { rich_text: {} },
+        Subject: { rich_text: {} },
+        Duration: { rich_text: {} },
+        Outcome: { rich_text: {} },
+        Status: {
+          select: {
+            options: [
+              { name: "Completed", color: "green" },
+              { name: "No Answer", color: "yellow" },
+              { name: "Failed", color: "red" },
+            ],
+          },
+        },
+      },
+    }),
+  });
+  if (!createOk) return null;
+  log(`Created "Nova Calls" database: ${createData.id}`);
+  return createData.id;
+}
+
+async function saveCallToNotion(opts: {
+  calleeName: string;
+  phone: string;
+  subject: string;
+  duration: string;
+  outcome: string;
+  status: "Completed" | "No Answer" | "Failed";
+  transcript: string;
+  callStart: Date;
+}): Promise<void> {
+  if (!NOTION_API_KEY) {
+    log("NOTION_API_KEY not set — skipping Notion save");
+    return;
+  }
+
+  try {
+    let dbId = await findNovaCallsDb();
+    if (!dbId) {
+      log("Nova Calls database not found — creating it");
+      dbId = await createNovaCallsDb();
+      if (!dbId) { log("Failed to create Notion database"); return; }
+    }
+
+    // Create page with properties
+    const { ok, data } = await notionFetch("/pages", {
+      method: "POST",
+      body: JSON.stringify({
+        parent: { database_id: dbId },
+        properties: {
+          Title: { title: [{ text: { content: `Call with ${opts.calleeName}` } }] },
+          Date: { date: { start: opts.callStart.toISOString() } },
+          "Phone Number": { rich_text: [{ text: { content: opts.phone } }] },
+          Callee: { rich_text: [{ text: { content: opts.calleeName } }] },
+          Subject: { rich_text: [{ text: { content: opts.subject.slice(0, 2000) } }] },
+          Duration: { rich_text: [{ text: { content: opts.duration } }] },
+          Outcome: { rich_text: [{ text: { content: opts.outcome.slice(0, 2000) } }] },
+          Status: { select: { name: opts.status } },
+        },
+      }),
+    });
+
+    if (!ok) { log("Failed to create Notion page"); return; }
+    const pageId = data.id;
+    log(`Notion page created: ${pageId}`);
+
+    // Add transcript blocks to page body
+    const transcriptLines = opts.transcript.split("\n").filter(Boolean);
+    const blocks: any[] = [
+      { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "Call Summary" } }] } },
+      { object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: opts.outcome } }] } },
+      { object: "block", type: "divider", divider: {} },
+      { object: "block", type: "heading_2", heading_2: { rich_text: [{ type: "text", text: { content: "Full Transcript" } }] } },
+      ...transcriptLines.map((line) => ({
+        object: "block",
+        type: "paragraph",
+        paragraph: { rich_text: [{ type: "text", text: { content: line } }] },
+      })),
+    ];
+
+    // Notion allows max 100 blocks per append — batch if needed
+    for (let i = 0; i < blocks.length; i += 100) {
+      await notionFetch(`/blocks/${pageId}/children`, {
+        method: "PATCH",
+        body: JSON.stringify({ children: blocks.slice(i, i + 100) }),
+      });
+    }
+    log("Transcript saved to Notion");
+  } catch (error) {
+    log(`Notion save error: ${error}`);
+  }
 }
 
 // ============================================================
@@ -311,9 +497,8 @@ async function pollForCallCompletion(
 }
 
 /**
- * Fetch transcript and output structured results to stdout.
- * The calling Claude session (relay) handles Telegram, Notion, and follow-ups
- * since it has MCP tools available.
+ * Fetch transcript, send Telegram notification, save to Notion, and output
+ * any follow-up tasks to stdout for the relay Claude to handle via MCP.
  */
 async function outputCallResult(
   callId: string,
@@ -336,6 +521,16 @@ async function outputCallResult(
     const statusLabel = endReason === "busy" ? "Busy"
       : endReason === "denied" ? "Denied"
       : "No Answer";
+
+    // Notify DJ directly via Telegram
+    await sendTelegram(`📞 *Call to ${calleeName}*: ${statusLabel}\nSubject: ${subject}\nReason: ${endReason}`);
+
+    // Save to Notion even for failed calls
+    await saveCallToNotion({
+      calleeName, phone, subject, duration: durationStr,
+      outcome: `${statusLabel} — ${endReason}`,
+      status: "No Answer", transcript: "", callStart,
+    });
 
     console.log(`CALL RESULT: ${statusLabel.toUpperCase()}\nCallee: ${calleeName}\nPhone: ${phone}\nSubject: ${subject}\nEnd reason: ${endReason}`);
     return;
@@ -366,8 +561,27 @@ async function outputCallResult(
   // Use Ultravox's built-in summary if available
   const shortSummary = (call.shortSummary as string) || "";
   const fullSummary = (call.summary as string) || "";
+  const outcome = shortSummary || fullSummary || "Call completed";
 
-  // Output everything to stdout — the relay Claude will process it
+  // === STEP 1: Send Telegram notification (direct API — guaranteed) ===
+  const telegramMsg = [
+    `📞 *Call with ${calleeName}* — Completed (${durationStr})`,
+    `*Subject:* ${subject}`,
+    outcome !== "Call completed" ? `*Summary:* ${outcome}` : "",
+    transcript ? `\n_Transcript saved to Notion_` : "",
+  ].filter(Boolean).join("\n");
+
+  await sendTelegram(telegramMsg);
+  log("Telegram notification sent");
+
+  // === STEP 2: Save to Notion (direct API — guaranteed) ===
+  await saveCallToNotion({
+    calleeName, phone, subject, duration: durationStr,
+    outcome, status: "Completed", transcript, callStart,
+  });
+
+  // === STEP 3: Output transcript + follow-up tasks to stdout for relay ===
+  // The relay Claude handles MCP-dependent follow-ups (calendar, email, SMS)
   const output = [
     `CALL RESULT: COMPLETED`,
     `Callee: ${calleeName}`,
@@ -376,6 +590,9 @@ async function outputCallResult(
     `Duration: ${durationStr}`,
     `Call ID: ${callId}`,
     `Start: ${callStart.toISOString()}`,
+    ``,
+    `NOTE: Telegram notification and Notion transcript have ALREADY been saved by the script.`,
+    `Do NOT re-send Telegram or re-save to Notion.`,
   ];
 
   if (shortSummary) output.push(`\nUltravox Summary: ${shortSummary}`);
@@ -383,6 +600,7 @@ async function outputCallResult(
 
   if (transcript) {
     output.push(`\nTRANSCRIPT:\n${transcript}`);
+    output.push(`\nFOLLOW-UP TASKS: Review the transcript above. If the conversation resulted in any commitments or action items (appointments, reservations, messages to send, calendar events), execute them NOW using your MCP tools (Google Calendar, Gmail, etc.). If no follow-ups are needed, do nothing.`);
   } else {
     output.push(`\nNo transcript was captured.`);
   }

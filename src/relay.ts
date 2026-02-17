@@ -713,16 +713,12 @@ function buildPrompt(
       "\n  - PROACTIVE CALLS: If something is genuinely urgent (time-sensitive deadline, important update DJ needs to act on NOW), you should proactively call DJ rather than waiting for him to check Telegram." +
       "\n  - Call third parties on DJ's behalf (powered by Ultravox — natural sub-second voice AI):" +
       `\n    bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject/reason for calling" [--lang language]` +
-      "\n    The script outputs the transcript + result to stdout. It does NOT send Telegram, save to Notion, or execute follow-ups — YOU handle all of that." +
       "\n    Language: Use --lang when DJ specifies the callee speaks a different language (e.g., --lang spanish, --lang french, --lang portuguese)." +
       "\n    If no --lang is given, Nova starts in English but auto-switches if the callee responds in another language." +
       "\n    Only use this when DJ explicitly asks you to call someone else. Never use call-thirdparty to call DJ — use the regular call command for that." +
-      "\n" +
-      "\n    *** CRITICAL POST-CALL PROTOCOL — Execute ALL of these after the script returns: ***" +
-      "\n    STEP 1: Send " + USER_NAME + " a single concise Telegram message summarizing the call outcome." +
-      "\n    STEP 2: Save the transcript to Notion. Search for 'Nova Calls' database. If it doesn't exist, create it with properties: Title, Date, Phone Number, Callee, Subject, Duration, Outcome, Status. Create a page with the call details and full transcript in the body." +
-      "\n    STEP 3: Execute any follow-up tasks from the conversation — create calendar events, send emails, update Notion, etc. Use your MCP tools (Google Calendar, Gmail, Notion) directly." +
-      "\n    Do NOT skip steps 2 and 3. Do NOT tell " + USER_NAME + " you can't access MCP tools — you have them. Just execute." +
+      "\n    The script AUTOMATICALLY handles: (1) Telegram notification to " + USER_NAME + ", (2) Saving transcript to Notion 'Nova Calls' database." +
+      "\n    Do NOT re-send Telegram or re-save to Notion after the call — the script already did it." +
+      "\n    YOUR ONLY TASK after the script returns: Read the transcript and execute any follow-up actions from the conversation (create calendar events, send emails/SMS, etc.) using your MCP tools." +
       "\n• Square: Query orders and transactions by date range, view payment history, check account balances, create payment links, manage customers and catalog items." +
       "\n  - LOCATIONS: Open Source Mind (Main) ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
       "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
