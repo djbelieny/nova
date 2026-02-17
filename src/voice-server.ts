@@ -26,12 +26,12 @@ const PROJECT_ROOT = dirname(dirname(__filename));
 
 const PORT = parseInt(process.env.VOICE_SERVER_PORT || "80");
 const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL || "https://nova.1osm.com";
-const USER_PIN = process.env.USER_PIN || "852185";
-const USER_PHONE = process.env.USER_PHONE || "+18636047056";
+const FALLBACK_PIN = process.env.USER_PIN || "852185";
+const FALLBACK_PHONE = process.env.USER_PHONE || "+18636047056";
 const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
-const USER_NAME = process.env.USER_NAME || "DJ";
-const USER_TIMEZONE = process.env.USER_TIMEZONE || "America/New_York";
+const FALLBACK_USER_NAME = process.env.USER_NAME || "DJ";
+const FALLBACK_USER_TIMEZONE = process.env.USER_TIMEZONE || "America/New_York";
 const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const CALL_CONTEXTS_DIR = join(RELAY_DIR, "call-contexts");
 
@@ -43,6 +43,70 @@ const supabase: SupabaseClient | null =
   process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
     ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
     : null;
+
+// ============================================================
+// MULTI-USER: Resolve caller by phone number
+// ============================================================
+
+interface CallUser {
+  id: string;
+  name: string;
+  phone: string;
+  pin: string;
+  timezone: string;
+  telegram_id: string;
+  profile_text: string;
+}
+
+const phoneUserCache = new Map<string, CallUser | null>();
+
+async function resolveUserByPhone(phone: string): Promise<CallUser | null> {
+  const cached = phoneUserCache.get(phone);
+  if (cached !== undefined) return cached;
+
+  if (!supabase) {
+    // Fallback to env vars for single-user mode
+    if (phone === FALLBACK_PHONE) {
+      const fallback: CallUser = {
+        id: "",
+        name: FALLBACK_USER_NAME,
+        phone: FALLBACK_PHONE,
+        pin: FALLBACK_PIN,
+        timezone: FALLBACK_USER_TIMEZONE,
+        telegram_id: process.env.TELEGRAM_USER_ID || "",
+        profile_text: "",
+      };
+      phoneUserCache.set(phone, fallback);
+      return fallback;
+    }
+    phoneUserCache.set(phone, null);
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase.rpc("get_user_by_phone", { p_phone: phone });
+    if (error || !data?.length) {
+      phoneUserCache.set(phone, null);
+      return null;
+    }
+    const row = data[0];
+    const user: CallUser = {
+      id: row.id,
+      name: row.name,
+      phone: row.phone || "",
+      pin: row.pin || "",
+      timezone: row.timezone || "UTC",
+      telegram_id: row.telegram_id || "",
+      profile_text: row.profile_text || "",
+    };
+    phoneUserCache.set(phone, user);
+    return user;
+  } catch (error) {
+    console.error("Phone user resolution error:", error);
+    phoneUserCache.set(phone, null);
+    return null;
+  }
+}
 
 // ============================================================
 // SECURITY
@@ -147,6 +211,7 @@ interface CallState {
   context?: string; // For outgoing calls
   createdAt: number;
   lastActivity: number;
+  user?: CallUser; // Resolved caller
 }
 
 const activeCalls = new Map<string, CallState>();
@@ -188,9 +253,9 @@ async function loadProfile(): Promise<string> {
 
 const profile = await loadProfile();
 
-function getTimeStr(): string {
+function getTimeStr(timezone?: string): string {
   return new Date().toLocaleString("en-US", {
-    timeZone: USER_TIMEZONE,
+    timeZone: timezone || FALLBACK_USER_TIMEZONE,
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -200,13 +265,16 @@ function getTimeStr(): string {
   });
 }
 
-function buildVoiceSystemPrompt(callContext?: string): string {
-  return `You are Nova, ${USER_NAME}'s personal AI assistant, on a live phone call.
+function buildVoiceSystemPrompt(callContext?: string, callUser?: CallUser): string {
+  const userName = callUser?.name || FALLBACK_USER_NAME;
+  const userTimezone = callUser?.timezone || FALLBACK_USER_TIMEZONE;
+  const userProfile = callUser?.profile_text || profile;
+  return `You are Nova, ${userName}'s personal AI assistant, on a live phone call.
 
 VOICE CALL PROTOCOL:
 - You are on a real-time voice call — speak naturally and conversationally
 - Keep responses concise — this is a phone call, not a text chat
-- Match ${USER_NAME}'s casual, no-fluff communication style
+- Match ${userName}'s casual, no-fluff communication style
 - If you don't understand something, ask them to repeat
 
 NUMBERS & FORMATTING FOR SPEECH:
@@ -217,9 +285,9 @@ NUMBERS & FORMATTING FOR SPEECH:
 - Never use markdown, asterisks, bullet points, or other text formatting — this is speech
 
 ${callContext ? `CONTEXT FOR THIS CALL:\n${callContext}\n` : ""}
-CURRENT TIME: ${getTimeStr()}
+CURRENT TIME: ${getTimeStr(userTimezone)}
 
-${profile ? `ABOUT ${USER_NAME}:\n${profile}` : ""}
+${userProfile ? `ABOUT ${userName}:\n${userProfile}` : ""}
 
 YOUR INTEGRATIONS — what you actually have access to (via Telegram, not during this call):
 - Gmail & Google Calendar: Read, search, draft, send emails. View, create, update calendar events.
@@ -228,20 +296,20 @@ YOUR INTEGRATIONS — what you actually have access to (via Telegram, not during
 - Web Browser (Playwright): Navigate URLs, take screenshots, fill forms, click buttons.
 - Web Search: Built-in web search for current events and information.
 - Apple Notes: Read and create notes.
-- Apple Contacts: Search and look up contacts from ${USER_NAME}'s iPhone (synced via iCloud).
+- Apple Contacts: Search and look up contacts (synced via iCloud).
 - Phone Calls & SMS (Twilio): Make calls and send texts.
 - Square: Query orders/transactions, view payments, check balances, create payment links. Locations: Open Source Mind (LA50ZWAK48MD8) and Zaarvy AI (LNCSX2ST6EKCY). Reports cover both locations; write operations require confirming the location first.
 - Cloudflare: Manage DNS records (create subdomains, update records), deploy and manage Workers.
 - Task Scheduler: Create recurring scheduled tasks (daily, weekly, hourly, interval-based).
 - File System & Terminal: Read, write, manage files and run shell commands.
 
-IMPORTANT: Only mention integrations listed above. Do NOT make up or assume integrations you don't have (no Netlify, no Slack, no Trello, etc.). If ${USER_NAME} asks about something not listed, say you don't have that one set up.
+IMPORTANT: Only mention integrations listed above. Do NOT make up or assume integrations you don't have (no Netlify, no Slack, no Trello, etc.). If ${userName} asks about something not listed, say you don't have that one set up.
 
 During this phone call, you cannot execute these tools directly — but you WILL execute them automatically after the call ends.
 
 TASK TRACKING:
-When ${USER_NAME} asks you to do something actionable (send an email, check calendar, look something up, create a Notion page, etc.), acknowledge it and confirm you'll handle it after the call. These tasks are automatically extracted from the conversation transcript when the call ends and executed.
-- If ${USER_NAME} says something is URGENT, acknowledge the urgency. Urgent tasks get priority execution and ${USER_NAME} will be notified via SMS and follow-up call if needed.
+When ${userName} asks you to do something actionable (send an email, check calendar, look something up, create a Notion page, etc.), acknowledge it and confirm you'll handle it after the call. These tasks are automatically extracted from the conversation transcript when the call ends and executed.
+- If ${userName} says something is URGENT, acknowledge the urgency. Urgent tasks get priority execution and ${userName} will be notified via SMS and follow-up call if needed.
 - You don't need to use special tags — just have a natural conversation. The system extracts tasks from the full transcript.
 
 SKILLS — You also have specialized skills available (via Telegram, not during the call):
@@ -254,15 +322,15 @@ SKILLS — You also have specialized skills available (via Telegram, not during 
 - Lead research for business development
 - SaaS platform generation
 - Google NotebookLM queries
-If ${USER_NAME} mentions needing any of these, note it as a task to handle after the call.
+If ${userName} mentions needing any of these, note it as a task to handle after the call.
 
 SELF-IMPROVEMENT:
-You learn from every interaction. If ${USER_NAME} describes a recurring task or workflow during the call, or asks you to create a skill, note it as a task. After the call, you'll use /skill-creator to build reusable skills that automate repetitive workflows.
+You learn from every interaction. If ${userName} describes a recurring task or workflow during the call, or asks you to create a skill, note it as a task. After the call, you'll use /skill-creator to build reusable skills that automate repetitive workflows.
 
 PERSONALITY:
 - You're Nova — confident, direct, helpful
 - Brief and casual by default, more detail when needed
-- You're ${USER_NAME}'s trusted assistant — act like it`;
+- You're ${userName}'s trusted assistant — act like it`;
 }
 
 async function callClaude(prompt: string): Promise<string> {
@@ -312,15 +380,17 @@ async function generateAudio(text: string): Promise<string | null> {
   return id;
 }
 
-async function saveCallMessage(role: string, content: string, callSid?: string): Promise<void> {
+async function saveCallMessage(role: string, content: string, callSid?: string, userId?: string): Promise<void> {
   if (!supabase) return;
   try {
-    await supabase.from("messages").insert({
+    const row: Record<string, any> = {
       role,
       content,
       channel: "phone",
       metadata: { callSid },
-    });
+    };
+    if (userId) row.user_id = userId;
+    await supabase.from("messages").insert(row);
   } catch (error) {
     console.error("Supabase save error:", error);
   }
@@ -336,8 +406,9 @@ const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || "";
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || "";
 
-async function sendTelegram(text: string): Promise<void> {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_USER_ID) {
+async function sendTelegramNotification(text: string, chatId?: string): Promise<void> {
+  const targetChatId = chatId || TELEGRAM_USER_ID;
+  if (!TELEGRAM_BOT_TOKEN || !targetChatId) {
     console.error("Telegram not configured — skipping notification");
     return;
   }
@@ -357,7 +428,7 @@ async function sendTelegram(text: string): Promise<void> {
       await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: TELEGRAM_USER_ID, text: chunk }),
+        body: JSON.stringify({ chat_id: targetChatId, text: chunk }),
       });
     }
   } catch (error) {
@@ -365,8 +436,9 @@ async function sendTelegram(text: string): Promise<void> {
   }
 }
 
-async function sendSMS(text: string): Promise<void> {
-  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
+async function sendSMS(text: string, toPhone?: string): Promise<void> {
+  const targetPhone = toPhone || FALLBACK_PHONE;
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER || !targetPhone) {
     console.error("Twilio not configured — skipping SMS");
     return;
   }
@@ -375,22 +447,23 @@ async function sendSMS(text: string): Promise<void> {
     await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
       method: "POST",
       headers: { Authorization: auth, "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ To: USER_PHONE, From: TWILIO_PHONE_NUMBER, Body: text }),
+      body: new URLSearchParams({ To: targetPhone, From: TWILIO_PHONE_NUMBER, Body: text }),
     });
   } catch (error) {
     console.error("SMS send error:", error);
   }
 }
 
-async function makeFollowUpCall(context: string): Promise<void> {
-  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) return;
+async function makeFollowUpCall(context: string, toPhone?: string): Promise<void> {
+  const targetPhone = toPhone || FALLBACK_PHONE;
+  if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER || !targetPhone) return;
   try {
     const auth = "Basic " + Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString("base64");
     const resp = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Calls.json`, {
       method: "POST",
       headers: { Authorization: auth, "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        To: USER_PHONE,
+        To: targetPhone,
         From: TWILIO_PHONE_NUMBER,
         Url: `${VOICE_SERVER_URL}/voice/outgoing`,
         Method: "POST",
@@ -403,7 +476,7 @@ async function makeFollowUpCall(context: string): Promise<void> {
       // Save context for the follow-up call
       await mkdir(CALL_CONTEXTS_DIR, { recursive: true });
       const contextPath = join(CALL_CONTEXTS_DIR, `${data.sid}.json`);
-      await Bun.write(contextPath, JSON.stringify({ context, to: USER_PHONE, timestamp: new Date().toISOString() }));
+      await Bun.write(contextPath, JSON.stringify({ context, to: targetPhone, timestamp: new Date().toISOString() }));
       console.log(`Follow-up call initiated: ${data.sid}`);
     }
   } catch (error) {
@@ -423,21 +496,21 @@ interface ExtractedTask {
   urgent: boolean;
 }
 
-async function extractTasksFromTranscript(turns: { role: string; content: string }[]): Promise<ExtractedTask[]> {
+async function extractTasksFromTranscript(turns: { role: string; content: string }[], userName: string): Promise<ExtractedTask[]> {
   const transcript = turns
-    .map((t) => `${t.role === "user" ? USER_NAME : "Nova"}: ${t.content}`)
+    .map((t) => `${t.role === "user" ? userName : "Nova"}: ${t.content}`)
     .join("\n");
 
-  const prompt = `Analyze this phone call transcript between ${USER_NAME} and Nova (AI assistant).
+  const prompt = `Analyze this phone call transcript between ${userName} and Nova (AI assistant).
 
-Extract ALL actionable tasks that ${USER_NAME} asked Nova to do. These are things Nova agreed to handle after the call — things that require using tools (email, calendar, Notion, web search, etc.).
+Extract ALL actionable tasks that ${userName} asked Nova to do. These are things Nova agreed to handle after the call — things that require using tools (email, calendar, Notion, web search, etc.).
 
 Do NOT include:
 - Things already discussed/resolved during the call
 - General conversation or opinions
-- Things ${USER_NAME} said they would do themselves
+- Things ${userName} said they would do themselves
 
-For each task, determine if it was marked as URGENT by ${USER_NAME} (they explicitly said it's urgent, time-sensitive, needs to happen right away, etc.).
+For each task, determine if it was marked as URGENT by ${userName} (they explicitly said it's urgent, time-sensitive, needs to happen right away, etc.).
 
 Return ONLY a JSON array. No other text. Example:
 [{"task": "Send email to John about the meeting tomorrow", "urgent": false}, {"task": "Check Google Calendar for Friday availability", "urgent": true}]
@@ -460,13 +533,13 @@ ${transcript}`;
   }
 }
 
-async function executeTask(task: ExtractedTask): Promise<string> {
-  const prompt = `You are Nova, ${USER_NAME}'s AI assistant. ${USER_NAME} asked you to do the following during a phone call. Now execute it using your available tools.
+async function executeTask(task: ExtractedTask, userName: string): Promise<string> {
+  const prompt = `You are Nova, ${userName}'s AI assistant. ${userName} asked you to do the following during a phone call. Now execute it using your available tools.
 
 TASK: ${task.task}
 ${task.urgent ? "PRIORITY: URGENT — handle this immediately and thoroughly." : ""}
 
-Execute the task and return a brief summary of what you did and the result. Be concise — this will be sent as a notification to ${USER_NAME}.`;
+Execute the task and return a brief summary of what you did and the result. Be concise — this will be sent as a notification to ${userName}.`;
 
   return await callClaude(prompt);
 }
@@ -474,9 +547,14 @@ Execute the task and return a brief summary of what you did and the result. Be c
 async function processPostCallTasks(callSid: string, state: CallState): Promise<void> {
   if (state.turns.length === 0) return;
 
-  console.log(`Processing post-call tasks for ${callSid} (${state.turns.length} turns)`);
+  const userName = state.user?.name || FALLBACK_USER_NAME;
+  const userTelegramId = state.user?.telegram_id || TELEGRAM_USER_ID;
+  const userPhone = state.user?.phone || FALLBACK_PHONE;
+  const userId = state.user?.id;
 
-  const tasks = await extractTasksFromTranscript(state.turns);
+  console.log(`Processing post-call tasks for ${callSid} (${state.turns.length} turns, user: ${userName})`);
+
+  const tasks = await extractTasksFromTranscript(state.turns, userName);
 
   if (tasks.length === 0) {
     console.log(`No tasks extracted from call ${callSid}`);
@@ -485,35 +563,36 @@ async function processPostCallTasks(callSid: string, state: CallState): Promise<
 
   console.log(`Extracted ${tasks.length} task(s) from call ${callSid}:`, tasks.map(t => t.task));
 
-  await sendTelegram(`📞 Call ended — working on ${tasks.length} task${tasks.length > 1 ? "s" : ""} from our conversation...`);
+  await sendTelegramNotification(`📞 Call ended — working on ${tasks.length} task${tasks.length > 1 ? "s" : ""} from our conversation...`, userTelegramId);
 
   for (const task of tasks) {
     console.log(`Executing task: "${task.task}" (urgent: ${task.urgent})`);
 
     try {
-      const result = await executeTask(task);
+      const result = await executeTask(task, userName);
       const label = task.urgent ? "🚨 URGENT TASK COMPLETE" : "✅ Task complete";
       const message = `${label}\n\nTask: ${task.task}\n\nResult: ${result}`;
 
       // Always send to Telegram
-      await sendTelegram(message);
-      await saveCallMessage("assistant", `[Post-call task]: ${task.task}\n[Result]: ${result}`, callSid);
+      await sendTelegramNotification(message, userTelegramId);
+      await saveCallMessage("assistant", `[Post-call task]: ${task.task}\n[Result]: ${result}`, callSid, userId);
 
       // Urgent tasks: also SMS + 15-min follow-up call if no ack
       if (task.urgent) {
         const smsText = `URGENT task done: ${task.task}\n\nResult: ${result.substring(0, 300)}${result.length > 300 ? "..." : ""}\n\nReply OK to acknowledge.`;
-        await sendSMS(smsText);
+        await sendSMS(smsText, userPhone);
         console.log(`Urgent SMS sent for task: "${task.task}"`);
 
         // Set 15-min timer for follow-up call
         const ackKey = `${callSid}-${task.task.substring(0, 50)}`;
         const timer = setTimeout(async () => {
           pendingUrgentAcks.delete(ackKey);
-          console.log(`No ack for urgent task after 15 min, calling ${USER_NAME}: "${task.task}"`);
+          console.log(`No ack for urgent task after 15 min, calling ${userName}: "${task.task}"`);
           await makeFollowUpCall(
-            `You completed an urgent task for ${USER_NAME} 15 minutes ago but he hasn't acknowledged it. ` +
+            `You completed an urgent task for ${userName} 15 minutes ago but they haven't acknowledged it. ` +
             `Task: ${task.task}\nResult: ${result}\n\n` +
-            `Call him to make sure he saw the update and check if he needs anything else.`
+            `Call them to make sure they saw the update and check if they need anything else.`,
+            userPhone
           );
         }, 15 * 60 * 1000);
 
@@ -521,7 +600,7 @@ async function processPostCallTasks(callSid: string, state: CallState): Promise<
       }
     } catch (error) {
       console.error(`Task execution error for "${task.task}":`, error);
-      await sendTelegram(`❌ Failed to complete task: ${task.task}\n\nError: ${error}`);
+      await sendTelegramNotification(`❌ Failed to complete task: ${task.task}\n\nError: ${error}`, userTelegramId);
     }
   }
 }
@@ -594,6 +673,23 @@ async function handleIncoming(body: string): Promise<Response> {
   console.log(`Incoming call from ${from} (${callSid})`);
   const state = getCallState(callSid);
 
+  // Resolve caller by phone number
+  const callUser = await resolveUserByPhone(from);
+  if (callUser) {
+    state.user = callUser;
+    console.log(`Caller identified: ${callUser.name}`);
+  } else {
+    console.log(`Unknown caller: ${from}`);
+  }
+
+  // If the user has no PIN set, skip PIN verification
+  if (callUser && !callUser.pin) {
+    state.authenticated = true;
+    console.log(`Call ${callSid} auto-authenticated (no PIN set for ${callUser.name})`);
+    const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, "Hey, it's Nova. What's up?");
+    return twiml(gather);
+  }
+
   const greeting = await gatherWithAudio(
     `${VOICE_SERVER_URL}/voice/pin`,
     "Hey, it's Nova. Before we get into it, I need your PIN to verify it's you.",
@@ -606,9 +702,17 @@ async function handleIncoming(body: string): Promise<Response> {
 async function handleOutgoing(body: string): Promise<Response> {
   const params = parseFormBody(body);
   const callSid = params.CallSid || "unknown";
+  const to = params.To || "unknown";
 
-  console.log(`Outgoing call connected (${callSid})`);
+  console.log(`Outgoing call connected to ${to} (${callSid})`);
   const state = getCallState(callSid);
+
+  // Resolve the callee by phone number
+  const callUser = await resolveUserByPhone(to);
+  if (callUser) {
+    state.user = callUser;
+    console.log(`Callee identified: ${callUser.name}`);
+  }
 
   // Load call context if available
   try {
@@ -621,6 +725,17 @@ async function handleOutgoing(body: string): Promise<Response> {
     setTimeout(() => unlink(contextPath).catch(() => {}), 5_000);
   } catch {
     // No context file — that's fine
+  }
+
+  // If the user has no PIN set, skip PIN verification
+  if (callUser && !callUser.pin) {
+    state.authenticated = true;
+    console.log(`Call ${callSid} auto-authenticated (no PIN set for ${callUser.name})`);
+    const welcomeText = state.context
+      ? "Hey, it's Nova. I was actually calling about something — let me tell you what's up."
+      : "Hey, it's Nova. What's up?";
+    const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, welcomeText);
+    return twiml(gather);
   }
 
   const greeting = await gatherWithAudio(
@@ -651,10 +766,14 @@ async function handlePin(body: string): Promise<Response> {
 
   state.pinAttempts++;
 
-  if (input === USER_PIN) {
+  // Determine the correct PIN for this caller
+  const expectedPin = state.user?.pin || FALLBACK_PIN;
+  const callerName = state.user?.name || FALLBACK_USER_NAME;
+
+  if (input === expectedPin) {
     state.authenticated = true;
     recordPinSuccess();
-    console.log(`Call ${callSid} authenticated`);
+    console.log(`Call ${callSid} authenticated (${callerName})`);
 
     const welcomeText = state.context
       ? "You're good. I was actually calling about something — let me tell you what's up."
@@ -665,11 +784,11 @@ async function handlePin(body: string): Promise<Response> {
     // If there's outgoing call context, add the initial Claude response
     if (state.context) {
       // Generate an opening based on context
-      const prompt = buildVoiceSystemPrompt(state.context) +
-        `\n\nYou just called ${USER_NAME} and they've been authenticated. Open the conversation naturally — explain why you're calling based on the context above. Be brief and direct.`;
+      const prompt = buildVoiceSystemPrompt(state.context, state.user) +
+        `\n\nYou just called ${callerName} and they've been authenticated. Open the conversation naturally — explain why you're calling based on the context above. Be brief and direct.`;
       const response = await callClaude(prompt);
       state.turns.push({ role: "assistant", content: response });
-      await saveCallMessage("assistant", response, callSid);
+      await saveCallMessage("assistant", response, callSid, state.user?.id);
 
       const contextGather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, response);
       return twiml(contextGather);
@@ -720,7 +839,8 @@ async function handleGather(body: string): Promise<Response> {
   const sanitizedSpeech = sanitizeSpeechInput(speechResult);
   console.log(`Call ${callSid} speech: "${sanitizedSpeech}"`);
   state.turns.push({ role: "user", content: sanitizedSpeech });
-  await saveCallMessage("user", `[Phone call]: ${sanitizedSpeech}`, callSid);
+  const userId = state.user?.id;
+  await saveCallMessage("user", `[Phone call]: ${sanitizedSpeech}`, callSid, userId);
 
   // Check for hang-up intents
   const lowerSpeech = sanitizedSpeech.toLowerCase();
@@ -733,7 +853,7 @@ async function handleGather(body: string): Promise<Response> {
     lowerSpeech.includes("bye nova")
   ) {
     const goodbyeText = "Alright, I'll get started on anything we discussed. Talk to you later. Bye!";
-    await saveCallMessage("assistant", goodbyeText, callSid);
+    await saveCallMessage("assistant", goodbyeText, callSid, userId);
     const audioId = await generateAudio(goodbyeText);
 
     // Trigger post-call processing (non-blocking)
@@ -750,16 +870,17 @@ async function handleGather(body: string): Promise<Response> {
   }
 
   // Build conversation prompt with full turn history
+  const userName = state.user?.name || FALLBACK_USER_NAME;
   const turnHistory = state.turns
-    .map((t) => `${t.role === "user" ? USER_NAME : "Nova"}: ${t.content}`)
+    .map((t) => `${t.role === "user" ? userName : "Nova"}: ${t.content}`)
     .join("\n");
 
-  const prompt = buildVoiceSystemPrompt(state.context) +
-    `\n\nCONVERSATION SO FAR:\n${turnHistory}\n\nRespond to ${USER_NAME}'s latest message. Be concise — this is a phone call.`;
+  const prompt = buildVoiceSystemPrompt(state.context, state.user) +
+    `\n\nCONVERSATION SO FAR:\n${turnHistory}\n\nRespond to ${userName}'s latest message. Be concise — this is a phone call.`;
 
   const response = await callClaude(prompt);
   state.turns.push({ role: "assistant", content: response });
-  await saveCallMessage("assistant", `[Phone call]: ${response}`, callSid);
+  await saveCallMessage("assistant", `[Phone call]: ${response}`, callSid, userId);
 
   const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, response);
   return twiml(gather);
@@ -802,9 +923,10 @@ async function handleSmsIncoming(body: string): Promise<Response> {
   const params = parseFormBody(body);
   const from = params.From || "";
 
-  // SECURITY: Only process SMS from the authorized user's phone number.
+  // SECURITY: Only process SMS from known users' phone numbers.
   // All other senders are silently ignored — no response, no processing.
-  if (from !== USER_PHONE) {
+  const smsUser = await resolveUserByPhone(from);
+  if (!smsUser) {
     console.log(`SMS rejected: unauthorized sender ${from}`);
     return new Response(`<?xml version="1.0" encoding="UTF-8"?><Response></Response>`, {
       headers: { "Content-Type": "application/xml" },
@@ -823,12 +945,12 @@ async function handleSmsIncoming(body: string): Promise<Response> {
       cleared++;
     }
     if (cleared > 0) {
-      console.log(`Urgent ack received from ${USER_NAME}, cleared ${cleared} pending follow-up(s)`);
+      console.log(`Urgent ack received from ${smsUser.name}, cleared ${cleared} pending follow-up(s)`);
     }
   } else {
     // Unrecognized SMS from authorized user — log but do not process content.
     // SMS conversations are handled by the Telegram relay, not this server.
-    console.log(`SMS from ${USER_NAME} ignored (not an ack keyword)`);
+    console.log(`SMS from ${smsUser.name} ignored (not an ack keyword)`);
   }
 
   // Always return empty TwiML — never echo or process SMS content

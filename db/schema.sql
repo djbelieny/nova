@@ -4,6 +4,9 @@
 --
 -- After running this, set up the embed Edge Function and database webhook
 -- so embeddings are generated automatically on every INSERT.
+--
+-- NOTE: For multi-user support, also run db/migration-multiuser.sql
+-- which adds the users table, user_id columns, and updated RPCs.
 
 -- Required extensions
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -80,18 +83,40 @@ CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status);
 CREATE INDEX IF NOT EXISTS idx_agent_tasks_created ON agent_tasks(created_at DESC);
 
 -- ============================================================
+-- COST TRACKING TABLE (API Usage & Costs)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS cost_tracking (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  model TEXT NOT NULL,
+  input_tokens INTEGER DEFAULT 0,
+  output_tokens INTEGER DEFAULT 0,
+  cache_read_tokens INTEGER DEFAULT 0,
+  cache_creation_tokens INTEGER DEFAULT 0,
+  cost_usd DOUBLE PRECISION DEFAULT 0,
+  duration_ms INTEGER DEFAULT 0,
+  session_id TEXT,
+  metadata JSONB DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_cost_tracking_created_at ON cost_tracking(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cost_tracking_model ON cost_tracking(model);
+
+-- ============================================================
 -- ROW LEVEL SECURITY
 -- ============================================================
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE memory ENABLE ROW LEVEL SECURITY;
 ALTER TABLE logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_tasks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cost_tracking ENABLE ROW LEVEL SECURITY;
 
 -- Allow all for service role (your bot uses service key)
 CREATE POLICY "Allow all for service role" ON messages FOR ALL USING (true);
 CREATE POLICY "Allow all for service role" ON memory FOR ALL USING (true);
 CREATE POLICY "Allow all for service role" ON logs FOR ALL USING (true);
 CREATE POLICY "Allow all for service role" ON agent_tasks FOR ALL USING (true);
+CREATE POLICY "Allow all for service role" ON cost_tracking FOR ALL USING (true);
 
 -- ============================================================
 -- HELPER FUNCTIONS

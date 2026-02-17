@@ -20,6 +20,7 @@ Deno.serve(async (req) => {
       table = "messages",
       match_count = 10,
       match_threshold = 0.7,
+      user_id,
     } = await req.json();
 
     if (!query) {
@@ -65,6 +66,7 @@ Deno.serve(async (req) => {
 
     const { data: results, error } = await supabase.rpc(rpcName, {
       query_embedding: embedding,
+      p_user_id: user_id,
       match_threshold,
       match_count,
     });

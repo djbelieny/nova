@@ -19,7 +19,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  */
 export async function processMemoryIntents(
   supabase: SupabaseClient | null,
-  response: string
+  response: string,
+  userId: string
 ): Promise<string> {
   if (!supabase) return response;
 
@@ -30,6 +31,19 @@ export async function processMemoryIntents(
     await supabase.from("memory").insert({
       type: "fact",
       content: match[1],
+      user_id: userId,
+      scope: "private",
+    });
+    clean = clean.replace(match[0], "");
+  }
+
+  // [SHARE: fact to share with team]
+  for (const match of response.matchAll(/\[SHARE:\s*(.+?)\]/gi)) {
+    await supabase.from("memory").insert({
+      type: "fact",
+      content: match[1],
+      user_id: userId,
+      scope: "shared",
     });
     clean = clean.replace(match[0], "");
   }
@@ -42,6 +56,7 @@ export async function processMemoryIntents(
       type: "goal",
       content: match[1],
       deadline: match[2] || null,
+      user_id: userId,
     });
     clean = clean.replace(match[0], "");
   }
@@ -52,6 +67,7 @@ export async function processMemoryIntents(
       .from("memory")
       .select("id")
       .eq("type", "goal")
+      .eq("user_id", userId)
       .ilike("content", `%${match[1]}%`)
       .limit(1);
 
@@ -73,6 +89,7 @@ export async function processMemoryIntents(
       agent: match[1],
       description: match[2],
       status: "pending",
+      user_id: userId,
     });
     clean = clean.replace(match[0], "");
   }
@@ -83,6 +100,7 @@ export async function processMemoryIntents(
       .from("agent_tasks")
       .select("id")
       .eq("status", "pending")
+      .eq("user_id", userId)
       .ilike("description", `%${match[1]}%`)
       .limit(1);
 
@@ -101,6 +119,7 @@ export async function processMemoryIntents(
       .from("agent_tasks")
       .select("id")
       .in("status", ["pending", "in_progress"])
+      .eq("user_id", userId)
       .ilike("description", `%${match[1]}%`)
       .limit(1);
 
@@ -119,6 +138,7 @@ export async function processMemoryIntents(
       .from("agent_tasks")
       .select("id")
       .in("status", ["pending", "in_progress"])
+      .eq("user_id", userId)
       .ilike("description", `%${match[1]}%`)
       .limit(1);
 
@@ -137,6 +157,7 @@ export async function processMemoryIntents(
       .from("agent_tasks")
       .select("id")
       .in("status", ["pending", "in_progress", "blocked"])
+      .eq("user_id", userId)
       .ilike("description", `%${match[1]}%`)
       .limit(1);
 
@@ -156,14 +177,15 @@ export async function processMemoryIntents(
  * Get all facts and active goals for prompt context.
  */
 export async function getMemoryContext(
-  supabase: SupabaseClient | null
+  supabase: SupabaseClient | null,
+  userId: string
 ): Promise<string> {
   if (!supabase) return "";
 
   try {
     const [factsResult, goalsResult] = await Promise.all([
-      supabase.rpc("get_facts"),
-      supabase.rpc("get_active_goals"),
+      supabase.rpc("get_facts", { p_user_id: userId }),
+      supabase.rpc("get_active_goals", { p_user_id: userId }),
     ]);
 
     const parts: string[] = [];
@@ -200,12 +222,13 @@ export async function getMemoryContext(
  * Get active agent tasks for prompt context.
  */
 export async function getTaskContext(
-  supabase: SupabaseClient | null
+  supabase: SupabaseClient | null,
+  userId: string
 ): Promise<string> {
   if (!supabase) return "";
 
   try {
-    const { data, error } = await supabase.rpc("get_active_tasks");
+    const { data, error } = await supabase.rpc("get_active_tasks", { p_user_id: userId });
 
     if (error) {
       console.warn("Task context error:", error.message);
@@ -231,12 +254,14 @@ export async function getTaskContext(
  */
 export async function getRecentHistory(
   supabase: SupabaseClient | null,
+  userId: string,
   count: number = 12
 ): Promise<string> {
   if (!supabase) return "";
 
   try {
     const { data, error } = await supabase.rpc("get_recent_messages", {
+      p_user_id: userId,
       limit_count: count,
     });
 
@@ -272,13 +297,14 @@ export async function getRecentHistory(
  */
 export async function getRelevantContext(
   supabase: SupabaseClient | null,
-  query: string
+  query: string,
+  userId: string
 ): Promise<string> {
   if (!supabase) return "";
 
   try {
     const { data, error } = await supabase.functions.invoke("search", {
-      body: { query, match_count: 5, table: "messages" },
+      body: { query, match_count: 5, table: "messages", user_id: userId },
     });
 
     if (error) {

@@ -107,14 +107,30 @@ async function getStatus(): Promise<unknown> {
   return { services: results, uptime: Math.floor((Date.now() - startTime) / 1000) };
 }
 
-async function getMessages(limit: number): Promise<unknown> {
-  if (!supabase) return { messages: [], error: "Supabase not configured" };
+async function getUsers(): Promise<unknown> {
+  if (!supabase) return { users: [], error: "Supabase not configured" };
   try {
     const { data, error } = await supabase
+      .from("users")
+      .select("id, name, telegram_id, role, timezone, active")
+      .order("created_at");
+    if (error) return { users: [], error: error.message };
+    return { users: data || [] };
+  } catch (e: any) {
+    return { users: [], error: e.message };
+  }
+}
+
+async function getMessages(limit: number, userId?: string): Promise<unknown> {
+  if (!supabase) return { messages: [], error: "Supabase not configured" };
+  try {
+    let query = supabase
       .from("messages")
       .select("id, created_at, role, content, channel, metadata")
       .order("created_at", { ascending: false })
       .limit(limit);
+    if (userId) query = query.eq("user_id", userId);
+    const { data, error } = await query;
     if (error) return { messages: [], error: error.message };
     return { messages: data || [] };
   } catch (e: any) {
@@ -122,17 +138,18 @@ async function getMessages(limit: number): Promise<unknown> {
   }
 }
 
-async function getMemory(type: string): Promise<unknown> {
+async function getMemory(type: string, userId?: string): Promise<unknown> {
   if (!supabase) return { memory: [], error: "Supabase not configured" };
   try {
     let query = supabase
       .from("memory")
-      .select("id, created_at, type, content, deadline, completed_at, priority")
+      .select("id, created_at, type, content, deadline, completed_at, priority, scope")
       .order("created_at", { ascending: false })
       .limit(100);
     if (type !== "all") {
       query = query.eq("type", type);
     }
+    if (userId) query = query.eq("user_id", userId);
     const { data, error } = await query;
     if (error) return { memory: [], error: error.message };
     return { memory: data || [] };
@@ -141,18 +158,23 @@ async function getMemory(type: string): Promise<unknown> {
   }
 }
 
-async function getMetrics(): Promise<unknown> {
+async function getMetrics(userId?: string): Promise<unknown> {
   if (!supabase) return { error: "Supabase not configured" };
   try {
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    const [dayResult, weekResult, channelResult] = await Promise.all([
-      supabase.from("messages").select("id", { count: "exact", head: true }).gte("created_at", oneDayAgo),
-      supabase.from("messages").select("id", { count: "exact", head: true }).gte("created_at", oneWeekAgo),
-      supabase.from("messages").select("channel, role, created_at").gte("created_at", oneDayAgo),
-    ]);
+    let dayQ = supabase.from("messages").select("id", { count: "exact", head: true }).gte("created_at", oneDayAgo);
+    let weekQ = supabase.from("messages").select("id", { count: "exact", head: true }).gte("created_at", oneWeekAgo);
+    let chanQ = supabase.from("messages").select("channel, role, created_at").gte("created_at", oneDayAgo);
+    if (userId) {
+      dayQ = dayQ.eq("user_id", userId);
+      weekQ = weekQ.eq("user_id", userId);
+      chanQ = chanQ.eq("user_id", userId);
+    }
+
+    const [dayResult, weekResult, channelResult] = await Promise.all([dayQ, weekQ, chanQ]);
 
     // Hourly breakdown for last 24h
     const hourly: Record<number, number> = {};
@@ -236,12 +258,15 @@ async function getTasks(): Promise<unknown> {
     }
   }
 
-  // Also check scheduler.ts tasks
+  // Also check scheduler.ts tasks (with timeout to prevent hanging)
   try {
     const proc = Bun.spawn(["bun", "run", join(PROJECT_ROOT, "src/scheduler.ts"), "list"], {
       stdout: "pipe", stderr: "pipe", cwd: PROJECT_ROOT,
     });
-    const out = await new Response(proc.stdout).text();
+    const timeout = new Promise<string>((_, reject) =>
+      setTimeout(() => { proc.kill(); reject(new Error("timeout")); }, 5000)
+    );
+    const out = await Promise.race([new Response(proc.stdout).text(), timeout]);
     await proc.exited;
     if (out.trim()) {
       results.push({ name: "scheduler", label: "Task Scheduler", schedule: "see output", installed: true, output: out.trim() });
@@ -294,15 +319,17 @@ async function getResources(): Promise<unknown> {
   };
 }
 
-async function getVoice(): Promise<unknown> {
+async function getVoice(userId?: string): Promise<unknown> {
   if (!supabase) return { calls: [], error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from("messages")
       .select("id, created_at, role, content, metadata")
       .eq("channel", "phone")
       .order("created_at", { ascending: false })
       .limit(20);
+    if (userId) query = query.eq("user_id", userId);
+    const { data, error } = await query;
     if (error) return { calls: [], error: error.message };
     return { calls: data || [] };
   } catch (e: any) {
@@ -341,14 +368,100 @@ async function getSkills(): Promise<unknown> {
   return { mcp: mcpIntegrations, skills };
 }
 
-async function getAgentTasks(): Promise<unknown> {
+async function getCosts(userId?: string): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  try {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    let dailyQ = supabase.from("cost_tracking").select("model, cost_usd, input_tokens, output_tokens, created_at").gte("created_at", todayStart).order("created_at", { ascending: true });
+    let monthlyQ = supabase.from("cost_tracking").select("model, cost_usd, input_tokens, output_tokens, created_at").gte("created_at", monthStart).order("created_at", { ascending: true });
+    let lifetimeQ = supabase.from("cost_tracking").select("model, cost_usd, input_tokens, output_tokens, created_at").order("created_at", { ascending: true });
+    if (userId) {
+      dailyQ = dailyQ.eq("user_id", userId);
+      monthlyQ = monthlyQ.eq("user_id", userId);
+      lifetimeQ = lifetimeQ.eq("user_id", userId);
+    }
+
+    const { data: dailyData } = await dailyQ;
+    const { data: monthlyData } = await monthlyQ;
+    const { data: lifetimeData } = await lifetimeQ;
+
+    // Aggregate by model
+    function aggregateByModel(rows: any[]): Record<string, { cost: number; input_tokens: number; output_tokens: number; count: number }> {
+      const result: Record<string, { cost: number; input_tokens: number; output_tokens: number; count: number }> = {};
+      for (const r of rows || []) {
+        const m = r.model || "claude-sonnet-4-5";
+        if (!result[m]) result[m] = { cost: 0, input_tokens: 0, output_tokens: 0, count: 0 };
+        result[m].cost += r.cost_usd || 0;
+        result[m].input_tokens += r.input_tokens || 0;
+        result[m].output_tokens += r.output_tokens || 0;
+        result[m].count++;
+      }
+      return result;
+    }
+
+    // Daily breakdown by hour for chart
+    const hourlyByModel: Record<string, Record<number, number>> = {};
+    for (const r of dailyData || []) {
+      const m = r.model || "claude-sonnet-4-5";
+      const h = new Date(r.created_at).getHours();
+      if (!hourlyByModel[m]) hourlyByModel[m] = {};
+      hourlyByModel[m][h] = (hourlyByModel[m][h] || 0) + (r.cost_usd || 0);
+    }
+
+    // Monthly breakdown by day for chart
+    const dailyByModel: Record<string, Record<number, number>> = {};
+    for (const r of monthlyData || []) {
+      const m = r.model || "claude-sonnet-4-5";
+      const d = new Date(r.created_at).getDate();
+      if (!dailyByModel[m]) dailyByModel[m] = {};
+      dailyByModel[m][d] = (dailyByModel[m][d] || 0) + (r.cost_usd || 0);
+    }
+
+    // Lifetime breakdown by month for chart (YYYY-MM)
+    const monthlyByModel: Record<string, Record<string, number>> = {};
+    for (const r of lifetimeData || []) {
+      const m = r.model || "claude-sonnet-4-5";
+      const dt = new Date(r.created_at);
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+      if (!monthlyByModel[m]) monthlyByModel[m] = {};
+      monthlyByModel[m][key] = (monthlyByModel[m][key] || 0) + (r.cost_usd || 0);
+    }
+
+    return {
+      daily: {
+        byModel: aggregateByModel(dailyData),
+        hourlyChart: hourlyByModel,
+      },
+      monthly: {
+        byModel: aggregateByModel(monthlyData),
+        dailyChart: dailyByModel,
+      },
+      lifetime: {
+        byModel: aggregateByModel(lifetimeData),
+        monthlyChart: monthlyByModel,
+      },
+      totalDaily: (dailyData || []).reduce((s: number, r: any) => s + (r.cost_usd || 0), 0),
+      totalMonthly: (monthlyData || []).reduce((s: number, r: any) => s + (r.cost_usd || 0), 0),
+      totalLifetime: (lifetimeData || []).reduce((s: number, r: any) => s + (r.cost_usd || 0), 0),
+    };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function getAgentTasks(userId?: string): Promise<unknown> {
   if (!supabase) return { tasks: [], error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from("agent_tasks")
       .select("id, created_at, updated_at, agent, description, status, result, metadata")
       .order("updated_at", { ascending: false })
       .limit(30);
+    if (userId) query = query.eq("user_id", userId);
+    const { data, error } = await query;
     if (error) return { tasks: [], error: error.message };
     return { tasks: data || [] };
   } catch (e: any) {
@@ -727,6 +840,136 @@ function renderDashboard(): string {
   }
   select:focus, input[type="text"]:focus { outline: none; border-color: var(--green-dim); }
 
+  /* Cost charts */
+  .cost-summary {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .cost-card {
+    flex: 1;
+    min-width: 180px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 12px;
+    text-align: center;
+  }
+  .cost-card-label {
+    font-size: 10px;
+    color: var(--dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .cost-card-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--green);
+  }
+  .cost-card-value.amber { color: var(--amber); }
+  .cost-card-value.cyan { color: var(--cyan); }
+
+  .cost-section {
+    margin-bottom: 20px;
+  }
+  .cost-section-title {
+    font-size: 11px;
+    color: var(--amber);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cost-chart-container {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .cost-chart-block {
+    flex: 1;
+    min-width: 280px;
+  }
+
+  .stacked-bar-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 80px;
+    margin-top: 8px;
+    padding-top: 4px;
+    position: relative;
+  }
+  .stacked-bar {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    min-height: 1px;
+    position: relative;
+  }
+  .stacked-bar-segment {
+    width: 100%;
+    min-height: 0;
+    transition: height 0.3s;
+    opacity: 0.8;
+  }
+  .stacked-bar-segment:hover { opacity: 1; }
+  .stacked-bar .bar-label {
+    position: absolute;
+    bottom: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 8px;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+
+  .cost-legend {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+    font-size: 11px;
+  }
+  .cost-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .cost-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .cost-model-table {
+    width: 100%;
+    font-size: 12px;
+    border-collapse: collapse;
+    margin-top: 8px;
+  }
+  .cost-model-table th {
+    text-align: left;
+    color: var(--dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .cost-model-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #1a1a1a;
+  }
+  .cost-model-table td.cost-val {
+    color: var(--green);
+    font-weight: 700;
+    text-align: right;
+  }
+
   /* Responsive */
   @media (max-width: 900px) {
     .grid { grid-template-columns: 1fr; }
@@ -754,6 +997,14 @@ function renderDashboard(): string {
     </div>
   </div>
 
+  <!-- USER SELECTOR -->
+  <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
+    <label style="color:var(--green);font-size:11px;text-transform:uppercase;letter-spacing:1px;">User Filter:</label>
+    <select id="user-selector" style="min-width:200px;">
+      <option value="">All Users (Admin View)</option>
+    </select>
+  </div>
+
   <div class="grid">
 
     <!-- SYSTEM STATUS -->
@@ -774,6 +1025,17 @@ function renderDashboard(): string {
         <span class="indicator">30s</span>
       </div>
       <div class="panel-body" id="metrics-panel">
+        <div style="color:var(--dim)">Loading...</div>
+      </div>
+    </div>
+
+    <!-- API COSTS -->
+    <div class="panel full-width">
+      <div class="panel-header">
+        <span>API Costs</span>
+        <span class="indicator">30s</span>
+      </div>
+      <div class="panel-body" id="costs-panel" style="max-height:500px">
         <div style="color:var(--dim)">Loading...</div>
       </div>
     </div>
@@ -934,7 +1196,7 @@ async function loadStatus() {
 // ---- METRICS ----
 async function loadMetrics() {
   try {
-    const r = await fetch('/api/metrics');
+    const r = await fetch('/api/metrics' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
     if (d.error) { $('metrics-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
 
@@ -971,7 +1233,7 @@ async function loadMetrics() {
 // ---- MESSAGES ----
 async function loadMessages() {
   try {
-    const r = await fetch('/api/messages?limit=50');
+    const r = await fetch('/api/messages?limit=50' + userParam());
     const d = await r.json();
     if (!d.messages.length) { $('messages-panel').innerHTML = '<div style="color:var(--dim)">No messages yet</div>'; return; }
 
@@ -992,7 +1254,7 @@ async function loadMessages() {
 let memoryType = 'all';
 async function loadMemory() {
   try {
-    const r = await fetch('/api/memory?type=' + memoryType);
+    const r = await fetch('/api/memory?type=' + memoryType + userParam());
     const d = await r.json();
 
     let html = '<div class="tabs">';
@@ -1037,7 +1299,7 @@ async function loadTasks() {
 // ---- VOICE ----
 async function loadVoice() {
   try {
-    const r = await fetch('/api/voice');
+    const r = await fetch('/api/voice' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
     if (!d.calls || !d.calls.length) { $('voice-panel').innerHTML = '<div style="color:var(--dim)">No recent voice activity</div>'; return; }
 
@@ -1087,7 +1349,7 @@ async function loadSkills() {
 let agentTaskFilter = 'all';
 async function loadAgentTasks() {
   try {
-    const r = await fetch('/api/agent-tasks');
+    const r = await fetch('/api/agent-tasks' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
 
     let html = '<div class="tabs">';
@@ -1174,10 +1436,160 @@ async function loadLogs() {
 
 $('log-service').addEventListener('change', loadLogs);
 
+// ---- COSTS ----
+const MODEL_COLORS = ['#00ff41','#00e5ff','#ffb000','#a855f7','#ff3333','#ff6b9d','#00ccff','#66ff66'];
+function getModelColor(idx) { return MODEL_COLORS[idx % MODEL_COLORS.length]; }
+
+function renderCostTable(byModel) {
+  const models = Object.entries(byModel || {}).sort(function(a,b) { return b[1].cost - a[1].cost; });
+  if (!models.length) return '<div style="color:var(--dim);font-size:11px">No data</div>';
+  let html = '<table class="cost-model-table"><tr><th>Model</th><th>Calls</th><th style="text-align:right">Input Tok</th><th style="text-align:right">Output Tok</th><th style="text-align:right">Cost</th></tr>';
+  for (const [model, d] of models) {
+    const shortName = model.replace(/^claude-/, '').replace(/-\\d{8}$/, '');
+    html += '<tr>'
+      + '<td style="color:var(--cyan)">' + esc(shortName) + '</td>'
+      + '<td>' + d.count + '</td>'
+      + '<td style="text-align:right">' + d.input_tokens.toLocaleString() + '</td>'
+      + '<td style="text-align:right">' + d.output_tokens.toLocaleString() + '</td>'
+      + '<td class="cost-val">$' + d.cost.toFixed(4) + '</td>'
+      + '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function renderStackedChart(chartData, labelFn, maxBuckets) {
+  const models = Object.keys(chartData || {});
+  if (!models.length) return '<div style="color:var(--dim);font-size:11px">No chart data</div>';
+  // Collect all bucket keys
+  const allKeys = new Set();
+  for (const m of models) for (const k of Object.keys(chartData[m])) allKeys.add(k);
+  let buckets = Array.from(allKeys).sort();
+  if (maxBuckets && buckets.length > maxBuckets) buckets = buckets.slice(-maxBuckets);
+  // Find max stacked height
+  let maxVal = 0;
+  for (const b of buckets) {
+    let sum = 0;
+    for (const m of models) sum += (chartData[m][b] || 0);
+    if (sum > maxVal) maxVal = sum;
+  }
+  if (maxVal === 0) maxVal = 1;
+
+  let html = '<div class="stacked-bar-chart">';
+  for (let i = 0; i < buckets.length; i++) {
+    const b = buckets[i];
+    let total = 0;
+    for (const m of models) total += (chartData[m][b] || 0);
+    html += '<div class="stacked-bar" style="height:100%" title="' + labelFn(b) + ': $' + total.toFixed(4) + '">';
+    for (let mi = 0; mi < models.length; mi++) {
+      const val = chartData[models[mi]][b] || 0;
+      const pct = (val / maxVal) * 100;
+      if (pct > 0) {
+        html += '<div class="stacked-bar-segment" style="height:' + pct + '%;background:' + getModelColor(mi) + '" title="' + models[mi] + ': $' + val.toFixed(4) + '"></div>';
+      }
+    }
+    const showLabel = buckets.length <= 12 || (i % Math.ceil(buckets.length / 12) === 0);
+    if (showLabel) html += '<span class="bar-label">' + labelFn(b) + '</span>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Legend
+  html += '<div class="cost-legend">';
+  for (let mi = 0; mi < models.length; mi++) {
+    const shortName = models[mi].replace(/^claude-/, '').replace(/-\\d{8}$/, '');
+    html += '<div class="cost-legend-item"><div class="cost-legend-dot" style="background:' + getModelColor(mi) + '"></div><span>' + esc(shortName) + '</span></div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+async function loadCosts() {
+  try {
+    const r = await fetch('/api/costs' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
+    const d = await r.json();
+    if (d.error) { $('costs-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
+
+    // Summary cards
+    let html = '<div class="cost-summary">';
+    html += '<div class="cost-card"><div class="cost-card-label">Today</div><div class="cost-card-value">$' + (d.totalDaily || 0).toFixed(4) + '</div></div>';
+    html += '<div class="cost-card"><div class="cost-card-label">This Month</div><div class="cost-card-value amber">$' + (d.totalMonthly || 0).toFixed(2) + '</div></div>';
+    html += '<div class="cost-card"><div class="cost-card-label">Lifetime</div><div class="cost-card-value cyan">$' + (d.totalLifetime || 0).toFixed(2) + '</div></div>';
+    html += '</div>';
+
+    // Daily section - hourly chart + model table
+    html += '<div class="cost-section">';
+    html += '<div class="cost-section-title">Today — Hourly Breakdown</div>';
+    html += '<div class="cost-chart-container">';
+    html += '<div class="cost-chart-block">';
+    html += renderStackedChart(d.daily.hourlyChart, function(h) { return h + ':00'; }, 24);
+    html += '</div>';
+    html += '<div class="cost-chart-block">';
+    html += renderCostTable(d.daily.byModel);
+    html += '</div>';
+    html += '</div></div>';
+
+    // Monthly section - daily chart + model table
+    html += '<div class="cost-section">';
+    html += '<div class="cost-section-title">This Month — Daily Breakdown</div>';
+    html += '<div class="cost-chart-container">';
+    html += '<div class="cost-chart-block">';
+    html += renderStackedChart(d.monthly.dailyChart, function(day) { return 'Day ' + day; }, 31);
+    html += '</div>';
+    html += '<div class="cost-chart-block">';
+    html += renderCostTable(d.monthly.byModel);
+    html += '</div>';
+    html += '</div></div>';
+
+    // Lifetime section - monthly chart + model table
+    html += '<div class="cost-section">';
+    html += '<div class="cost-section-title">Lifetime — Monthly Breakdown</div>';
+    html += '<div class="cost-chart-container">';
+    html += '<div class="cost-chart-block">';
+    html += renderStackedChart(d.lifetime.monthlyChart, function(m) { return m; }, 24);
+    html += '</div>';
+    html += '<div class="cost-chart-block">';
+    html += renderCostTable(d.lifetime.byModel);
+    html += '</div>';
+    html += '</div></div>';
+
+    $('costs-panel').innerHTML = html;
+  } catch(e) { $('costs-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+}
+
+// ---- USER SELECTOR ----
+let selectedUserId = '';
+
+async function loadUsers() {
+  try {
+    const r = await fetch('/api/users');
+    const d = await r.json();
+    const sel = $('user-selector');
+    // Keep the "All Users" option
+    sel.innerHTML = '<option value="">All Users (Admin View)</option>';
+    for (const u of (d.users || [])) {
+      const status = u.active ? '' : ' (inactive)';
+      sel.innerHTML += '<option value="' + u.id + '">' + esc(u.name) + ' — ' + esc(u.role) + status + '</option>';
+    }
+    sel.value = selectedUserId;
+  } catch(e) { console.error('Users load error:', e); }
+}
+
+$('user-selector').addEventListener('change', function() {
+  selectedUserId = this.value;
+  // Reload all data with new filter
+  loadMessages(); loadMemory(); loadMetrics(); loadVoice(); loadCosts(); loadAgentTasks();
+});
+
+function userParam() {
+  return selectedUserId ? '&user_id=' + selectedUserId : '';
+}
+
 // ---- INIT & INTERVALS ----
+loadUsers();
 loadStatus();  loadMetrics();  loadMessages();  loadMemory();
 loadTasks();   loadVoice();    loadSkills();     loadResources();  loadLogs();
-loadAgentTasks();
+loadAgentTasks(); loadCosts();
 
 setInterval(loadStatus, 10000);
 setInterval(loadLogs, 10000);
@@ -1188,6 +1600,7 @@ setInterval(loadMetrics, 30000);
 setInterval(loadMemory, 30000);
 setInterval(loadTasks, 30000);
 setInterval(loadVoice, 30000);
+setInterval(loadCosts, 30000);
 setInterval(loadSkills, 60000);
 </script>
 </body>
@@ -1215,25 +1628,29 @@ const server = Bun.serve({
     }
 
     // API routes
+    const userId = url.searchParams.get("user_id") || undefined;
+
+    if (path === "/api/users") return jsonResponse(await getUsers());
     if (path === "/api/status") return jsonResponse(await getStatus());
     if (path === "/api/messages") {
       const limit = parseInt(url.searchParams.get("limit") || "50");
-      return jsonResponse(await getMessages(Math.min(limit, 200)));
+      return jsonResponse(await getMessages(Math.min(limit, 200), userId));
     }
     if (path === "/api/memory") {
       const type = url.searchParams.get("type") || "all";
-      return jsonResponse(await getMemory(type));
+      return jsonResponse(await getMemory(type, userId));
     }
-    if (path === "/api/metrics") return jsonResponse(await getMetrics());
+    if (path === "/api/metrics") return jsonResponse(await getMetrics(userId));
     if (path === "/api/logs") {
       const service = url.searchParams.get("service") || "all";
       const lines = parseInt(url.searchParams.get("lines") || "100");
       return jsonResponse(await getLogs(service, Math.min(lines, 500)));
     }
     if (path === "/api/tasks") return jsonResponse(await getTasks());
-    if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks());
+    if (path === "/api/costs") return jsonResponse(await getCosts(userId));
+    if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks(userId));
     if (path === "/api/resources") return jsonResponse(await getResources());
-    if (path === "/api/voice") return jsonResponse(await getVoice());
+    if (path === "/api/voice") return jsonResponse(await getVoice(userId));
     if (path === "/api/skills") return jsonResponse(await getSkills());
 
     return new Response("Not found", { status: 404 });
@@ -1244,12 +1661,14 @@ console.log(`Nova Command Center running on http://localhost:${PORT}`);
 console.log("Routes:");
 console.log("  GET  /              — Dashboard UI");
 console.log("  GET  /health        — Health check");
+console.log("  GET  /api/users     — User list");
 console.log("  GET  /api/status    — Service status");
 console.log("  GET  /api/messages  — Recent messages");
 console.log("  GET  /api/memory    — Memory entries");
 console.log("  GET  /api/metrics   — Performance metrics");
 console.log("  GET  /api/logs      — Log viewer");
 console.log("  GET  /api/tasks     — Scheduled tasks");
+console.log("  GET  /api/costs      — API cost tracking");
 console.log("  GET  /api/agent-tasks — Agent task tracking");
 console.log("  GET  /api/resources — System resources");
 console.log("  GET  /api/voice     — Voice call activity");

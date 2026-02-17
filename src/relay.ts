@@ -30,7 +30,6 @@ const PROJECT_ROOT = dirname(dirname(import.meta.path));
 // ============================================================
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const ALLOWED_USER_ID = process.env.TELEGRAM_USER_ID || "";
 const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
 const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
@@ -113,9 +112,69 @@ const supabase: SupabaseClient | null =
     ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
     : null;
 
+// ============================================================
+// MULTI-USER: User resolution + cache
+// ============================================================
+
+interface NovaUser {
+  id: string;           // UUID from users table
+  telegram_id: string;
+  name: string;
+  timezone: string;
+  phone: string;
+  role: string;
+  preferences: Record<string, any>;
+  profile_text: string;
+}
+
+const userCache = new Map<string, NovaUser>();
+
+async function resolveUser(telegramId: string): Promise<NovaUser | null> {
+  // Check cache first
+  const cached = userCache.get(telegramId);
+  if (cached) return cached;
+
+  if (!supabase) return null;
+
+  try {
+    const { data, error } = await supabase.rpc("get_user_by_telegram_id", {
+      p_telegram_id: telegramId,
+    });
+
+    if (error || !data?.length) return null;
+
+    const row = data[0];
+    const user: NovaUser = {
+      id: row.id,
+      telegram_id: row.telegram_id,
+      name: row.name,
+      timezone: row.timezone || "UTC",
+      phone: row.phone || "",
+      role: row.role,
+      preferences: row.preferences || {},
+      profile_text: row.profile_text || "",
+    };
+
+    userCache.set(telegramId, user);
+    return user;
+  } catch (error) {
+    console.error("User resolution error:", error);
+    return null;
+  }
+}
+
+function invalidateUserCache(telegramId?: string): void {
+  if (telegramId) {
+    userCache.delete(telegramId);
+  } else {
+    userCache.clear();
+  }
+}
+
 async function saveMessage(
   role: string,
   content: string,
+  userId: string,
   metadata?: Record<string, unknown>
 ): Promise<void> {
   if (!supabase) return;
@@ -125,6 +184,7 @@ async function saveMessage(
       content,
       channel: "telegram",
       metadata: metadata || {},
+      user_id: userId,
     });
   } catch (error) {
     console.error("Supabase save error:", error);
@@ -140,19 +200,21 @@ if (!(await acquireLock())) {
 const bot = new Bot(BOT_TOKEN);
 
 // ============================================================
-// SECURITY: Only respond to authorized user
+// SECURITY: User resolution middleware (multi-user)
 // ============================================================
 
 bot.use(async (ctx, next) => {
-  const userId = ctx.from?.id.toString();
+  const telegramId = ctx.from?.id.toString();
+  if (!telegramId) return;
 
-  // If ALLOWED_USER_ID is set, enforce it
-  if (ALLOWED_USER_ID && userId !== ALLOWED_USER_ID) {
-    console.log(`Unauthorized: ${userId}`);
-    await ctx.reply("This bot is private.");
+  const user = await resolveUser(telegramId);
+  if (!user) {
+    console.log(`Unauthorized: ${telegramId}`);
+    await ctx.reply("This bot is private. Ask the admin to add you.");
     return;
   }
 
+  (ctx as any).novaUser = user;
   await next();
 });
 
@@ -162,11 +224,12 @@ bot.use(async (ctx, next) => {
 
 bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data;
+  const user = (ctx as any).novaUser as NovaUser;
 
   // Handle button presses — format is "btn:Label Text"
   if (data.startsWith("btn:")) {
     const selection = data.substring(4);
-    console.log(`Button pressed: ${selection}`);
+    console.log(`Button pressed by ${user.name}: ${selection}`);
 
     // Acknowledge the button press immediately
     await ctx.answerCallbackQuery({ text: `Got it: ${selection}` });
@@ -180,19 +243,20 @@ bot.on("callback_query:data", async (ctx) => {
     } catch {}
 
     // Process the button selection as a new user message
-    await saveMessage("user", selection);
+    await saveMessage("user", selection, user.id);
 
     await ctx.replyWithChatAction("typing");
 
     runTask(ctx, `Button: ${selection.substring(0, 40)}`, async () => {
       const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
-        getRelevantContext(supabase, selection),
-        getMemoryContext(supabase),
-        getRecentHistory(supabase),
-        getTaskContext(supabase),
+        getRelevantContext(supabase, selection, user.id),
+        getMemoryContext(supabase, user.id),
+        getRecentHistory(supabase, user.id),
+        getTaskContext(supabase, user.id),
       ]);
       return {
         prompt: buildPrompt(
+          user,
           `[Button selected in response to a question]: ${selection}`,
           relevantContext,
           memoryContext,
@@ -201,7 +265,7 @@ bot.on("callback_query:data", async (ctx) => {
         ),
       };
     }, {
-      postProcess: (raw) => processMemoryIntents(supabase, raw),
+      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id),
     });
   }
 });
@@ -229,6 +293,7 @@ async function logCostTracking(data: {
   cost_usd: number;
   duration_ms: number;
   session_id?: string;
+  user_id?: string;
 }): Promise<void> {
   if (!supabase) return;
   try {
@@ -241,6 +306,7 @@ async function logCostTracking(data: {
       cost_usd: data.cost_usd,
       duration_ms: data.duration_ms,
       session_id: data.session_id || null,
+      user_id: data.user_id || null,
     });
   } catch (e) {
     console.error("Cost tracking insert error:", e);
@@ -280,10 +346,17 @@ async function callClaude(prompt: string): Promise<string> {
       const json = JSON.parse(output.trim());
       const result = typeof json.result === "string" ? json.result : output.trim();
 
+      // Extract model from various possible locations in the JSON response
+      const model = json.model
+        || json.metadata?.model
+        || (typeof json.result === "object" && json.result?.model)
+        || process.env.ANTHROPIC_MODEL
+        || "claude-sonnet-4-5";
+
       // Log cost data if available
-      if (json.model || json.usage) {
+      if (json.usage) {
         logCostTracking({
-          model: json.model || "unknown",
+          model,
           input_tokens: json.usage?.input_tokens || 0,
           output_tokens: json.usage?.output_tokens || 0,
           cache_read_tokens: json.usage?.cache_read_input_tokens || 0,
@@ -314,7 +387,7 @@ function runTask(
   ctx: Context,
   taskDescription: string,
   buildTask: () => Promise<{ prompt: string }>,
-  opts?: { postProcess?: (response: string) => Promise<string> }
+  opts?: { postProcess?: (response: string) => Promise<string>; userId?: string }
 ): void {
   const taskId = `task-${++taskCounter}`;
   const task: ActiveTask = {
@@ -352,8 +425,11 @@ function runTask(
         ? await opts.postProcess(rawResponse)
         : rawResponse;
 
-      await saveMessage("assistant", response);
-      await sendResponseWithVoice(ctx, response);
+      const userId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
+      if (userId) {
+        await saveMessage("assistant", response, userId);
+      }
+      await sendResponseWithVoice(ctx, response, userId);
     } catch (error) {
       console.error(`Task ${taskId} error:`, error);
       await ctx.reply("Something went wrong processing that. Check logs for details.").catch(() => {});
@@ -372,9 +448,10 @@ function runTask(
 // Text messages
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
-  console.log(`Message: ${text.substring(0, 50)}...`);
+  const user = (ctx as any).novaUser as NovaUser;
+  console.log(`Message from ${user.name}: ${text.substring(0, 50)}...`);
 
-  // Handle /voice toggle command — enables "always voice" mode (e.g., when user can't read)
+  // Handle /voice toggle command
   if (text.trim().toLowerCase() === "/voice") {
     if (!isTTSEnabled()) {
       await ctx.reply(
@@ -382,7 +459,7 @@ bot.on("message:text", async (ctx) => {
       );
       return;
     }
-    const enabled = await toggleVoiceResponses();
+    const enabled = await toggleVoiceResponses(supabase, user.id);
     await ctx.reply(
       enabled
         ? "Voice mode on. I'll send audio with every reply until you turn it off."
@@ -391,28 +468,35 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
+  // Handle admin commands
+  if (text.startsWith("/") && user.role === "admin") {
+    const handled = await handleAdminCommand(ctx, text, user);
+    if (handled) return;
+  }
+
   await ctx.replyWithChatAction("typing");
-  await saveMessage("user", text);
+  await saveMessage("user", text, user.id);
 
   runTask(ctx, text.substring(0, 50), async () => {
     const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
-      getRelevantContext(supabase, text),
-      getMemoryContext(supabase),
-      getRecentHistory(supabase),
-      getTaskContext(supabase),
+      getRelevantContext(supabase, text, user.id),
+      getMemoryContext(supabase, user.id),
+      getRecentHistory(supabase, user.id),
+      getTaskContext(supabase, user.id),
     ]);
     return {
-      prompt: buildPrompt(text, relevantContext, memoryContext, recentHistory, taskContext),
+      prompt: buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext),
     };
   }, {
-    postProcess: (raw) => processMemoryIntents(supabase, raw),
+    postProcess: (raw) => processMemoryIntents(supabase, raw, user.id),
   });
 });
 
 // Voice messages
 bot.on("message:voice", async (ctx) => {
   const voice = ctx.message.voice;
-  console.log(`Voice message: ${voice.duration}s`);
+  const user = (ctx as any).novaUser as NovaUser;
+  console.log(`Voice message from ${user.name}: ${voice.duration}s`);
   await ctx.replyWithChatAction("typing");
 
   if (!process.env.VOICE_PROVIDER) {
@@ -435,17 +519,18 @@ bot.on("message:voice", async (ctx) => {
       return;
     }
 
-    await saveMessage("user", `[Voice ${voice.duration}s]: ${transcription}`);
+    await saveMessage("user", `[Voice ${voice.duration}s]: ${transcription}`, user.id);
 
     runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
       const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
-        getRelevantContext(supabase, transcription),
-        getMemoryContext(supabase),
-        getRecentHistory(supabase),
-        getTaskContext(supabase),
+        getRelevantContext(supabase, transcription, user.id),
+        getMemoryContext(supabase, user.id),
+        getRecentHistory(supabase, user.id),
+        getTaskContext(supabase, user.id),
       ]);
       return {
         prompt: buildPrompt(
+          user,
           `[Voice message transcribed]: ${transcription}`,
           relevantContext,
           memoryContext,
@@ -454,7 +539,7 @@ bot.on("message:voice", async (ctx) => {
         ),
       };
     }, {
-      postProcess: (raw) => processMemoryIntents(supabase, raw),
+      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id),
     });
   } catch (error) {
     console.error("Voice error:", error);
@@ -464,7 +549,8 @@ bot.on("message:voice", async (ctx) => {
 
 // Photos/Images
 bot.on("message:photo", async (ctx) => {
-  console.log("Image received");
+  const user = (ctx as any).novaUser as NovaUser;
+  console.log(`Image received from ${user.name}`);
   await ctx.replyWithChatAction("typing");
 
   try {
@@ -485,13 +571,13 @@ bot.on("message:photo", async (ctx) => {
 
     const caption = ctx.message.caption || "Analyze this image.";
     const memoryMode = isMemoryIntent(caption);
-    await saveMessage("user", `[Image]: ${caption}`);
+    await saveMessage("user", `[Image]: ${caption}`, user.id);
 
     runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
       const [memoryContext, recentHistory, taskContext] = await Promise.all([
-        getMemoryContext(supabase),
-        getRecentHistory(supabase),
-        getTaskContext(supabase),
+        getMemoryContext(supabase, user.id),
+        getRecentHistory(supabase, user.id),
+        getTaskContext(supabase, user.id),
       ]);
       const contextPrefix = [memoryContext, taskContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
@@ -502,7 +588,7 @@ bot.on("message:photo", async (ctx) => {
       postProcess: async (raw) => {
         // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
         setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
-        return processMemoryIntents(supabase, raw);
+        return processMemoryIntents(supabase, raw, user.id);
       },
     });
   } catch (error) {
@@ -514,7 +600,8 @@ bot.on("message:photo", async (ctx) => {
 // Documents
 bot.on("message:document", async (ctx) => {
   const doc = ctx.message.document;
-  console.log(`Document: ${doc.file_name}`);
+  const user = (ctx as any).novaUser as NovaUser;
+  console.log(`Document from ${user.name}: ${doc.file_name}`);
   await ctx.replyWithChatAction("typing");
 
   try {
@@ -538,13 +625,13 @@ bot.on("message:document", async (ctx) => {
 
     const caption = ctx.message.caption || `Analyze: ${doc.file_name}`;
     const memoryMode = isMemoryIntent(caption);
-    await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`);
+    await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`, user.id);
 
     runTask(ctx, `Doc: ${doc.file_name}`, async () => {
       const [memoryContext, recentHistory, taskContext] = await Promise.all([
-        getMemoryContext(supabase),
-        getRecentHistory(supabase),
-        getTaskContext(supabase),
+        getMemoryContext(supabase, user.id),
+        getRecentHistory(supabase, user.id),
+        getTaskContext(supabase, user.id),
       ]);
       const contextPrefix = [memoryContext, taskContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
@@ -560,7 +647,7 @@ bot.on("message:document", async (ctx) => {
         } else {
           await unlink(filePath).catch(() => {});
         }
-        return processMemoryIntents(supabase, raw);
+        return processMemoryIntents(supabase, raw, user.id);
       },
     });
   } catch (error) {
@@ -612,18 +699,8 @@ function buildMemoryExtractionPrompt(filePath: string, fileName: string, caption
   );
 }
 
-// Load profile once at startup
-let profileContext = "";
-try {
-  profileContext = await readFile(join(PROJECT_ROOT, "config", "profile.md"), "utf-8");
-} catch {
-  // No profile yet — that's fine
-}
-
-const USER_NAME = process.env.USER_NAME || "";
-const USER_TIMEZONE = process.env.USER_TIMEZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
-
 function buildPrompt(
+  user: NovaUser,
   userMessage: string,
   relevantContext?: string,
   memoryContext?: string,
@@ -632,7 +709,7 @@ function buildPrompt(
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
-    timeZone: USER_TIMEZONE,
+    timeZone: user.timezone,
     weekday: "long",
     year: "numeric",
     month: "long",
@@ -645,9 +722,9 @@ function buildPrompt(
     "You are a personal AI assistant responding via Telegram. Keep responses concise and conversational.",
   ];
 
-  if (USER_NAME) parts.push(`You are speaking with ${USER_NAME}.`);
+  parts.push(`You are speaking with ${user.name}.`);
   parts.push(`Current time: ${timeStr}`);
-  if (profileContext) parts.push(`\nProfile:\n${profileContext}`);
+  if (user.profile_text) parts.push(`\nProfile:\n${user.profile_text}`);
   if (memoryContext) parts.push(`\n${memoryContext}`);
   if (taskContext) parts.push(`\n${taskContext}`);
   if (recentHistory) parts.push(`\n${recentHistory}`);
@@ -657,7 +734,8 @@ function buildPrompt(
     "\nMEMORY MANAGEMENT:" +
       "\nWhen the user shares something worth remembering, sets goals, or completes goals, " +
       "include these tags in your response (they are processed automatically and hidden from the user):" +
-      "\n[REMEMBER: fact to store]" +
+      "\n[REMEMBER: fact to store] — private to this user" +
+      "\n[SHARE: fact to share] — visible to all team members" +
       "\n[GOAL: goal text | DEADLINE: optional date]" +
       "\n[DONE: search text for completed goal]" +
       "\n" +
@@ -667,6 +745,11 @@ function buildPrompt(
       "\n- Preferences: communication style, tools, workflows, schedules" +
       "\n- Decisions: choices made, strategies adopted, commitments" +
       "\n- Key dates: deadlines, milestones, recurring events" +
+      "\n" +
+      "\nWhat to SHARE (team-wide knowledge, not personal):" +
+      "\n- Company policies, shared processes, team contacts" +
+      "\n- Decisions that affect the whole team" +
+      "\n- Only use [SHARE:] when the user explicitly says to share with the team" +
       "\n" +
       "\nWhat NOT to remember (ephemeral conversation, not facts):" +
       "\n- Debugging discussions, troubleshooting steps, or bug reports" +
@@ -699,62 +782,42 @@ function buildPrompt(
       "\n• Web Browser (Playwright): Navigate to URLs, take screenshots, fill forms, click buttons. Use for any website interaction." +
       "\n• Web Search: You have built-in web search. Use it to answer questions about current events, look up information, etc." +
       "\n• Apple Notes: Read and create notes using osascript. Example: osascript -e 'tell application \"Notes\" to get name of every note'" +
-      "\n• Apple Contacts: Search and look up contacts synced from DJ's iPhone via iCloud (1,500+ contacts)." +
+      "\n• Apple Contacts: Search and look up contacts synced via iCloud." +
       "\n  - Search by name: osascript -e 'tell application \"Contacts\" to get {name, value of phones, value of emails} of (every person whose name contains \"John\")'" +
-      "\n  - Get all details for a contact: osascript -e 'tell application \"Contacts\" to tell (first person whose name contains \"John Smith\") to return {name, organization, value of phones, value of emails, formatted address of addresses}'" +
-      "\n  - Always look up a contact before calling or texting someone DJ mentions by name — get their number from Contacts first." +
+      "\n  - Always look up a contact before calling or texting someone mentioned by name." +
       "\n• Phone Calls & SMS (Twilio + ElevenLabs): Make voice calls and send text messages." +
-      `\n  - DJ's phone: ${process.env.USER_PHONE || "+18636047056"}. Use this when DJ says "call me", "text me", or when something is urgent enough to warrant a call.` +
-      `\n  - SMS: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts sms "${process.env.USER_PHONE || "+18636047056"}" "message"\`` +
-      `\n  - Call: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts call "${process.env.USER_PHONE || "+18636047056"}" "detailed context about why you're calling and what to discuss"\`` +
-      "\n  - Calls connect via Twilio, with Nova's voice powered by ElevenLabs. Nova will have a multi-turn voice conversation with DJ on the phone." +
-      "\n  - The call context you provide becomes Nova's briefing for the call. Include ALL relevant details, memory, and context so Nova can have an informed conversation." +
-      "\n  - Nova authenticates DJ with a PIN before discussing anything." +
-      "\n  - PROACTIVE CALLS: If something is genuinely urgent (time-sensitive deadline, important update DJ needs to act on NOW), you should proactively call DJ rather than waiting for him to check Telegram." +
-      "\n  - Call third parties on DJ's behalf (powered by Ultravox — natural sub-second voice AI):" +
-      `\n    bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject/reason for calling" [--lang language]` +
-      "\n    Language: Use --lang when DJ specifies the callee speaks a different language (e.g., --lang spanish, --lang french, --lang portuguese)." +
-      "\n    If no --lang is given, Nova starts in English but auto-switches if the callee responds in another language." +
-      "\n    Only use this when DJ explicitly asks you to call someone else. Never use call-thirdparty to call DJ — use the regular call command for that." +
-      "\n    The script AUTOMATICALLY handles: (1) Telegram notification to " + USER_NAME + ", (2) Saving transcript to Notion 'Nova Calls' database." +
-      "\n    Do NOT re-send Telegram or re-save to Notion after the call — the script already did it." +
-      "\n    YOUR ONLY TASK after the script returns: Read the transcript and execute any follow-up actions from the conversation (create calendar events, send emails/SMS, etc.) using your MCP tools." +
+      (user.phone
+        ? `\n  - ${user.name}'s phone: ${user.phone}. Use this when ${user.name} says "call me", "text me", or when something is urgent.`
+        : "") +
+      `\n  - SMS: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts sms "<phone>" "message"\`` +
+      `\n  - Call: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts call "<phone>" "context"\`` +
+      "\n  - Call third parties:" +
+      `\n    bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject" [--lang language]` +
       "\n• Square: Query orders and transactions by date range, view payment history, check account balances, create payment links, manage customers and catalog items." +
       "\n  - LOCATIONS: Open Source Mind (Main) ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
       "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
-      "\n  - WRITE OPERATIONS (create payment links, create payments, etc.): Always ask " + USER_NAME + " which location to use BEFORE executing." +
-      "\n• Cloudflare: Manage DNS records (create/update/delete subdomains and records), deploy and manage Cloudflare Workers." +
+      "\n  - WRITE OPERATIONS: Always ask " + user.name + " which location to use BEFORE executing." +
+      "\n• Cloudflare: Manage DNS records, deploy and manage Cloudflare Workers." +
       "\n• Task Scheduler: Create, list, and manage recurring scheduled tasks." +
       `\n  - List tasks: \`bun run ${PROJECT_ROOT}/src/scheduler.ts list\`` +
       `\n  - Create: \`bun run ${PROJECT_ROOT}/src/scheduler.ts create "<name>" "<schedule>" "<command>"\`` +
-      `\n  - Delete: \`bun run ${PROJECT_ROOT}/src/scheduler.ts delete "<name>"\`` +
-      `\n  - Run now: \`bun run ${PROJECT_ROOT}/src/scheduler.ts run-once "<name>"\`` +
-      "\n  - Schedule formats: daily:HH:MM, weekdays:HH:MM, weekly:DAY:HH:MM (0=Sun), interval:SECONDS, hourly:MM" +
-      `\n  - Example: \`bun run ${PROJECT_ROOT}/src/scheduler.ts create "weekly-metrics" "weekly:1:09:00" "bun run examples/smart-checkin.ts"\`` +
-      "\n  - Use this when " + USER_NAME + " asks for recurring reminders, periodic reports, or scheduled checks." +
       "\n• File System: You can read, write, and manage files on the user's computer." +
       "\n• Terminal: You can run any shell command the user needs." +
       "\n" +
-      "\nUse the right tool for the job. If the user asks to send an email, use Gmail. If they ask to check their schedule, use Calendar. " +
-      "If they ask to call or text someone, use Twilio. Always confirm before taking consequential actions (sending emails, making calls, etc.)." +
+      "\nUse the right tool for the job. Always confirm before taking consequential actions (sending emails, making calls, etc.)." +
       "\n" +
       "\nRESPONSE PROTOCOL:" +
-      "\n" + USER_NAME + " can send you multiple requests at once — you handle them in parallel." +
+      "\n" + user.name + " can send you multiple requests at once — you handle them in parallel." +
       "\nJust do the work and deliver results. Keep responses focused and actionable." +
-      "\nWhen a task involves creating a file that " + USER_NAME + " needs, use the /telegram-file-sender skill to send it directly." +
+      "\nWhen a task involves creating a file that " + user.name + " needs, use the /telegram-file-sender skill to send it directly." +
       "\n" +
       "\nINLINE BUTTONS — Use buttons when asking for confirmation, selection, or quick input:" +
-      "\nWhen you need " + USER_NAME + " to choose between options, confirm an action, or approve something, " +
+      "\nWhen you need " + user.name + " to choose between options, confirm an action, or approve something, " +
       "add a button tag at the end of your message:" +
       "\n  [BUTTONS: Option A | Option B | Option C]" +
       "\nThis renders as tappable buttons in Telegram — much faster than typing." +
-      "\nExamples:" +
-      "\n  - Confirming an action: 'Ready to send the email?' [BUTTONS: Send it | Cancel]" +
-      "\n  - Choosing a location: 'Which Square location?' [BUTTONS: Open Source Mind | Zaarvy AI | Both]" +
-      "\n  - Yes/No: 'Should I proceed?' [BUTTONS: Yes | No]" +
-      "\n  - Multiple options: 'Which format?' [BUTTONS: PDF | DOCX | PPTX | XLSX]" +
       "\nKeep labels short (1-3 words). Max 6 buttons. The tag is hidden from the user — they only see the buttons." +
-      "\nUse buttons whenever you would otherwise ask " + USER_NAME + " to type a simple choice."
+      "\nUse buttons whenever you would otherwise ask " + user.name + " to type a simple choice."
   );
 
   parts.push(
@@ -771,28 +834,141 @@ function buildPrompt(
       "\n• /platform-maker — Generate complete SaaS platforms from YAML configuration" +
       "\n• /pptx — Create, edit, and analyze PowerPoint presentations" +
       "\n• /xlsx — Create, edit, and analyze spreadsheets with formulas and formatting" +
-      "\n• /skill-creator — Create new skills to extend your own capabilities. Use this when " + USER_NAME + " asks you to create a skill, or when you detect a recurring task that should become one." +
-      "\n• /telegram-file-sender — Send files as document attachments via Telegram. Use when " + USER_NAME + " asks you to send, share, or deliver any file."
+      "\n• /skill-creator — Create new skills to extend your own capabilities." +
+      "\n• /telegram-file-sender — Send files as document attachments via Telegram."
   );
 
   parts.push(
     "\nSELF-IMPROVEMENT — You learn and evolve over time:" +
-      "\nYou can improve yourself by detecting patterns and creating reusable skills." +
-      "\n" +
-      "\n• PATTERN DETECTION: When you notice " + USER_NAME + " repeatedly asks you to do the same kind of task " +
-      "(e.g., 'research X and summarize', 'format data as Y', 'draft email in Z style'), note the pattern." +
-      "\n• SKILL CREATION: When you detect a recurring workflow or " + USER_NAME + " asks you to create a skill, " +
-      "use the /skill-creator skill to build it. Skills are your preferred way to package repeatable workflows — " +
-      "they're more powerful than raw slash commands and include proper structure, tool access, and documentation." +
-      "\n• PROFILE UPDATES: When you learn new preferences, habits, or context about " + USER_NAME + " that would help future interactions, " +
-      "update `config/profile.md` to reflect this. Examples: communication preferences, common contacts, project names, recurring meetings." +
+      "\n• PATTERN DETECTION: When you notice " + user.name + " repeatedly asks you to do the same kind of task, note the pattern." +
+      "\n• SKILL CREATION: When you detect a recurring workflow or " + user.name + " asks you to create a skill, " +
+      "use the /skill-creator skill to build it." +
       "\n• MEMORY TAGS: Continue using [REMEMBER: ...] tags for facts and context. Use [GOAL: ...] and [DONE: ...] for goal tracking." +
-      "\n• PROACTIVE SUGGESTIONS: If you see an opportunity to automate something " + USER_NAME + " does manually, suggest creating a skill for it."
+      "\n• PROACTIVE SUGGESTIONS: If you see an opportunity to automate something " + user.name + " does manually, suggest creating a skill for it."
   );
 
   parts.push(`\nUser: ${userMessage}`);
 
   return parts.join("\n");
+}
+
+// ============================================================
+// ADMIN COMMANDS
+// ============================================================
+
+async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): Promise<boolean> {
+  if (!supabase) return false;
+
+  const parts = text.trim().split(/\s+/);
+  const command = parts[0].toLowerCase();
+
+  if (command === "/adduser") {
+    // /adduser <telegram_id> <name> [timezone] [pin]
+    const telegramId = parts[1];
+    const name = parts[2];
+    const timezone = parts[3] || "UTC";
+    const pin = parts[4] || null;
+
+    if (!telegramId || !name) {
+      await ctx.reply("Usage: /adduser <telegram_id> <name> [timezone] [pin]");
+      return true;
+    }
+
+    try {
+      const row: Record<string, any> = {
+        telegram_id: telegramId,
+        name,
+        timezone,
+        role: "member",
+      };
+      if (pin) row.pin = pin;
+      const { error } = await supabase.from("users").insert(row);
+
+      if (error) {
+        await ctx.reply(`Failed to add user: ${error.message}`);
+      } else {
+        invalidateUserCache();
+        await ctx.reply(`Added ${name} (${telegramId}) with timezone ${timezone}.`);
+      }
+    } catch (e: any) {
+      await ctx.reply(`Error: ${e.message}`);
+    }
+    return true;
+  }
+
+  if (command === "/removeuser") {
+    // /removeuser <telegram_id>
+    const telegramId = parts[1];
+    if (!telegramId) {
+      await ctx.reply("Usage: /removeuser <telegram_id>");
+      return true;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("users")
+        .update({ active: false, updated_at: new Date().toISOString() })
+        .eq("telegram_id", telegramId);
+
+      if (error) {
+        await ctx.reply(`Failed to remove user: ${error.message}`);
+      } else {
+        invalidateUserCache(telegramId);
+        await ctx.reply(`Deactivated user ${telegramId}.`);
+      }
+    } catch (e: any) {
+      await ctx.reply(`Error: ${e.message}`);
+    }
+    return true;
+  }
+
+  if (command === "/listusers") {
+    try {
+      const { data, error } = await supabase
+        .from("users")
+        .select("telegram_id, name, role, timezone, active")
+        .order("created_at");
+
+      if (error || !data?.length) {
+        await ctx.reply("No users found.");
+        return true;
+      }
+
+      const lines = data.map(
+        (u: any) =>
+          `${u.active ? "●" : "○"} ${u.name} (${u.telegram_id}) — ${u.role}, ${u.timezone}`
+      );
+      await ctx.reply("Users:\n" + lines.join("\n"));
+    } catch (e: any) {
+      await ctx.reply(`Error: ${e.message}`);
+    }
+    return true;
+  }
+
+  if (command === "/share") {
+    // /share <fact> — shortcut to insert shared memory
+    const fact = parts.slice(1).join(" ");
+    if (!fact) {
+      await ctx.reply("Usage: /share <fact to share with team>");
+      return true;
+    }
+
+    try {
+      await supabase.from("memory").insert({
+        type: "fact",
+        content: fact,
+        user_id: user.id,
+        scope: "shared",
+      });
+      await ctx.reply(`Shared with team: "${fact}"`);
+    } catch (e: any) {
+      await ctx.reply(`Error: ${e.message}`);
+    }
+    return true;
+  }
+
+  // Not an admin command — fall through to normal handling
+  return false;
 }
 
 async function sendResponse(ctx: Context, response: string): Promise<void> {
@@ -866,7 +1042,8 @@ function parseButtons(response: string): { text: string; keyboard: InlineKeyboar
 
 async function sendResponseWithVoice(
   ctx: Context,
-  response: string
+  response: string,
+  userId?: string
 ): Promise<void> {
   // Parse any inline buttons from the response
   const { text, keyboard } = parseButtons(response);
@@ -879,9 +1056,8 @@ async function sendResponseWithVoice(
   }
 
   // Send voice ONLY when /voice toggle is on (user explicitly wants all replies as audio).
-  // Voice messages from the user get a text reply — they can toggle /voice if they want audio back.
   if (isTTSEnabled()) {
-    const settings = await loadSettings();
+    const settings = await loadSettings(supabase, userId);
     if (settings.voiceResponses) {
       const audio = await textToSpeech(text);
       if (audio) {
@@ -936,12 +1112,11 @@ async function sendResponseWithButtons(
 // START
 // ============================================================
 
-console.log("Starting Nova...");
-console.log(`Authorized user: ${ALLOWED_USER_ID || "ANY (not recommended)"}`);
+console.log("Starting Nova (multi-user mode)...");
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
 
 bot.start({
   onStart: () => {
-    console.log("Bot is running!");
+    console.log("Bot is running! Users are managed via the 'users' table in Supabase.");
   },
 });

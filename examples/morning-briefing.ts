@@ -1,9 +1,12 @@
 /**
- * Morning Briefing
+ * Morning Briefing (Multi-User)
  *
- * Sends a daily summary via Telegram at a scheduled time.
+ * Sends a daily summary via Telegram at each user's preferred briefing hour.
  * Fetches real data from Supabase (goals/facts) and uses Claude CLI
  * with MCPs (Gmail, Calendar, Notion) for live context.
+ *
+ * Iterates over all active users with morning_briefing enabled,
+ * checks each user's local time against their briefing_hour preference.
  *
  * Schedule this with:
  * - macOS: launchd (see daemon/morning-briefing.plist)
@@ -14,22 +17,28 @@
  */
 
 import { spawn } from "bun";
-import { createClient } from "@supabase/supabase-js";
+import { readFile, writeFile } from "fs/promises";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { dirname, join } from "path";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CHAT_ID = process.env.TELEGRAM_USER_ID || "";
 const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
-const USER_NAME = process.env.USER_NAME || "";
-const USER_TIMEZONE =
-  process.env.USER_TIMEZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
+const STATE_FILE = "/tmp/morning-briefing-state.json";
+
+interface BriefingUser {
+  id: string;
+  telegram_id: string;
+  name: string;
+  timezone: string;
+  preferences: Record<string, any>;
+}
 
 // ============================================================
 // TELEGRAM HELPER
 // ============================================================
 
-async function sendTelegram(message: string): Promise<boolean> {
+async function sendTelegram(chatId: string, message: string): Promise<boolean> {
   try {
     const response = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
@@ -37,7 +46,7 @@ async function sendTelegram(message: string): Promise<boolean> {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chat_id: CHAT_ID,
+          chat_id: chatId,
           text: message,
           parse_mode: "Markdown",
         }),
@@ -52,23 +61,72 @@ async function sendTelegram(message: string): Promise<boolean> {
 }
 
 // ============================================================
-// SUPABASE DATA (goals & facts — fast, direct queries)
+// FETCH BRIEFING USERS
 // ============================================================
 
-async function getSupabaseContext(): Promise<string> {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    return "";
-  }
+async function getAllBriefingUsers(supabase: SupabaseClient): Promise<BriefingUser[]> {
+  const { data, error } = await supabase
+    .from("users")
+    .select("id, telegram_id, name, timezone, preferences")
+    .eq("active", true);
 
+  if (error || !data) return [];
+
+  return data.filter(
+    (u: any) => u.preferences?.morning_briefing !== false
+  );
+}
+
+// ============================================================
+// PER-USER STATE (already-ran-today tracking)
+// ============================================================
+
+interface BriefingState {
+  [userId: string]: string; // userId -> last run date (YYYY-MM-DD)
+}
+
+async function loadBriefingState(): Promise<BriefingState> {
   try {
-    const supabase = createClient(
-      process.env.SUPABASE_URL,
-      process.env.SUPABASE_ANON_KEY
-    );
+    const content = await readFile(STATE_FILE, "utf-8");
+    return JSON.parse(content);
+  } catch {
+    return {};
+  }
+}
 
+async function saveBriefingState(state: BriefingState): Promise<void> {
+  await writeFile(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+function alreadyRanToday(state: BriefingState, userId: string, timezone: string): boolean {
+  const lastDate = state[userId] || "";
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+  return lastDate === today;
+}
+
+function markRanToday(state: BriefingState, userId: string, timezone: string): void {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
+  state[userId] = today;
+}
+
+function isUserBriefingHour(user: BriefingUser): boolean {
+  const now = new Date();
+  const userHour = parseInt(
+    now.toLocaleString("en-US", { timeZone: user.timezone, hour: "numeric", hour12: false })
+  );
+  const briefingHour = user.preferences?.briefing_hour ?? 9;
+  return userHour === briefingHour;
+}
+
+// ============================================================
+// SUPABASE DATA (goals & facts — per-user)
+// ============================================================
+
+async function getSupabaseContext(supabase: SupabaseClient, userId: string): Promise<string> {
+  try {
     const [goalsResult, factsResult] = await Promise.all([
-      supabase.rpc("get_active_goals"),
-      supabase.rpc("get_facts"),
+      supabase.rpc("get_active_goals", { p_user_id: userId }),
+      supabase.rpc("get_facts", { p_user_id: userId }),
     ]);
 
     const parts: string[] = [];
@@ -86,7 +144,6 @@ async function getSupabaseContext(): Promise<string> {
     }
 
     if (factsResult.data?.length) {
-      // Only include recent/relevant facts (last 20)
       const facts = factsResult.data
         .slice(0, 20)
         .map((f: any) => `- ${f.content}`)
@@ -102,20 +159,20 @@ async function getSupabaseContext(): Promise<string> {
 }
 
 // ============================================================
-// CLAUDE CLI WITH MCPs (Gmail, Calendar, Notion — live data)
+// CLAUDE CLI WITH MCPs (per-user context)
 // ============================================================
 
-async function getMCPBriefing(supabaseContext: string): Promise<string> {
+async function getMCPBriefing(user: BriefingUser, supabaseContext: string): Promise<string> {
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-US", {
-    timeZone: USER_TIMEZONE,
+    timeZone: user.timezone,
     weekday: "long",
     month: "long",
     day: "numeric",
     year: "numeric",
   });
 
-  const prompt = `You are ${USER_NAME}'s AI assistant preparing a morning briefing for ${dateStr}.
+  const prompt = `You are ${user.name}'s AI assistant preparing a morning briefing for ${dateStr}.
 
 ${supabaseContext ? supabaseContext + "\n\n" : ""}Your task: Create a concise morning briefing by checking available tools:
 
@@ -166,13 +223,13 @@ RULES:
     const exitCode = await proc.exited;
 
     if (exitCode !== 0) {
-      console.error("Claude error:", stderr);
+      console.error(`Claude error for ${user.name}:`, stderr);
       return "";
     }
 
     return output.trim();
   } catch (error) {
-    console.error("Claude CLI error:", error);
+    console.error(`Claude CLI error for ${user.name}:`, error);
     return "";
   }
 }
@@ -182,32 +239,67 @@ RULES:
 // ============================================================
 
 async function main() {
-  console.log("Building morning briefing...");
+  console.log("Building morning briefing (multi-user)...");
 
-  if (!BOT_TOKEN || !CHAT_ID) {
-    console.error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_USER_ID");
+  if (!BOT_TOKEN) {
+    console.error("Missing TELEGRAM_BOT_TOKEN");
     process.exit(1);
   }
 
-  // Fetch Supabase data (fast) in parallel with starting Claude
-  const supabaseContext = await getSupabaseContext();
-
-  // Claude CLI checks MCPs and assembles the briefing
-  const briefing = await getMCPBriefing(supabaseContext);
-
-  if (!briefing) {
-    console.error("Failed to generate briefing");
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
     process.exit(1);
   }
 
-  console.log("Sending briefing...");
-  const success = await sendTelegram(briefing);
+  const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY
+  );
 
-  if (success) {
-    console.log("Briefing sent successfully!");
-  } else {
-    console.error("Failed to send briefing");
-    process.exit(1);
+  const users = await getAllBriefingUsers(supabase);
+  console.log(`Found ${users.length} briefing user(s)`);
+
+  const state = await loadBriefingState();
+  let stateChanged = false;
+
+  for (const user of users) {
+    // Skip if already ran today for this user
+    if (alreadyRanToday(state, user.id, user.timezone)) {
+      console.log(`Already sent today's briefing to ${user.name} — skipping.`);
+      continue;
+    }
+
+    // Skip if it's not the user's briefing hour
+    if (!isUserBriefingHour(user)) {
+      const briefingHour = user.preferences?.briefing_hour ?? 9;
+      console.log(`Not ${user.name}'s briefing hour (${briefingHour}:00 in ${user.timezone}) — skipping.`);
+      continue;
+    }
+
+    console.log(`\nBuilding briefing for ${user.name}...`);
+
+    const supabaseContext = await getSupabaseContext(supabase, user.id);
+    const briefing = await getMCPBriefing(user, supabaseContext);
+
+    if (!briefing) {
+      console.error(`Failed to generate briefing for ${user.name}`);
+      continue;
+    }
+
+    console.log(`Sending briefing to ${user.name}...`);
+    const success = await sendTelegram(user.telegram_id, briefing);
+
+    if (success) {
+      markRanToday(state, user.id, user.timezone);
+      stateChanged = true;
+      console.log(`Briefing sent to ${user.name}!`);
+    } else {
+      console.error(`Failed to send briefing to ${user.name}`);
+    }
+  }
+
+  if (stateChanged) {
+    await saveBriefingState(state);
   }
 }
 
@@ -218,6 +310,7 @@ main();
 // ============================================================
 /*
 Save this as ~/Library/LaunchAgents/com.nova.morning-briefing.plist:
+Runs hourly; the script itself checks each user's timezone and briefing_hour.
 
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -233,13 +326,8 @@ Save this as ~/Library/LaunchAgents/com.nova.morning-briefing.plist:
     </array>
     <key>WorkingDirectory</key>
     <string>/path/to/nova</string>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>9</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>3600</integer>
     <key>StandardOutPath</key>
     <string>/tmp/morning-briefing.log</string>
     <key>StandardErrorPath</key>
@@ -248,14 +336,4 @@ Save this as ~/Library/LaunchAgents/com.nova.morning-briefing.plist:
 </plist>
 
 Load with: launchctl load ~/Library/LaunchAgents/com.nova.morning-briefing.plist
-*/
-
-// ============================================================
-// CRON FOR SCHEDULING (Linux)
-// ============================================================
-/*
-Add to crontab with: crontab -e
-
-# Run at 9:00 AM every day
-0 9 * * * cd /path/to/nova && /home/USER/.bun/bin/bun run examples/morning-briefing.ts >> /tmp/morning-briefing.log 2>&1
 */
