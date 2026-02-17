@@ -876,8 +876,10 @@ async function handleOutgoingThirdParty(body: string): Promise<Response> {
   console.log(`Third-party outgoing call connected (${callSid}) answeredBy=${answeredBy}`);
   const state = getCallState(callSid);
 
-  // If voicemail/machine detected, hang up and notify DJ
-  if (answeredBy && answeredBy !== "human") {
+  // If voicemail/machine explicitly detected, hang up and notify DJ
+  // "unknown" means detection is still in progress — treat as human
+  const machineValues = new Set(["machine_start", "machine_end_beep", "machine_end_silence", "machine_end_other", "fax"]);
+  if (machineValues.has(answeredBy)) {
     // Load context to get callee info for the notification
     let vmCalleeName = "the contact";
     let vmSubject = "";
