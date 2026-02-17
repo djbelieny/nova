@@ -157,8 +157,14 @@ async function callClaude(prompt: string): Promise<string> {
     const proc = spawn(args, {
       stdout: "pipe",
       stderr: "pipe",
+      // Run from the relay project dir so Claude picks up .mcp.json (Google Workspace, Notion, etc.)
       cwd: PROJECT_ROOT,
-      env: { ...process.env, CLAUDECODE: undefined },
+      env: {
+        ...process.env,
+        CLAUDECODE: undefined,
+        // Pass PROJECT_DIR so Claude can still access user's files
+        PROJECT_DIR: process.env.PROJECT_DIR || undefined,
+      },
     });
     const output = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
@@ -496,21 +502,22 @@ ${calleeName}'s position: ${summary.calleePosition}${
     callStart,
   }).catch((err) => console.error("Notion transcript save error:", err));
 
-  // Execute subject-scoped follow-up tasks
+  // Execute all follow-up tasks in a single Claude session (MCP boots once)
   if (summary.followUpTasks.length > 0) {
     await sendTelegram(`Working on ${summary.followUpTasks.length} follow-up task(s) from the call with ${calleeName}...`);
-    for (const task of summary.followUpTasks) {
-      try {
-        const result = await callClaude(
-          `You are Nova, ${USER_NAME}'s AI assistant. After a phone call with ${calleeName} about "${subject}", ` +
-          `the following follow-up task was identified. Execute it.\n\nTASK: ${task}\n\n` +
-          `Return a brief summary of what you did.`
-        );
-        await sendTelegram(`Follow-up done: ${task}\n\nResult: ${result}`);
-      } catch (err) {
-        console.error(`Follow-up task error: "${task}":`, err);
-        await sendTelegram(`Failed follow-up: ${task}\n\nError: ${err}`);
-      }
+    const taskList = summary.followUpTasks.map((t, i) => `${i + 1}. ${t}`).join("\n");
+    try {
+      const result = await callClaude(
+        `You are Nova, ${USER_NAME}'s AI assistant. After a phone call with ${calleeName} about "${subject}", ` +
+        `the following follow-up tasks were identified. Execute ALL of them using your available tools ` +
+        `(Google Calendar, Gmail, Notion, etc.).\n\n` +
+        `TASKS:\n${taskList}\n\n` +
+        `Execute each task and return a brief summary of what you did for each one.`
+      );
+      await sendTelegram(`Follow-up tasks done:\n\n${result}`);
+    } catch (err) {
+      console.error(`Follow-up tasks error:`, err);
+      await sendTelegram(`Failed to execute follow-up tasks: ${err}`);
     }
   }
 
