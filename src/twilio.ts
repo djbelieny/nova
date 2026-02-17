@@ -231,12 +231,17 @@ Execute this now. If you encounter any errors with Notion, log them but don't fa
 // THIRD-PARTY VOICE CALL (Ultravox — handles full conversation)
 // ============================================================
 
-function buildThirdPartyPrompt(calleeName: string, subject: string): string {
+function buildThirdPartyPrompt(calleeName: string, subject: string, language?: string): string {
+  const langInstruction = language
+    ? `\nLANGUAGE: Speak in ${language}. Conduct the entire conversation in ${language}.`
+    : `\nLANGUAGE: Start in English. If ${calleeName} responds in a different language, immediately switch to that language and continue the conversation entirely in their language. Match their language naturally without commenting on the switch.`;
+
   return `You are Nova, ${USER_NAME}'s AI assistant, on a live phone call with ${calleeName}.
 
 YOUR OBJECTIVE: ${subject}
 
 Time: ${getTimeStr()}
+${langInstruction}
 
 BEHAVIOR:
 - Be warm, natural, and conversational — like a real person on the phone.
@@ -253,51 +258,107 @@ NUMBERS & FORMATTING FOR SPEECH:
 - Never use text formatting`;
 }
 
-async function makeThirdPartyCall(to: string, calleeName: string, subject: string): Promise<void> {
+// Map of common language names/codes to BCP-47 codes for Ultravox languageHint
+const LANGUAGE_CODES: Record<string, string> = {
+  english: "en", en: "en",
+  spanish: "es", es: "es", español: "es",
+  french: "fr", fr: "fr", français: "fr",
+  portuguese: "pt", pt: "pt", português: "pt",
+  german: "de", de: "de", deutsch: "de",
+  italian: "it", it: "it", italiano: "it",
+  japanese: "ja", ja: "ja",
+  chinese: "zh", zh: "zh", mandarin: "zh",
+  korean: "ko", ko: "ko",
+  arabic: "ar", ar: "ar",
+  russian: "ru", ru: "ru",
+  hindi: "hi", hi: "hi",
+  dutch: "nl", nl: "nl",
+  turkish: "tr", tr: "tr",
+  polish: "pl", pl: "pl",
+  swedish: "sv", sv: "sv",
+  thai: "th", th: "th",
+  vietnamese: "vi", vi: "vi",
+  indonesian: "id", id: "id",
+  haitian: "ht", creole: "ht", ht: "ht",
+};
+
+function resolveLanguageCode(lang: string): string | undefined {
+  const key = lang.toLowerCase().trim();
+  return LANGUAGE_CODES[key] || (key.length === 2 ? key : undefined);
+}
+
+// Greetings in the callee's language
+const GREETINGS: Record<string, (name: string, userName: string) => string> = {
+  es: (name, user) => `Hola ${name}, soy Nova, la asistente de inteligencia artificial de ${user}. ${user} me pidió que te llamara. ¿Tienes un momento?`,
+  fr: (name, user) => `Bonjour ${name}, c'est Nova, l'assistante IA de ${user}. ${user} m'a demandé de vous appeler. Avez-vous un moment?`,
+  pt: (name, user) => `Olá ${name}, sou a Nova, assistente de IA do ${user}. ${user} me pediu para ligar. Você tem um momento?`,
+  de: (name, user) => `Hallo ${name}, hier ist Nova, die KI-Assistentin von ${user}. ${user} hat mich gebeten, Sie anzurufen. Haben Sie einen Moment?`,
+  it: (name, user) => `Ciao ${name}, sono Nova, l'assistente IA di ${user}. ${user} mi ha chiesto di chiamarti. Hai un momento?`,
+  ht: (name, user) => `Bonjou ${name}, mwen se Nova, asistan AI ${user} a. ${user} te mande m rele ou. Èske ou gen yon ti moman?`,
+};
+
+function getGreeting(calleeName: string, langCode?: string): string {
+  if (langCode && GREETINGS[langCode]) {
+    return GREETINGS[langCode](calleeName, USER_NAME);
+  }
+  return `Hi ${calleeName}, this is Nova, ${USER_NAME}'s AI assistant. ${USER_NAME} asked me to give you a call. Do you have a moment?`;
+}
+
+async function makeThirdPartyCall(to: string, calleeName: string, subject: string, language?: string): Promise<void> {
   if (!ULTRAVOX_API_KEY) {
     console.error("Missing ULTRAVOX_API_KEY in .env");
     process.exit(1);
   }
 
-  const systemPrompt = buildThirdPartyPrompt(calleeName, subject);
+  const langCode = language ? resolveLanguageCode(language) : undefined;
+  const systemPrompt = buildThirdPartyPrompt(calleeName, subject, language);
+  const greeting = getGreeting(calleeName, langCode);
 
   // Create Ultravox call — it dials via Twilio internally (credentials linked)
+  const callBody: Record<string, unknown> = {
+    systemPrompt,
+    model: "fixie-ai/ultravox-70B",
+    voice: "ecfa0ff5-55e1-45da-9646-5d6c6c780692",
+    temperature: 0.4,
+    maxDuration: "600s",
+    recordingEnabled: true,
+    firstSpeaker: "FIRST_SPEAKER_AGENT",
+    initialOutputMedium: "MESSAGE_MEDIUM_VOICE",
+    firstSpeakerSettings: {
+      agent: {
+        uninterruptible: true,
+        text: greeting,
+      },
+    },
+    medium: {
+      twilio: {
+        outgoing: {
+          to,
+          from: FROM_NUMBER,
+        },
+      },
+    },
+    metadata: {
+      calleeName,
+      subject,
+      requestedBy: USER_NAME,
+      calleePhone: to,
+      language: language || "auto",
+    },
+  };
+
+  // Set languageHint if a specific language was requested
+  if (langCode) {
+    callBody.languageHint = langCode;
+  }
+
   const response = await fetch(`${ULTRAVOX_API}/calls`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-API-Key": ULTRAVOX_API_KEY,
     },
-    body: JSON.stringify({
-      systemPrompt,
-      model: "fixie-ai/ultravox-70B",
-      voice: "ecfa0ff5-55e1-45da-9646-5d6c6c780692",
-      temperature: 0.4,
-      maxDuration: "600s",
-      recordingEnabled: true,
-      firstSpeaker: "FIRST_SPEAKER_AGENT",
-      initialOutputMedium: "MESSAGE_MEDIUM_VOICE",
-      firstSpeakerSettings: {
-        agent: {
-          uninterruptible: true,
-          text: `Hi ${calleeName}, this is Nova, ${USER_NAME}'s AI assistant. ${USER_NAME} asked me to give you a call. Do you have a moment?`,
-        },
-      },
-      medium: {
-        twilio: {
-          outgoing: {
-            to,
-            from: FROM_NUMBER,
-          },
-        },
-      },
-      metadata: {
-        calleeName,
-        subject,
-        requestedBy: USER_NAME,
-        calleePhone: to,
-      },
-    }),
+    body: JSON.stringify(callBody),
   });
 
   const data = await response.json();
@@ -310,6 +371,7 @@ async function makeThirdPartyCall(to: string, calleeName: string, subject: strin
   console.log(`Ultravox call created: ${callId}`);
   console.log(`Calling ${calleeName} at ${to}`);
   console.log(`Subject: ${subject}`);
+  console.log(`Language: ${language || "auto-detect"}`);
 
   // Poll for call completion, then process transcript
   await pollForCallCompletion(callId, calleeName, to, subject);
@@ -555,17 +617,27 @@ if (action === "sms") {
   }
   await makeCall(to, context);
 } else if (action === "call-thirdparty") {
-  const [to, calleeName, ...subjectParts] = rest;
+  // Parse --lang flag from args
+  let language: string | undefined;
+  const filtered: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === "--lang" && i + 1 < rest.length) {
+      language = rest[++i];
+    } else {
+      filtered.push(rest[i]);
+    }
+  }
+  const [to, calleeName, ...subjectParts] = filtered;
   const subject = subjectParts.join(" ");
   if (!ACCOUNT_SID || !AUTH_TOKEN || !FROM_NUMBER) {
     console.error("Missing Twilio env vars");
     process.exit(1);
   }
   if (!to || !calleeName || !subject) {
-    console.error('Usage: bun run src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject/reason for calling"');
+    console.error('Usage: bun run src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject" [--lang spanish]');
     process.exit(1);
   }
-  await makeThirdPartyCall(to, calleeName, subject);
+  await makeThirdPartyCall(to, calleeName, subject, language);
 } else {
   console.error(`Usage: bun run src/twilio.ts <sms|call|call-thirdparty> [args...]`);
   process.exit(1);
