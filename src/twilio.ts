@@ -255,8 +255,8 @@ async function makeThirdPartyCall(to: string, calleeName: string, subject: strin
 
   const systemPrompt = buildThirdPartyPrompt(calleeName, subject);
 
-  // Create Ultravox call — it handles Twilio dialing internally
-  const response = await fetch(`${ULTRAVOX_API}/calls`, {
+  // Step 1: Create Ultravox call — get joinUrl (WebSocket)
+  const uvResponse = await fetch(`${ULTRAVOX_API}/calls`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -278,12 +278,7 @@ async function makeThirdPartyCall(to: string, calleeName: string, subject: strin
         },
       },
       medium: {
-        twilio: {
-          outgoing: {
-            to,
-            from: FROM_NUMBER,
-          },
-        },
+        twilio: {},
       },
       metadata: {
         calleeName,
@@ -294,18 +289,44 @@ async function makeThirdPartyCall(to: string, calleeName: string, subject: strin
     }),
   });
 
-  const data = await response.json();
-  if (!response.ok) {
-    console.error("Ultravox call creation failed:", JSON.stringify(data, null, 2));
+  const uvData = await uvResponse.json();
+  if (!uvResponse.ok) {
+    console.error("Ultravox call creation failed:", JSON.stringify(uvData, null, 2));
     process.exit(1);
   }
 
-  const callId = data.callId;
+  const callId = uvData.callId;
+  const joinUrl = uvData.joinUrl;
   console.log(`Ultravox call created: ${callId}`);
+  console.log(`Join URL: ${joinUrl}`);
+
+  // Step 2: Make Twilio call and connect audio to Ultravox via <Stream>
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Connect><Stream url="${joinUrl}" /></Connect></Response>`;
+
+  const twilioResponse = await fetch(`${TWILIO_API}/Calls.json`, {
+    method: "POST",
+    headers: {
+      Authorization: twilioAuth(),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      To: to,
+      From: FROM_NUMBER,
+      Twiml: twiml,
+    }),
+  });
+
+  const twilioData = await twilioResponse.json();
+  if (!twilioResponse.ok) {
+    console.error("Twilio call failed:", JSON.stringify(twilioData, null, 2));
+    process.exit(1);
+  }
+
+  console.log(`Twilio call initiated: ${twilioData.sid}`);
   console.log(`Calling ${calleeName} at ${to}`);
   console.log(`Subject: ${subject}`);
 
-  // Poll for call completion, then process transcript
+  // Poll Ultravox for call completion, then process transcript
   await pollForCallCompletion(callId, calleeName, to, subject);
 }
 
