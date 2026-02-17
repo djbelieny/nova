@@ -108,7 +108,8 @@ async function makeThirdPartyCall(to: string, calleeName: string, subject: strin
       Method: "POST",
       StatusCallback: `${VOICE_SERVER_URL}/voice/status`,
       StatusCallbackMethod: "POST",
-      StatusCallbackEvent: "completed",
+      "StatusCallbackEvent": ["initiated", "ringing", "answered", "completed"].join(" "),
+      MachineDetection: "Enable",
     }),
   });
 

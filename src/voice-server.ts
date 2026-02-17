@@ -872,8 +872,43 @@ async function handleOutgoingThirdParty(body: string): Promise<Response> {
   const params = parseFormBody(body);
   const callSid = params.CallSid || "unknown";
 
-  console.log(`Third-party outgoing call connected (${callSid})`);
+  const answeredBy = params.AnsweredBy || "";
+  console.log(`Third-party outgoing call connected (${callSid}) answeredBy=${answeredBy}`);
   const state = getCallState(callSid);
+
+  // If voicemail/machine detected, hang up and notify DJ
+  if (answeredBy && answeredBy !== "human") {
+    // Load context to get callee info for the notification
+    let vmCalleeName = "the contact";
+    let vmSubject = "";
+    let vmPhone = "";
+    try {
+      if (callSid.match(/^[A-Za-z0-9]+$/)) {
+        const contextPath = join(CALL_CONTEXTS_DIR, basename(`${callSid}.json`));
+        const contextData = JSON.parse(await readFile(contextPath, "utf-8"));
+        vmCalleeName = contextData.calleeName || vmCalleeName;
+        vmSubject = contextData.subject || "";
+        vmPhone = contextData.to || "";
+        setTimeout(() => unlink(contextPath).catch(() => {}), 5_000);
+      }
+    } catch {}
+
+    console.log(`Third-party call ${callSid} hit voicemail (${answeredBy}), hanging up`);
+    sendTelegram(`📞 Call to ${vmCalleeName} (${vmPhone}): Went to voicemail — hung up.\nSubject: ${vmSubject}`).catch(() => {});
+
+    // Save to Notion
+    saveTranscriptToNotion({
+      calleeName: vmCalleeName,
+      calleePhone: vmPhone,
+      subject: vmSubject,
+      transcript: "(Voicemail detected — call was not connected)",
+      summary: { summary: "Voicemail detected", outcome: "Voicemail", status: "no-answer" },
+      durationStr: "0s",
+      callStart: new Date(),
+    }).catch(() => {});
+
+    return twiml("<Hangup/>");
+  }
 
   // Load call context
   let calleeName = "there";
@@ -896,11 +931,9 @@ async function handleOutgoingThirdParty(body: string): Promise<Response> {
     console.warn(`No context file found for third-party call ${callSid}`);
   }
 
-  // Generate opening greeting
-  const openingPrompt = buildThirdPartySystemPrompt(calleeName, subject) +
-    `\n\nYou just connected to ${calleeName}'s phone. Greet them, introduce yourself as Nova calling on behalf of ${USER_NAME}, and state why you're calling. Be brief and professional.`;
-
-  const greeting = await callClaude(openingPrompt);
+  // Use a static greeting — do NOT call Claude here, Twilio times out at ~15s
+  // and Claude CLI takes longer than that. First Claude response happens in handleGather.
+  const greeting = `Hi ${calleeName}, this is Nova, ${USER_NAME}'s AI assistant. I'm calling on ${USER_NAME}'s behalf about ${subject || "something he wanted to discuss with you"}. Do you have a moment?`;
   state.turns.push({ role: "assistant", content: greeting });
   await saveCallMessage("assistant", `[Third-party call to ${calleeName}]: ${greeting}`, callSid);
 
@@ -1077,6 +1110,38 @@ async function handleStatus(body: string): Promise<Response> {
   const callStatus = params.CallStatus || "";
 
   console.log(`Call status update: ${callSid} → ${callStatus}`);
+
+  // Handle third-party call failures — no-answer, busy, failed, canceled
+  if (["no-answer", "busy", "failed", "canceled"].includes(callStatus)) {
+    const state = activeCalls.get(callSid);
+    if (state?.thirdParty) {
+      const calleeName = state.calleeName || "the contact";
+      const subject = state.subject || "";
+      const calleePhone = state.calleePhone || "";
+      const statusLabel = callStatus === "no-answer" ? "No Answer"
+        : callStatus === "busy" ? "Busy"
+        : callStatus === "failed" ? "Failed"
+        : "Canceled";
+
+      await sendTelegram(`📞 Call to ${calleeName} (${calleePhone}): ${statusLabel}\nSubject: ${subject}`);
+
+      // Save to Notion with appropriate status
+      saveTranscriptToNotion({
+        calleeName,
+        calleePhone,
+        subject,
+        transcript: "(No conversation — call was not answered)",
+        summary: { summary: `Call ${callStatus}`, outcome: statusLabel, status: callStatus },
+        durationStr: "0s",
+        callStart: new Date(state.createdAt),
+      }).catch((err) => console.error(`Notion save error for ${callStatus} call ${callSid}:`, err));
+
+      activeCalls.delete(callSid);
+    } else if (state) {
+      activeCalls.delete(callSid);
+    }
+    return new Response("OK");
+  }
 
   // When call completes, process any remaining tasks if we still have state
   // (handles cases where user hangs up without saying goodbye)
