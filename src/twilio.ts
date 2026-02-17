@@ -89,6 +89,55 @@ async function makeCall(to: string, context: string): Promise<void> {
 }
 
 // ============================================================
+// THIRD-PARTY VOICE CALL (no PIN — callee is not DJ)
+// ============================================================
+
+async function makeThirdPartyCall(to: string, calleeName: string, subject: string): Promise<void> {
+  const USER_NAME = process.env.USER_NAME || "DJ";
+
+  const response = await fetch(`${TWILIO_API}/Calls.json`, {
+    method: "POST",
+    headers: {
+      Authorization: twilioAuth(),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      To: to,
+      From: FROM_NUMBER,
+      Url: `${VOICE_SERVER_URL}/voice/outgoing-thirdparty`,
+      Method: "POST",
+      StatusCallback: `${VOICE_SERVER_URL}/voice/status`,
+      StatusCallbackMethod: "POST",
+      StatusCallbackEvent: "completed",
+    }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    console.error("Call failed:", JSON.stringify(data, null, 2));
+    process.exit(1);
+  }
+
+  // Write extended call context for the voice server
+  await mkdir(CALL_CONTEXTS_DIR, { recursive: true });
+  const contextPath = join(CALL_CONTEXTS_DIR, `${data.sid}.json`);
+  await writeFile(contextPath, JSON.stringify({
+    context: subject,
+    to,
+    calleeName,
+    subject,
+    requestedBy: USER_NAME,
+    thirdParty: true,
+    timestamp: new Date().toISOString(),
+  }));
+
+  console.log(`Third-party call initiated to ${calleeName} (${to})`);
+  console.log(`Subject: ${subject}`);
+  console.log(`Call SID: ${data.sid}`);
+  console.log(`Context saved for voice server`);
+}
+
+// ============================================================
 // CLI ENTRY POINT
 // ============================================================
 
@@ -118,7 +167,19 @@ if (action === "sms") {
     process.exit(1);
   }
   await makeCall(to, context);
+} else if (action === "call-thirdparty") {
+  const [to, calleeName, ...subjectParts] = rest;
+  const subject = subjectParts.join(" ");
+  if (!ACCOUNT_SID || !AUTH_TOKEN || !FROM_NUMBER) {
+    console.error("Missing Twilio env vars");
+    process.exit(1);
+  }
+  if (!to || !calleeName || !subject) {
+    console.error('Usage: bun run src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject/reason for calling"');
+    process.exit(1);
+  }
+  await makeThirdPartyCall(to, calleeName, subject);
 } else {
-  console.error(`Usage: bun run src/twilio.ts <sms|call> [args...]`);
+  console.error(`Usage: bun run src/twilio.ts <sms|call|call-thirdparty> [args...]`);
   process.exit(1);
 }

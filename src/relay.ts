@@ -220,8 +220,35 @@ interface ActiveTask {
 const activeTasks = new Map<string, ActiveTask>();
 let taskCounter = 0;
 
+async function logCostTracking(data: {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+  session_id?: string;
+}): Promise<void> {
+  if (!supabase) return;
+  try {
+    await supabase.from("cost_tracking").insert({
+      model: data.model,
+      input_tokens: data.input_tokens,
+      output_tokens: data.output_tokens,
+      cache_read_tokens: data.cache_read_tokens,
+      cache_creation_tokens: data.cache_creation_tokens,
+      cost_usd: data.cost_usd,
+      duration_ms: data.duration_ms,
+      session_id: data.session_id || null,
+    });
+  } catch (e) {
+    console.error("Cost tracking insert error:", e);
+  }
+}
+
 async function callClaude(prompt: string): Promise<string> {
-  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "text", "--permission-mode", "bypassPermissions"];
+  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions"];
 
   console.log(`Calling Claude: ${prompt.substring(0, 50)}...`);
 
@@ -248,7 +275,30 @@ async function callClaude(prompt: string): Promise<string> {
       return `Error: ${stderr || "Claude exited with code " + exitCode}`;
     }
 
-    return output.trim();
+    // Parse JSON response to extract cost data
+    try {
+      const json = JSON.parse(output.trim());
+      const result = typeof json.result === "string" ? json.result : output.trim();
+
+      // Log cost data if available
+      if (json.model || json.usage) {
+        logCostTracking({
+          model: json.model || "unknown",
+          input_tokens: json.usage?.input_tokens || 0,
+          output_tokens: json.usage?.output_tokens || 0,
+          cache_read_tokens: json.usage?.cache_read_input_tokens || 0,
+          cache_creation_tokens: json.usage?.cache_creation_input_tokens || 0,
+          cost_usd: json.cost_usd || json.total_cost_usd || 0,
+          duration_ms: json.duration_ms || 0,
+          session_id: json.session_id || undefined,
+        });
+      }
+
+      return result;
+    } catch {
+      // If JSON parsing fails, return raw output
+      return output.trim();
+    }
   } catch (error) {
     console.error("Spawn error:", error);
     return `Error: Could not run Claude CLI`;
@@ -657,7 +707,10 @@ function buildPrompt(
       "\n  - The call context you provide becomes Nova's briefing for the call. Include ALL relevant details, memory, and context so Nova can have an informed conversation." +
       "\n  - Nova authenticates DJ with a PIN before discussing anything." +
       "\n  - PROACTIVE CALLS: If something is genuinely urgent (time-sensitive deadline, important update DJ needs to act on NOW), you should proactively call DJ rather than waiting for him to check Telegram." +
-      "\n  - You can also call/text other numbers if DJ asks you to." +
+      "\n  - Call third parties on DJ's behalf:" +
+      `\n    bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject/reason for calling"` +
+      "\n    Nova will introduce herself, stay on topic, and save the transcript to Notion automatically." +
+      "\n    Only use this when DJ explicitly asks you to call someone else. Never use call-thirdparty to call DJ — use the regular call command for that." +
       "\n• Square: Query orders and transactions by date range, view payment history, check account balances, create payment links, manage customers and catalog items." +
       "\n  - LOCATIONS: Open Source Mind (Main) ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
       "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
