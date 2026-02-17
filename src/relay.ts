@@ -713,7 +713,11 @@ function buildPrompt(
       "\n  - PROACTIVE CALLS: If something is genuinely urgent (time-sensitive deadline, important update DJ needs to act on NOW), you should proactively call DJ rather than waiting for him to check Telegram." +
       "\n  - Call third parties on DJ's behalf (powered by Ultravox — natural sub-second voice AI):" +
       `\n    bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject/reason for calling" [--lang language]` +
-      "\n    Nova handles the full conversation natively with natural voice. The script polls for completion, fetches the transcript, sends a summary to Telegram, and saves to Notion automatically." +
+      "\n    The script creates the call, polls until it ends, and outputs the transcript + result to stdout. It does NOT send Telegram messages or save to Notion — YOU do that." +
+      "\n    After the script returns, you MUST:" +
+      "\n      1. Send DJ a single concise Telegram summary of the call result" +
+      "\n      2. Save the transcript to the 'Nova Calls' Notion database" +
+      "\n      3. Execute any follow-up tasks that arose from the conversation (calendar events, emails, etc.)" +
       "\n    Language: Use --lang when DJ specifies the callee speaks a different language (e.g., --lang spanish, --lang french, --lang portuguese)." +
       "\n    If no --lang is given, Nova starts in English but auto-switches if the callee responds in another language." +
       "\n    Only use this when DJ explicitly asks you to call someone else. Never use call-thirdparty to call DJ — use the regular call command for that." +
