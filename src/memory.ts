@@ -25,7 +25,8 @@ function escapeIlike(text: string): string {
 export async function processMemoryIntents(
   supabase: SupabaseClient | null,
   response: string,
-  userId: string
+  userId: string,
+  userTimezone?: string
 ): Promise<string> {
   if (!supabase) return response;
 
@@ -169,6 +170,56 @@ export async function processMemoryIntents(
     if (data?.[0]) {
       await supabase
         .from("agent_tasks")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("id", data[0].id);
+    }
+    clean = clean.replace(match[0], "");
+  }
+
+  // [SCHEDULE: title | datetime | instructions]
+  // [SCHEDULE: title | datetime | instructions | RECUR: rule]
+  // [SCHEDULE: title | datetime | instructions | RECUR: rule | IF: condition]
+  for (const match of response.matchAll(
+    /\[SCHEDULE:\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)(?:\s*\|\s*RECUR:\s*(.+?))?(?:\s*\|\s*IF:\s*(.+?))?\]/gi
+  )) {
+    const title = match[1].trim();
+    const rawTrigger = match[2].trim();
+    const instructions = match[3].trim();
+    const recurrence = match[4]?.trim() || null;
+    const condition = match[5]?.trim() || null;
+    const tz = userTimezone || "UTC";
+
+    const triggerAt = parseScheduleTrigger(rawTrigger, tz);
+    if (triggerAt) {
+      const isOneTime = !recurrence;
+      await supabase.from("scheduled_tasks").insert({
+        user_id: userId,
+        created_by: "user",
+        title,
+        instructions,
+        trigger_at: triggerAt.toISOString(),
+        recurrence,
+        timezone: tz,
+        condition,
+        max_runs: isOneTime ? 1 : null,
+      });
+    }
+    clean = clean.replace(match[0], "");
+  }
+
+  // [SCHEDULE_CANCEL: search text]
+  for (const match of response.matchAll(/\[SCHEDULE_CANCEL:\s*(.+?)\]/gi)) {
+    const { data } = await supabase
+      .from("scheduled_tasks")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .ilike("title", `%${escapeIlike(match[1])}%`)
+      .limit(1);
+
+    if (data?.[0]) {
+      await supabase
+        .from("scheduled_tasks")
         .update({ status: "cancelled", updated_at: new Date().toISOString() })
         .eq("id", data[0].id);
     }
@@ -330,6 +381,124 @@ export async function getRelevantContext(
     );
   } catch (error) {
     console.warn("Semantic search unavailable:", error);
+    return "";
+  }
+}
+
+/**
+ * Parse a trigger time string into a Date.
+ * Supports: ISO datetime (2026-02-19T15:00:00), relative (+30m, +2h, +1d).
+ */
+export function parseScheduleTrigger(raw: string, timezone: string): Date | null {
+  // Relative: +30m, +2h, +1d
+  const relMatch = raw.match(/^\+(\d+)([mhd])$/i);
+  if (relMatch) {
+    const amount = parseInt(relMatch[1]);
+    const unit = relMatch[2].toLowerCase();
+    const now = new Date();
+    if (unit === "m") now.setMinutes(now.getMinutes() + amount);
+    else if (unit === "h") now.setHours(now.getHours() + amount);
+    else if (unit === "d") now.setDate(now.getDate() + amount);
+    return now;
+  }
+
+  // ISO datetime — parse directly
+  const parsed = new Date(raw);
+  if (!isNaN(parsed.getTime())) return parsed;
+
+  return null;
+}
+
+/**
+ * Compute the next trigger_at for a recurring task.
+ * Recurrence DSL: daily:HH:MM, weekly:DAY:HH:MM, weekdays:HH:MM, interval:SECONDS
+ */
+export function computeNextTrigger(recurrence: string, timezone: string, lastTrigger: Date): Date | null {
+  const parts = recurrence.split(":");
+
+  if (parts[0] === "interval" && parts[1]) {
+    const seconds = parseInt(parts[1]);
+    if (isNaN(seconds)) return null;
+    return new Date(lastTrigger.getTime() + seconds * 1000);
+  }
+
+  if (parts[0] === "daily" && parts[1] && parts[2]) {
+    const hour = parseInt(parts[1]);
+    const minute = parseInt(parts[2]);
+    const next = new Date(lastTrigger);
+    next.setDate(next.getDate() + 1);
+    // Set time in UTC approximation (timezone handling is simplified)
+    next.setUTCHours(hour, minute, 0, 0);
+    return next;
+  }
+
+  if (parts[0] === "weekly" && parts[1] && parts[2] && parts[3]) {
+    const targetDay = parseInt(parts[1]); // 0=Sunday, 1=Monday, etc.
+    const hour = parseInt(parts[2]);
+    const minute = parseInt(parts[3]);
+    const next = new Date(lastTrigger);
+    const currentDay = next.getUTCDay();
+    let daysAhead = targetDay - currentDay;
+    if (daysAhead <= 0) daysAhead += 7;
+    next.setDate(next.getDate() + daysAhead);
+    next.setUTCHours(hour, minute, 0, 0);
+    return next;
+  }
+
+  if (parts[0] === "weekdays" && parts[1] && parts[2]) {
+    const hour = parseInt(parts[1]);
+    const minute = parseInt(parts[2]);
+    const next = new Date(lastTrigger);
+    do {
+      next.setDate(next.getDate() + 1);
+    } while (next.getUTCDay() === 0 || next.getUTCDay() === 6); // skip weekends
+    next.setUTCHours(hour, minute, 0, 0);
+    return next;
+  }
+
+  return null;
+}
+
+/**
+ * Get active scheduled tasks for prompt context injection.
+ */
+export async function getScheduleContext(
+  supabase: SupabaseClient | null,
+  userId: string,
+  userTimezone?: string
+): Promise<string> {
+  if (!supabase) return "";
+
+  try {
+    const { data, error } = await supabase.rpc("get_scheduled_tasks", { p_user_id: userId });
+
+    if (error) {
+      console.warn("Schedule context error:", error.message);
+      return "";
+    }
+
+    if (!data?.length) return "";
+
+    const lines = data.map((t: any) => {
+      const triggerStr = t.trigger_at
+        ? new Date(t.trigger_at).toLocaleString("en-US", {
+            timeZone: userTimezone || t.timezone || "UTC",
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          })
+        : "no trigger time";
+      const recur = t.recurrence ? ` (${t.recurrence})` : "";
+      const creator = t.created_by === "nova" ? " [self-scheduled]" : "";
+      return `- ${t.title} — ${triggerStr}${recur}${creator}`;
+    });
+
+    return "SCHEDULED TASKS:\n" + lines.join("\n");
+  } catch (error) {
+    console.warn("Schedule context error:", error);
     return "";
   }
 }

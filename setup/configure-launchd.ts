@@ -50,6 +50,7 @@ function generatePlist(opts: {
   script: string;
   keepAlive: boolean;
   calendarIntervals?: { Hour: number; Minute: number }[];
+  startInterval?: number;
 }): string {
   const bunPath = findBunSync;
 
@@ -69,6 +70,10 @@ function generatePlist(opts: {
       )
       .join("")}
     </array>`;
+  } else if (opts.startInterval) {
+    scheduling = `
+    <key>StartInterval</key>
+    <integer>${opts.startInterval}</integer>`;
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -121,6 +126,7 @@ interface ServiceConfig {
   script: string;
   keepAlive: boolean;
   calendarIntervals?: { Hour: number; Minute: number }[];
+  startInterval?: number;
   description: string;
 }
 
@@ -158,6 +164,13 @@ const SERVICES: Record<string, ServiceConfig> = {
     keepAlive: false,
     calendarIntervals: [{ Hour: 3, Minute: 0 }],
     description: "Memory cleanup (daily at 3am)",
+  },
+  dispatcher: {
+    label: "com.nova.task-dispatcher",
+    script: "examples/task-dispatcher.ts",
+    keepAlive: false,
+    startInterval: 60,
+    description: "Scheduled task dispatcher (runs every 60s)",
   },
   miniapp: {
     label: "com.nova.miniapp",
@@ -232,7 +245,7 @@ async function main() {
     const config = SERVICES[name];
     if (!config) {
       console.log(`  ${FAIL} Unknown service: ${name}`);
-      console.log(`      ${dim("Available: relay, checkin, briefing, memory-review, miniapp, all")}`);
+      console.log(`      ${dim("Available: relay, checkin, briefing, memory-review, dispatcher, miniapp, all")}`);
       allOk = false;
       continue;
     }

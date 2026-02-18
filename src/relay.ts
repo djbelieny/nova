@@ -20,6 +20,7 @@ import {
   getRelevantContext,
   getRecentHistory,
   getTaskContext,
+  getScheduleContext,
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
@@ -284,11 +285,12 @@ bot.on("callback_query:data", async (ctx) => {
     await ctx.replyWithChatAction("typing");
 
     runTask(ctx, `Button: ${selection.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
+      const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
         getRelevantContext(supabase, selection, user.id),
         getMemoryContext(supabase, user.id),
         getRecentHistory(supabase, user.id),
         getTaskContext(supabase, user.id),
+        getScheduleContext(supabase, user.id, user.timezone),
       ]);
       return {
         prompt: buildPrompt(
@@ -297,11 +299,12 @@ bot.on("callback_query:data", async (ctx) => {
           relevantContext,
           memoryContext,
           recentHistory,
-          taskContext
+          taskContext,
+          scheduleContext
         ),
       };
     }, {
-      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id),
+      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
     });
   }
 });
@@ -738,11 +741,12 @@ bot.on("message:voice", async (ctx) => {
     await saveMessage("user", `[Voice ${voice.duration}s]: ${transcription}`, user.id);
 
     runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
+      const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
         getRelevantContext(supabase, transcription, user.id),
         getMemoryContext(supabase, user.id),
         getRecentHistory(supabase, user.id),
         getTaskContext(supabase, user.id),
+        getScheduleContext(supabase, user.id, user.timezone),
       ]);
       return {
         prompt: buildPrompt(
@@ -751,11 +755,12 @@ bot.on("message:voice", async (ctx) => {
           relevantContext,
           memoryContext,
           recentHistory,
-          taskContext
+          taskContext,
+          scheduleContext
         ),
       };
     }, {
-      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id),
+      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
     });
   } catch (error) {
     console.error("Voice error:", error);
@@ -791,12 +796,13 @@ bot.on("message:photo", async (ctx) => {
     await saveMessage("user", `[Image]: ${caption}`, user.id);
 
     runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
-      const [memoryContext, recentHistory, taskContext] = await Promise.all([
+      const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
         getMemoryContext(supabase, user.id),
         getRecentHistory(supabase, user.id),
         getTaskContext(supabase, user.id),
+        getScheduleContext(supabase, user.id, user.timezone),
       ]);
-      const contextPrefix = [memoryContext, taskContext, recentHistory].filter(Boolean).join("\n\n");
+      const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, `image_${fileId}.jpg`, caption)
         : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
@@ -805,7 +811,7 @@ bot.on("message:photo", async (ctx) => {
       postProcess: async (raw) => {
         // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
         setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
-        return processMemoryIntents(supabase, raw, user.id);
+        return processMemoryIntents(supabase, raw, user.id, user.timezone);
       },
     });
   } catch (error) {
@@ -846,12 +852,13 @@ bot.on("message:document", async (ctx) => {
     await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`, user.id);
 
     runTask(ctx, `Doc: ${doc.file_name}`, async () => {
-      const [memoryContext, recentHistory, taskContext] = await Promise.all([
+      const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
         getMemoryContext(supabase, user.id),
         getRecentHistory(supabase, user.id),
         getTaskContext(supabase, user.id),
+        getScheduleContext(supabase, user.id, user.timezone),
       ]);
-      const contextPrefix = [memoryContext, taskContext, recentHistory].filter(Boolean).join("\n\n");
+      const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, doc.file_name || "document", caption)
         : (contextPrefix ? contextPrefix + "\n\n" : "") + `[File: ${filePath}]\n\n${caption}`;
@@ -865,7 +872,7 @@ bot.on("message:document", async (ctx) => {
         } else {
           await unlink(filePath).catch(() => {});
         }
-        return processMemoryIntents(supabase, raw, user.id);
+        return processMemoryIntents(supabase, raw, user.id, user.timezone);
       },
     });
   } catch (error) {
@@ -923,7 +930,8 @@ function buildPrompt(
   relevantContext?: string,
   memoryContext?: string,
   recentHistory?: string,
-  taskContext?: string
+  taskContext?: string,
+  scheduleContext?: string
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -945,6 +953,7 @@ function buildPrompt(
   if (user.profile_text) parts.push(`\nProfile:\n${user.profile_text}`);
   if (memoryContext) parts.push(`\n${memoryContext}`);
   if (taskContext) parts.push(`\n${taskContext}`);
+  if (scheduleContext) parts.push(`\n${scheduleContext}`);
   if (recentHistory) parts.push(`\n${recentHistory}`);
   if (relevantContext) parts.push(`\n${relevantContext}`);
 
@@ -993,6 +1002,36 @@ function buildPrompt(
       "\n  [TASK_BLOCKED: search text | what's blocking it]" +
       "\nTo cancel a task:" +
       "\n  [TASK_CANCEL: search text]"
+  );
+
+  parts.push(
+    "\nSCHEDULED TASKS:" +
+      "\nYou can schedule reminders, follow-ups, and recurring tasks. When the user asks to be reminded, " +
+      "or when you think a follow-up check would be useful, include a schedule tag:" +
+      "\n  [SCHEDULE: title | datetime | instructions]" +
+      "\n  [SCHEDULE: title | datetime | instructions | RECUR: rule]" +
+      "\n  [SCHEDULE: title | datetime | instructions | RECUR: rule | IF: condition]" +
+      "\n  [SCHEDULE_CANCEL: search text matching title]" +
+      "\n" +
+      "\nDatetime formats:" +
+      "\n  - Absolute: 2026-02-19T15:00:00 (ISO format, user's timezone)" +
+      "\n  - Relative: +30m, +2h, +1d (from now)" +
+      "\n" +
+      "\nRecurrence rules (RECUR:):" +
+      "\n  - daily:HH:MM — every day at HH:MM" +
+      "\n  - weekly:DAY:HH:MM — every week (DAY: 0=Sun, 1=Mon, ...)" +
+      "\n  - weekdays:HH:MM — Monday through Friday at HH:MM" +
+      "\n  - interval:SECONDS — every N seconds" +
+      "\n" +
+      "\nConditions (IF:): Optional. Claude evaluates this at trigger time and skips if false." +
+      "\n" +
+      "\nExamples:" +
+      "\n  [SCHEDULE: Call dentist | 2026-02-19T15:00:00 | Remind " + user.name + " to call the dentist for a cleaning appointment]" +
+      "\n  [SCHEDULE: Weekly calendar preview | 2026-02-24T08:30:00 | Check " + user.name + "'s Google Calendar for the week ahead and send a summary | RECUR: weekly:1:08:30]" +
+      "\n  [SCHEDULE: Q1 Report check | +2h | Check Notion for Q1 Report status | IF: Q1 Report task exists in Notion]" +
+      "\n" +
+      "\nSelf-scheduling: When you realize a follow-up would help (e.g., checking if a task got done, " +
+      "following up on a request), proactively schedule one. " + user.name + " benefits from you being anticipatory."
   );
 
   parts.push(
@@ -1399,6 +1438,42 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
           `Last 5 commits:\n${output.trim()}\n\nTo revert the latest commit, send:\n/revert confirm`
         );
       }
+    } catch (e: any) {
+      await ctx.reply(`Error: ${e.message}`);
+    }
+    return true;
+  }
+
+  if (command === "/schedules") {
+    try {
+      const { data, error } = await supabase.rpc("get_scheduled_tasks", { p_user_id: user.id });
+
+      if (error || !data?.length) {
+        await ctx.reply("No active scheduled tasks.");
+        return true;
+      }
+
+      const lines = data.map((t: any) => {
+        const triggerStr = t.trigger_at
+          ? new Date(t.trigger_at).toLocaleString("en-US", {
+              timeZone: user.timezone,
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })
+          : "no trigger";
+        const recur = t.recurrence ? ` | ${t.recurrence}` : " | one-time";
+        const creator = t.created_by === "nova" ? " (Nova)" : "";
+        const cond = t.condition ? `\n  IF: ${t.condition}` : "";
+        return `- <b>${t.title}</b>${creator}\n  ${triggerStr}${recur}${cond}`;
+      });
+
+      await ctx.reply(`<b>Scheduled Tasks (${data.length})</b>\n\n${lines.join("\n\n")}`, { parse_mode: "HTML" }).catch(async () => {
+        await ctx.reply(`Scheduled Tasks (${data.length})\n\n${lines.map((l: string) => l.replace(/<[^>]+>/g, "")).join("\n\n")}`);
+      });
     } catch (e: any) {
       await ctx.reply(`Error: ${e.message}`);
     }

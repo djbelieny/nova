@@ -37,6 +37,7 @@ import {
   getRelevantContext,
   getRecentHistory,
   getTaskContext,
+  getScheduleContext,
 } from "./memory.ts";
 
 type ModelTier = "haiku" | "sonnet" | "opus";
@@ -160,7 +161,7 @@ export async function handleApproval(
 
     // Aggregate
     const aggregated = await aggregate(pending.originalText, allResults);
-    const processed = await processMemoryIntents(pending.supabase, aggregated, pending.user.id);
+    const processed = await processMemoryIntents(pending.supabase, aggregated, pending.user.id, pending.user.timezone);
     await _saveMessage("assistant", processed, pending.user.id);
     await _sendResponseWithVoice(ctx, processed, pending.user.id);
 
@@ -294,14 +295,15 @@ export function orchestrate(
     console.log(`[orchestrator] Classified as: ${classification.type}`);
 
     if (classification.type === "simple") {
-      const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
+      const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
         getRelevantContext(supabase, text, user.id),
         getMemoryContext(supabase, user.id),
         getRecentHistory(supabase, user.id),
         getTaskContext(supabase, user.id),
+        getScheduleContext(supabase, user.id, user.timezone),
       ]);
       return {
-        prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext),
+        prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext),
       };
     }
 
@@ -311,7 +313,7 @@ export function orchestrate(
   }, {
     postProcess: async (raw) => {
       if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
-      return processMemoryIntents(supabase, raw, user.id);
+      return processMemoryIntents(supabase, raw, user.id, user.timezone);
     },
     userId: user.id,
   });
@@ -328,17 +330,18 @@ function routeSimple(
   supabase: SupabaseClient | null
 ): void {
   _runTask(ctx, text.substring(0, 50), async () => {
-    const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
+    const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
       getRelevantContext(supabase, text, user.id),
       getMemoryContext(supabase, user.id),
       getRecentHistory(supabase, user.id),
       getTaskContext(supabase, user.id),
+      getScheduleContext(supabase, user.id, user.timezone),
     ]);
     return {
-      prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext),
+      prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext),
     };
   }, {
-    postProcess: (raw) => processMemoryIntents(supabase, raw, user.id),
+    postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
   });
 }
 
@@ -427,7 +430,7 @@ async function routeComplex(
       const allSucceeded = results.every((r) => r.success);
 
       const aggregated = await aggregate(text, results);
-      const processed = await processMemoryIntents(supabase, aggregated, user.id);
+      const processed = await processMemoryIntents(supabase, aggregated, user.id, user.timezone);
       await _saveMessage("assistant", processed, user.id);
 
       // Delete checklist and send final response
