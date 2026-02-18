@@ -398,7 +398,7 @@ async function routeComplex(
         await supabase
           .from("agent_tasks")
           .update({
-            status: allSucceeded ? "done" : "blocked",
+            status: allSucceeded ? "completed" : "blocked",
             result: `${results.length} subtasks, ${results.filter((r) => r.success).length} succeeded`,
             updated_at: new Date().toISOString(),
           })
@@ -511,6 +511,20 @@ async function routeComplex(
     }
   } catch (error) {
     console.error("[orchestrator] Complex route error:", error);
+
+    // Mark parent task as blocked so it doesn't stay stuck as in_progress
+    if (supabase && parentTaskId) {
+      await supabase
+        .from("agent_tasks")
+        .update({
+          status: "blocked",
+          result: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", parentTaskId)
+        .catch(() => {});
+    }
+
     console.log("[orchestrator] Falling back to simple path");
     routeSimple(ctx, text, user, supabase);
   }

@@ -274,7 +274,7 @@ export async function executePhase(
             await supabase
               .from("agent_tasks")
               .update({
-                status: "done",
+                status: "completed",
                 result: result.substring(0, 500),
                 updated_at: new Date().toISOString(),
               })

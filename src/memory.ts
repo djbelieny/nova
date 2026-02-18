@@ -126,7 +126,7 @@ export async function processMemoryIntents(
     if (data?.[0]) {
       await supabase
         .from("agent_tasks")
-        .update({ status: "done", result: match[2], updated_at: new Date().toISOString() })
+        .update({ status: "completed", result: match[2], updated_at: new Date().toISOString() })
         .eq("id", data[0].id);
     }
     clean = clean.replace(match[0], "");
