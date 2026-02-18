@@ -169,15 +169,23 @@ async function authenticateRequest(req: Request): Promise<{ user: any; telegramU
 async function getProfile(userId: string): Promise<unknown> {
   if (!supabase) return { error: "Supabase not configured" };
   try {
-    const [{ data: user, error: userErr }, { data: prefs, error: prefsErr }] = await Promise.all([
-      supabase.from("users").select("*").eq("id", userId).single(),
-      supabase.from("user_preferences").select("*").eq("user_id", userId).single(),
-    ]);
+    const { data: user, error: userErr } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", userId)
+      .single();
 
+    // Extract preferences from users.preferences JSONB column
+    const prefs = user?.preferences || {};
     return {
       user: user || null,
-      preferences: prefs || null,
-      error: userErr?.message || prefsErr?.message || null,
+      preferences: {
+        voice_responses: prefs.voice_responses ?? false,
+        auto_approve: prefs.auto_approve ?? false,
+        notification_style: prefs.notification_style ?? "normal",
+        language: prefs.language ?? "en",
+      },
+      error: userErr?.message || null,
     };
   } catch (e: any) {
     return { error: e.message };
@@ -218,31 +226,24 @@ async function updatePreferences(userId: string, fields: Record<string, any>): P
     }
     if (Object.keys(updates).length === 0) return { error: "No valid fields to update" };
 
-    // Upsert: try update first, then insert if not found
-    const { data: existing } = await supabase
-      .from("user_preferences")
-      .select("id")
-      .eq("user_id", userId)
+    // Write each preference to users.preferences JSONB via RPC
+    for (const [key, value] of Object.entries(updates)) {
+      const { error } = await supabase.rpc("update_user_preference", {
+        p_user_id: userId,
+        p_key: key,
+        p_value: JSON.stringify(value),
+      });
+      if (error) return { error: error.message };
+    }
+
+    // Return the updated preferences
+    const { data: user } = await supabase
+      .from("users")
+      .select("preferences")
+      .eq("id", userId)
       .single();
 
-    if (existing) {
-      const { data, error } = await supabase
-        .from("user_preferences")
-        .update(updates)
-        .eq("user_id", userId)
-        .select()
-        .single();
-      if (error) return { error: error.message };
-      return { preferences: data };
-    } else {
-      const { data, error } = await supabase
-        .from("user_preferences")
-        .insert({ user_id: userId, ...updates })
-        .select()
-        .single();
-      if (error) return { error: error.message };
-      return { preferences: data };
-    }
+    return { preferences: user?.preferences || updates };
   } catch (e: any) {
     return { error: e.message };
   }

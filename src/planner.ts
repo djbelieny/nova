@@ -52,6 +52,8 @@ export interface SubtaskResult {
   artifacts: Artifact[];
 }
 
+export type ProgressCallback = (index: number, status: "started" | "completed" | "failed") => void;
+
 /**
  * Parse [ARTIFACT: type | value] tags from agent output.
  */
@@ -154,7 +156,8 @@ export async function executePhase(
   supabase: SupabaseClient | null,
   parentTaskId?: string,
   priorArtifacts?: Artifact[],
-  priorResults?: SubtaskResult[]
+  priorResults?: SubtaskResult[],
+  onProgress?: ProgressCallback
 ): Promise<SubtaskResult[]> {
   const results: SubtaskResult[] = [...(priorResults || [])];
   const completed = new Set<number>(results.map((r) => r.index));
@@ -263,6 +266,7 @@ export async function executePhase(
         );
 
         console.log(`[planner] Executing subtask ${idx} via ${agentSlug} [${phase}]: ${subtask.description.substring(0, 50)}`);
+        onProgress?.(idx, "started");
 
         try {
           const result = await _callClaude(prompt);
@@ -280,6 +284,8 @@ export async function executePhase(
               })
               .eq("id", subtaskIds[idx]);
           }
+
+          onProgress?.(idx, "completed");
 
           return {
             index: idx,
@@ -302,6 +308,8 @@ export async function executePhase(
               })
               .eq("id", subtaskIds[idx]);
           }
+
+          onProgress?.(idx, "failed");
 
           return {
             index: idx,
@@ -333,16 +341,17 @@ export async function executeSubtasks(
   plan: ExecutionPlan,
   user: any,
   supabase: SupabaseClient | null,
-  parentTaskId?: string
+  parentTaskId?: string,
+  onProgress?: ProgressCallback
 ): Promise<SubtaskResult[]> {
-  const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId);
+  const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress);
   const artifacts = collectArtifacts(prepareResults);
 
   const hasExecute = plan.subtasks.some((s) => s.phase === "execute");
   if (!hasExecute) return prepareResults;
 
   const executeResults = await executePhase(
-    plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults
+    plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults, onProgress
   );
 
   return [...prepareResults, ...executeResults];

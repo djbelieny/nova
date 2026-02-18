@@ -18,7 +18,7 @@
  * - Haiku for aggregation of results (formatting, not reasoning)
  */
 
-import type { Context } from "grammy";
+import { type Context, InlineKeyboard } from "grammy";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ExecutionPlan } from "./patterns.ts";
 import { findPattern, recordExecution } from "./patterns.ts";
@@ -30,7 +30,7 @@ import {
   collectArtifacts,
   aggregate,
 } from "./planner.ts";
-import type { SubtaskResult, Artifact } from "./planner.ts";
+import type { SubtaskResult, Artifact, ProgressCallback } from "./planner.ts";
 import {
   processMemoryIntents,
   getMemoryContext,
@@ -387,12 +387,55 @@ async function routeComplex(
         console.log("[orchestrator] Auto-approve detected — running all phases");
       }
 
-      const results = await executeSubtasks(plan, user, supabase, parentTaskId);
+      // Send progress checklist for auto-approve/no-execute path
+      const autoChecklistMsg = await sendProgressChecklist(ctx, plan);
+      const autoStatuses = new Map<number, "pending" | "started" | "completed" | "failed">();
+      plan.subtasks.forEach((_s, i) => autoStatuses.set(i, "pending"));
+      let autoLastEdit = 0;
+      let autoEditPending = false;
+
+      const autoUpdateChecklist = async () => {
+        const now = Date.now();
+        if (now - autoLastEdit < 2000) {
+          if (!autoEditPending) {
+            autoEditPending = true;
+            setTimeout(async () => {
+              autoEditPending = false;
+              await autoUpdateChecklist();
+            }, 2000 - (now - autoLastEdit));
+          }
+          return;
+        }
+        autoLastEdit = now;
+        try {
+          if (autoChecklistMsg) {
+            await ctx.api.editMessageText(
+              ctx.chat!.id,
+              autoChecklistMsg.message_id,
+              buildChecklistText(plan, autoStatuses)
+            );
+          }
+        } catch {}
+      };
+
+      const autoOnProgress: ProgressCallback = (index, status) => {
+        autoStatuses.set(index, status === "started" ? "started" : status === "completed" ? "completed" : "failed");
+        autoUpdateChecklist();
+      };
+
+      const results = await executeSubtasks(plan, user, supabase, parentTaskId, autoOnProgress);
       const allSucceeded = results.every((r) => r.success);
 
       const aggregated = await aggregate(text, results);
       const processed = await processMemoryIntents(supabase, aggregated, user.id);
       await _saveMessage("assistant", processed, user.id);
+
+      // Delete checklist and send final response
+      try {
+        if (autoChecklistMsg) {
+          await ctx.api.deleteMessage(ctx.chat!.id, autoChecklistMsg.message_id);
+        }
+      } catch {}
       await _sendResponseWithVoice(ctx, processed, user.id);
 
       // Mark parent task done
@@ -414,10 +457,56 @@ async function routeComplex(
 
     // === TWO-PHASE EXECUTION WITH APPROVAL GATE ===
 
+    // Send progress checklist message
+    const checklistMsg = await sendProgressChecklist(ctx, plan);
+
+    // Build debounced progress callback for live checklist updates
+    const subtaskStatuses = new Map<number, "pending" | "started" | "completed" | "failed">();
+    plan.subtasks.forEach((_s, i) => subtaskStatuses.set(i, "pending"));
+    let lastChecklistEdit = 0;
+    let checklistEditPending = false;
+    const CHECKLIST_DEBOUNCE_MS = 2000;
+
+    const updateChecklist = async () => {
+      const now = Date.now();
+      if (now - lastChecklistEdit < CHECKLIST_DEBOUNCE_MS) {
+        if (!checklistEditPending) {
+          checklistEditPending = true;
+          setTimeout(async () => {
+            checklistEditPending = false;
+            await updateChecklist();
+          }, CHECKLIST_DEBOUNCE_MS - (now - lastChecklistEdit));
+        }
+        return;
+      }
+      lastChecklistEdit = now;
+      const text = buildChecklistText(plan, subtaskStatuses);
+      try {
+        if (checklistMsg) {
+          await ctx.api.editMessageText(ctx.chat!.id, checklistMsg.message_id, text);
+        }
+      } catch {}
+    };
+
+    const onProgress: ProgressCallback = (index, status) => {
+      const statusMap = { started: "started", completed: "completed", failed: "failed" } as const;
+      subtaskStatuses.set(index, statusMap[status]);
+      updateChecklist();
+    };
+
     // Phase 1: Run prepare subtasks
     console.log("[orchestrator] Phase 1: Running prepare subtasks");
-    const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId);
+    const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress);
     const artifacts = collectArtifacts(prepareResults);
+
+    // Delete checklist after prepare phase
+    try {
+      if (checklistMsg) {
+        await updateChecklist(); // final update
+        await new Promise((r) => setTimeout(r, 1500));
+        await ctx.api.deleteMessage(ctx.chat!.id, checklistMsg.message_id);
+      }
+    } catch {}
 
     console.log(`[orchestrator] Prepare phase done: ${prepareResults.length} results, ${artifacts.length} artifacts`);
 
@@ -478,27 +567,26 @@ async function routeComplex(
       }
     }, 30 * 60 * 1000);
 
-    // Send the summary with approval buttons
+    // Send the summary with approval buttons (embedded approval ID in callback data)
     const executeDescriptions = plan.subtasks
       .filter((s) => s.phase === "execute")
       .map((s) => `• ${s.description}`)
       .join("\n");
 
-    const fullMessage = `${approvalSummary}\n\n<b>Pending actions:</b>\n${executeDescriptions}\n\n<i>Tap below to proceed:</i>`;
-
-    // Save and send with buttons
     await _saveMessage("assistant", approvalSummary, user.id);
     await _sendResponseWithVoice(
       ctx,
-      `${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}\n\n_Tap below to proceed:_\n[BUTTONS: Approve & Execute | Revise | Cancel]`,
+      `${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}`,
       user.id
     );
 
-    // Store the approval ID in button callbacks via a follow-up hidden message
-    // The buttons use the format: approval:<id>:<action>
-    // But since we're using the existing [BUTTONS:] system, we need to handle
-    // the mapping in the callback handler. Store the latest approval ID per user.
-    latestApprovalByUser.set(user.id, approvalId);
+    // Send approval buttons with embedded approval ID directly
+    const keyboard = new InlineKeyboard()
+      .text("Approve & Execute", `apv:${approvalId}:approve`)
+      .text("Revise", `apv:${approvalId}:revise`)
+      .text("Cancel", `apv:${approvalId}:cancel`);
+
+    await ctx.reply("Tap below to proceed:", { reply_markup: keyboard });
 
     // Update parent task to waiting
     if (supabase && parentTaskId) {
@@ -530,17 +618,6 @@ async function routeComplex(
     console.log("[orchestrator] Falling back to simple path");
     routeSimple(ctx, text, user, supabase);
   }
-}
-
-// Track latest approval per user for button callback mapping
-const latestApprovalByUser = new Map<string, string>();
-
-/**
- * Resolve an approval ID from a user's button press.
- * Since [BUTTONS:] generates btn: callbacks, we map them to the pending approval.
- */
-export function resolveApprovalForUser(userId: string): string | undefined {
-  return latestApprovalByUser.get(userId);
 }
 
 // ============================================================
@@ -592,6 +669,46 @@ export function startMiniAppApprovalPolling(supabase: SupabaseClient | null): vo
     }
   }, 5000);
 }
+
+// ============================================================
+// PROGRESS CHECKLIST — edit-in-place with emoji status
+// ============================================================
+
+function buildChecklistText(
+  plan: ExecutionPlan,
+  statuses: Map<number, "pending" | "started" | "completed" | "failed">
+): string {
+  const lines = plan.subtasks.map((s, i) => {
+    const status = statuses.get(i) || "pending";
+    const emoji =
+      status === "completed" ? "\u2705" :  // checkmark
+      status === "failed" ? "\u274C" :      // X
+      status === "started" ? "\u23F3" :     // hourglass
+      "\u25AA\uFE0F";                       // small black square
+    return `${emoji} ${s.description}`;
+  });
+  return `Working on your task...\n\n${lines.join("\n")}`;
+}
+
+async function sendProgressChecklist(
+  ctx: Context,
+  plan: ExecutionPlan
+): Promise<{ message_id: number } | null> {
+  if (plan.subtasks.length <= 1) return null; // no checklist for single-subtask plans
+  try {
+    const statuses = new Map<number, "pending" | "started" | "completed" | "failed">();
+    plan.subtasks.forEach((_s, i) => statuses.set(i, "pending"));
+    const text = buildChecklistText(plan, statuses);
+    const msg = await ctx.reply(text);
+    return { message_id: msg.message_id };
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
+// APPROVAL SUMMARY
+// ============================================================
 
 /**
  * Build a human-readable summary of prepare-phase results for the approval message.

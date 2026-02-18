@@ -23,7 +23,7 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
-import { orchestrate, initOrchestrator, handleApproval, resolveApprovalForUser, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
+import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
@@ -249,26 +249,20 @@ bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data;
   const user = (ctx as any).novaUser as NovaUser;
 
-  // Handle approval button presses — "Approve & Execute", "Revise", "Cancel"
-  const approvalActions: Record<string, "approve" | "revise" | "cancel"> = {
-    "Approve & Execute": "approve",
-    "Revise": "revise",
-    "Cancel": "cancel",
-  };
+  // Handle approval buttons with embedded approval ID (apv:ID:action)
+  if (data.startsWith("apv:")) {
+    const parts = data.split(":");
+    const approvalId = parts[1];
+    const action = parts[2] as "approve" | "revise" | "cancel";
+    if (approvalId && action) {
+      console.log(`Approval ${action} by ${user.name}: ${approvalId}`);
+      await handleApproval(approvalId, action, ctx);
+      return;
+    }
+  }
 
   if (data.startsWith("btn:")) {
     const selection = data.substring(4);
-
-    // Check if this is an approval button
-    const approvalAction = approvalActions[selection];
-    if (approvalAction) {
-      const approvalId = resolveApprovalForUser(user.id);
-      if (approvalId) {
-        console.log(`Approval ${approvalAction} by ${user.name}: ${approvalId}`);
-        await handleApproval(approvalId, approvalAction, ctx);
-        return;
-      }
-    }
 
     // Regular button press
     console.log(`Button pressed by ${user.name}: ${selection}`);
@@ -657,6 +651,7 @@ function isRateLimited(userId: string): boolean {
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
   const user = (ctx as any).novaUser as NovaUser;
+  (ctx as any).novaReplyTo = ctx.message.message_id; // for reply threading
   console.log(`Message from ${user.name}: ${text.substring(0, 50)}...`);
 
   // Rate limit check (skip for admin commands)
@@ -698,6 +693,7 @@ bot.on("message:text", async (ctx) => {
 bot.on("message:voice", async (ctx) => {
   const voice = ctx.message.voice;
   const user = (ctx as any).novaUser as NovaUser;
+  (ctx as any).novaReplyTo = ctx.message.message_id;
   console.log(`Voice message from ${user.name}: ${voice.duration}s`);
   await ctx.replyWithChatAction("typing");
 
@@ -752,6 +748,7 @@ bot.on("message:voice", async (ctx) => {
 // Photos/Images
 bot.on("message:photo", async (ctx) => {
   const user = (ctx as any).novaUser as NovaUser;
+  (ctx as any).novaReplyTo = ctx.message.message_id;
   console.log(`Image received from ${user.name}`);
   await ctx.replyWithChatAction("typing");
 
@@ -803,6 +800,7 @@ bot.on("message:photo", async (ctx) => {
 bot.on("message:document", async (ctx) => {
   const doc = ctx.message.document;
   const user = (ctx as any).novaUser as NovaUser;
+  (ctx as any).novaReplyTo = ctx.message.message_id;
   console.log(`Document from ${user.name}: ${doc.file_name}`);
   await ctx.replyWithChatAction("typing");
 
@@ -1466,11 +1464,16 @@ async function sendResponse(ctx: Context, response: string): Promise<void> {
   // Telegram has a 4096 character limit
   const MAX_LENGTH = 4000;
 
+  // Reply threading: reply to the original user message if available
+  const replyTo = (ctx as any).novaReplyTo as number | undefined;
+  const replyOpts = replyTo ? { reply_parameters: { message_id: replyTo } } : {};
+
   if (html.length <= MAX_LENGTH) {
-    await ctx.reply(html, { parse_mode: "HTML" }).catch(async () => {
-      // Fallback to plain text if HTML parsing fails
-      await ctx.reply(response);
+    await ctx.reply(html, { parse_mode: "HTML", ...replyOpts }).catch(async () => {
+      await ctx.reply(response, replyOpts);
     });
+    // Only reply-thread the first message
+    delete (ctx as any).novaReplyTo;
     return;
   }
 
@@ -1484,7 +1487,6 @@ async function sendResponse(ctx: Context, response: string): Promise<void> {
       break;
     }
 
-    // Try to split at a natural boundary
     let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
     if (splitIndex === -1) splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
     if (splitIndex === -1) splitIndex = remaining.lastIndexOf(" ", MAX_LENGTH);
@@ -1494,11 +1496,13 @@ async function sendResponse(ctx: Context, response: string): Promise<void> {
     remaining = remaining.substring(splitIndex).trim();
   }
 
-  for (const chunk of chunks) {
-    await ctx.reply(chunk, { parse_mode: "HTML" }).catch(async () => {
-      await ctx.reply(chunk);
+  for (let i = 0; i < chunks.length; i++) {
+    const opts = i === 0 ? { parse_mode: "HTML" as const, ...replyOpts } : { parse_mode: "HTML" as const };
+    await ctx.reply(chunks[i], opts).catch(async () => {
+      await ctx.reply(chunks[i]);
     });
   }
+  delete (ctx as any).novaReplyTo;
 }
 
 /**
@@ -1571,10 +1575,14 @@ async function sendResponseWithButtons(
   const html = markdownToTelegramHTML(response);
   const MAX_LENGTH = 4000;
 
+  const replyTo = (ctx as any).novaReplyTo as number | undefined;
+  const replyOpts = replyTo ? { reply_parameters: { message_id: replyTo } } : {};
+
   if (html.length <= MAX_LENGTH) {
-    await ctx.reply(html, { reply_markup: keyboard, parse_mode: "HTML" }).catch(async () => {
-      await ctx.reply(response, { reply_markup: keyboard });
+    await ctx.reply(html, { reply_markup: keyboard, parse_mode: "HTML", ...replyOpts }).catch(async () => {
+      await ctx.reply(response, { reply_markup: keyboard, ...replyOpts });
     });
+    delete (ctx as any).novaReplyTo;
     return;
   }
 
@@ -1599,16 +1607,18 @@ async function sendResponseWithButtons(
   }
 
   for (let i = 0; i < chunks.length; i++) {
+    const baseOpts = i === 0 ? replyOpts : {};
     if (i === chunks.length - 1) {
-      await ctx.reply(chunks[i], { reply_markup: keyboard, parse_mode: "HTML" }).catch(async () => {
-        await ctx.reply(chunks[i], { reply_markup: keyboard });
+      await ctx.reply(chunks[i], { reply_markup: keyboard, parse_mode: "HTML", ...baseOpts }).catch(async () => {
+        await ctx.reply(chunks[i], { reply_markup: keyboard, ...baseOpts });
       });
     } else {
-      await ctx.reply(chunks[i], { parse_mode: "HTML" }).catch(async () => {
-        await ctx.reply(chunks[i]);
+      await ctx.reply(chunks[i], { parse_mode: "HTML", ...baseOpts }).catch(async () => {
+        await ctx.reply(chunks[i], baseOpts);
       });
     }
   }
+  delete (ctx as any).novaReplyTo;
 }
 
 // ============================================================

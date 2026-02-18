@@ -1,0 +1,291 @@
+{
+  "_comment": "Locale Template - Generated from platform.config.yaml",
+  "_instructions": [
+    "This template shows the structure for i18n locale files.",
+    "Replace {{PLACEHOLDERS}} with values from the config.",
+    "Create one file per namespace (common, home, checkout, etc.)",
+    "Create one folder per language (en, pt, es, etc.)"
+  ],
+
+  "common.json": {
+    "brand": {
+      "name": "{{config.brand.name}}",
+      "slug": "{{config.brand.slug}}",
+      "tagline": "{{config.brand.tagline}}",
+      "commandCenter": "Command Center"
+    },
+    "nav": {
+      "login": "Login",
+      "logout": "Logout",
+      "home": "Home",
+      "backToHome": "Back to Home",
+      "backToLaunchpad": "Back to Launchpad",
+      "terms": "Terms",
+      "privacy": "Privacy",
+      "contact": "Contact"
+    },
+    "buttons": {
+      "hireNow": "HIRE NOW",
+      "meetOurAgents": "MEET OUR AGENTS",
+      "getInstantAccess": "GET INSTANT ACCESS",
+      "signIn": "Sign In",
+      "signInToContinue": "Sign In to Continue",
+      "signingIn": "Signing in...",
+      "sending": "Sending...",
+      "saving": "Saving...",
+      "getAccess": "Get Access",
+      "viewDossier": "View Details",
+      "dossier": "Details",
+      "launch": "Launch",
+      "launchAgent": "Launch Agent",
+      "unlockAgent": "Unlock Agent",
+      "upgradeToUnlock": "Upgrade to Unlock",
+      "copyPrompt": "Copy prompt",
+      "copied": "Copied!",
+      "returnToHome": "Return to Home",
+      "clickHereIfNotRedirected": "Click here if not redirected",
+      "accessMyAITeam": "Access My AI Team"
+    },
+    "tiers": {
+      "_comment": "Generated from config.tiers.products",
+      "{{#each config.tiers.products}}{{tierKey}}": "{{name}}{{#unless @last}},\n      {{/unless}}{{/each}}"
+    },
+    "labels": {
+      "yourAgents": "YOUR {{count}} AGENTS:",
+      "whatsIncluded": "WHAT'S INCLUDED:",
+      "oneTime": "one-time",
+      "lifetimeAccess": "Lifetime access. No subscriptions.",
+      "popular": "POPULAR"
+    },
+    "footer": {
+      "copyright": "{{config.brand.name}}. All rights reserved.",
+      "terms": "Terms",
+      "privacy": "Privacy",
+      "contact": "Contact"
+    },
+    "loading": {
+      "loadingCommandCenter": "Loading your command center...",
+      "verifyingPurchase": "Verifying Purchase...",
+      "pleaseWait": "Please wait while we confirm your payment.",
+      "redirectingToLaunchpad": "Redirecting to your launchpad..."
+    },
+    "errors": {
+      "invalidConfirmationLink": "Invalid Confirmation Link",
+      "linkInvalidOrExpired": "This confirmation link is invalid or has expired.",
+      "unexpectedError": "An unexpected error occurred.",
+      "failedToLogin": "Failed to login"
+    },
+    "referral": {
+      "title": "REFER FRIENDS, UNLOCK REWARDS",
+      "yourLink": "Your Referral Link",
+      "copyLink": "Copy Link",
+      "copied": "Copied!",
+      "shareText": "Join me on {{config.brand.name}} and get {{config.referral.discount.value}}% off!",
+      "progressTo": "Progress to {{tier}}",
+      "friendsCount": "{{count}}/{{config.referral.milestones[0].count}} friends",
+      "badge": "Referred by a friend!",
+      "benefit": "You're saving {{config.referral.discount.value}}% on your purchase!",
+      "discountPrice": "{{config.referral.discount.value}}% OFF"
+    }
+  },
+
+  "home.json": {
+    "hero": {
+      "title": "{{config.brand.tagline}}",
+      "subtitle": "{{config.brand.description}}",
+      "cta": "GET STARTED"
+    },
+    "agents": {
+      "title": "Meet Your AI Crew",
+      "subtitle": "Specialized agents ready to transform your business",
+      "_comment": "Agent names and roles are generated from config.agents"
+    },
+    "pricing": {
+      "title": "Choose Your Crew",
+      "subtitle": "One-time payment. Lifetime access. No subscriptions.",
+      "_comment": "Pricing tiers are generated from config.tiers.products"
+    },
+    "features": {
+      "title": "Why {{config.brand.name}}?",
+      "items": [
+        "Specialized AI agents for every business need",
+        "Expert-crafted prompt templates",
+        "Lifetime access with all future updates",
+        "No subscriptions or hidden fees"
+      ]
+    }
+  },
+
+  "checkout.json": {
+    "header": {
+      "title": "Complete Your Purchase",
+      "subtitle": "Secure checkout powered by Square"
+    },
+    "orderSummary": {
+      "title": "Order Summary",
+      "agentCount": "{{count}} specialized AI agents"
+    },
+    "userInfo": {
+      "title": "Your Information",
+      "confirmUpgrade": "Confirm Your Upgrade",
+      "emailLabel": "Email Address",
+      "emailPlaceholder": "you@example.com",
+      "emailHint": "We'll send your login credentials to this email",
+      "loggedInAs": "Logged in as"
+    },
+    "whatHappensNext": {
+      "title": "What happens next?",
+      "step1": "Complete secure payment via Square",
+      "step2New": "Receive login credentials via email",
+      "step2Upgrade": "Your tier will be upgraded instantly",
+      "step3New": "Access your AI command center",
+      "step3Upgrade": "Access your new agents immediately"
+    },
+    "buttons": {
+      "proceedToPayment": "Proceed to Payment",
+      "creatingCheckout": "Creating checkout..."
+    },
+    "trust": {
+      "securePayment": "Secure payment powered by Square",
+      "ssl": "256-bit SSL Encryption",
+      "pci": "PCI DSS Compliant",
+      "moneyBack": "30-Day Money Back Guarantee"
+    },
+    "legal": {
+      "agreement": "By continuing, you agree to our Terms of Service and Privacy Policy"
+    },
+    "errors": {
+      "enterEmail": "Please enter your email address",
+      "invalidTier": "Invalid tier selected"
+    },
+    "currencyNotice": {
+      "title": "Currency Conversion Notice",
+      "description": "You are paying {{localAmount}} ({{localCurrency}}). Our payment processor will convert this to approximately ${{usdAmount}} USD at the current exchange rate."
+    }
+  },
+
+  "confirmation.json": {
+    "success": {
+      "title": "Welcome to {{config.brand.name}}!",
+      "subtitle": "Your purchase was successful",
+      "tierUnlocked": "{{tier}} Unlocked!",
+      "accessGranted": "You now have access to {{count}} AI agents"
+    },
+    "createAccount": {
+      "title": "Create Your Account",
+      "subtitle": "Set a password to access your AI crew",
+      "passwordLabel": "Password",
+      "passwordHint": "At least 8 characters",
+      "confirmLabel": "Confirm Password"
+    },
+    "buttons": {
+      "createAccount": "Create Account & Access Agents",
+      "goToLaunchpad": "Go to Launchpad"
+    },
+    "errors": {
+      "passwordMismatch": "Passwords do not match",
+      "passwordTooShort": "Password must be at least 8 characters"
+    }
+  },
+
+  "launchpad.json": {
+    "welcome": "Welcome, {{name}}!",
+    "yourTier": "Your Tier: {{tier}}",
+    "agents": {
+      "title": "Your AI Agents",
+      "subtitle": "Launch an agent to get started",
+      "locked": "Upgrade to unlock",
+      "launch": "Launch"
+    },
+    "upgrade": {
+      "title": "Unlock More Agents",
+      "subtitle": "Upgrade to access additional specialized AI agents",
+      "cta": "View Upgrade Options"
+    },
+    "referral": {
+      "title": "Earn Free Upgrades",
+      "subtitle": "Refer friends and unlock higher tiers for free"
+    }
+  },
+
+  "auth.json": {
+    "login": {
+      "title": "Welcome Back",
+      "subtitle": "Sign in to access your AI crew",
+      "emailLabel": "Email",
+      "passwordLabel": "Password",
+      "forgotPassword": "Forgot password?",
+      "noAccount": "Don't have an account?",
+      "signUp": "Get access"
+    },
+    "forgotPassword": {
+      "title": "Reset Password",
+      "subtitle": "Enter your email to receive a reset link",
+      "emailLabel": "Email Address",
+      "button": "Send Reset Link",
+      "success": "Check your email for the reset link",
+      "backToLogin": "Back to login"
+    },
+    "resetPassword": {
+      "title": "Set New Password",
+      "subtitle": "Enter your new password",
+      "passwordLabel": "New Password",
+      "confirmLabel": "Confirm Password",
+      "button": "Reset Password",
+      "success": "Password reset successfully",
+      "invalidToken": "This reset link is invalid or has expired"
+    },
+    "errors": {
+      "invalidCredentials": "Invalid email or password",
+      "emailRequired": "Email is required",
+      "passwordRequired": "Password is required"
+    }
+  },
+
+  "agents.json": {
+    "_comment": "Agent-specific translations",
+    "_instructions": [
+      "For each agent in config.agents, create entries like:",
+      "{{agentKey}}: { name, role, personality, etc. }",
+      "Most agent data comes from the database, but you can override UI labels here"
+    ],
+    "labels": {
+      "personality": "Personality",
+      "communicationStyle": "Communication Style",
+      "signatureQuote": "Signature Quote",
+      "idealFor": "Ideal For",
+      "realWorldUse": "Real World Use",
+      "valueProposition": "Why {{name}}?"
+    }
+  },
+
+  "prompts.json": {
+    "_comment": "Prompt template translations",
+    "_instructions": [
+      "Prompt templates are stored in the database with multi-language support",
+      "This file contains UI labels for the prompts interface"
+    ],
+    "labels": {
+      "promptTemplates": "Prompt Templates",
+      "copyPrompt": "Copy Prompt",
+      "copied": "Copied to clipboard!",
+      "useWith": "Use this prompt with {{agentName}}"
+    }
+  },
+
+  "legal.json": {
+    "terms": {
+      "title": "Terms of Service",
+      "lastUpdated": "Last updated: {{date}}"
+    },
+    "privacy": {
+      "title": "Privacy Policy",
+      "lastUpdated": "Last updated: {{date}}"
+    },
+    "contact": {
+      "title": "Contact Us",
+      "email": "Email: {{config.brand.supportEmail}}",
+      "description": "Have questions? We'd love to hear from you."
+    }
+  }
+}

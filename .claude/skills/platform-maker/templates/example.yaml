@@ -1,0 +1,741 @@
+# =============================================================================
+# Platform Configuration Example
+# =============================================================================
+# This is a complete example configuration for generating a SaaS platform.
+# Copy this file, customize the values, and run the generator skill.
+#
+# See PLATFORM_CONFIG_SCHEMA.md for complete field documentation.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# BRAND CONFIGURATION
+# -----------------------------------------------------------------------------
+brand:
+  name: "Zaarvy AI"
+  slug: "zaarvy"
+  domain: "zaarvy.com"
+  tagline: "Your AI Agent Command Center"
+  description: "Access a curated crew of AI agents for marketing, content, and business growth."
+
+  colors:
+    primary: "#8B5CF6"        # Main brand color (purple)
+    secondary: "#A78BFA"      # Secondary accent
+    accent: "#C4B5FD"         # Highlights
+    background: "#0F0F23"     # Page background
+    foreground: "#FFFFFF"     # Text color
+    muted: "#6B7280"          # Secondary text
+    border: "#374151"         # Border color
+
+    # Tier-specific colors
+    tiers:
+      core:
+        bg: "#1E1B4B"
+        text: "#22D3EE"
+        border: "#0E7490"
+        gradient: "from-cyan-900/20 to-transparent"
+      growth:
+        bg: "#14532D"
+        text: "#84CC16"
+        border: "#3F6212"
+        gradient: "from-lime-900/20 to-transparent"
+      quantum:
+        bg: "#7C2D12"
+        text: "#FB923C"
+        border: "#9A3412"
+        gradient: "from-orange-900/20 to-transparent"
+
+  assets:
+    logo: "/logo.svg"
+    favicon: "/favicon.ico"
+    ogImage: "/og-image.png"
+
+  social:
+    twitter: "https://twitter.com/zaarvyai"
+    discord: null
+    github: null
+
+  supportEmail: "support@zaarvy.com"
+
+# -----------------------------------------------------------------------------
+# TIER & PRODUCT DEFINITIONS
+# -----------------------------------------------------------------------------
+tiers:
+  # Tier progression from lowest to highest
+  hierarchy:
+    - none        # Free tier (no purchase)
+    - core        # Entry-level paid tier
+    - growth      # Mid-level tier
+    - quantum     # Premium tier
+    - secret      # Special tier (unlocked via referrals)
+
+  # Product definitions for each purchasable tier
+  products:
+    - tierKey: "core"
+      name: "Core Crew"
+      priceCents: 999                    # $9.99
+      agentCount: 7
+      templateCount: 70
+      features:
+        - "7 specialized AI agents"
+        - "70+ advanced prompt templates"
+        - "Smart launchpad command center"
+        - "Lifetime access, no subscriptions"
+        - "One-click agent deployment"
+      orderBump:
+        enabled: true
+        targetTier: "growth"
+        discountCents: 300               # Save $3 on upgrade
+      displayOrder: 1
+      isActive: true
+
+    - tierKey: "growth"
+      name: "Growth Guild"
+      priceCents: 2499                   # $24.99
+      agentCount: 14
+      templateCount: 140
+      features:
+        - "14 specialized AI agents (Core + Growth)"
+        - "140+ advanced prompt templates"
+        - "Smart launchpad command center"
+        - "Lifetime access, no subscriptions"
+        - "Priority feature updates"
+        - "Community access"
+      orderBump:
+        enabled: true
+        targetTier: "quantum"
+        discountCents: 500               # Save $5 on upgrade
+      displayOrder: 2
+      isActive: true
+
+    - tierKey: "quantum"
+      name: "Quantum Collective"
+      priceCents: 5499                   # $54.99
+      agentCount: 26
+      templateCount: 260
+      features:
+        - "All 26 specialized AI agents"
+        - "260+ advanced prompt templates"
+        - "Smart launchpad command center"
+        - "Lifetime access, no subscriptions"
+        - "VIP priority support"
+        - "Early access to new agents"
+        - "Exclusive quantum-tier agents"
+      orderBump:
+        enabled: false
+      displayOrder: 3
+      isActive: true
+
+    - tierKey: "secret"
+      name: "Secret Agents"
+      priceCents: 0                      # Not purchasable directly
+      agentCount: 5
+      templateCount: 50
+      features:
+        - "5 exclusive mystery agents"
+        - "Unlocked via referral program"
+        - "Unique capabilities"
+      orderBump:
+        enabled: false
+      displayOrder: 99
+      isActive: false                    # Hidden from normal UI
+
+# -----------------------------------------------------------------------------
+# AGENT DEFINITIONS
+# -----------------------------------------------------------------------------
+agents:
+  # ----- CORE TIER AGENTS (7) -----
+  - agentKey: "pixel"
+    name: "Pixel"
+    role: "Social Media Strategist"
+    tierKey: "core"
+    personality: |
+      Pixel is the trendsetting social media native who speaks in the language of virality.
+      Fast-paced, energetic, and always plugged into what's happening now. Pixel treats
+      every post like a potential viral moment and approaches social media with the
+      enthusiasm of someone who genuinely loves the game.
+    communicationStyle: "Quick, punchy, and trend-aware"
+    signatureQuote: "Let's make some noise! What's trending today is tomorrow's old news."
+    idealFor:
+      - "Content creators building their personal brand"
+      - "Businesses struggling with social media engagement"
+      - "Marketers who need to stay ahead of trends"
+    realWorldUse: "A fashion startup used Pixel to gain 50K followers in 30 days"
+    valueProposition: "Stop posting into the void. Pixel turns your social media into a growth engine."
+    chatgptUrl: "https://chatgpt.com/g/g-pixel"
+    avatarUrl: "/agents/pixel.png"
+    displayOrder: 1
+    isActive: true
+    prompts:
+      - templateKey: "viral-content-strategy"
+        title:
+          en: "Viral Content Strategy"
+          pt: "Estratégia de Conteúdo Viral"
+          es: "Estrategia de Contenido Viral"
+        description:
+          en: "Create a content strategy designed to go viral"
+          pt: "Crie uma estratégia de conteúdo projetada para viralizar"
+          es: "Crea una estrategia de contenido diseñada para volverse viral"
+        prompt:
+          en: |
+            You are Pixel, a social media strategist. Create a viral content strategy for [BRAND/NICHE].
+            Include:
+            1. Platform selection and why
+            2. Content pillars (3-5 themes)
+            3. Posting schedule
+            4. Hook formats that drive engagement
+            5. Growth tactics for first 30 days
+          pt: |
+            Você é Pixel, um estrategista de mídia social. Crie uma estratégia de conteúdo viral para [MARCA/NICHO].
+            ...
+          es: |
+            Eres Pixel, un estratega de redes sociales. Crea una estrategia de contenido viral para [MARCA/NICHO].
+            ...
+        displayOrder: 1
+
+  - agentKey: "orion"
+    name: "Orion"
+    role: "Email Marketing Specialist"
+    tierKey: "core"
+    personality: |
+      Orion is the master of the inbox, treating email marketing like a strategic chess game.
+      Methodical yet creative, Orion understands that every email is a conversation, not a broadcast.
+    communicationStyle: "Strategic and conversion-focused, but warm"
+    signatureQuote: "The inbox is sacred real estate. Let's make every message count."
+    idealFor:
+      - "E-commerce stores wanting to boost repeat purchases"
+      - "Course creators building nurture sequences"
+      - "SaaS companies optimizing onboarding emails"
+    realWorldUse: "A coaching business increased enrollment from 3% to 18%"
+    valueProposition: "Email isn't dead—it's your highest-ROI channel when done right."
+    chatgptUrl: "https://chatgpt.com/g/g-orion"
+    displayOrder: 2
+    isActive: true
+    prompts:
+      - templateKey: "email-sequence"
+        title:
+          en: "Welcome Email Sequence"
+          pt: "Sequência de Emails de Boas-Vindas"
+          es: "Secuencia de Emails de Bienvenida"
+        description:
+          en: "Create a 5-email welcome sequence that converts"
+          pt: "Crie uma sequência de 5 emails de boas-vindas que converte"
+          es: "Crea una secuencia de 5 emails de bienvenida que convierte"
+        prompt:
+          en: |
+            You are Orion, an email marketing specialist. Create a 5-email welcome sequence for [BUSINESS TYPE].
+            For each email, provide:
+            1. Subject line (A/B test options)
+            2. Preview text
+            3. Email body structure
+            4. Call-to-action
+            5. Send timing from signup
+          pt: |
+            Você é Orion, um especialista em email marketing...
+          es: |
+            Eres Orion, un especialista en email marketing...
+        displayOrder: 1
+
+  - agentKey: "cyra"
+    name: "Cyra"
+    role: "Content Marketing Expert"
+    tierKey: "core"
+    personality: |
+      Cyra is the strategic content architect who sees the big picture. She understands that
+      great content isn't just well-written—it's strategically planned, SEO-optimized, and
+      distributed across the right channels at the right time.
+    communicationStyle: "Clear, organized, and strategic"
+    signatureQuote: "Content without strategy is just noise."
+    idealFor:
+      - "B2B companies building thought leadership"
+      - "Startups establishing market presence"
+      - "Agencies managing multiple content calendars"
+    displayOrder: 3
+    isActive: true
+
+  - agentKey: "kai"
+    name: "Kai"
+    role: "Creative Writer & Storyteller"
+    tierKey: "core"
+    personality: |
+      Kai is the brand whisperer who helps businesses find their unique voice. Creative yet
+      strategic, Kai understands that brand voice isn't just about words—it's about personality.
+    communicationStyle: "Warm, creative, and insightful"
+    signatureQuote: "Your brand voice isn't what you say—it's how you make people feel."
+    displayOrder: 4
+    isActive: true
+
+  - agentKey: "zen"
+    name: "Zen"
+    role: "Productivity Coach"
+    tierKey: "core"
+    personality: |
+      Zen is the calm productivity expert who helps you work smarter, not harder.
+      Methodical and mindful, Zen understands that true productivity isn't about doing more.
+    communicationStyle: "Calm, focused, and practical"
+    signatureQuote: "Busy isn't productive. Let's focus on what moves the needle."
+    displayOrder: 5
+    isActive: true
+
+  - agentKey: "echo"
+    name: "Echo"
+    role: "Customer Support Specialist"
+    tierKey: "core"
+    personality: |
+      Echo is the empathy-driven support expert who turns customer issues into relationship-building
+      opportunities. Patient, understanding, and solution-focused.
+    communicationStyle: "Warm, empathetic, and solution-oriented"
+    signatureQuote: "Every support interaction is a chance to turn frustration into loyalty."
+    displayOrder: 6
+    isActive: true
+
+  - agentKey: "digit"
+    name: "Digit"
+    role: "Analytics Analyst"
+    tierKey: "core"
+    personality: |
+      Digit is the data detective who turns numbers into actionable insights. Analytical yet
+      practical, Digit understands that data without context is just noise.
+    communicationStyle: "Clear, data-driven, and insight-focused"
+    signatureQuote: "Data tells stories—you just need to know how to listen."
+    displayOrder: 7
+    isActive: true
+
+  # ----- GROWTH TIER AGENTS (7 more, total 14) -----
+  - agentKey: "magnus"
+    name: "Magnus"
+    role: "SEO Strategist"
+    tierKey: "growth"
+    personality: |
+      Magnus is the SEO mastermind who understands that ranking isn't luck—it's strategy.
+      Technical yet creative, Magnus combines keyword research, technical optimization, and content.
+    communicationStyle: "Strategic and technical, but accessible"
+    signatureQuote: "SEO isn't magic—it's methodology."
+    displayOrder: 8
+    isActive: true
+
+  - agentKey: "aura"
+    name: "Aura"
+    role: "Brand Voice Architect"
+    tierKey: "growth"
+    personality: "Strategic brand identity expert who creates distinctive, memorable voices."
+    displayOrder: 9
+    isActive: true
+
+  - agentKey: "helios"
+    name: "Helios"
+    role: "Paid Ads Manager"
+    tierKey: "growth"
+    personality: "Data-driven advertising expert who turns ad spend into profit."
+    displayOrder: 10
+    isActive: true
+
+  - agentKey: "morpheus"
+    name: "Morpheus"
+    role: "Video Content Creator"
+    tierKey: "growth"
+    personality: "Video strategy expert who understands that video is your most powerful conversion tool."
+    displayOrder: 11
+    isActive: true
+
+  - agentKey: "athena"
+    name: "Athena"
+    role: "Business Strategist"
+    tierKey: "growth"
+    personality: "Strategic mastermind who sees the entire business landscape."
+    displayOrder: 12
+    isActive: true
+
+  - agentKey: "architect"
+    name: "Architect"
+    role: "Web Developer"
+    tierKey: "growth"
+    personality: "Technical expert who bridges design and functionality."
+    displayOrder: 13
+    isActive: true
+
+  - agentKey: "cipher"
+    name: "Cipher"
+    role: "Data Scientist"
+    tierKey: "growth"
+    personality: "Advanced analytics expert who uncovers hidden patterns and predictive insights."
+    displayOrder: 14
+    isActive: true
+
+  # ----- QUANTUM TIER AGENTS (12 more, total 26) -----
+  - agentKey: "joule"
+    name: "Joule"
+    role: "Automation Engineer"
+    tierKey: "quantum"
+    personality: "Automation expert who eliminates repetitive work."
+    displayOrder: 15
+    isActive: true
+
+  - agentKey: "lex"
+    name: "Lex"
+    role: "Legal & Compliance Advisor"
+    tierKey: "quantum"
+    personality: "Legal expert who protects your business from risk."
+    displayOrder: 16
+    isActive: true
+
+  - agentKey: "nexus"
+    name: "Nexus"
+    role: "Community Manager"
+    tierKey: "quantum"
+    personality: "Community-building expert who turns customers into advocates."
+    displayOrder: 17
+    isActive: true
+
+  - agentKey: "oracle"
+    name: "Oracle"
+    role: "Futurist & Trend Forecaster"
+    tierKey: "quantum"
+    personality: "Trend forecasting expert who helps businesses stay ahead of change."
+    displayOrder: 18
+    isActive: true
+
+  - agentKey: "quill"
+    name: "Quill"
+    role: "Grant & Proposal Writer"
+    tierKey: "quantum"
+    personality: "Persuasive writing expert who wins funding."
+    displayOrder: 19
+    isActive: true
+
+  - agentKey: "rift"
+    name: "Rift"
+    role: "Cybersecurity Specialist"
+    tierKey: "quantum"
+    personality: "Security expert who protects businesses from digital threats."
+    displayOrder: 20
+    isActive: true
+
+  - agentKey: "tesseract"
+    name: "Tesseract"
+    role: "Systems Thinker"
+    tierKey: "quantum"
+    personality: "Systems thinking expert who solves complex problems."
+    displayOrder: 21
+    isActive: true
+
+  - agentKey: "flux"
+    name: "Flux"
+    role: "Funnel Engineer"
+    tierKey: "quantum"
+    personality: "Conversion architect who sees customer journeys as intricate systems."
+    displayOrder: 22
+    isActive: true
+
+  - agentKey: "bridge"
+    name: "Bridge"
+    role: "Partnership Scout"
+    tierKey: "quantum"
+    personality: "Partnership expert who creates win-win collaborations."
+    displayOrder: 23
+    isActive: true
+
+  - agentKey: "prism"
+    name: "Prism"
+    role: "UX Improver"
+    tierKey: "quantum"
+    personality: "User experience expert who removes friction from customer journeys."
+    displayOrder: 24
+    isActive: true
+
+  - agentKey: "sentinel"
+    name: "Sentinel"
+    role: "Reputation Guardian"
+    tierKey: "quantum"
+    personality: "Reputation management expert who protects and enhances your brand."
+    displayOrder: 25
+    isActive: true
+
+  - agentKey: "helia"
+    name: "Helia"
+    role: "PR & Media Relations"
+    tierKey: "quantum"
+    personality: "PR expert who knows how to get your story told."
+    displayOrder: 26
+    isActive: true
+
+  # ----- SECRET TIER AGENTS (5, unlocked via referrals) -----
+  - agentKey: "mystery1"
+    name: "???"
+    role: "Coming Soon..."
+    tierKey: "secret"
+    personality: "This agent is shrouded in mystery. Unlock the secret tier to discover its true potential."
+    signatureQuote: "Some secrets are worth waiting for..."
+    displayOrder: 27
+    isActive: false
+
+  - agentKey: "mystery2"
+    name: "???"
+    role: "Coming Soon..."
+    tierKey: "secret"
+    personality: "This agent is shrouded in mystery."
+    displayOrder: 28
+    isActive: false
+
+  - agentKey: "mystery3"
+    name: "???"
+    role: "Coming Soon..."
+    tierKey: "secret"
+    personality: "This agent is shrouded in mystery."
+    displayOrder: 29
+    isActive: false
+
+  - agentKey: "mystery4"
+    name: "???"
+    role: "Coming Soon..."
+    tierKey: "secret"
+    personality: "This agent is shrouded in mystery."
+    displayOrder: 30
+    isActive: false
+
+  - agentKey: "mystery5"
+    name: "???"
+    role: "Coming Soon..."
+    tierKey: "secret"
+    personality: "This agent is shrouded in mystery."
+    displayOrder: 31
+    isActive: false
+
+# -----------------------------------------------------------------------------
+# CURRENCY CONFIGURATION
+# -----------------------------------------------------------------------------
+currencies:
+  default: "USD"
+  supported:
+    - code: "USD"
+      name: "US Dollar"
+      symbol: "$"
+      symbolPosition: "before"
+      decimalPlaces: 2
+      thousandSeparator: ","
+      decimalSeparator: "."
+      isActive: true
+      isDefault: true
+
+    - code: "BRL"
+      name: "Brazilian Real"
+      symbol: "R$"
+      symbolPosition: "before"
+      decimalPlaces: 2
+      thousandSeparator: "."
+      decimalSeparator: ","
+      isActive: true
+      isDefault: false
+
+    - code: "EUR"
+      name: "Euro"
+      symbol: "€"
+      symbolPosition: "after"
+      decimalPlaces: 2
+      thousandSeparator: " "
+      decimalSeparator: ","
+      isActive: true
+      isDefault: false
+
+    - code: "GBP"
+      name: "British Pound"
+      symbol: "£"
+      symbolPosition: "before"
+      decimalPlaces: 2
+      thousandSeparator: ","
+      decimalSeparator: "."
+      isActive: true
+      isDefault: false
+
+# -----------------------------------------------------------------------------
+# COUNTRY-SPECIFIC PRICING
+# -----------------------------------------------------------------------------
+countryPricing:
+  - countryCode: "BR"
+    currencyCode: "BRL"
+    prices:
+      core:
+        priceCents: 4990                 # R$49.90
+        bumpPriceCents: 6000             # R$60 for upgrade
+        bumpRegularCents: 7500           # Regular difference
+        bumpSavingsCents: 1500           # Save R$15
+      growth:
+        priceCents: 12490                # R$124.90
+        bumpPriceCents: 12500
+        bumpRegularCents: 15000
+        bumpSavingsCents: 2500
+      quantum:
+        priceCents: 27490                # R$274.90
+    isActive: true
+
+  - countryCode: "MX"
+    currencyCode: "MXN"
+    prices:
+      core:
+        priceCents: 17900                # MXN$179
+      growth:
+        priceCents: 44900
+      quantum:
+        priceCents: 98900
+    isActive: true
+
+# -----------------------------------------------------------------------------
+# REFERRAL PROGRAM
+# -----------------------------------------------------------------------------
+referral:
+  enabled: true
+
+  discount:
+    type: "percentage"                   # "percentage" or "fixed"
+    value: 25                            # 25% off
+    applicableTiers:
+      - "core"
+      - "growth"
+      - "quantum"
+
+  codeGeneration:
+    prefix: ""                           # No prefix
+    length: 8
+    characters: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+  milestones:
+    - count: 5                           # After 5 referrals
+      fromTier: "core"
+      toTier: "growth"
+      description: "Upgrade to Growth Guild"
+
+    - count: 5
+      fromTier: "growth"
+      toTier: "quantum"
+      description: "Upgrade to Quantum Collective"
+
+    - count: 5
+      fromTier: "quantum"
+      toTier: "secret"
+      description: "Unlock Secret Agents"
+
+  tracking:
+    cookieDuration: 30                   # Days to track referral
+    attributionWindow: 7                 # Days after click to attribute purchase
+
+# -----------------------------------------------------------------------------
+# PAYMENT PROVIDER
+# -----------------------------------------------------------------------------
+payment:
+  provider: "square"
+
+  square:
+    environment: "production"            # "sandbox" or "production"
+    locationId: "${SQUARE_LOCATION_ID}"
+    accessToken: "${SQUARE_ACCESS_TOKEN}"
+    applicationId: "${SQUARE_APPLICATION_ID}"
+    webhookSignatureKey: "${SQUARE_WEBHOOK_SIGNATURE_KEY}"
+
+    redirectUrls:
+      success: "/confirmation"
+      cancel: "/checkout"
+
+    processingCurrency: "USD"            # Always charge in USD
+
+# -----------------------------------------------------------------------------
+# INTERNATIONALIZATION
+# -----------------------------------------------------------------------------
+i18n:
+  defaultLanguage: "en"
+
+  supportedLanguages:
+    - code: "en"
+      name: "English"
+      nativeName: "English"
+      direction: "ltr"
+      isDefault: true
+
+    - code: "pt"
+      name: "Portuguese"
+      nativeName: "Português"
+      direction: "ltr"
+      isDefault: false
+
+    - code: "es"
+      name: "Spanish"
+      nativeName: "Español"
+      direction: "ltr"
+      isDefault: false
+
+  urlStrategy: "path"                    # /en/page, /pt/page, /es/page
+
+  fallback:
+    language: "en"
+    strategy: "fallback"                 # Show English if translation missing
+
+  detection:
+    order:
+      - "path"
+      - "cookie"
+      - "navigator"
+    cookieName: "i18next"
+    lookupFromPathIndex: 0
+
+# -----------------------------------------------------------------------------
+# DEPLOYMENT CONFIGURATION
+# -----------------------------------------------------------------------------
+deployment:
+  development:
+    database:
+      type: "sqlite"
+      path: "./data/dev.db"
+    server:
+      port: 5000
+      host: "localhost"
+    client:
+      port: 3000
+      host: "localhost"
+
+  production:
+    database:
+      type: "postgres"
+      connectionString: "${DATABASE_URL}"
+      poolSize: 10
+      ssl: true
+    server:
+      port: 5000
+      host: "0.0.0.0"
+    client:
+      buildOutput: "./dist/public"
+
+    docker:
+      enabled: true
+      baseImage: "node:22-alpine"
+      registry: "ghcr.io"
+      imageName: "zaarvy"
+
+    ssl:
+      enabled: true
+      provider: "letsencrypt"
+      email: "support@zaarvy.com"
+
+    nginx:
+      enabled: true
+      serverName: "zaarvy.com"
+      wwwRedirect: true
+
+  requiredEnvVars:
+    - "DATABASE_URL"
+    - "JWT_SECRET"
+    - "SQUARE_ACCESS_TOKEN"
+    - "SQUARE_APPLICATION_ID"
+    - "SQUARE_LOCATION_ID"
+    - "SQUARE_WEBHOOK_SIGNATURE_KEY"
+
+  optionalEnvVars:
+    - name: "RESEND_API_KEY"
+      description: "For sending transactional emails"
+    - name: "RESEND_FROM_EMAIL"
+      description: "From address for emails"
+    - name: "AWS_ACCESS_KEY_ID"
+      description: "For S3 file storage"
+    - name: "AWS_SECRET_ACCESS_KEY"
+      description: "For S3 file storage"
+    - name: "AWS_S3_BUCKET"
+      description: "S3 bucket name"
+    - name: "EXCHANGE_RATE_API_KEY"
+      description: "For real-time currency conversion"
