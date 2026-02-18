@@ -13,6 +13,7 @@ import { writeFile, mkdir, readFile, unlink } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { transcribe } from "./transcribe.ts";
+import { trackCost } from "./cost-tracker.ts";
 import {
   processMemoryIntents,
   getMemoryContext,
@@ -22,6 +23,7 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
+import { orchestrate, initOrchestrator } from "./orchestrator.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -284,34 +286,7 @@ interface ActiveTask {
 const activeTasks = new Map<string, ActiveTask>();
 let taskCounter = 0;
 
-async function logCostTracking(data: {
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
-  cost_usd: number;
-  duration_ms: number;
-  session_id?: string;
-  user_id?: string;
-}): Promise<void> {
-  if (!supabase) return;
-  try {
-    await supabase.from("cost_tracking").insert({
-      model: data.model,
-      input_tokens: data.input_tokens,
-      output_tokens: data.output_tokens,
-      cache_read_tokens: data.cache_read_tokens,
-      cache_creation_tokens: data.cache_creation_tokens,
-      cost_usd: data.cost_usd,
-      duration_ms: data.duration_ms,
-      session_id: data.session_id || null,
-      user_id: data.user_id || null,
-    });
-  } catch (e) {
-    console.error("Cost tracking insert error:", e);
-  }
-}
+// Cost tracking is now handled by src/cost-tracker.ts
 
 async function callClaude(prompt: string): Promise<string> {
   const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions"];
@@ -355,7 +330,8 @@ async function callClaude(prompt: string): Promise<string> {
 
       // Log cost data if available
       if (json.usage) {
-        logCostTracking({
+        trackCost({
+          provider: "claude",
           model,
           input_tokens: json.usage?.input_tokens || 0,
           output_tokens: json.usage?.output_tokens || 0,
@@ -425,6 +401,9 @@ function runTask(
         ? await opts.postProcess(rawResponse)
         : rawResponse;
 
+      // Orchestrator handled the response internally — skip sending
+      if (response === "__SKIP__") return;
+
       const userId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
       if (userId) {
         await saveMessage("assistant", response, userId);
@@ -477,19 +456,7 @@ bot.on("message:text", async (ctx) => {
   await ctx.replyWithChatAction("typing");
   await saveMessage("user", text, user.id);
 
-  runTask(ctx, text.substring(0, 50), async () => {
-    const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
-      getRelevantContext(supabase, text, user.id),
-      getMemoryContext(supabase, user.id),
-      getRecentHistory(supabase, user.id),
-      getTaskContext(supabase, user.id),
-    ]);
-    return {
-      prompt: buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext),
-    };
-  }, {
-    postProcess: (raw) => processMemoryIntents(supabase, raw, user.id),
-  });
+  orchestrate(ctx, text, user, supabase);
 });
 
 // Voice messages
@@ -739,24 +706,28 @@ function buildPrompt(
       "\n[GOAL: goal text | DEADLINE: optional date]" +
       "\n[DONE: search text for completed goal]" +
       "\n" +
-      "\nWhat to REMEMBER (durable facts about the user's life, work, and preferences):" +
-      "\n- Personal info: names, relationships, contacts, birthdays, locations" +
-      "\n- Business info: company details, pricing, clients, partners, revenue" +
-      "\n- Preferences: communication style, tools, workflows, schedules" +
-      "\n- Decisions: choices made, strategies adopted, commitments" +
-      "\n- Key dates: deadlines, milestones, recurring events" +
+      "\nWhat to REMEMBER (ONLY durable, long-term facts — things still true months from now):" +
+      "\n- Personal identity: names, relationships, birthdays, locations, contact info" +
+      "\n- Business identity: company details, pricing, clients, partners, revenue figures" +
+      "\n- Stable preferences: communication style, favorite tools, recurring workflows" +
+      "\n- Major life decisions: strategies adopted, long-term commitments, career changes" +
+      "\n- Recurring patterns: weekly routines, standing meetings, regular habits" +
+      "\n" +
+      "\nWhat NOT to remember (DO NOT use [REMEMBER:] for any of these):" +
+      "\n- One-time events: dinner plans, lunch dates, appointments, meetings, reservations" +
+      "\n- Calendar items: anything with a specific date/time that happens once — these belong in Google Calendar, NOT memory" +
+      "\n- Schedule changes: moved/rescheduled events — update the calendar instead" +
+      "\n- Transient tasks: things being done today/this week that won't matter next month" +
+      "\n- Conversations: debugging, troubleshooting, technical discussions, corrections" +
+      "\n- System details: file paths, tool access, configuration, implementation details" +
+      "\n- Anything only relevant to the current conversation or the next few days" +
+      "\n" +
+      "\nRule of thumb: If it won't matter in 30 days, don't remember it. Use the calendar for events." +
       "\n" +
       "\nWhat to SHARE (team-wide knowledge, not personal):" +
       "\n- Company policies, shared processes, team contacts" +
       "\n- Decisions that affect the whole team" +
-      "\n- Only use [SHARE:] when the user explicitly says to share with the team" +
-      "\n" +
-      "\nWhat NOT to remember (ephemeral conversation, not facts):" +
-      "\n- Debugging discussions, troubleshooting steps, or bug reports" +
-      "\n- Requests about tool access, file paths, or system configuration" +
-      "\n- Your own mistakes or corrections (e.g., fabricated data callouts)" +
-      "\n- Implementation details or technical conversations" +
-      "\n- Anything that is only relevant to the current conversation"
+      "\n- Only use [SHARE:] when the user explicitly says to share with the team"
   );
 
   parts.push(
@@ -1107,6 +1078,18 @@ async function sendResponseWithButtons(
     }
   }
 }
+
+// ============================================================
+// ORCHESTRATOR INIT
+// ============================================================
+
+initOrchestrator({
+  callClaude,
+  buildPrompt,
+  runTask,
+  saveMessage,
+  sendResponseWithVoice,
+});
 
 // ============================================================
 // START
