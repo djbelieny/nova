@@ -13,7 +13,7 @@ import { writeFile, mkdir, readFile, unlink } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { transcribe } from "./transcribe.ts";
-import { trackCost } from "./cost-tracker.ts";
+import { trackCost, initCostTracker } from "./cost-tracker.ts";
 import {
   processMemoryIntents,
   getMemoryContext,
@@ -62,7 +62,11 @@ async function acquireLock(): Promise<boolean> {
       }
     }
 
-    await writeFile(LOCK_FILE, process.pid.toString());
+    // Atomic write: write to temp file then rename (prevents TOCTOU race)
+    const tmpLock = `${LOCK_FILE}.${process.pid}`;
+    await writeFile(tmpLock, process.pid.toString());
+    const { renameSync } = require("fs");
+    renameSync(tmpLock, LOCK_FILE);
     return true;
   } catch (error) {
     console.error("Lock error:", error);
@@ -80,13 +84,25 @@ process.on("exit", () => {
     require("fs").unlinkSync(LOCK_FILE);
   } catch {}
 });
+let shuttingDown = false;
 process.on("SIGINT", async () => {
-  await releaseLock();
-  process.exit(0);
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log("[shutdown] SIGINT received, draining...");
+  // Give in-flight tasks a few seconds to finish
+  setTimeout(async () => {
+    await releaseLock();
+    process.exit(0);
+  }, 3000);
 });
 process.on("SIGTERM", async () => {
-  await releaseLock();
-  process.exit(0);
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log("[shutdown] SIGTERM received, draining...");
+  setTimeout(async () => {
+    await releaseLock();
+    process.exit(0);
+  }, 3000);
 });
 
 // ============================================================
@@ -115,6 +131,9 @@ const supabase: SupabaseClient | null =
     ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
     : null;
 
+// Share supabase client with cost tracker (avoid duplicate connections)
+initCostTracker(supabase);
+
 // ============================================================
 // MULTI-USER: User resolution + cache
 // ============================================================
@@ -130,12 +149,13 @@ interface NovaUser {
   profile_text: string;
 }
 
-const userCache = new Map<string, NovaUser>();
+const USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const userCache = new Map<string, { user: NovaUser; cachedAt: number }>();
 
 async function resolveUser(telegramId: string): Promise<NovaUser | null> {
-  // Check cache first
+  // Check cache first (with TTL)
   const cached = userCache.get(telegramId);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.cachedAt < USER_CACHE_TTL_MS) return cached.user;
 
   if (!supabase) return null;
 
@@ -158,7 +178,7 @@ async function resolveUser(telegramId: string): Promise<NovaUser | null> {
       profile_text: row.profile_text || "",
     };
 
-    userCache.set(telegramId, user);
+    userCache.set(telegramId, { user, cachedAt: Date.now() });
     return user;
   } catch (error) {
     console.error("User resolution error:", error);
@@ -613,6 +633,23 @@ function runTask(
 }
 
 // ============================================================
+// PER-USER RATE LIMITING
+// ============================================================
+
+const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 10;           // max messages per window
+const rateLimitMap = new Map<string, number[]>();
+
+function isRateLimited(userId: string): boolean {
+  const now = Date.now();
+  const timestamps = rateLimitMap.get(userId) || [];
+  const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+  recent.push(now);
+  rateLimitMap.set(userId, recent);
+  return recent.length > RATE_LIMIT_MAX;
+}
+
+// ============================================================
 // MESSAGE HANDLERS
 // ============================================================
 
@@ -621,6 +658,12 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text;
   const user = (ctx as any).novaUser as NovaUser;
   console.log(`Message from ${user.name}: ${text.substring(0, 50)}...`);
+
+  // Rate limit check (skip for admin commands)
+  if (!text.startsWith("/") && isRateLimited(user.id)) {
+    await ctx.reply("You're sending messages too fast. Please wait a moment.");
+    return;
+  }
 
   // Handle /voice toggle command
   if (text.trim().toLowerCase() === "/voice") {
@@ -719,8 +762,8 @@ bot.on("message:photo", async (ctx) => {
     const file = await ctx.api.getFile(photo.file_id);
 
     // Download the image
-    const timestamp = Date.now();
-    const filePath = join(UPLOADS_DIR, `image_${timestamp}.jpg`);
+    const fileId = crypto.randomUUID();
+    const filePath = join(UPLOADS_DIR, `image_${fileId}.jpg`);
 
     const response = await fetch(
       `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`
@@ -740,7 +783,7 @@ bot.on("message:photo", async (ctx) => {
       ]);
       const contextPrefix = [memoryContext, taskContext, recentHistory].filter(Boolean).join("\n\n");
       const prompt = memoryMode
-        ? buildMemoryExtractionPrompt(filePath, `image_${timestamp}.jpg`, caption)
+        ? buildMemoryExtractionPrompt(filePath, `image_${fileId}.jpg`, caption)
         : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
       return { prompt };
     }, {
@@ -1287,7 +1330,19 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
   }
 
   if (command === "/reload") {
-    await ctx.reply("Reloading Nova... I'll be back in a few seconds.");
+    // Safety check: show diff of uncommitted changes so admin knows what's being applied
+    try {
+      const diffProc = spawn(["git", "-C", PROJECT_ROOT, "diff", "--stat", "HEAD"], { stdout: "pipe", stderr: "pipe" });
+      const diffOut = await new Response(diffProc.stdout).text();
+      await diffProc.exited;
+      if (diffOut.trim()) {
+        await ctx.reply(`Uncommitted changes:\n${diffOut.trim()}\n\nReloading...`);
+      } else {
+        await ctx.reply("Reloading Nova... I'll be back in a few seconds.");
+      }
+    } catch {
+      await ctx.reply("Reloading Nova... I'll be back in a few seconds.");
+    }
     // Give the message time to send, then restart the process
     // launchd (KeepAlive=true) will restart us automatically
     setTimeout(() => {
@@ -1575,8 +1630,21 @@ initOrchestrator({
 // Load specialist agents before starting
 await loadAgents();
 
+// Startup config validation — report which features are active/disabled
 console.log("Starting Nova (multi-user mode)...");
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
+const configStatus = [
+  ["Supabase (memory/tasks)", !!supabase],
+  ["Voice transcription", !!process.env.VOICE_PROVIDER],
+  ["TTS (ElevenLabs)", !!process.env.ELEVENLABS_API_KEY],
+  ["Mini App", !!process.env.MINIAPP_URL],
+] as const;
+for (const [feature, active] of configStatus) {
+  console.log(`  ${active ? "+" : "-"} ${feature}: ${active ? "enabled" : "DISABLED (missing config)"}`);
+}
+if (!supabase) {
+  console.warn("WARNING: No SUPABASE_URL — memory, tasks, patterns, and cost tracking are all disabled.");
+}
 
 // Start Mini App approval polling (checks Supabase for approvals made via Mini App)
 startMiniAppApprovalPolling(supabase);

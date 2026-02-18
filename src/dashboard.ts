@@ -35,7 +35,7 @@ const startTime = Date.now();
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "http://localhost:3033" },
   });
 }
 
@@ -311,9 +311,9 @@ async function getResources(): Promise<unknown> {
 
   return {
     disk: {
-      uploads: { path: uploadsDir, size: uploadsSize, formatted: formatBytes(uploadsSize) },
-      temp: { path: tempDir, size: tempSize, formatted: formatBytes(tempSize) },
-      logs: { path: LOGS_DIR, size: logsSize, formatted: formatBytes(logsSize) },
+      uploads: { size: uploadsSize, formatted: formatBytes(uploadsSize) },
+      temp: { size: tempSize, formatted: formatBytes(tempSize) },
+      logs: { size: logsSize, formatted: formatBytes(logsSize) },
     },
     processes,
   };
@@ -1835,7 +1835,12 @@ const server = Bun.serve({
 
     // Dashboard HTML
     if (path === "/") {
-      return new Response(renderDashboard(), { headers: { "Content-Type": "text/html" } });
+      return new Response(renderDashboard(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
+        },
+      });
     }
 
     // API routes

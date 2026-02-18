@@ -13,6 +13,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+/** Escape SQL LIKE/ILIKE wildcards to prevent wildcard injection. */
+function escapeIlike(text: string): string {
+  return text.replace(/[%_\\]/g, (c) => `\\${c}`);
+}
+
 /**
  * Parse Claude's response for memory intent tags.
  * Saves facts/goals to Supabase and returns the cleaned response.
@@ -68,7 +73,7 @@ export async function processMemoryIntents(
       .select("id")
       .eq("type", "goal")
       .eq("user_id", userId)
-      .ilike("content", `%${match[1]}%`)
+      .ilike("content", `%${escapeIlike(match[1])}%`)
       .limit(1);
 
     if (data?.[0]) {
@@ -101,7 +106,7 @@ export async function processMemoryIntents(
       .select("id")
       .eq("status", "pending")
       .eq("user_id", userId)
-      .ilike("description", `%${match[1]}%`)
+      .ilike("description", `%${escapeIlike(match[1])}%`)
       .limit(1);
 
     if (data?.[0]) {
@@ -120,7 +125,7 @@ export async function processMemoryIntents(
       .select("id")
       .in("status", ["pending", "in_progress"])
       .eq("user_id", userId)
-      .ilike("description", `%${match[1]}%`)
+      .ilike("description", `%${escapeIlike(match[1])}%`)
       .limit(1);
 
     if (data?.[0]) {
@@ -139,7 +144,7 @@ export async function processMemoryIntents(
       .select("id")
       .in("status", ["pending", "in_progress"])
       .eq("user_id", userId)
-      .ilike("description", `%${match[1]}%`)
+      .ilike("description", `%${escapeIlike(match[1])}%`)
       .limit(1);
 
     if (data?.[0]) {
@@ -158,7 +163,7 @@ export async function processMemoryIntents(
       .select("id")
       .in("status", ["pending", "in_progress", "blocked"])
       .eq("user_id", userId)
-      .ilike("description", `%${match[1]}%`)
+      .ilike("description", `%${escapeIlike(match[1])}%`)
       .limit(1);
 
     if (data?.[0]) {

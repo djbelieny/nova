@@ -26,6 +26,9 @@ const supabase: SupabaseClient | null =
 
 const startTime = Date.now();
 
+// Allowed CORS origin — Telegram Web App or localhost for dev
+const CORS_ORIGIN = process.env.MINIAPP_URL || "https://web.telegram.org";
+
 // ============================================================
 // HELPERS
 // ============================================================
@@ -35,7 +38,7 @@ function jsonResponse(data: unknown, status = 200): Response {
     status,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": CORS_ORIGIN,
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, initData",
     },
@@ -46,20 +49,11 @@ function corsResponse(): Response {
   return new Response(null, {
     status: 204,
     headers: {
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": CORS_ORIGIN,
       "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, initData",
     },
   });
-}
-
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
 }
 
 // ============================================================
@@ -112,6 +106,12 @@ async function validateInitData(initDataRaw: string): Promise<{ valid: boolean; 
       .join("");
 
     if (computedHash !== hash) {
+      return { valid: false, user: null };
+    }
+
+    // Check auth_date expiration (reject if older than 1 hour)
+    const authDate = parseInt(params.get("auth_date") || "0", 10);
+    if (authDate > 0 && Math.floor(Date.now() / 1000) - authDate > 3600) {
       return { valid: false, user: null };
     }
 
@@ -1680,7 +1680,12 @@ const server = Bun.serve({
 
     // Serve SPA
     if (path === "/" || path === "/index.html") {
-      return new Response(renderMiniApp(), { headers: { "Content-Type": "text/html" } });
+      return new Response(renderMiniApp(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
     }
 
     // ---- API routes (require auth) ----

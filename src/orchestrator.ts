@@ -169,7 +169,7 @@ export async function handleApproval(
       await pending.supabase
         .from("agent_tasks")
         .update({
-          status: allSucceeded ? "done" : "blocked",
+          status: allSucceeded ? "completed" : "blocked",
           result: `${allResults.length} subtasks, ${allResults.filter((r) => r.success).length} succeeded`,
           updated_at: new Date().toISOString(),
         })
@@ -206,7 +206,9 @@ const AUTO_APPROVE_PHRASES = [
 ];
 
 function detectAutoApprove(text: string): boolean {
-  const lower = text.toLowerCase();
+  // Only match phrases at the start of the message (first 60 chars) to avoid
+  // false positives from embedded/quoted text
+  const lower = text.toLowerCase().substring(0, 60);
   return AUTO_APPROVE_PHRASES.some((p) => lower.includes(p));
 }
 

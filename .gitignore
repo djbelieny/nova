@@ -5,8 +5,7 @@
 # Dependencies
 node_modules/
 
-# Bun
-bun.lockb
+# Bun (lockfile is committed for reproducible builds)
 
 # Personal config (keep examples, ignore actual)
 config/profile.md
@@ -22,6 +21,10 @@ session.json
 
 # Supabase
 supabase/.temp/
+
+# Generated output / artifacts
+workspace/
+agent-team/
 
 # OS
 .DS_Store

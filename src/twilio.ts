@@ -68,7 +68,7 @@ async function sendSMS(to: string, body: string): Promise<void> {
     console.error("SMS failed:", data.message || data);
     process.exit(1);
   }
-  console.log(`SMS sent to ${to} (SID: ${data.sid})`);
+  console.log(`SMS sent to ${to.slice(0, -4).replace(/./g, '*')}${to.slice(-4)} (SID: ${data.sid})`);
 }
 
 // ============================================================
@@ -105,7 +105,8 @@ async function makeCall(to: string, context: string): Promise<void> {
   const contextPath = join(CALL_CONTEXTS_DIR, `${data.sid}.json`);
   await writeFile(contextPath, JSON.stringify({ context, to, timestamp: new Date().toISOString() }));
 
-  console.log(`Call initiated to ${to}`);
+  const redacted = to.slice(0, -4).replace(/./g, '*') + to.slice(-4);
+  console.log(`Call initiated to ${redacted}`);
   console.log(`Call SID: ${data.sid}`);
   console.log(`Context saved for voice server`);
 }
