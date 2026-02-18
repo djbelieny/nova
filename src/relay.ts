@@ -568,25 +568,34 @@ function runTask(
     ctx.replyWithChatAction("typing").catch(() => {});
   }, 4000);
 
-  // Notify user of queue position if there's a wait
-  const queueNotifyTimer = setTimeout(async () => {
-    if (activeTasks.has(taskId)) {
-      task.notified = true;
+  // Edit-in-place status indicator
+  let statusMsgId: number | null = null;
+  const chatId = ctx.chat?.id;
+
+  // Send "Working on it..." after 8 seconds, edit to "taking longer" after 60s
+  const statusTimer = setTimeout(async () => {
+    if (!activeTasks.has(taskId) || !chatId) return;
+    try {
       const queueLen = claudeQueue.length;
       const otherTasks = activeTasks.size - 1;
-      let msg: string;
+      let msg = "Working on it...";
       if (queueLen > 0) {
-        msg = `Your request is queued (${queueLen} ahead).`;
-        if (otherTasks > 0) msg += ` ${otherTasks} other task${otherTasks > 1 ? "s" : ""} also in progress.`;
-        msg += " I'll deliver results as they complete.";
+        msg = `Working on it... (${queueLen} queued ahead)`;
       } else if (otherTasks > 0) {
-        msg = `Still working on this (+ ${otherTasks} other task${otherTasks > 1 ? "s" : ""} in progress). I'll send the result when it's ready.`;
-      } else {
-        msg = "Still working on this — it's a bigger task. I'll send the result when it's ready.";
+        msg = `Working on it... (${otherTasks + 1} tasks in progress)`;
       }
-      await ctx.reply(msg).catch(() => {});
-    }
-  }, 30_000);
+      const sent = await ctx.reply(msg);
+      statusMsgId = sent.message_id;
+      task.notified = true;
+    } catch {}
+  }, 8_000);
+
+  const longerTimer = setTimeout(async () => {
+    if (!activeTasks.has(taskId) || !chatId || !statusMsgId) return;
+    try {
+      await ctx.api.editMessageText(chatId, statusMsgId, "Taking longer than usual, still working on it...");
+    } catch {}
+  }, 60_000);
 
   // Fire and forget — run the task asynchronously
   (async () => {
@@ -605,6 +614,11 @@ function runTask(
       // Orchestrator handled the response internally — skip sending
       if (response === "__SKIP__") return;
 
+      // Delete the status message before sending the real response
+      if (statusMsgId && chatId) {
+        try { await ctx.api.deleteMessage(chatId, statusMsgId); } catch {}
+      }
+
       const userId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
       if (userId) {
         await saveMessage("assistant", response, userId);
@@ -612,14 +626,18 @@ function runTask(
       await sendResponseWithVoice(ctx, response, userId);
     } catch (error) {
       console.error(`Task ${taskId} error:`, error);
-      // Don't send cryptic error messages — give a useful reply
-      const queued = claudeQueue.length;
-      const msg = queued > 0
-        ? `I'm handling several tasks right now. This one is queued (${queued} ahead). I'll get to it shortly.`
-        : "Something went wrong processing that. Try sending your message again in a moment.";
-      await ctx.reply(msg).catch(() => {});
+      // Edit the status message to show error, or send a new one
+      const msg = "Something went wrong processing that. Try sending your message again in a moment.";
+      if (statusMsgId && chatId) {
+        try { await ctx.api.editMessageText(chatId, statusMsgId, msg); } catch {
+          await ctx.reply(msg).catch(() => {});
+        }
+      } else {
+        await ctx.reply(msg).catch(() => {});
+      }
     } finally {
-      clearTimeout(queueNotifyTimer);
+      clearTimeout(statusTimer);
+      clearTimeout(longerTimer);
       clearInterval(typingInterval);
       activeTasks.delete(taskId);
     }
