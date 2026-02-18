@@ -1690,7 +1690,22 @@ if (MINIAPP_URL) {
 }
 
 bot.start({
-  onStart: () => {
+  onStart: async () => {
     console.log("Bot is running! Users are managed via the 'users' table in Supabase.");
+
+    // Notify admin users that Nova is back online
+    if (supabase) {
+      try {
+        const { data: admins } = await supabase
+          .from("users")
+          .select("telegram_id")
+          .eq("role", "admin");
+        if (admins?.length) {
+          for (const admin of admins) {
+            bot.api.sendMessage(admin.telegram_id, "Nova is back online.").catch(() => {});
+          }
+        }
+      } catch {}
+    }
   },
 });
