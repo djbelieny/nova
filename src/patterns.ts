@@ -8,7 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export interface ExecutionPlan {
-  subtasks: { description: string; agent?: string; dependsOn?: number[] }[];
+  subtasks: { description: string; agent?: string; dependsOn?: number[]; phase?: "prepare" | "execute" }[];
 }
 
 export interface ExecutionPattern {

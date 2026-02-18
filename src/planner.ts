@@ -3,60 +3,116 @@
  *
  * Handles complex tasks by decomposing them into subtasks,
  * executing independent groups in parallel, and aggregating results.
+ *
+ * Model strategy:
+ * - Haiku for decomposition (structured output, cheap)
+ * - Sonnet for subtask execution (quality matters)
+ * - Haiku for aggregation (formatting, not reasoning)
+ *
+ * Agent routing:
+ * - Decomposer sees the full agent catalog and picks specialists
+ * - Each subtask gets the specialist's full system prompt injected
+ * - Falls back to generic prompt if no specialist matches
+ *
+ * Phase execution:
+ * - "prepare" subtasks run first (research, create content, generate images)
+ * - "execute" subtasks run after approval (create campaigns, send emails, publish)
+ * - Artifacts (file paths, copy, audiences) flow from prepare → execute
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ExecutionPlan } from "./patterns.ts";
+import { getAgentCatalog, buildAgentPrompt } from "./agent-router.ts";
 
-// callClaude is injected from relay.ts to avoid circular imports
-let _callClaude: (prompt: string) => Promise<string>;
+type ModelTier = "haiku" | "sonnet" | "opus";
+
+let _callClaude: (prompt: string, model?: ModelTier) => Promise<string>;
 let _buildPrompt: (...args: any[]) => string;
 
 export function initPlanner(
-  callClaude: (prompt: string) => Promise<string>,
+  callClaude: (prompt: string, model?: ModelTier) => Promise<string>,
   buildPrompt: (...args: any[]) => string
 ): void {
   _callClaude = callClaude;
   _buildPrompt = buildPrompt;
 }
 
-interface Subtask {
-  description: string;
-  agent?: string;
-  dependsOn?: number[];
+export interface Artifact {
+  type: string;   // "image", "copy", "audience", "url", "file", etc.
+  value: string;  // file path, text content, or URL
+  source: number; // subtask index that produced it
 }
 
-interface SubtaskResult {
+export interface SubtaskResult {
   index: number;
   description: string;
   agent?: string;
   result: string;
   success: boolean;
+  artifacts: Artifact[];
 }
 
 /**
- * Decompose a complex task into ordered subtasks with dependencies.
+ * Parse [ARTIFACT: type | value] tags from agent output.
+ */
+export function extractArtifacts(text: string, sourceIndex: number): Artifact[] {
+  const artifacts: Artifact[] = [];
+  const pattern = /\[ARTIFACT:\s*(\w+)\s*\|\s*(.+?)\]/g;
+  for (const match of text.matchAll(pattern)) {
+    artifacts.push({
+      type: match[1].toLowerCase(),
+      value: match[2].trim(),
+      source: sourceIndex,
+    });
+  }
+  return artifacts;
+}
+
+/**
+ * Collect all artifacts from a set of subtask results.
+ */
+export function collectArtifacts(results: SubtaskResult[]): Artifact[] {
+  return results.flatMap((r) => r.artifacts);
+}
+
+/**
+ * Decompose a complex task into ordered subtasks with dependencies and phases.
+ * Uses Haiku — this is structured output, not creative work.
+ * Includes the agent catalog so Haiku routes to the right specialist.
  */
 export async function decompose(
   text: string,
   user: { name: string; timezone: string }
 ): Promise<ExecutionPlan> {
-  const prompt = `You are a task decomposition engine. Break the following complex request into 2-5 independent subtasks.
+  const catalog = getAgentCatalog();
+
+  const prompt = `You are a task decomposition engine. Break the following complex request into 2-5 subtasks.
 
 Return ONLY valid JSON in this exact format (no markdown, no explanation):
-{"subtasks":[{"description":"...","agent":"general","dependsOn":[]}]}
+{"subtasks":[{"description":"...","agent":"agent_slug","dependsOn":[],"phase":"prepare"}]}
 
-Agent types: "research", "coding", "data", "content", "strategy", "general"
-dependsOn is an array of 0-indexed subtask positions that must complete first.
-If subtasks are independent, use empty dependsOn arrays so they run in parallel.
+${catalog || 'Agent types: "general" (default)'}
+
+Rules:
+- dependsOn is an array of 0-indexed subtask positions that must complete first.
+- If subtasks are independent, use empty dependsOn arrays so they run in parallel.
+- Match each subtask to the BEST specialist agent based on the task description.
+- Use "general" only if no specialist clearly fits.
+- Keep descriptions specific and actionable — the agent needs to know exactly what to do.
+
+Each subtask MUST have a "phase" field:
+- "prepare": research, create content, generate images, write copy, analyze, design — safe, reversible work
+- "execute": create campaigns via API, send emails, publish posts, make calls, spend money — consequential, hard to reverse
+
+Rule: Any subtask that calls an external API to CREATE, SEND, PUBLISH, or SPEND must be "execute".
+If unsure, default to "prepare" — it's safer to ask for approval than to act without it.
 
 User: ${user.name}
 Request: ${text}`;
 
-  const raw = await _callClaude(prompt);
+  const raw = await _callClaude(prompt, "haiku");
 
   try {
-    // Extract JSON from response (handle markdown code blocks)
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON found");
 
@@ -65,35 +121,59 @@ Request: ${text}`;
       throw new Error("Invalid plan structure");
     }
 
-    return {
+    const plan: ExecutionPlan = {
       subtasks: parsed.subtasks.map((s: any) => ({
         description: String(s.description || ""),
         agent: String(s.agent || "general"),
         dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn : [],
+        phase: s.phase === "execute" ? "execute" : "prepare",
       })),
     };
+
+    // Log the routing decisions
+    for (const st of plan.subtasks) {
+      console.log(`[planner] → ${st.agent} [${st.phase}]: ${st.description.substring(0, 60)}`);
+    }
+
+    return plan;
   } catch (error) {
     console.error("Decomposition parse error:", error);
-    // Fallback: single subtask with the original text
-    return { subtasks: [{ description: text, agent: "general" }] };
+    return { subtasks: [{ description: text, agent: "general", phase: "prepare" }] };
   }
 }
 
 /**
- * Execute subtasks respecting dependencies — independent tasks run in parallel.
+ * Execute subtasks for a specific phase, respecting dependencies.
+ * Each subtask gets its specialist agent's system prompt injected.
+ * Prepare-phase agents are instructed to output [ARTIFACT:] tags.
  */
-export async function executeSubtasks(
+export async function executePhase(
   plan: ExecutionPlan,
+  phase: "prepare" | "execute",
   user: any,
   supabase: SupabaseClient | null,
-  parentTaskId?: string
+  parentTaskId?: string,
+  priorArtifacts?: Artifact[],
+  priorResults?: SubtaskResult[]
 ): Promise<SubtaskResult[]> {
-  const results: SubtaskResult[] = [];
-  const completed = new Set<number>();
+  const results: SubtaskResult[] = [...(priorResults || [])];
+  const completed = new Set<number>(results.map((r) => r.index));
+
+  // Only execute subtasks matching the requested phase
+  const phaseIndices = new Set<number>();
+  for (let i = 0; i < plan.subtasks.length; i++) {
+    const subtaskPhase = plan.subtasks[i].phase || "prepare";
+    if (subtaskPhase === phase) phaseIndices.add(i);
+  }
 
   // Log subtasks to agent_tasks table
   const subtaskIds: (string | null)[] = [];
-  for (const subtask of plan.subtasks) {
+  for (let i = 0; i < plan.subtasks.length; i++) {
+    if (!phaseIndices.has(i)) {
+      subtaskIds.push(null);
+      continue;
+    }
+    const subtask = plan.subtasks[i];
     if (supabase) {
       const { data } = await supabase
         .from("agent_tasks")
@@ -112,11 +192,17 @@ export async function executeSubtasks(
     }
   }
 
+  // Build artifact context string for execute-phase subtasks
+  const artifactContext = priorArtifacts?.length
+    ? "\n\nArtifacts from prepare phase:\n" +
+      priorArtifacts.map((a) => `- [${a.type}]: ${a.value}`).join("\n")
+    : "";
+
   // Execute in dependency order
-  while (completed.size < plan.subtasks.length) {
-    // Find subtasks whose dependencies are all completed
+  const allIndices = [...phaseIndices];
+  while (completed.size < plan.subtasks.length && allIndices.some((i) => !completed.has(i))) {
     const ready: number[] = [];
-    for (let i = 0; i < plan.subtasks.length; i++) {
+    for (const i of allIndices) {
       if (completed.has(i)) continue;
       const deps = plan.subtasks[i].dependsOn || [];
       if (deps.every((d) => completed.has(d))) {
@@ -125,8 +211,11 @@ export async function executeSubtasks(
     }
 
     if (ready.length === 0) {
-      // Circular dependency — break out
-      console.error("Circular dependency detected in subtasks");
+      // Check if remaining subtasks are all from other phase (not a circular dep)
+      const remaining = allIndices.filter((i) => !completed.has(i));
+      if (remaining.length > 0) {
+        console.error("Circular dependency detected in subtasks");
+      }
       break;
     }
 
@@ -134,8 +223,8 @@ export async function executeSubtasks(
     const batchResults = await Promise.all(
       ready.map(async (idx) => {
         const subtask = plan.subtasks[idx];
+        const agentSlug = subtask.agent || "general";
 
-        // Mark as in_progress
         if (supabase && subtaskIds[idx]) {
           await supabase
             .from("agent_tasks")
@@ -154,15 +243,33 @@ export async function executeSubtasks(
           .filter(Boolean)
           .join("\n\n");
 
-        const focusedPrompt = _buildPrompt(
+        // Add artifact context for execute-phase subtasks
+        const fullDepContext = phase === "execute"
+          ? (depContext ? depContext + artifactContext : artifactContext)
+          : depContext;
+
+        // Build the prompt — specialist agent or generic
+        const basePrompt = _buildPrompt(
           user,
-          `${depContext ? `Context from prior steps:\n${depContext}\n\n` : ""}Task: ${subtask.description}`,
+          `${fullDepContext ? `Context from prior steps:\n${fullDepContext}\n\n` : ""}Task: ${subtask.description}`,
         );
 
-        try {
-          const result = await _callClaude(focusedPrompt);
+        const prompt = buildAgentPrompt(
+          agentSlug,
+          subtask.description,
+          basePrompt,
+          fullDepContext || undefined,
+          phase
+        );
 
-          // Mark as done
+        console.log(`[planner] Executing subtask ${idx} via ${agentSlug} [${phase}]: ${subtask.description.substring(0, 50)}`);
+
+        try {
+          const result = await _callClaude(prompt);
+
+          // Extract artifacts from the result
+          const artifacts = extractArtifacts(result, idx);
+
           if (supabase && subtaskIds[idx]) {
             await supabase
               .from("agent_tasks")
@@ -180,9 +287,10 @@ export async function executeSubtasks(
             agent: subtask.agent,
             result,
             success: true,
+            artifacts,
           };
         } catch (error) {
-          console.error(`Subtask ${idx} error:`, error);
+          console.error(`Subtask ${idx} (${agentSlug}) error:`, error);
 
           if (supabase && subtaskIds[idx]) {
             await supabase
@@ -201,6 +309,7 @@ export async function executeSubtasks(
             agent: subtask.agent,
             result: `Error: ${error}`,
             success: false,
+            artifacts: [],
           };
         }
       })
@@ -212,32 +321,63 @@ export async function executeSubtasks(
     }
   }
 
-  return results;
+  // Return only the results from this phase
+  return results.filter((r) => phaseIndices.has(r.index));
+}
+
+/**
+ * Execute all subtasks (legacy — runs both phases without approval gate).
+ * Kept for backward compatibility with auto-approve flow.
+ */
+export async function executeSubtasks(
+  plan: ExecutionPlan,
+  user: any,
+  supabase: SupabaseClient | null,
+  parentTaskId?: string
+): Promise<SubtaskResult[]> {
+  const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId);
+  const artifacts = collectArtifacts(prepareResults);
+
+  const hasExecute = plan.subtasks.some((s) => s.phase === "execute");
+  if (!hasExecute) return prepareResults;
+
+  const executeResults = await executePhase(
+    plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults
+  );
+
+  return [...prepareResults, ...executeResults];
 }
 
 /**
  * Aggregate subtask results into a coherent final response.
+ * Uses Haiku — this is formatting/synthesis, not heavy reasoning.
+ * Mentions which agents contributed so the user knows who did what.
  */
 export async function aggregate(
   originalRequest: string,
   results: SubtaskResult[]
 ): Promise<string> {
-  // If only one subtask, return its result directly
   if (results.length === 1) return results[0].result;
 
   const resultSummary = results
     .sort((a, b) => a.index - b.index)
-    .map((r) => `## ${r.description}\n${r.result}`)
+    .map((r) => `## [${r.agent || "general"}] ${r.description}\n${r.result}`)
     .join("\n\n---\n\n");
 
-  const prompt = `You are synthesizing results from parallel subtasks into one coherent response.
+  const prompt = `You are synthesizing results from specialist agents into one coherent response for a Telegram user.
 
 Original request: ${originalRequest}
 
-Subtask results:
+Agent results:
 ${resultSummary}
 
-Combine these into a single, well-organized response. Remove redundancy. Keep it concise and actionable. Do not mention that subtasks were used — present it as one unified answer.`;
+Instructions:
+- Combine into a single, well-organized response.
+- Remove redundancy between agent outputs.
+- Keep it concise and actionable.
+- Do NOT mention "agents" or "subtasks" — present it as one unified answer.
+- Preserve any actionable items, numbers, and specific recommendations.
+- Use Telegram-friendly formatting (bold for headers, bullet points for lists).`;
 
-  return _callClaude(prompt);
+  return _callClaude(prompt, "haiku");
 }

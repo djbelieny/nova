@@ -5,12 +5,32 @@
  * - Simple messages → existing callClaude() path (no extra latency)
  * - Complex messages → planner decomposition → parallel execution → aggregation
  * - Cached patterns → reuse known-good plans (skip classification)
+ *
+ * Human-in-the-Loop:
+ * - Complex tasks split into "prepare" (safe) and "execute" (consequential) phases
+ * - After prepare completes, user sees a summary + deliverables + approval buttons
+ * - Execute phase only runs after explicit approval
+ * - Auto-approve detection skips the gate when user says "just do it"
+ *
+ * Model strategy:
+ * - Haiku for classification and decomposition (cheap overhead calls)
+ * - Sonnet for actual task execution (quality matters)
+ * - Haiku for aggregation of results (formatting, not reasoning)
  */
 
 import type { Context } from "grammy";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { ExecutionPlan } from "./patterns.ts";
 import { findPattern, recordExecution } from "./patterns.ts";
-import { initPlanner, decompose, executeSubtasks, aggregate } from "./planner.ts";
+import {
+  initPlanner,
+  decompose,
+  executePhase,
+  executeSubtasks,
+  collectArtifacts,
+  aggregate,
+} from "./planner.ts";
+import type { SubtaskResult, Artifact } from "./planner.ts";
 import {
   processMemoryIntents,
   getMemoryContext,
@@ -19,20 +39,22 @@ import {
   getTaskContext,
 } from "./memory.ts";
 
+type ModelTier = "haiku" | "sonnet" | "opus";
+
 // Injected dependencies from relay.ts
-let _callClaude: (prompt: string) => Promise<string>;
+let _callClaude: (prompt: string, model?: ModelTier) => Promise<string>;
 let _buildPrompt: (...args: any[]) => string;
 let _runTask: (
   ctx: Context,
   desc: string,
-  buildTask: () => Promise<{ prompt: string }>,
+  buildTask: () => Promise<{ prompt: string; model?: ModelTier }>,
   opts?: { postProcess?: (r: string) => Promise<string>; userId?: string }
 ) => void;
 let _saveMessage: (role: string, content: string, userId: string) => Promise<void>;
 let _sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
 
 export function initOrchestrator(deps: {
-  callClaude: (prompt: string) => Promise<string>;
+  callClaude: (prompt: string, model?: ModelTier) => Promise<string>;
   buildPrompt: (...args: any[]) => string;
   runTask: typeof _runTask;
   saveMessage: (role: string, content: string, userId: string) => Promise<void>;
@@ -46,6 +68,136 @@ export function initOrchestrator(deps: {
 
   // Initialize planner with shared dependencies
   initPlanner(deps.callClaude, deps.buildPrompt);
+}
+
+// ============================================================
+// PENDING APPROVALS — stored in memory for callback handler
+// ============================================================
+
+export interface PendingApproval {
+  id: string;
+  ctx: Context;
+  user: any;
+  supabase: SupabaseClient | null;
+  originalText: string;
+  plan: ExecutionPlan;
+  prepareResults: SubtaskResult[];
+  artifacts: Artifact[];
+  parentTaskId?: string;
+  startTime: number;
+}
+
+const pendingApprovals = new Map<string, PendingApproval>();
+
+/**
+ * Handle an approval callback from the Telegram inline button.
+ * Called by relay.ts when user taps Approve/Revise/Cancel.
+ */
+export async function handleApproval(
+  approvalId: string,
+  action: "approve" | "revise" | "cancel",
+  ctx: Context,
+  feedback?: string
+): Promise<void> {
+  const pending = pendingApprovals.get(approvalId);
+  if (!pending) {
+    await ctx.answerCallbackQuery({ text: "This approval has expired." });
+    return;
+  }
+
+  await ctx.answerCallbackQuery({ text: action === "approve" ? "Executing..." : action === "revise" ? "Send your revision" : "Cancelled" });
+
+  // Remove buttons from the approval message
+  try {
+    const originalText = ctx.callbackQuery?.message?.text || "";
+    const statusLine = action === "approve" ? "\n\n>> Approved" : action === "cancel" ? "\n\n>> Cancelled" : "\n\n>> Revision requested";
+    await ctx.editMessageText(`${originalText}${statusLine}`, { reply_markup: undefined });
+  } catch {}
+
+  if (action === "cancel") {
+    pendingApprovals.delete(approvalId);
+    await _saveMessage("assistant", "Task cancelled.", pending.user.id);
+    await _sendResponseWithVoice(ctx, "Got it — cancelled.", pending.user.id);
+    return;
+  }
+
+  if (action === "revise") {
+    // Keep the approval pending — user will send a follow-up message with revision
+    // The revision will be handled as a new message, and this approval expires
+    pendingApprovals.delete(approvalId);
+    await _sendResponseWithVoice(ctx, "Send me your revision and I'll redo the prepare phase.", pending.user.id);
+    return;
+  }
+
+  // action === "approve" — run execute phase
+  pendingApprovals.delete(approvalId);
+
+  try {
+    await ctx.replyWithChatAction("typing");
+
+    const executeResults = await executePhase(
+      pending.plan,
+      "execute",
+      pending.user,
+      pending.supabase,
+      pending.parentTaskId,
+      pending.artifacts,
+      pending.prepareResults
+    );
+
+    const allResults = [...pending.prepareResults, ...executeResults];
+    const allSucceeded = allResults.every((r) => r.success);
+
+    // Aggregate
+    const aggregated = await aggregate(pending.originalText, allResults);
+    const processed = await processMemoryIntents(pending.supabase, aggregated, pending.user.id);
+    await _saveMessage("assistant", processed, pending.user.id);
+    await _sendResponseWithVoice(ctx, processed, pending.user.id);
+
+    // Mark parent task done
+    if (pending.supabase && pending.parentTaskId) {
+      await pending.supabase
+        .from("agent_tasks")
+        .update({
+          status: allSucceeded ? "done" : "blocked",
+          result: `${allResults.length} subtasks, ${allResults.filter((r) => r.success).length} succeeded`,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", pending.parentTaskId);
+    }
+
+    // Record pattern
+    const durationMs = Date.now() - pending.startTime;
+    await recordExecution(pending.supabase, pending.originalText, pending.plan, allSucceeded, durationMs, pending.user.id);
+  } catch (error) {
+    console.error("[orchestrator] Execute phase error:", error);
+    await _sendResponseWithVoice(ctx, "Something went wrong during the execute phase. The prepare work is still saved — try again.", pending.user.id);
+  }
+}
+
+/**
+ * Get pending approval count (for /status command).
+ */
+export function getPendingApprovalCount(): number {
+  return pendingApprovals.size;
+}
+
+// ============================================================
+// AUTO-APPROVE DETECTION
+// ============================================================
+
+const AUTO_APPROVE_PHRASES = [
+  "just do it", "do everything", "approved in advance", "go ahead",
+  "no need to confirm", "skip approval", "execute directly",
+  "don't ask", "full auto", "run it all", "do it all",
+  // Portuguese
+  "deixe tudo pronto", "pode fazer tudo", "aprovado",
+  "pode executar", "faz tudo", "manda ver",
+];
+
+function detectAutoApprove(text: string): boolean {
+  const lower = text.toLowerCase();
+  return AUTO_APPROVE_PHRASES.some((p) => lower.includes(p));
 }
 
 // ============================================================
@@ -70,8 +222,6 @@ function isSimpleMessage(text: string): boolean {
     const hasConjunction = lower.some((w) => CONJUNCTIONS.has(w));
 
     // Only complex if it has both an action verb AND a conjunction
-    // e.g., "research X and write a summary" is complex
-    // e.g., "what's the weather" is simple
     if (!hasActionVerb || !hasConjunction) return true;
   }
 
@@ -79,7 +229,7 @@ function isSimpleMessage(text: string): boolean {
 }
 
 // ============================================================
-// CLASSIFY — cheap Claude call for ambiguous messages (~200 tokens)
+// CLASSIFY — uses Haiku for cheap classification (~200 tokens)
 // ============================================================
 
 async function classify(
@@ -94,7 +244,7 @@ Message: "${text.substring(0, 300)}"
 
 Return ONLY one word: simple or complex`;
 
-  const result = await _callClaude(prompt);
+  const result = await _callClaude(prompt, "haiku");
   const lower = result.toLowerCase().trim();
 
   return { type: lower.includes("complex") ? "complex" : "simple" };
@@ -124,16 +274,14 @@ export function orchestrate(
     if (pattern) {
       console.log(`[orchestrator] Pattern cache hit: ${pattern.task_signature.substring(0, 50)}`);
       await routeComplex(ctx, text, user, supabase, pattern.plan);
-      // Return empty prompt — we already handled it
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }
 
-    // Classify via cheap Claude call
+    // Classify via cheap Haiku call
     const classification = await classify(text);
     console.log(`[orchestrator] Classified as: ${classification.type}`);
 
     if (classification.type === "simple") {
-      // Build the normal prompt inline
       const [relevantContext, memoryContext, recentHistory, taskContext] = await Promise.all([
         getRelevantContext(supabase, text, user.id),
         getMemoryContext(supabase, user.id),
@@ -150,7 +298,6 @@ export function orchestrate(
     return { prompt: "__ORCHESTRATOR_HANDLED__" };
   }, {
     postProcess: async (raw) => {
-      // If orchestrator handled it internally, skip normal post-processing
       if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
       return processMemoryIntents(supabase, raw, user.id);
     },
@@ -184,7 +331,9 @@ function routeSimple(
 }
 
 // ============================================================
-// COMPLEX PATH — decompose → parallel execute → aggregate
+// COMPLEX PATH — two-phase with approval gate
+// Phase 1: prepare (safe) → show summary → wait for approval
+// Phase 2: execute (consequential) → run on approval
 // ============================================================
 
 async function routeComplex(
@@ -192,9 +341,10 @@ async function routeComplex(
   text: string,
   user: any,
   supabase: SupabaseClient | null,
-  cachedPlan?: { subtasks: { description: string; agent?: string; dependsOn?: number[] }[] }
+  cachedPlan?: ExecutionPlan
 ): Promise<void> {
   const startTime = Date.now();
+  const autoApprove = detectAutoApprove(text);
 
   try {
     // Create parent task
@@ -213,41 +363,161 @@ async function routeComplex(
       parentTaskId = data?.id;
     }
 
-    // Decompose or use cached plan
+    // Decompose using Haiku (cheap) or use cached plan
     const plan = cachedPlan || (await decompose(text, user));
     console.log(`[orchestrator] Plan: ${plan.subtasks.length} subtasks`);
 
-    // Execute subtasks
-    const results = await executeSubtasks(plan, user, supabase, parentTaskId);
-    const allSucceeded = results.every((r) => r.success);
+    const hasExecutePhase = plan.subtasks.some((s) => s.phase === "execute");
 
-    // Aggregate results
-    const aggregated = await aggregate(text, results);
+    // If no execute subtasks or auto-approve: run everything straight through
+    if (!hasExecutePhase || autoApprove) {
+      if (autoApprove && hasExecutePhase) {
+        console.log("[orchestrator] Auto-approve detected — running all phases");
+      }
 
-    // Process memory intents and send response
-    const processed = await processMemoryIntents(supabase, aggregated, user.id);
-    await _saveMessage("assistant", processed, user.id);
-    await _sendResponseWithVoice(ctx, processed, user.id);
+      const results = await executeSubtasks(plan, user, supabase, parentTaskId);
+      const allSucceeded = results.every((r) => r.success);
 
-    // Mark parent task done
+      const aggregated = await aggregate(text, results);
+      const processed = await processMemoryIntents(supabase, aggregated, user.id);
+      await _saveMessage("assistant", processed, user.id);
+      await _sendResponseWithVoice(ctx, processed, user.id);
+
+      // Mark parent task done
+      if (supabase && parentTaskId) {
+        await supabase
+          .from("agent_tasks")
+          .update({
+            status: allSucceeded ? "done" : "blocked",
+            result: `${results.length} subtasks, ${results.filter((r) => r.success).length} succeeded`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", parentTaskId);
+      }
+
+      const durationMs = Date.now() - startTime;
+      await recordExecution(supabase, text, plan, allSucceeded, durationMs, user.id);
+      return;
+    }
+
+    // === TWO-PHASE EXECUTION WITH APPROVAL GATE ===
+
+    // Phase 1: Run prepare subtasks
+    console.log("[orchestrator] Phase 1: Running prepare subtasks");
+    const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId);
+    const artifacts = collectArtifacts(prepareResults);
+
+    console.log(`[orchestrator] Prepare phase done: ${prepareResults.length} results, ${artifacts.length} artifacts`);
+
+    // Build approval summary using Haiku
+    const approvalSummary = await buildApprovalSummary(text, prepareResults, artifacts, plan);
+
+    // Generate approval ID and store pending approval
+    const approvalId = `apv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+    pendingApprovals.set(approvalId, {
+      id: approvalId,
+      ctx,
+      user,
+      supabase,
+      originalText: text,
+      plan,
+      prepareResults,
+      artifacts,
+      parentTaskId,
+      startTime,
+    });
+
+    // Auto-expire after 30 minutes
+    setTimeout(() => {
+      if (pendingApprovals.has(approvalId)) {
+        pendingApprovals.delete(approvalId);
+        console.log(`[orchestrator] Approval ${approvalId} expired`);
+      }
+    }, 30 * 60 * 1000);
+
+    // Send the summary with approval buttons
+    const executeDescriptions = plan.subtasks
+      .filter((s) => s.phase === "execute")
+      .map((s) => `• ${s.description}`)
+      .join("\n");
+
+    const fullMessage = `${approvalSummary}\n\n<b>Pending actions:</b>\n${executeDescriptions}\n\n<i>Tap below to proceed:</i>`;
+
+    // Save and send with buttons
+    await _saveMessage("assistant", approvalSummary, user.id);
+    await _sendResponseWithVoice(
+      ctx,
+      `${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}\n\n_Tap below to proceed:_\n[BUTTONS: Approve & Execute | Revise | Cancel]`,
+      user.id
+    );
+
+    // Store the approval ID in button callbacks via a follow-up hidden message
+    // The buttons use the format: approval:<id>:<action>
+    // But since we're using the existing [BUTTONS:] system, we need to handle
+    // the mapping in the callback handler. Store the latest approval ID per user.
+    latestApprovalByUser.set(user.id, approvalId);
+
+    // Update parent task to waiting
     if (supabase && parentTaskId) {
       await supabase
         .from("agent_tasks")
         .update({
-          status: allSucceeded ? "done" : "blocked",
-          result: `${results.length} subtasks, ${results.filter((r) => r.success).length} succeeded`,
+          status: "blocked",
+          result: "Waiting for user approval",
           updated_at: new Date().toISOString(),
         })
         .eq("id", parentTaskId);
     }
-
-    // Record pattern for learning
-    const durationMs = Date.now() - startTime;
-    await recordExecution(supabase, text, plan, allSucceeded, durationMs, user.id);
   } catch (error) {
     console.error("[orchestrator] Complex route error:", error);
-    // Fallback to simple path
     console.log("[orchestrator] Falling back to simple path");
     routeSimple(ctx, text, user, supabase);
   }
+}
+
+// Track latest approval per user for button callback mapping
+const latestApprovalByUser = new Map<string, string>();
+
+/**
+ * Resolve an approval ID from a user's button press.
+ * Since [BUTTONS:] generates btn: callbacks, we map them to the pending approval.
+ */
+export function resolveApprovalForUser(userId: string): string | undefined {
+  return latestApprovalByUser.get(userId);
+}
+
+/**
+ * Build a human-readable summary of prepare-phase results for the approval message.
+ */
+async function buildApprovalSummary(
+  originalRequest: string,
+  results: SubtaskResult[],
+  artifacts: Artifact[],
+  plan: ExecutionPlan
+): Promise<string> {
+  if (results.length === 0) return "Prepare phase produced no results.";
+
+  const resultSummary = results
+    .sort((a, b) => a.index - b.index)
+    .map((r) => `[${r.agent || "general"}] ${r.description}: ${r.result.substring(0, 300)}`)
+    .join("\n\n");
+
+  const artifactSummary = artifacts.length > 0
+    ? "\nDeliverables:\n" + artifacts.map((a) => `- ${a.type}: ${a.value}`).join("\n")
+    : "";
+
+  const prompt = `Summarize the preparation work done so far for the user. Be concise.
+
+Original request: ${originalRequest}
+
+Work completed:
+${resultSummary}
+${artifactSummary}
+
+Write a brief Telegram-friendly summary (2-4 paragraphs max) of what was prepared.
+Highlight the key deliverables. Do NOT mention "agents" or "subtasks" — just describe what was done.
+End by noting that the next step requires their approval to execute.`;
+
+  return _callClaude(prompt, "haiku");
 }

@@ -23,7 +23,8 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
-import { orchestrate, initOrchestrator } from "./orchestrator.ts";
+import { orchestrate, initOrchestrator, handleApproval, resolveApprovalForUser, getPendingApprovalCount } from "./orchestrator.ts";
+import { loadAgents } from "./agent-router.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -228,9 +229,28 @@ bot.on("callback_query:data", async (ctx) => {
   const data = ctx.callbackQuery.data;
   const user = (ctx as any).novaUser as NovaUser;
 
-  // Handle button presses — format is "btn:Label Text"
+  // Handle approval button presses — "Approve & Execute", "Revise", "Cancel"
+  const approvalActions: Record<string, "approve" | "revise" | "cancel"> = {
+    "Approve & Execute": "approve",
+    "Revise": "revise",
+    "Cancel": "cancel",
+  };
+
   if (data.startsWith("btn:")) {
     const selection = data.substring(4);
+
+    // Check if this is an approval button
+    const approvalAction = approvalActions[selection];
+    if (approvalAction) {
+      const approvalId = resolveApprovalForUser(user.id);
+      if (approvalId) {
+        console.log(`Approval ${approvalAction} by ${user.name}: ${approvalId}`);
+        await handleApproval(approvalId, approvalAction, ctx);
+        return;
+      }
+    }
+
+    // Regular button press
     console.log(`Button pressed by ${user.name}: ${selection}`);
 
     // Acknowledge the button press immediately
@@ -288,10 +308,158 @@ let taskCounter = 0;
 
 // Cost tracking is now handled by src/cost-tracker.ts
 
-async function callClaude(prompt: string): Promise<string> {
+// ============================================================
+// RATE LIMIT MONITORING
+// ============================================================
+
+interface UsageStats {
+  callsTotal: number;
+  callsSuccess: number;
+  callsFailed: number;
+  callsByModel: Record<string, number>;
+  rateLimitHits: number;
+  lastRateLimitAt: number | null;
+  uptimeSince: number;
+  avgDurationMs: number;
+  totalDurationMs: number;
+}
+
+const usage: UsageStats = {
+  callsTotal: 0,
+  callsSuccess: 0,
+  callsFailed: 0,
+  callsByModel: {},
+  rateLimitHits: 0,
+  lastRateLimitAt: null,
+  uptimeSince: Date.now(),
+  avgDurationMs: 0,
+  totalDurationMs: 0,
+};
+
+function recordCall(success: boolean, model: string, durationMs: number, rateLimited: boolean): void {
+  usage.callsTotal++;
+  if (success) usage.callsSuccess++;
+  else usage.callsFailed++;
+  usage.callsByModel[model] = (usage.callsByModel[model] || 0) + 1;
+  if (rateLimited) {
+    usage.rateLimitHits++;
+    usage.lastRateLimitAt = Date.now();
+  }
+  usage.totalDurationMs += durationMs;
+  usage.avgDurationMs = usage.totalDurationMs / usage.callsTotal;
+}
+
+// Persist usage stats to Supabase every 5 minutes
+setInterval(async () => {
+  if (!supabase || usage.callsTotal === 0) return;
+  try {
+    await supabase.from("cost_tracking").insert({
+      provider: "claude",
+      model: "usage_stats",
+      input_tokens: usage.callsTotal,
+      output_tokens: usage.callsSuccess,
+      cache_read_tokens: usage.callsFailed,
+      cache_creation_tokens: usage.rateLimitHits,
+      cost_usd: 0,
+      duration_ms: usage.avgDurationMs,
+      metadata: {
+        type: "usage_snapshot",
+        calls_by_model: usage.callsByModel,
+        queue_depth: claudeQueue.length,
+        active_tasks: activeTasks.size,
+        uptime_hours: ((Date.now() - usage.uptimeSince) / 3600000).toFixed(1),
+      },
+    });
+  } catch {}
+}, 5 * 60 * 1000);
+
+// ============================================================
+// CONCURRENCY LIMITER + REQUEST QUEUE
+// ============================================================
+
+const MAX_CONCURRENT_CLAUDE = 2;
+let runningClaude = 0;
+const claudeQueue: Array<{
+  resolve: (v: void) => void;
+  description: string;
+  enqueuedAt: number;
+}> = [];
+
+async function acquireClaudeSlot(description?: string): Promise<void> {
+  if (runningClaude < MAX_CONCURRENT_CLAUDE) {
+    runningClaude++;
+    return;
+  }
+  console.log(`[queue] Slot full (${runningClaude}/${MAX_CONCURRENT_CLAUDE}), queuing: ${description?.substring(0, 50) || "unknown"} (${claudeQueue.length + 1} waiting)`);
+  return new Promise((resolve) => {
+    claudeQueue.push({ resolve, description: description || "unknown", enqueuedAt: Date.now() });
+  });
+}
+
+function releaseClaudeSlot(): void {
+  const next = claudeQueue.shift();
+  if (next) {
+    const waitMs = Date.now() - next.enqueuedAt;
+    console.log(`[queue] Dequeuing: ${next.description.substring(0, 50)} (waited ${(waitMs / 1000).toFixed(1)}s)`);
+    next.resolve();
+  } else {
+    runningClaude--;
+  }
+}
+
+// ============================================================
+// CALL CLAUDE — with model selection, retry, and monitoring
+// ============================================================
+
+type ModelTier = "haiku" | "sonnet" | "opus";
+
+async function callClaude(prompt: string, model?: ModelTier): Promise<string> {
+  await acquireClaudeSlot(prompt.substring(0, 60));
+
+  const maxRetries = 2;
+  let lastError: Error | null = null;
+
+  try {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          // Exponential backoff: 3s, 9s
+          const delay = 3000 * Math.pow(3, attempt - 1);
+          console.log(`[retry] Attempt ${attempt + 1}/${maxRetries + 1} after ${delay / 1000}s delay`);
+          await new Promise((r) => setTimeout(r, delay));
+        }
+        return await _callClaudeOnce(prompt, model);
+      } catch (error) {
+        lastError = error as Error;
+        const isRateLimit = lastError.message.includes("rate") || lastError.message.includes("overloaded");
+        if (isRateLimit) {
+          recordCall(false, model || "sonnet", 0, true);
+          console.warn(`[rate-limit] Hit rate limit on attempt ${attempt + 1}`);
+          continue; // retry
+        }
+        // Non-rate-limit errors: retry once, then give up
+        if (attempt >= 1) break;
+      }
+    }
+
+    throw lastError || new Error("Claude call failed after retries");
+  } finally {
+    releaseClaudeSlot();
+  }
+}
+
+async function _callClaudeOnce(prompt: string, model?: ModelTier): Promise<string> {
   const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions"];
 
-  console.log(`Calling Claude: ${prompt.substring(0, 50)}...`);
+  // Add model flag if specified (uses Max plan quota for all models)
+  if (model) {
+    args.push("--model", model);
+  }
+
+  const modelLabel = model || "default";
+  console.log(`Calling Claude [${modelLabel}] (${runningClaude}/${MAX_CONCURRENT_CLAUDE} slots, ${claudeQueue.length} queued): ${prompt.substring(0, 50)}...`);
+
+  const startTime = Date.now();
 
   try {
     const proc = spawn(args, {
@@ -310,10 +478,12 @@ async function callClaude(prompt: string): Promise<string> {
     ]);
 
     const exitCode = await proc.exited;
+    const durationMs = Date.now() - startTime;
 
     if (exitCode !== 0) {
-      console.error("Claude error:", stderr);
-      return `Error: ${stderr || "Claude exited with code " + exitCode}`;
+      console.error(`Claude error (exit ${exitCode}):`, stderr || "(empty stderr)");
+      recordCall(false, modelLabel, durationMs, stderr.includes("rate") || stderr.includes("overloaded"));
+      throw new Error(stderr || `Claude CLI exited with code ${exitCode}`);
     }
 
     // Parse JSON response to extract cost data
@@ -321,36 +491,41 @@ async function callClaude(prompt: string): Promise<string> {
       const json = JSON.parse(output.trim());
       const result = typeof json.result === "string" ? json.result : output.trim();
 
-      // Extract model from various possible locations in the JSON response
-      const model = json.model
+      const resolvedModel = json.model
         || json.metadata?.model
         || (typeof json.result === "object" && json.result?.model)
         || process.env.ANTHROPIC_MODEL
-        || "claude-sonnet-4-5";
+        || modelLabel;
 
-      // Log cost data if available
+      recordCall(true, resolvedModel, durationMs, false);
+
       if (json.usage) {
         trackCost({
           provider: "claude",
-          model,
+          model: resolvedModel,
           input_tokens: json.usage?.input_tokens || 0,
           output_tokens: json.usage?.output_tokens || 0,
           cache_read_tokens: json.usage?.cache_read_input_tokens || 0,
           cache_creation_tokens: json.usage?.cache_creation_input_tokens || 0,
           cost_usd: json.cost_usd || json.total_cost_usd || 0,
-          duration_ms: json.duration_ms || 0,
+          duration_ms: durationMs,
           session_id: json.session_id || undefined,
         });
       }
 
       return result;
     } catch {
-      // If JSON parsing fails, return raw output
+      recordCall(true, modelLabel, durationMs, false);
       return output.trim();
     }
   } catch (error) {
+    if (error instanceof Error && (error.message.includes("Claude CLI exited") || error.message.includes("rate") || error.message.includes("overloaded"))) {
+      throw error;
+    }
+    const durationMs = Date.now() - startTime;
+    recordCall(false, modelLabel, durationMs, false);
     console.error("Spawn error:", error);
-    return `Error: Could not run Claude CLI`;
+    throw new Error("Could not run Claude CLI");
   }
 }
 
@@ -362,7 +537,7 @@ async function callClaude(prompt: string): Promise<string> {
 function runTask(
   ctx: Context,
   taskDescription: string,
-  buildTask: () => Promise<{ prompt: string }>,
+  buildTask: () => Promise<{ prompt: string; model?: ModelTier }>,
   opts?: { postProcess?: (response: string) => Promise<string>; userId?: string }
 ): void {
   const taskId = `task-${++taskCounter}`;
@@ -379,14 +554,22 @@ function runTask(
     ctx.replyWithChatAction("typing").catch(() => {});
   }, 4000);
 
-  // Notify after 30 seconds that the task is still running
-  const progressTimer = setTimeout(async () => {
+  // Notify user of queue position if there's a wait
+  const queueNotifyTimer = setTimeout(async () => {
     if (activeTasks.has(taskId)) {
       task.notified = true;
+      const queueLen = claudeQueue.length;
       const otherTasks = activeTasks.size - 1;
-      const msg = otherTasks > 0
-        ? `Still working on this (+ ${otherTasks} other task${otherTasks > 1 ? "s" : ""} in progress). I'll send the result when it's ready.`
-        : "Still working on this — it's a bigger task. I'll send the result when it's ready.";
+      let msg: string;
+      if (queueLen > 0) {
+        msg = `Your request is queued (${queueLen} ahead).`;
+        if (otherTasks > 0) msg += ` ${otherTasks} other task${otherTasks > 1 ? "s" : ""} also in progress.`;
+        msg += " I'll deliver results as they complete.";
+      } else if (otherTasks > 0) {
+        msg = `Still working on this (+ ${otherTasks} other task${otherTasks > 1 ? "s" : ""} in progress). I'll send the result when it's ready.`;
+      } else {
+        msg = "Still working on this — it's a bigger task. I'll send the result when it's ready.";
+      }
       await ctx.reply(msg).catch(() => {});
     }
   }, 30_000);
@@ -394,8 +577,12 @@ function runTask(
   // Fire and forget — run the task asynchronously
   (async () => {
     try {
-      const { prompt } = await buildTask();
-      const rawResponse = await callClaude(prompt);
+      const { prompt, model } = await buildTask();
+
+      // Skip calling Claude for orchestrator-handled prompts
+      const rawResponse = prompt === "__ORCHESTRATOR_HANDLED__"
+        ? "__ORCHESTRATOR_HANDLED__"
+        : await callClaude(prompt, model);
 
       const response = opts?.postProcess
         ? await opts.postProcess(rawResponse)
@@ -411,9 +598,14 @@ function runTask(
       await sendResponseWithVoice(ctx, response, userId);
     } catch (error) {
       console.error(`Task ${taskId} error:`, error);
-      await ctx.reply("Something went wrong processing that. Check logs for details.").catch(() => {});
+      // Don't send cryptic error messages — give a useful reply
+      const queued = claudeQueue.length;
+      const msg = queued > 0
+        ? `I'm handling several tasks right now. This one is queued (${queued} ahead). I'll get to it shortly.`
+        : "Something went wrong processing that. Try sending your message again in a moment.";
+      await ctx.reply(msg).catch(() => {});
     } finally {
-      clearTimeout(progressTimer);
+      clearTimeout(queueNotifyTimer);
       clearInterval(typingInterval);
       activeTasks.delete(taskId);
     }
@@ -768,6 +960,18 @@ function buildPrompt(
       "\n  - LOCATIONS: Open Source Mind (Main) ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
       "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
       "\n  - WRITE OPERATIONS: Always ask " + user.name + " which location to use BEFORE executing." +
+      "\n• Go High Level (GHL): Full CRM and agency management via official MCP server." +
+      "\n  - CONTACTS: Create, update, search, tag, add to workflows, manage custom fields" +
+      "\n  - MEMBERSHIPS & COURSES: Grant/revoke contact access to courses, memberships, and groups" +
+      "\n  - CALENDARS: Create/edit/delete calendars, appointments, check free slots, block time" +
+      "\n  - OPPORTUNITIES: Create/update deals in existing pipelines, change deal status" +
+      "\n  - CONVERSATIONS: Send SMS/email to contacts, manage conversation threads" +
+      "\n  - EMAIL TEMPLATES: Create, edit, delete email templates" +
+      "\n  - BLOG POSTS: Create, update, list blog posts, manage categories and authors" +
+      "\n  - SOCIAL MEDIA: Create/schedule/manage social posts across connected accounts" +
+      "\n  - PAYMENTS & INVOICES: List orders, manage subscriptions, create invoices" +
+      "\n  - LIMITATIONS: Cannot create pipelines/stages, cannot create/edit forms, cannot edit funnel pages, cannot create/edit workflows (only add/remove contacts)" +
+      "\n  - Always confirm before modifying contacts, sending messages, or changing access." +
       "\n• Cloudflare: Manage DNS records, deploy and manage Cloudflare Workers." +
       "\n• Task Scheduler: Create, list, and manage recurring scheduled tasks." +
       `\n  - List tasks: \`bun run ${PROJECT_ROOT}/src/scheduler.ts list\`` +
@@ -817,6 +1021,113 @@ function buildPrompt(
       "\n• MEMORY TAGS: Continue using [REMEMBER: ...] tags for facts and context. Use [GOAL: ...] and [DONE: ...] for goal tracking." +
       "\n• PROACTIVE SUGGESTIONS: If you see an opportunity to automate something " + user.name + " does manually, suggest creating a skill for it."
   );
+
+  if (user.role === "admin") {
+    parts.push(
+      "\nSELF-MODIFICATION — You can edit your own source code:" +
+        `\n• Your source code lives at: ${PROJECT_ROOT}` +
+        `\n• Key files:` +
+        `\n  - src/relay.ts — Main bot, message handlers, system prompt` +
+        `\n  - src/orchestrator.ts — Task routing (simple vs complex)` +
+        `\n  - src/planner.ts — Task decomposition and execution` +
+        `\n  - src/agent-router.ts — Agent definitions, tool mappings, prompt building` +
+        `\n  - src/patterns.ts — Execution pattern learning` +
+        `\n  - src/memory.ts — Memory and context retrieval` +
+        `\n  - src/settings.ts — User settings` +
+        `\n  - .claude/agents/*.md — Agent personality files (frontmatter + markdown)` +
+        `\n  - .claude/skills/*/ — Skill definitions` +
+        `\n  - CHANGELOG.md — Your modification log (YOU maintain this)` +
+        "\n" +
+        "\nWhen " + user.name + " asks you to fix, improve, or change how you work:" +
+        "\n1. ALWAYS commit the current state first: `git -C " + PROJECT_ROOT + " add -A && git -C " + PROJECT_ROOT + " commit -m \"auto-save before self-edit\"`" +
+        "\n2. Read the relevant file(s) to understand the current code" +
+        "\n3. Make the change using your file editing tools" +
+        "\n4. Log the change in CHANGELOG.md (see format below)" +
+        "\n5. Commit the change: `git -C " + PROJECT_ROOT + " add -A && git -C " + PROJECT_ROOT + " commit -m \"self-edit: <description>\"`" +
+        "\n6. Tell " + user.name + " what you changed and suggest they send /reload to apply it" +
+        "\n" +
+        `\nCHANGELOG.md — You MUST maintain ${PROJECT_ROOT}/CHANGELOG.md. Append an entry for EVERY modification:` +
+        "\n  Format:" +
+        "\n  ## [YYYY-MM-DD HH:MM] <trigger>" +
+        "\n  **Trigger:** user-request | auto-correction | self-learning | agent-creation" +
+        "\n  **Files:** list of files modified" +
+        "\n  **Summary:** what changed and why" +
+        "\n  **Risk:** low | medium | high" +
+        "\n  ---" +
+        "\n" +
+        "\nAGENT CREATION — When " + user.name + " asks you to create a new agent:" +
+        "\n1. Ask for: agent name, description (one-liner), personality, core capabilities" +
+        "\n2. If " + user.name + " sends knowledge base files (PDFs, docs), save them to `agent-team/` and reference them in the agent" +
+        "\n3. Create the agent file at `.claude/agents/<slug>.md` using this format:" +
+        "\n   ---" +
+        "\n   name: AgentName" +
+        "\n   description: One-line description for the catalog" +
+        "\n   ---" +
+        "\n   # AgentName — Role Title" +
+        "\n   You are **AgentName**, a [personality]. [Backstory]." +
+        "\n   ## Personality" +
+        "\n   [2-3 sentences]" +
+        "\n   ## Core Capabilities" +
+        "\n   1. **Capability** — description" +
+        "\n   ## Playbook" +
+        "\n   [numbered rules]" +
+        "\n   ## Knowledge Base" +
+        "\n   - `agent-team/knowledge_bases/<file>`" +
+        "\n4. Add the agent's tool mapping to `src/agent-router.ts` in the AGENT_TOOLS object" +
+        "\n   Pick from available MCP tools: Google Workspace (Gmail, Calendar, Docs, Sheets, Slides, Drive, Chat), " +
+        "Notion, Playwright (browser), Go High Level (CRM), Square (payments), Cloudflare (deploy), Zoom (meetings), Supabase (database)" +
+        "\n   And skills: /image-gen, /canvas-design, /docx, /xlsx, /pptx, /pdf, /content-research-writer, " +
+        "/competitive-ads-extractor, /lead-research-assistant, /ghostwriter, /platform-maker, /notebooklm, /telegram-file-sender, /skill-creator" +
+        "\n5. Log in CHANGELOG.md, commit, and tell " + user.name + " to /reload" +
+        "\n" +
+        "\nAUTO-CORRECTION — When you encounter errors, try to fix them yourself:" +
+        "\n• If a subtask fails with a code error (syntax, import, type), read the file, identify the bug, and fix it." +
+        "\n• If a skill invocation fails, check the skill's README and adjust parameters." +
+        "\n• If an MCP tool call fails, check the error message and retry with corrected parameters." +
+        "\n• If you successfully auto-correct, log it in CHANGELOG.md with trigger: auto-correction." +
+        "\n• If you cannot fix it after one attempt, report the error to " + user.name + " with diagnostics." +
+        "\n• NEVER auto-correct core files (relay.ts, orchestrator.ts) without telling " + user.name + " first." +
+        "\n• For agent/skill files, you may auto-correct silently and report what you fixed." +
+        "\n" +
+        "\nSELF-LEARNING — You evolve by detecting patterns and creating reusable capabilities:" +
+        "\n" +
+        "\n1. SKILL CREATION FROM REPETITION:" +
+        "\n   When you notice " + user.name + " has asked for the same type of task 3+ times:" +
+        "\n   - Identify the pattern (e.g., \"generate Instagram carousel for product\")" +
+        "\n   - Use /skill-creator to build a dedicated skill that automates the workflow" +
+        "\n   - Tell " + user.name + ": \"I noticed you do [pattern] often. I created a /[skill-name] skill for it.\"" +
+        "\n   - Log it in CHANGELOG.md with trigger: self-learning" +
+        "\n" +
+        "\n2. AGENT SPECIALIZATION:" +
+        "\n   When you notice a recurring problem domain that doesn't fit existing agents:" +
+        "\n   - After seeing 3+ requests in that domain, propose creating a specialist agent" +
+        "\n   - If " + user.name + " agrees (or says \"just do it\"), create the agent automatically" +
+        "\n   - Give it the right MCP tools and skills for its domain" +
+        "\n   - Log it in CHANGELOG.md with trigger: self-learning" +
+        "\n" +
+        "\n3. PROMPT REFINEMENT:" +
+        "\n   When an agent consistently produces poor results for a task type:" +
+        "\n   - Identify what's going wrong (too verbose, missing context, wrong tool usage)" +
+        "\n   - Edit the agent's .md file or AGENT_TOOLS entry to improve instructions" +
+        "\n   - Log it in CHANGELOG.md with trigger: auto-correction" +
+        "\n" +
+        "\n4. WORKFLOW OPTIMIZATION:" +
+        "\n   When you notice an execution pattern that's slow or wasteful:" +
+        "\n   - Adjust decomposition prompts or dependency chains" +
+        "\n   - Cache intermediate results that get reused" +
+        "\n   - Log it in CHANGELOG.md with trigger: self-learning" +
+        "\n" +
+        "\nSAFETY RULES FOR SELF-MODIFICATION:" +
+        "\n• ALWAYS git commit before AND after changes (never lose work)" +
+        "\n• ALWAYS log every change in CHANGELOG.md" +
+        "\n• NEVER modify .env or credentials files" +
+        "\n• NEVER delete files without asking " + user.name + " first" +
+        "\n• For core files (relay.ts, orchestrator.ts, planner.ts): describe the plan first and ask for confirmation" +
+        "\n• For agent/skill files: you may edit freely but always log it" +
+        "\n• If something breaks, tell " + user.name + " and offer to revert: `git -C " + PROJECT_ROOT + " revert HEAD`" +
+        "\n• Max 5 self-initiated changes per day without explicit user request (prevents runaway self-modification)"
+    );
+  }
 
   parts.push(`\nUser: ${userMessage}`);
 
@@ -935,6 +1246,106 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     } catch (e: any) {
       await ctx.reply(`Error: ${e.message}`);
     }
+    return true;
+  }
+
+  if (command === "/status") {
+    const uptimeH = ((Date.now() - usage.uptimeSince) / 3600000).toFixed(1);
+    const successRate = usage.callsTotal > 0
+      ? ((usage.callsSuccess / usage.callsTotal) * 100).toFixed(0)
+      : "N/A";
+    const modelBreakdown = Object.entries(usage.callsByModel)
+      .map(([m, c]) => `  ${m}: ${c}`)
+      .join("\n") || "  (none yet)";
+    const lastRL = usage.lastRateLimitAt
+      ? `${((Date.now() - usage.lastRateLimitAt) / 60000).toFixed(0)} min ago`
+      : "never";
+
+    const statusMsg = [
+      `<b>Nova Status</b>`,
+      ``,
+      `<b>Uptime:</b> ${uptimeH}h`,
+      `<b>Claude Calls:</b> ${usage.callsTotal} total (${usage.callsSuccess} ok, ${usage.callsFailed} failed)`,
+      `<b>Success Rate:</b> ${successRate}%`,
+      `<b>Avg Response:</b> ${(usage.avgDurationMs / 1000).toFixed(1)}s`,
+      `<b>Rate Limit Hits:</b> ${usage.rateLimitHits} (last: ${lastRL})`,
+      ``,
+      `<b>Right Now:</b>`,
+      `  Active slots: ${runningClaude}/${MAX_CONCURRENT_CLAUDE}`,
+      `  Queued: ${claudeQueue.length}`,
+      `  Active tasks: ${activeTasks.size}`,
+      `  Pending approvals: ${getPendingApprovalCount()}`,
+      ``,
+      `<b>Calls by Model:</b>`,
+      modelBreakdown,
+    ].join("\n");
+
+    await ctx.reply(statusMsg, { parse_mode: "HTML" }).catch(async () => {
+      await ctx.reply(statusMsg);
+    });
+    return true;
+  }
+
+  if (command === "/reload") {
+    await ctx.reply("Reloading Nova... I'll be back in a few seconds.");
+    // Give the message time to send, then restart the process
+    // launchd (KeepAlive=true) will restart us automatically
+    setTimeout(() => {
+      console.log("[reload] Admin requested reload — exiting for launchd restart");
+      process.exit(0);
+    }, 1000);
+    return true;
+  }
+
+  if (command === "/revert") {
+    // Revert the last git commit (safety net for self-edits)
+    try {
+      const proc = spawn(["git", "-C", PROJECT_ROOT, "log", "--oneline", "-5"], {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const output = await new Response(proc.stdout).text();
+      await proc.exited;
+
+      const lines = output.trim().split("\n");
+      const lastCommit = lines[0] || "(no commits)";
+
+      if (parts[1] === "confirm") {
+        const revertProc = spawn(["git", "-C", PROJECT_ROOT, "revert", "--no-edit", "HEAD"], {
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const revertErr = await new Response(revertProc.stderr).text();
+        const revertCode = await revertProc.exited;
+
+        if (revertCode !== 0) {
+          await ctx.reply(`Revert failed: ${revertErr.trim()}\nYou may need to resolve this manually.`);
+        } else {
+          await ctx.reply(`Reverted: ${lastCommit}\nSend /reload to apply the revert.`);
+        }
+      } else {
+        await ctx.reply(
+          `Last 5 commits:\n${output.trim()}\n\nTo revert the latest commit, send:\n/revert confirm`
+        );
+      }
+    } catch (e: any) {
+      await ctx.reply(`Error: ${e.message}`);
+    }
+    return true;
+  }
+
+  if (command === "/agents") {
+    // List loaded agents
+    const { getAllAgents } = await import("./agent-router.ts");
+    const agents = getAllAgents();
+    if (agents.length === 0) {
+      await ctx.reply("No agents loaded.");
+      return true;
+    }
+    const lines = agents.map((a) => `• <b>${a.name}</b> (${a.slug}) — ${a.description.substring(0, 80)}`);
+    await ctx.reply(`<b>Loaded Agents (${agents.length})</b>\n\n${lines.join("\n")}`, { parse_mode: "HTML" }).catch(async () => {
+      await ctx.reply(`Loaded Agents (${agents.length})\n\n${lines.map(l => l.replace(/<[^>]+>/g, "")).join("\n")}`);
+    });
     return true;
   }
 
@@ -1160,6 +1571,9 @@ initOrchestrator({
 // ============================================================
 // START
 // ============================================================
+
+// Load specialist agents before starting
+await loadAgents();
 
 console.log("Starting Nova (multi-user mode)...");
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
