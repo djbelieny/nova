@@ -43,19 +43,19 @@ import {
 type ModelTier = "haiku" | "sonnet" | "opus";
 
 // Injected dependencies from relay.ts
-let _callClaude: (prompt: string, model?: ModelTier) => Promise<string>;
+let _callClaude: (prompt: string, model?: ModelTier, userId?: string) => Promise<string>;
 let _buildPrompt: (...args: any[]) => string;
 let _runTask: (
   ctx: Context,
   desc: string,
   buildTask: () => Promise<{ prompt: string; model?: ModelTier }>,
-  opts?: { postProcess?: (r: string) => Promise<string>; userId?: string }
+  opts?: { postProcess?: (r: string) => Promise<string>; userId?: string },
 ) => void;
 let _saveMessage: (role: string, content: string, userId: string) => Promise<void>;
 let _sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
 
 export function initOrchestrator(deps: {
-  callClaude: (prompt: string, model?: ModelTier) => Promise<string>;
+  callClaude: (prompt: string, model?: ModelTier, userId?: string) => Promise<string>;
   buildPrompt: (...args: any[]) => string;
   runTask: typeof _runTask;
   saveMessage: (role: string, content: string, userId: string) => Promise<void>;

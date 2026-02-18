@@ -11,6 +11,14 @@
 import "dotenv/config";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { getAllAgents, loadAgents } from "./agent-router.ts";
+import {
+  getIntegrationStatus,
+  getOAuthUrl,
+  handleOAuthCallback,
+  disconnectIntegration,
+  PER_USER_PROVIDERS,
+  type Provider,
+} from "./integrations.ts";
 
 // ============================================================
 // CONFIGURATION
@@ -394,6 +402,188 @@ async function getTaskDetail(userId: string, taskId: string): Promise<unknown> {
 }
 
 // ============================================================
+// DASHBOARD HANDLER
+// ============================================================
+
+async function getDashboard(): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  try {
+    const { data, error } = await supabase
+      .from("nova_status")
+      .select("*")
+      .eq("id", 1)
+      .single();
+
+    if (error) return { error: error.message };
+
+    return {
+      uptime_since: data?.uptime_since,
+      uptime_hours: data?.uptime_since
+        ? ((Date.now() - new Date(data.uptime_since).getTime()) / 3600000).toFixed(1)
+        : "0",
+      calls_total: data?.calls_total || 0,
+      calls_success: data?.calls_success || 0,
+      calls_failed: data?.calls_failed || 0,
+      calls_by_model: data?.calls_by_model || {},
+      rate_limit_hits: data?.rate_limit_hits || 0,
+      avg_duration_ms: data?.avg_duration_ms || 0,
+      active_slots: data?.active_slots || 0,
+      max_slots: data?.max_slots || 2,
+      queue_depth: data?.queue_depth || 0,
+      active_tasks: data?.active_tasks || 0,
+      pending_approvals: data?.pending_approvals || 0,
+      updated_at: data?.updated_at,
+    };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+// ============================================================
+// INTEGRATIONS HANDLERS
+// ============================================================
+
+async function getIntegrations(userId: string): Promise<unknown> {
+  if (!supabase) return { integrations: [], error: "Supabase not configured" };
+  try {
+    const statuses = await getIntegrationStatus(supabase, userId);
+    return { integrations: statuses };
+  } catch (e: any) {
+    return { integrations: [], error: e.message };
+  }
+}
+
+async function connectIntegration(userId: string, provider: string): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  if (!PER_USER_PROVIDERS.includes(provider as Provider)) {
+    return { error: `Invalid provider: ${provider}` };
+  }
+
+  const callbackBase = process.env.MINIAPP_URL || `http://localhost:${PORT}`;
+  const result = getOAuthUrl(provider as Provider, userId, callbackBase);
+
+  if (result.error) return { error: result.error };
+
+  // Mark as pending in DB
+  await supabase.rpc("upsert_user_integration", {
+    p_user_id: userId,
+    p_provider: provider,
+    p_status: "pending",
+  });
+
+  return { url: result.url };
+}
+
+async function disconnectIntegrationHandler(userId: string, provider: string): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  if (!PER_USER_PROVIDERS.includes(provider as Provider)) {
+    return { error: `Invalid provider: ${provider}` };
+  }
+
+  const result = await disconnectIntegration(supabase, userId, provider as Provider);
+  return result;
+}
+
+// ============================================================
+// SCHEDULES HANDLERS
+// ============================================================
+
+async function getSchedules(userId: string): Promise<unknown> {
+  if (!supabase) return { schedules: [], error: "Supabase not configured" };
+  try {
+    const { data, error } = await supabase.rpc("get_scheduled_tasks", { p_user_id: userId });
+    if (error) return { schedules: [], error: error.message };
+    return { schedules: data || [] };
+  } catch (e: any) {
+    return { schedules: [], error: e.message };
+  }
+}
+
+async function cancelSchedule(userId: string, scheduleId: string): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  try {
+    const { error } = await supabase
+      .from("scheduled_tasks")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", scheduleId)
+      .eq("user_id", userId);
+    if (error) return { error: error.message };
+    return { success: true };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+// ============================================================
+// USERS HANDLERS (admin only)
+// ============================================================
+
+async function listUsers(): Promise<unknown> {
+  if (!supabase) return { users: [], error: "Supabase not configured" };
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, telegram_id, name, role, timezone, active, created_at")
+      .order("created_at");
+    if (error) return { users: [], error: error.message };
+    return { users: data || [] };
+  } catch (e: any) {
+    return { users: [], error: e.message };
+  }
+}
+
+async function addUser(fields: Record<string, any>): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  const { telegram_id, name, timezone, pin } = fields;
+  if (!telegram_id || !name) return { error: "telegram_id and name are required" };
+  try {
+    const row: Record<string, any> = {
+      telegram_id,
+      name,
+      timezone: timezone || "UTC",
+      role: "member",
+    };
+    if (pin) row.pin = pin;
+    const { data, error } = await supabase.from("users").insert(row).select().single();
+    if (error) return { error: error.message };
+    return { user: data };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function deactivateUser(userId: string): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  try {
+    const { error } = await supabase
+      .from("users")
+      .update({ active: false, updated_at: new Date().toISOString() })
+      .eq("id", userId);
+    if (error) return { error: error.message };
+    return { success: true };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+// ============================================================
+// OAUTH RESULT PAGE
+// ============================================================
+
+function renderOAuthResult(success: boolean, message: string): string {
+  const emoji = success ? "\u2705" : "\u274C";
+  const color = success ? "#2ecc71" : "#ff4444";
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova — Integration</title>
+<style>body{background:#1a1a2e;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}
+.card{background:#1e1e3a;border-radius:16px;padding:40px;max-width:400px;}.icon{font-size:48px;margin-bottom:16px;}.msg{font-size:18px;margin-bottom:24px;color:${color};}
+.hint{font-size:14px;color:#999;}</style></head>
+<body><div class="card"><div class="icon">${emoji}</div><div class="msg">${message.replace(/</g, "&lt;")}</div>
+<div class="hint">You can close this window and return to the Nova app.</div></div></body></html>`;
+}
+
+// ============================================================
 // FRONTEND SPA
 // ============================================================
 
@@ -467,18 +657,21 @@ function renderMiniApp(): string {
       background: var(--secondary-bg);
       display: flex;
       align-items: center;
-      justify-content: space-around;
+      overflow-x: auto;
       border-top: 1px solid rgba(255,255,255,0.06);
       z-index: 100;
       padding-bottom: env(safe-area-inset-bottom, 0);
+      scrollbar-width: none;
     }
+    .tab-bar::-webkit-scrollbar { display: none; }
 
     .tab-item {
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      flex: 1;
+      min-width: 64px;
+      flex: 0 0 auto;
       height: 100%;
       cursor: pointer;
       color: var(--hint);
@@ -486,6 +679,7 @@ function renderMiniApp(): string {
       gap: 2px;
       transition: color 0.2s;
       user-select: none;
+      padding: 0 6px;
     }
 
     .tab-item.active { color: var(--accent); }
@@ -904,8 +1098,16 @@ function renderMiniApp(): string {
   <div class="app">
     <div class="toast-container" id="toastContainer"></div>
 
+    <!-- ======== DASHBOARD PAGE ======== -->
+    <div class="content page active" id="pageDashboard">
+      <div class="section-header">System Status</div>
+      <div id="dashboardContent">
+        <div class="loading"><div class="spinner"></div>Loading dashboard...</div>
+      </div>
+    </div>
+
     <!-- ======== PROFILE PAGE ======== -->
-    <div class="content page active" id="pageProfile">
+    <div class="content page" id="pageProfile">
       <div class="ptr-indicator" id="ptrProfile">Pull to refresh</div>
       <div class="profile-header" id="profileHeader">
         <div class="avatar" id="profileAvatar" style="background:#5288c1;">?</div>
@@ -1033,6 +1235,45 @@ function renderMiniApp(): string {
       </div>
     </div>
 
+    <!-- ======== INTEGRATIONS PAGE ======== -->
+    <div class="content page" id="pageIntegrations">
+      <div class="section-header">Integrations</div>
+      <div id="integrationsList">
+        <div class="loading"><div class="spinner"></div>Loading integrations...</div>
+      </div>
+    </div>
+
+    <!-- ======== SCHEDULES PAGE ======== -->
+    <div class="content page" id="pageSchedules">
+      <div class="section-header">Scheduled Tasks</div>
+      <div id="schedulesList">
+        <div class="loading"><div class="spinner"></div>Loading schedules...</div>
+      </div>
+    </div>
+
+    <!-- ======== USERS PAGE (admin only) ======== -->
+    <div class="content page" id="pageUsers">
+      <div class="section-header">User Management</div>
+      <div id="addUserForm" class="card" style="margin-bottom:16px;">
+        <div class="field-group">
+          <div class="field-label">Telegram ID</div>
+          <input type="text" class="field-input" id="newUserTelegramId" placeholder="123456789">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Name</div>
+          <input type="text" class="field-input" id="newUserName" placeholder="John">
+        </div>
+        <div class="field-group">
+          <div class="field-label">Timezone</div>
+          <input type="text" class="field-input" id="newUserTimezone" placeholder="America/New_York" value="UTC">
+        </div>
+        <button class="approval-btn approve" style="width:100%;margin-top:8px;" onclick="addNewUser()">Add User</button>
+      </div>
+      <div id="usersList">
+        <div class="loading"><div class="spinner"></div>Loading users...</div>
+      </div>
+    </div>
+
     <!-- ======== AGENT DETAIL ======== -->
     <div class="detail-view" id="agentDetail">
       <div id="agentDetailContent"></div>
@@ -1045,13 +1286,29 @@ function renderMiniApp(): string {
 
     <!-- ======== TAB BAR ======== -->
     <div class="tab-bar">
-      <div class="tab-item active" data-tab="pageProfile" onclick="switchTab('pageProfile')">
+      <div class="tab-item active" data-tab="pageDashboard" onclick="switchTab('pageDashboard')">
+        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+        <span>Dashboard</span>
+      </div>
+      <div class="tab-item" data-tab="pageProfile" onclick="switchTab('pageProfile')">
         <svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
         <span>Profile</span>
+      </div>
+      <div class="tab-item" data-tab="pageIntegrations" onclick="switchTab('pageIntegrations')">
+        <svg viewBox="0 0 24 24"><path d="M17 7h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1 0 1.43-.98 2.63-2.31 2.98l1.46 1.46C20.88 15.61 22 13.95 22 12c0-2.76-2.24-5-5-5zm-1 4h-2.19l2 2H16v-2zM2 4.27l3.11 3.11C3.29 8.12 2 9.91 2 12c0 2.76 2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1 0-1.59 1.21-2.9 2.76-3.07L8.73 11H8v2h2.73L13 15.27V17h1.73l4.01 4L20 19.74 3.27 3 2 4.27z"/></svg>
+        <span>Integrations</span>
       </div>
       <div class="tab-item" data-tab="pageAgents" onclick="switchTab('pageAgents')">
         <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
         <span>Agents</span>
+      </div>
+      <div class="tab-item" data-tab="pageSchedules" onclick="switchTab('pageSchedules')">
+        <svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+        <span>Schedules</span>
+      </div>
+      <div class="tab-item" data-tab="pageUsers" onclick="switchTab('pageUsers')">
+        <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+        <span>Users</span>
       </div>
       <div class="tab-item" data-tab="pageApprovals" onclick="switchTab('pageApprovals')">
         <svg viewBox="0 0 24 24"><path d="M18 7l-1.41-1.41-6.34 6.34 1.41 1.41L18 7zm4.24-1.41L11.66 16.17 7.48 12l-1.41 1.41L11.66 19l12-12-1.42-1.41zM.41 13.41L6 19l1.41-1.41L1.83 12 .41 13.41z"/></svg>
@@ -1070,7 +1327,7 @@ function renderMiniApp(): string {
     // ============================================================
     const AGENT_COLORS = ['#FF6B6B','#4ECDC4','#45B7D1','#96CEB4','#FFEAA7','#DDA0DD','#98D8C8','#F7DC6F','#BB8FCE','#85C1E9','#F0B27A','#82E0AA'];
     let initData = '';
-    let currentTab = 'pageProfile';
+    let currentTab = 'pageDashboard';
     let currentFilter = 'all';
     let profileData = null;
     let prefsData = null;
@@ -1095,14 +1352,19 @@ function renderMiniApp(): string {
         });
       }
 
+      loadDashboard();
       loadProfile();
+      loadIntegrations();
       loadAgents();
+      loadSchedules();
+      loadUsers();
       loadApprovals();
       loadTasks();
 
-      // Auto-refresh approvals every 10 seconds
+      // Auto-refresh approvals every 10 seconds, dashboard every 30s
       approvalRefreshInterval = setInterval(function() {
         if (currentTab === 'pageApprovals') loadApprovals(true);
+        if (currentTab === 'pageDashboard') loadDashboard();
       }, 10000);
     });
 
@@ -1621,6 +1883,247 @@ function renderMiniApp(): string {
     }
 
     // ============================================================
+    // DASHBOARD
+    // ============================================================
+    async function loadDashboard() {
+      var data = await apiFetch('/dashboard');
+      if (!data) return;
+      renderDashboard(data);
+    }
+
+    function renderDashboard(d) {
+      var container = document.getElementById('dashboardContent');
+      var successRate = d.calls_total > 0 ? ((d.calls_success / d.calls_total) * 100).toFixed(0) : 'N/A';
+      var avgSec = (d.avg_duration_ms / 1000).toFixed(1);
+
+      var html = '';
+      html += '<div class="stat-row">';
+      html += '<div class="stat-item"><div class="stat-value">' + (d.uptime_hours || '0') + 'h</div><div class="stat-label">Uptime</div></div>';
+      html += '<div class="stat-item"><div class="stat-value">' + d.calls_total + '</div><div class="stat-label">Total Calls</div></div>';
+      html += '<div class="stat-item"><div class="stat-value">' + successRate + '%</div><div class="stat-label">Success</div></div>';
+      html += '</div>';
+
+      html += '<div class="card">';
+      html += '<div class="toggle-row"><div class="toggle-label">Active Slots</div><div style="color:var(--accent);font-weight:600;">' + d.active_slots + '/' + d.max_slots + '</div></div>';
+      html += '<div class="toggle-row"><div class="toggle-label">Queue Depth</div><div style="color:var(--accent);font-weight:600;">' + d.queue_depth + '</div></div>';
+      html += '<div class="toggle-row"><div class="toggle-label">Active Tasks</div><div style="color:var(--accent);font-weight:600;">' + d.active_tasks + '</div></div>';
+      html += '<div class="toggle-row"><div class="toggle-label">Pending Approvals</div><div style="color:var(--accent);font-weight:600;">' + d.pending_approvals + '</div></div>';
+      html += '<div class="toggle-row"><div class="toggle-label">Avg Response</div><div style="color:var(--accent);font-weight:600;">' + avgSec + 's</div></div>';
+      html += '<div class="toggle-row"><div class="toggle-label">Rate Limit Hits</div><div style="color:var(--accent);font-weight:600;">' + d.rate_limit_hits + '</div></div>';
+      html += '</div>';
+
+      // Model breakdown
+      var models = d.calls_by_model || {};
+      var modelKeys = Object.keys(models);
+      if (modelKeys.length > 0) {
+        html += '<div class="section-header">Calls by Model</div><div class="card">';
+        for (var i = 0; i < modelKeys.length; i++) {
+          var m = modelKeys[i];
+          html += '<div class="toggle-row"><div class="toggle-label">' + escapeStr(m) + '</div><div style="color:var(--accent);font-weight:600;">' + models[m] + '</div></div>';
+        }
+        html += '</div>';
+      }
+
+      if (d.updated_at) {
+        html += '<div style="text-align:center;font-size:12px;color:var(--hint);margin-top:12px;">Updated ' + timeAgo(d.updated_at) + '</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    // ============================================================
+    // INTEGRATIONS
+    // ============================================================
+    var PROVIDER_INFO = {
+      'google-personal': { name: 'Google Personal', icon: '\uD83D\uDCE7', color: '#4285F4' },
+      'google-work': { name: 'Google Work', icon: '\uD83C\uDFE2', color: '#0F9D58' },
+      'notion': { name: 'Notion', icon: '\uD83D\uDCDD', color: '#000000' },
+      'zoom': { name: 'Zoom', icon: '\uD83C\uDFA5', color: '#2D8CFF' }
+    };
+
+    async function loadIntegrations() {
+      var data = await apiFetch('/integrations');
+      if (!data) return;
+      renderIntegrations(data.integrations || []);
+    }
+
+    function renderIntegrations(integrations) {
+      var container = document.getElementById('integrationsList');
+      if (!integrations.length) {
+        container.innerHTML = '<div class="empty-state"><h3>No integrations available</h3></div>';
+        return;
+      }
+
+      var html = '';
+      for (var i = 0; i < integrations.length; i++) {
+        var intg = integrations[i];
+        var info = PROVIDER_INFO[intg.provider] || { name: intg.provider, icon: '\uD83D\uDD17', color: '#666' };
+        var connected = intg.status === 'connected';
+        var pending = intg.status === 'pending';
+        var statusText = connected ? 'Connected' : pending ? 'Pending...' : intg.status === 'error' ? 'Error' : 'Not connected';
+        var statusColor = connected ? '#2ecc71' : pending ? '#f39c12' : intg.status === 'error' ? '#ff4444' : 'var(--hint)';
+        var accountInfo = intg.metadata && intg.metadata.email ? intg.metadata.email : (intg.metadata && intg.metadata.workspace_name ? intg.metadata.workspace_name : '');
+
+        html += '<div class="card" style="display:flex;align-items:center;gap:14px;">';
+        html += '<div class="avatar-sm" style="background:' + info.color + ';font-size:20px;">' + info.icon + '</div>';
+        html += '<div style="flex:1;">';
+        html += '<div style="font-weight:600;font-size:15px;">' + escapeStr(info.name) + '</div>';
+        html += '<div style="font-size:12px;color:' + statusColor + ';">' + statusText + '</div>';
+        if (accountInfo) html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(accountInfo) + '</div>';
+        html += '</div>';
+
+        if (connected) {
+          html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="doDisconnect(\\'' + intg.provider + '\\')">Disconnect</button>';
+        } else if (!pending) {
+          html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="doConnect(\\'' + intg.provider + '\\')">Connect</button>';
+        }
+        html += '</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    async function doConnect(provider) {
+      var data = await apiFetch('/integrations/' + encodeURIComponent(provider) + '/connect', { method: 'POST' });
+      if (data && data.url) {
+        window.open(data.url, '_blank');
+        showToast('Complete the authorization in the new window', 'success');
+        // Poll for status change
+        var pollCount = 0;
+        var pollInterval = setInterval(async function() {
+          pollCount++;
+          if (pollCount > 60) { clearInterval(pollInterval); return; } // 5 min timeout
+          await loadIntegrations();
+        }, 5000);
+      }
+    }
+
+    async function doDisconnect(provider) {
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+        Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      }
+      var data = await apiFetch('/integrations/' + encodeURIComponent(provider) + '/disconnect', { method: 'POST' });
+      if (data && data.success) {
+        showToast('Disconnected', 'success');
+        loadIntegrations();
+      }
+    }
+
+    // ============================================================
+    // SCHEDULES
+    // ============================================================
+    async function loadSchedules() {
+      var data = await apiFetch('/schedules');
+      if (!data) return;
+      renderSchedules(data.schedules || []);
+    }
+
+    function renderSchedules(schedules) {
+      var container = document.getElementById('schedulesList');
+      if (!schedules.length) {
+        container.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg><h3>No Scheduled Tasks</h3><p>Scheduled reminders and recurring tasks will appear here.</p></div>';
+        return;
+      }
+
+      var html = '';
+      for (var i = 0; i < schedules.length; i++) {
+        var s = schedules[i];
+        var recurText = s.recurrence ? s.recurrence : 'one-time';
+        var triggerText = s.trigger_at ? new Date(s.trigger_at).toLocaleString() : 'not scheduled';
+        var creator = s.created_by === 'nova' ? ' (Nova)' : '';
+
+        html += '<div class="card" style="position:relative;">';
+        html += '<div style="font-weight:600;font-size:15px;">' + escapeStr(s.title || 'Task') + '<span style="color:var(--hint);font-size:12px;">' + creator + '</span></div>';
+        html += '<div style="font-size:13px;color:var(--hint);margin-top:4px;">' + escapeStr(triggerText) + ' &middot; ' + escapeStr(recurText) + '</div>';
+        if (s.condition) {
+          html += '<div style="font-size:12px;color:var(--accent);margin-top:4px;">IF: ' + escapeStr(s.condition) + '</div>';
+        }
+        if (s.instructions) {
+          html += '<div style="font-size:12px;color:var(--hint);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + escapeStr(s.instructions) + '</div>';
+        }
+        html += '<button class="approval-btn cancel" style="position:absolute;top:12px;right:12px;padding:6px 12px;font-size:12px;" onclick="doCancelSchedule(\\'' + s.id + '\\')">Cancel</button>';
+        html += '</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    async function doCancelSchedule(id) {
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+        Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      }
+      var data = await apiFetch('/schedules/' + encodeURIComponent(id) + '/cancel', { method: 'POST' });
+      if (data && data.success) {
+        showToast('Schedule cancelled', 'success');
+        loadSchedules();
+      }
+    }
+
+    // ============================================================
+    // USERS (admin)
+    // ============================================================
+    var isAdmin = false;
+
+    async function loadUsers() {
+      var data = await apiFetch('/users');
+      if (!data) {
+        // Hide add form if not admin
+        document.getElementById('addUserForm').style.display = 'none';
+        return;
+      }
+      isAdmin = true;
+      renderUsers(data.users || []);
+    }
+
+    function renderUsers(users) {
+      var container = document.getElementById('usersList');
+      if (!users.length) {
+        container.innerHTML = '<div class="empty-state"><h3>No users</h3></div>';
+        return;
+      }
+
+      var html = '';
+      for (var i = 0; i < users.length; i++) {
+        var u = users[i];
+        var statusDot = u.active ? '#2ecc71' : 'var(--hint)';
+        html += '<div class="card" style="display:flex;align-items:center;gap:12px;">';
+        html += '<div style="width:10px;height:10px;border-radius:50%;background:' + statusDot + ';flex-shrink:0;"></div>';
+        html += '<div style="flex:1;">';
+        html += '<div style="font-weight:600;font-size:15px;">' + escapeStr(u.name) + '</div>';
+        html += '<div style="font-size:12px;color:var(--hint);">' + escapeStr(u.telegram_id) + ' &middot; ' + escapeStr(u.role) + ' &middot; ' + escapeStr(u.timezone || 'UTC') + '</div>';
+        html += '</div>';
+        if (u.active) {
+          html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:6px 12px;font-size:12px;" onclick="doDeactivateUser(\\'' + u.id + '\\', \\'' + escapeStr(u.name) + '\\')">Remove</button>';
+        }
+        html += '</div>';
+      }
+      container.innerHTML = html;
+    }
+
+    async function addNewUser() {
+      var telegramId = document.getElementById('newUserTelegramId').value.trim();
+      var name = document.getElementById('newUserName').value.trim();
+      var timezone = document.getElementById('newUserTimezone').value.trim() || 'UTC';
+      if (!telegramId || !name) { showToast('Telegram ID and name are required', 'error'); return; }
+
+      var data = await apiFetch('/users', { method: 'POST', body: { telegram_id: telegramId, name: name, timezone: timezone } });
+      if (data && data.user) {
+        showToast('User added', 'success');
+        document.getElementById('newUserTelegramId').value = '';
+        document.getElementById('newUserName').value = '';
+        loadUsers();
+      }
+    }
+
+    async function doDeactivateUser(id, name) {
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+        Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      }
+      var data = await apiFetch('/users/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (data && data.success) {
+        showToast(name + ' deactivated', 'success');
+        loadUsers();
+      }
+    }
+
+    // ============================================================
     // UTILITY
     // ============================================================
     function escapeStr(str) {
@@ -1689,6 +2192,52 @@ const server = Bun.serve({
       });
     }
 
+    // ---- OAuth callback (no auth required — comes from provider) ----
+    if (path === "/api/integrations/callback" && method === "GET") {
+      const stateParam = url.searchParams.get("state");
+      const code = url.searchParams.get("code");
+      const error = url.searchParams.get("error");
+
+      if (error) {
+        return new Response(renderOAuthResult(false, `OAuth error: ${error}`), {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+
+      if (!stateParam || !code) {
+        return new Response(renderOAuthResult(false, "Missing state or code"), {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+
+      try {
+        const state = JSON.parse(Buffer.from(decodeURIComponent(stateParam), "base64").toString());
+        const { provider, userId } = state;
+
+        if (!supabase || !provider || !userId) {
+          return new Response(renderOAuthResult(false, "Invalid callback state"), {
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+
+        const result = await handleOAuthCallback(supabase, provider, code, userId);
+
+        if (result.success) {
+          return new Response(renderOAuthResult(true, `${provider} connected successfully!`), {
+            headers: { "Content-Type": "text/html" },
+          });
+        } else {
+          return new Response(renderOAuthResult(false, result.error || "Connection failed"), {
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+      } catch (e: any) {
+        return new Response(renderOAuthResult(false, e.message), {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+    }
+
     // ---- API routes (require auth) ----
     if (path.startsWith("/api/")) {
       const authResult = await authenticateRequest(req);
@@ -1755,6 +2304,57 @@ const server = Bun.serve({
         return jsonResponse(await getTaskDetail(userId, decodeURIComponent(taskMatch[1])));
       }
 
+      // Dashboard
+      if (path === "/api/dashboard" && method === "GET") {
+        return jsonResponse(await getDashboard());
+      }
+
+      // Integrations
+      if (path === "/api/integrations" && method === "GET") {
+        return jsonResponse(await getIntegrations(userId));
+      }
+
+      // Connect integration: /api/integrations/:provider/connect
+      const connectMatch = path.match(/^\/api\/integrations\/([^/]+)\/connect$/);
+      if (connectMatch && method === "POST") {
+        return jsonResponse(await connectIntegration(userId, decodeURIComponent(connectMatch[1])));
+      }
+
+      // Disconnect integration: /api/integrations/:provider/disconnect
+      const disconnectMatch = path.match(/^\/api\/integrations\/([^/]+)\/disconnect$/);
+      if (disconnectMatch && method === "POST") {
+        return jsonResponse(await disconnectIntegrationHandler(userId, decodeURIComponent(disconnectMatch[1])));
+      }
+
+      // Schedules
+      if (path === "/api/schedules" && method === "GET") {
+        return jsonResponse(await getSchedules(userId));
+      }
+
+      // Cancel schedule: /api/schedules/:id/cancel
+      const scheduleCancelMatch = path.match(/^\/api\/schedules\/([^/]+)\/cancel$/);
+      if (scheduleCancelMatch && method === "POST") {
+        return jsonResponse(await cancelSchedule(userId, decodeURIComponent(scheduleCancelMatch[1])));
+      }
+
+      // Users (admin only)
+      if (path === "/api/users" && method === "GET") {
+        if (user.role !== "admin") return jsonResponse({ error: "Admin only" }, 403);
+        return jsonResponse(await listUsers());
+      }
+      if (path === "/api/users" && method === "POST") {
+        if (user.role !== "admin") return jsonResponse({ error: "Admin only" }, 403);
+        const body = await req.json().catch(() => ({}));
+        return jsonResponse(await addUser(body));
+      }
+
+      // Delete/deactivate user: /api/users/:id
+      const userDeleteMatch = path.match(/^\/api\/users\/([^/]+)$/);
+      if (userDeleteMatch && method === "DELETE") {
+        if (user.role !== "admin") return jsonResponse({ error: "Admin only" }, 403);
+        return jsonResponse(await deactivateUser(decodeURIComponent(userDeleteMatch[1])));
+      }
+
       return jsonResponse({ error: "Not found" }, 404);
     }
 
@@ -1764,16 +2364,26 @@ const server = Bun.serve({
 
 console.log(`Nova Mini App running on http://localhost:${PORT}`);
 console.log("Routes:");
-console.log("  GET  /                          — Mini App SPA");
-console.log("  GET  /health                    — Health check");
-console.log("  GET  /api/profile               — User profile + preferences");
-console.log("  PUT  /api/profile               — Update profile fields");
-console.log("  PUT  /api/preferences            — Update preference fields");
-console.log("  GET  /api/agents                — Agent list with stats");
-console.log("  GET  /api/agents/:slug/tasks    — Agent task history");
-console.log("  GET  /api/approvals             — Pending approvals");
-console.log("  POST /api/approvals/:id/approve — Approve");
-console.log("  POST /api/approvals/:id/cancel  — Cancel");
-console.log("  POST /api/approvals/:id/revise  — Revise with feedback");
-console.log("  GET  /api/tasks                 — Task history");
-console.log("  GET  /api/tasks/:id             — Task detail with subtasks");
+console.log("  GET  /                                    — Mini App SPA (8 tabs)");
+console.log("  GET  /health                              — Health check");
+console.log("  GET  /api/dashboard                       — System status metrics");
+console.log("  GET  /api/profile                         — User profile + preferences");
+console.log("  PUT  /api/profile                         — Update profile fields");
+console.log("  PUT  /api/preferences                     — Update preference fields");
+console.log("  GET  /api/integrations                    — Integration statuses");
+console.log("  POST /api/integrations/:provider/connect  — Start OAuth flow");
+console.log("  POST /api/integrations/:provider/disconnect — Disconnect");
+console.log("  GET  /api/integrations/callback           — OAuth callback");
+console.log("  GET  /api/agents                          — Agent list with stats");
+console.log("  GET  /api/agents/:slug/tasks              — Agent task history");
+console.log("  GET  /api/schedules                       — Active scheduled tasks");
+console.log("  POST /api/schedules/:id/cancel            — Cancel scheduled task");
+console.log("  GET  /api/users                           — List users (admin)");
+console.log("  POST /api/users                           — Add user (admin)");
+console.log("  DELETE /api/users/:id                     — Deactivate user (admin)");
+console.log("  GET  /api/approvals                       — Pending approvals");
+console.log("  POST /api/approvals/:id/approve           — Approve");
+console.log("  POST /api/approvals/:id/cancel            — Cancel");
+console.log("  POST /api/approvals/:id/revise            — Revise with feedback");
+console.log("  GET  /api/tasks                           — Task history");
+console.log("  GET  /api/tasks/:id                       — Task detail with subtasks");

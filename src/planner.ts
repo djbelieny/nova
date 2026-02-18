@@ -26,11 +26,11 @@ import { getAgentCatalog, buildAgentPrompt } from "./agent-router.ts";
 
 type ModelTier = "haiku" | "sonnet" | "opus";
 
-let _callClaude: (prompt: string, model?: ModelTier) => Promise<string>;
+let _callClaude: (prompt: string, model?: ModelTier, userId?: string) => Promise<string>;
 let _buildPrompt: (...args: any[]) => string;
 
 export function initPlanner(
-  callClaude: (prompt: string, model?: ModelTier) => Promise<string>,
+  callClaude: (prompt: string, model?: ModelTier, userId?: string) => Promise<string>,
   buildPrompt: (...args: any[]) => string
 ): void {
   _callClaude = callClaude;
@@ -269,7 +269,7 @@ export async function executePhase(
         onProgress?.(idx, "started");
 
         try {
-          const result = await _callClaude(prompt);
+          const result = await _callClaude(prompt, undefined, user?.id);
 
           // Extract artifacts from the result
           const artifacts = extractArtifacts(result, idx);

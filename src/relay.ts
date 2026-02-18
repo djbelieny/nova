@@ -26,6 +26,7 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
+import { hasUserMcpConfig, getUserMcpConfigPath } from "./integrations.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -390,6 +391,30 @@ setInterval(async () => {
   } catch {}
 }, 5 * 60 * 1000);
 
+// Broadcast live status to nova_status table for Mini App dashboard (every 60s)
+setInterval(async () => {
+  if (!supabase) return;
+  try {
+    await supabase.from("nova_status").upsert({
+      id: 1,
+      updated_at: new Date().toISOString(),
+      uptime_since: new Date(usage.uptimeSince).toISOString(),
+      calls_total: usage.callsTotal,
+      calls_success: usage.callsSuccess,
+      calls_failed: usage.callsFailed,
+      calls_by_model: usage.callsByModel,
+      rate_limit_hits: usage.rateLimitHits,
+      last_rate_limit_at: usage.lastRateLimitAt ? new Date(usage.lastRateLimitAt).toISOString() : null,
+      avg_duration_ms: usage.avgDurationMs,
+      active_slots: runningClaude,
+      max_slots: MAX_CONCURRENT_CLAUDE,
+      queue_depth: claudeQueue.length,
+      active_tasks: activeTasks.size,
+      pending_approvals: getPendingApprovalCount(),
+    });
+  } catch {}
+}, 60_000);
+
 // ============================================================
 // CONCURRENCY LIMITER + REQUEST QUEUE
 // ============================================================
@@ -430,7 +455,7 @@ function releaseClaudeSlot(): void {
 
 type ModelTier = "haiku" | "sonnet" | "opus";
 
-async function callClaude(prompt: string, model?: ModelTier): Promise<string> {
+async function callClaude(prompt: string, model?: ModelTier, userId?: string): Promise<string> {
   await acquireClaudeSlot(prompt.substring(0, 60));
 
   const maxRetries = 2;
@@ -445,7 +470,7 @@ async function callClaude(prompt: string, model?: ModelTier): Promise<string> {
           console.log(`[retry] Attempt ${attempt + 1}/${maxRetries + 1} after ${delay / 1000}s delay`);
           await new Promise((r) => setTimeout(r, delay));
         }
-        return await _callClaudeOnce(prompt, model);
+        return await _callClaudeOnce(prompt, model, userId);
       } catch (error) {
         lastError = error as Error;
         const isRateLimit = lastError.message.includes("rate") || lastError.message.includes("overloaded");
@@ -465,12 +490,17 @@ async function callClaude(prompt: string, model?: ModelTier): Promise<string> {
   }
 }
 
-async function _callClaudeOnce(prompt: string, model?: ModelTier): Promise<string> {
+async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: string): Promise<string> {
   const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions"];
 
   // Add model flag if specified (uses Max plan quota for all models)
   if (model) {
     args.push("--model", model);
+  }
+
+  // Per-user MCP config: if user has connected integrations, use their config
+  if (userId && hasUserMcpConfig(userId)) {
+    args.push("--mcp-config", getUserMcpConfigPath(userId));
   }
 
   const modelLabel = model || "default";
@@ -606,9 +636,10 @@ function runTask(
       const { prompt, model } = await buildTask();
 
       // Skip calling Claude for orchestrator-handled prompts
+      const taskUserId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
       const rawResponse = prompt === "__ORCHESTRATOR_HANDLED__"
         ? "__ORCHESTRATOR_HANDLED__"
-        : await callClaude(prompt, model);
+        : await callClaude(prompt, model, taskUserId);
 
       const response = opts?.postProcess
         ? await opts.postProcess(rawResponse)
@@ -681,19 +712,17 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // Handle /voice toggle command
+  // /voice toggle migrated to Mini App (Profile > Preferences)
   if (text.trim().toLowerCase() === "/voice") {
     if (!isTTSEnabled()) {
-      await ctx.reply(
-        "Voice responses are not set up yet. Add ELEVENLABS_API_KEY to .env to enable."
-      );
+      await ctx.reply("Voice responses are not set up yet. Add ELEVENLABS_API_KEY to .env to enable.");
       return;
     }
     const enabled = await toggleVoiceResponses(supabase, user.id);
     await ctx.reply(
       enabled
-        ? "Voice mode on. I'll send audio with every reply until you turn it off."
-        : "Voice mode off. I'll only send audio when you send me a voice message."
+        ? "Voice mode on. You can also toggle this in the Nova Mini App (Profile > Preferences)."
+        : "Voice mode off. You can also toggle this in the Nova Mini App (Profile > Preferences)."
     );
     return;
   }
@@ -1242,86 +1271,9 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
   const parts = text.trim().split(/\s+/);
   const command = parts[0].toLowerCase();
 
-  if (command === "/adduser") {
-    // /adduser <telegram_id> <name> [timezone] [pin]
-    const telegramId = parts[1];
-    const name = parts[2];
-    const timezone = parts[3] || "UTC";
-    const pin = parts[4] || null;
-
-    if (!telegramId || !name) {
-      await ctx.reply("Usage: /adduser <telegram_id> <name> [timezone] [pin]");
-      return true;
-    }
-
-    try {
-      const row: Record<string, any> = {
-        telegram_id: telegramId,
-        name,
-        timezone,
-        role: "member",
-      };
-      if (pin) row.pin = pin;
-      const { error } = await supabase.from("users").insert(row);
-
-      if (error) {
-        await ctx.reply(`Failed to add user: ${error.message}`);
-      } else {
-        invalidateUserCache();
-        await ctx.reply(`Added ${name} (${telegramId}) with timezone ${timezone}.`);
-      }
-    } catch (e: any) {
-      await ctx.reply(`Error: ${e.message}`);
-    }
-    return true;
-  }
-
-  if (command === "/removeuser") {
-    // /removeuser <telegram_id>
-    const telegramId = parts[1];
-    if (!telegramId) {
-      await ctx.reply("Usage: /removeuser <telegram_id>");
-      return true;
-    }
-
-    try {
-      const { error } = await supabase
-        .from("users")
-        .update({ active: false, updated_at: new Date().toISOString() })
-        .eq("telegram_id", telegramId);
-
-      if (error) {
-        await ctx.reply(`Failed to remove user: ${error.message}`);
-      } else {
-        invalidateUserCache(telegramId);
-        await ctx.reply(`Deactivated user ${telegramId}.`);
-      }
-    } catch (e: any) {
-      await ctx.reply(`Error: ${e.message}`);
-    }
-    return true;
-  }
-
-  if (command === "/listusers") {
-    try {
-      const { data, error } = await supabase
-        .from("users")
-        .select("telegram_id, name, role, timezone, active")
-        .order("created_at");
-
-      if (error || !data?.length) {
-        await ctx.reply("No users found.");
-        return true;
-      }
-
-      const lines = data.map(
-        (u: any) =>
-          `${u.active ? "●" : "○"} ${u.name} (${u.telegram_id}) — ${u.role}, ${u.timezone}`
-      );
-      await ctx.reply("Users:\n" + lines.join("\n"));
-    } catch (e: any) {
-      await ctx.reply(`Error: ${e.message}`);
-    }
+  // Migrated to Mini App: /adduser, /removeuser, /listusers
+  if (command === "/adduser" || command === "/removeuser" || command === "/listusers") {
+    await ctx.reply("This command has moved to the Nova Mini App (Users tab).");
     return true;
   }
 
@@ -1347,40 +1299,9 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     return true;
   }
 
+  // Migrated to Mini App: /status
   if (command === "/status") {
-    const uptimeH = ((Date.now() - usage.uptimeSince) / 3600000).toFixed(1);
-    const successRate = usage.callsTotal > 0
-      ? ((usage.callsSuccess / usage.callsTotal) * 100).toFixed(0)
-      : "N/A";
-    const modelBreakdown = Object.entries(usage.callsByModel)
-      .map(([m, c]) => `  ${m}: ${c}`)
-      .join("\n") || "  (none yet)";
-    const lastRL = usage.lastRateLimitAt
-      ? `${((Date.now() - usage.lastRateLimitAt) / 60000).toFixed(0)} min ago`
-      : "never";
-
-    const statusMsg = [
-      `<b>Nova Status</b>`,
-      ``,
-      `<b>Uptime:</b> ${uptimeH}h`,
-      `<b>Claude Calls:</b> ${usage.callsTotal} total (${usage.callsSuccess} ok, ${usage.callsFailed} failed)`,
-      `<b>Success Rate:</b> ${successRate}%`,
-      `<b>Avg Response:</b> ${(usage.avgDurationMs / 1000).toFixed(1)}s`,
-      `<b>Rate Limit Hits:</b> ${usage.rateLimitHits} (last: ${lastRL})`,
-      ``,
-      `<b>Right Now:</b>`,
-      `  Active slots: ${runningClaude}/${MAX_CONCURRENT_CLAUDE}`,
-      `  Queued: ${claudeQueue.length}`,
-      `  Active tasks: ${activeTasks.size}`,
-      `  Pending approvals: ${getPendingApprovalCount()}`,
-      ``,
-      `<b>Calls by Model:</b>`,
-      modelBreakdown,
-    ].join("\n");
-
-    await ctx.reply(statusMsg, { parse_mode: "HTML" }).catch(async () => {
-      await ctx.reply(statusMsg);
-    });
+    await ctx.reply("Status dashboard has moved to the Nova Mini App (Dashboard tab).");
     return true;
   }
 
@@ -1444,54 +1365,14 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     return true;
   }
 
+  // Migrated to Mini App: /schedules, /agents
   if (command === "/schedules") {
-    try {
-      const { data, error } = await supabase.rpc("get_scheduled_tasks", { p_user_id: user.id });
-
-      if (error || !data?.length) {
-        await ctx.reply("No active scheduled tasks.");
-        return true;
-      }
-
-      const lines = data.map((t: any) => {
-        const triggerStr = t.trigger_at
-          ? new Date(t.trigger_at).toLocaleString("en-US", {
-              timeZone: user.timezone,
-              weekday: "short",
-              month: "short",
-              day: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-              hour12: true,
-            })
-          : "no trigger";
-        const recur = t.recurrence ? ` | ${t.recurrence}` : " | one-time";
-        const creator = t.created_by === "nova" ? " (Nova)" : "";
-        const cond = t.condition ? `\n  IF: ${t.condition}` : "";
-        return `- <b>${t.title}</b>${creator}\n  ${triggerStr}${recur}${cond}`;
-      });
-
-      await ctx.reply(`<b>Scheduled Tasks (${data.length})</b>\n\n${lines.join("\n\n")}`, { parse_mode: "HTML" }).catch(async () => {
-        await ctx.reply(`Scheduled Tasks (${data.length})\n\n${lines.map((l: string) => l.replace(/<[^>]+>/g, "")).join("\n\n")}`);
-      });
-    } catch (e: any) {
-      await ctx.reply(`Error: ${e.message}`);
-    }
+    await ctx.reply("Scheduled tasks have moved to the Nova Mini App (Schedules tab).");
     return true;
   }
 
   if (command === "/agents") {
-    // List loaded agents
-    const { getAllAgents } = await import("./agent-router.ts");
-    const agents = getAllAgents();
-    if (agents.length === 0) {
-      await ctx.reply("No agents loaded.");
-      return true;
-    }
-    const lines = agents.map((a) => `• <b>${a.name}</b> (${a.slug}) — ${a.description.substring(0, 80)}`);
-    await ctx.reply(`<b>Loaded Agents (${agents.length})</b>\n\n${lines.join("\n")}`, { parse_mode: "HTML" }).catch(async () => {
-      await ctx.reply(`Loaded Agents (${agents.length})\n\n${lines.map(l => l.replace(/<[^>]+>/g, "")).join("\n")}`);
-    });
+    await ctx.reply("Agent list has moved to the Nova Mini App (Agents tab).");
     return true;
   }
 
