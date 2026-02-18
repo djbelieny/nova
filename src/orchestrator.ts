@@ -114,6 +114,18 @@ export async function handleApproval(
     await ctx.editMessageText(`${originalText}${statusLine}`, { reply_markup: undefined });
   } catch {}
 
+  // Update Supabase status
+  if (pending.supabase) {
+    const statusMap = { approve: "approved", cancel: "cancelled", revise: "revised" } as const;
+    await pending.supabase.from("pending_approvals")
+      .update({
+        status: statusMap[action],
+        feedback: feedback || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", approvalId);
+  }
+
   if (action === "cancel") {
     pendingApprovals.delete(approvalId);
     await _saveMessage("assistant", "Task cancelled.", pending.user.id);
@@ -122,8 +134,6 @@ export async function handleApproval(
   }
 
   if (action === "revise") {
-    // Keep the approval pending — user will send a follow-up message with revision
-    // The revision will be handled as a new message, and this approval expires
     pendingApprovals.delete(approvalId);
     await _sendResponseWithVoice(ctx, "Send me your revision and I'll redo the prepare phase.", pending.user.id);
     return;
@@ -428,10 +438,40 @@ async function routeComplex(
       startTime,
     });
 
+    // Persist to Supabase so the Mini App can display and act on it
+    if (supabase) {
+      const chatId = ctx.chat?.id || 0;
+      const execDescs = plan.subtasks
+        .filter((s) => s.phase === "execute")
+        .map((s) => s.description);
+      await supabase.from("pending_approvals").insert({
+        id: approvalId,
+        user_id: user.id,
+        chat_id: chatId,
+        original_text: text.substring(0, 2000),
+        plan: plan,
+        prepare_summary: approvalSummary.substring(0, 5000),
+        artifacts: artifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
+        execute_descriptions: execDescs,
+        parent_task_id: parentTaskId || null,
+        status: "pending",
+      }).then(({ error }) => {
+        if (error) console.error("[orchestrator] Failed to persist approval:", error.message);
+      });
+    }
+
     // Auto-expire after 30 minutes
     setTimeout(() => {
       if (pendingApprovals.has(approvalId)) {
         pendingApprovals.delete(approvalId);
+        // Also expire in Supabase
+        if (supabase) {
+          supabase.from("pending_approvals")
+            .update({ status: "expired", updated_at: new Date().toISOString() })
+            .eq("id", approvalId)
+            .eq("status", "pending")
+            .then(() => {});
+        }
         console.log(`[orchestrator] Approval ${approvalId} expired`);
       }
     }, 30 * 60 * 1000);
@@ -485,6 +525,56 @@ const latestApprovalByUser = new Map<string, string>();
  */
 export function resolveApprovalForUser(userId: string): string | undefined {
   return latestApprovalByUser.get(userId);
+}
+
+// ============================================================
+// MINI APP POLLING — check Supabase for approvals acted on via Mini App
+// ============================================================
+
+let _miniAppPollInterval: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start polling Supabase for approvals that were approved/cancelled/revised
+ * through the Mini App (not through Telegram buttons).
+ * Runs every 5 seconds, only processes approvals that exist in the in-memory map.
+ */
+export function startMiniAppApprovalPolling(supabase: SupabaseClient | null): void {
+  if (!supabase || _miniAppPollInterval) return;
+
+  _miniAppPollInterval = setInterval(async () => {
+    if (pendingApprovals.size === 0) return;
+
+    try {
+      const ids = Array.from(pendingApprovals.keys());
+      const { data, error } = await supabase
+        .from("pending_approvals")
+        .select("id, status, feedback")
+        .in("id", ids)
+        .in("status", ["approved", "cancelled", "revised"]);
+
+      if (error || !data?.length) return;
+
+      for (const row of data) {
+        const pending = pendingApprovals.get(row.id);
+        if (!pending) continue;
+
+        const actionMap: Record<string, "approve" | "cancel" | "revise"> = {
+          approved: "approve",
+          cancelled: "cancel",
+          revised: "revise",
+        };
+        const action = actionMap[row.status];
+        if (!action) continue;
+
+        console.log(`[orchestrator] Mini App approval: ${row.id} → ${action}`);
+
+        // Use the stored ctx to handle the approval
+        await handleApproval(row.id, action, pending.ctx, row.feedback || undefined);
+      }
+    } catch (err) {
+      // Silent — polling errors are non-critical
+    }
+  }, 5000);
 }
 
 /**

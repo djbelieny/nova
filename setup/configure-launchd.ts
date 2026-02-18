@@ -159,6 +159,12 @@ const SERVICES: Record<string, ServiceConfig> = {
     calendarIntervals: [{ Hour: 3, Minute: 0 }],
     description: "Memory cleanup (daily at 3am)",
   },
+  miniapp: {
+    label: "com.nova.miniapp",
+    script: "src/miniapp.ts",
+    keepAlive: true,
+    description: "Telegram Mini App server (always running, port 3034)",
+  },
 };
 
 async function installService(name: string, config: ServiceConfig): Promise<boolean> {
@@ -226,7 +232,7 @@ async function main() {
     const config = SERVICES[name];
     if (!config) {
       console.log(`  ${FAIL} Unknown service: ${name}`);
-      console.log(`      ${dim("Available: relay, checkin, briefing, memory-review, all")}`);
+      console.log(`      ${dim("Available: relay, checkin, briefing, memory-review, miniapp, all")}`);
       allOk = false;
       continue;
     }

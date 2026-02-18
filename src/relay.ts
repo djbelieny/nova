@@ -23,7 +23,7 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
-import { orchestrate, initOrchestrator, handleApproval, resolveApprovalForUser, getPendingApprovalCount } from "./orchestrator.ts";
+import { orchestrate, initOrchestrator, handleApproval, resolveApprovalForUser, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
@@ -1577,6 +1577,21 @@ await loadAgents();
 
 console.log("Starting Nova (multi-user mode)...");
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
+
+// Start Mini App approval polling (checks Supabase for approvals made via Mini App)
+startMiniAppApprovalPolling(supabase);
+
+// Register Mini App menu button (if MINIAPP_URL is configured)
+const MINIAPP_URL = process.env.MINIAPP_URL;
+if (MINIAPP_URL) {
+  bot.api.setChatMenuButton({
+    menu_button: { type: "web_app", text: "Nova App", web_app: { url: MINIAPP_URL } },
+  }).then(() => {
+    console.log(`Mini App menu button registered: ${MINIAPP_URL}`);
+  }).catch((err) => {
+    console.warn(`Could not set Mini App menu button: ${err.message}`);
+  });
+}
 
 bot.start({
   onStart: () => {
