@@ -375,9 +375,10 @@ async function getCosts(userId?: string): Promise<unknown> {
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-    let dailyQ = supabase.from("cost_tracking").select("model, cost_usd, input_tokens, output_tokens, created_at").gte("created_at", todayStart).order("created_at", { ascending: true });
-    let monthlyQ = supabase.from("cost_tracking").select("model, cost_usd, input_tokens, output_tokens, created_at").gte("created_at", monthStart).order("created_at", { ascending: true });
-    let lifetimeQ = supabase.from("cost_tracking").select("model, cost_usd, input_tokens, output_tokens, created_at").order("created_at", { ascending: true });
+    const selectFields = "provider, model, cost_usd, input_tokens, output_tokens, created_at";
+    let dailyQ = supabase.from("cost_tracking").select(selectFields).gte("created_at", todayStart).order("created_at", { ascending: true });
+    let monthlyQ = supabase.from("cost_tracking").select(selectFields).gte("created_at", monthStart).order("created_at", { ascending: true });
+    let lifetimeQ = supabase.from("cost_tracking").select(selectFields).order("created_at", { ascending: true });
     if (userId) {
       dailyQ = dailyQ.eq("user_id", userId);
       monthlyQ = monthlyQ.eq("user_id", userId);
@@ -392,7 +393,7 @@ async function getCosts(userId?: string): Promise<unknown> {
     function aggregateByModel(rows: any[]): Record<string, { cost: number; input_tokens: number; output_tokens: number; count: number }> {
       const result: Record<string, { cost: number; input_tokens: number; output_tokens: number; count: number }> = {};
       for (const r of rows || []) {
-        const m = r.model || "claude-sonnet-4-5";
+        const m = r.model || "unknown";
         if (!result[m]) result[m] = { cost: 0, input_tokens: 0, output_tokens: 0, count: 0 };
         result[m].cost += r.cost_usd || 0;
         result[m].input_tokens += r.input_tokens || 0;
@@ -402,51 +403,149 @@ async function getCosts(userId?: string): Promise<unknown> {
       return result;
     }
 
-    // Daily breakdown by hour for chart
-    const hourlyByModel: Record<string, Record<number, number>> = {};
+    // Aggregate by provider
+    function aggregateByProvider(rows: any[]): Record<string, { cost: number; count: number; input_tokens: number; output_tokens: number }> {
+      const result: Record<string, { cost: number; count: number; input_tokens: number; output_tokens: number }> = {};
+      for (const r of rows || []) {
+        const p = r.provider || "claude";
+        if (!result[p]) result[p] = { cost: 0, count: 0, input_tokens: 0, output_tokens: 0 };
+        result[p].cost += r.cost_usd || 0;
+        result[p].count++;
+        result[p].input_tokens += r.input_tokens || 0;
+        result[p].output_tokens += r.output_tokens || 0;
+      }
+      return result;
+    }
+
+    // Hourly breakdown by provider for chart
+    const hourlyByProvider: Record<string, Record<number, number>> = {};
     for (const r of dailyData || []) {
-      const m = r.model || "claude-sonnet-4-5";
+      const p = r.provider || "claude";
       const h = new Date(r.created_at).getHours();
-      if (!hourlyByModel[m]) hourlyByModel[m] = {};
-      hourlyByModel[m][h] = (hourlyByModel[m][h] || 0) + (r.cost_usd || 0);
+      if (!hourlyByProvider[p]) hourlyByProvider[p] = {};
+      hourlyByProvider[p][h] = (hourlyByProvider[p][h] || 0) + (r.cost_usd || 0);
     }
 
-    // Monthly breakdown by day for chart
-    const dailyByModel: Record<string, Record<number, number>> = {};
+    // Daily breakdown by provider for chart
+    const dailyByProvider: Record<string, Record<number, number>> = {};
     for (const r of monthlyData || []) {
-      const m = r.model || "claude-sonnet-4-5";
+      const p = r.provider || "claude";
       const d = new Date(r.created_at).getDate();
-      if (!dailyByModel[m]) dailyByModel[m] = {};
-      dailyByModel[m][d] = (dailyByModel[m][d] || 0) + (r.cost_usd || 0);
+      if (!dailyByProvider[p]) dailyByProvider[p] = {};
+      dailyByProvider[p][d] = (dailyByProvider[p][d] || 0) + (r.cost_usd || 0);
     }
 
-    // Lifetime breakdown by month for chart (YYYY-MM)
-    const monthlyByModel: Record<string, Record<string, number>> = {};
+    // Lifetime breakdown by month by provider for chart (YYYY-MM)
+    const monthlyByProvider: Record<string, Record<string, number>> = {};
     for (const r of lifetimeData || []) {
-      const m = r.model || "claude-sonnet-4-5";
+      const p = r.provider || "claude";
       const dt = new Date(r.created_at);
       const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
-      if (!monthlyByModel[m]) monthlyByModel[m] = {};
-      monthlyByModel[m][key] = (monthlyByModel[m][key] || 0) + (r.cost_usd || 0);
+      if (!monthlyByProvider[p]) monthlyByProvider[p] = {};
+      monthlyByProvider[p][key] = (monthlyByProvider[p][key] || 0) + (r.cost_usd || 0);
     }
 
     return {
       daily: {
         byModel: aggregateByModel(dailyData),
-        hourlyChart: hourlyByModel,
+        byProvider: aggregateByProvider(dailyData),
+        hourlyChart: hourlyByProvider,
       },
       monthly: {
         byModel: aggregateByModel(monthlyData),
-        dailyChart: dailyByModel,
+        byProvider: aggregateByProvider(monthlyData),
+        dailyChart: dailyByProvider,
       },
       lifetime: {
         byModel: aggregateByModel(lifetimeData),
-        monthlyChart: monthlyByModel,
+        byProvider: aggregateByProvider(lifetimeData),
+        monthlyChart: monthlyByProvider,
       },
       totalDaily: (dailyData || []).reduce((s: number, r: any) => s + (r.cost_usd || 0), 0),
       totalMonthly: (monthlyData || []).reduce((s: number, r: any) => s + (r.cost_usd || 0), 0),
       totalLifetime: (lifetimeData || []).reduce((s: number, r: any) => s + (r.cost_usd || 0), 0),
     };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function getUsageByUser(): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  try {
+    const now = new Date();
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+    // Get all users
+    const { data: users } = await supabase
+      .from("users")
+      .select("id, name, role, active")
+      .order("created_at");
+
+    if (!users || !users.length) return { users: [] };
+
+    // Fetch messages and costs in parallel
+    const [
+      { data: dayMsgs },
+      { data: weekMsgs },
+      { data: monthCosts },
+    ] = await Promise.all([
+      supabase.from("messages").select("user_id").gte("created_at", oneDayAgo),
+      supabase.from("messages").select("user_id").gte("created_at", oneWeekAgo),
+      supabase.from("cost_tracking").select("user_id, provider, cost_usd").gte("created_at", monthStart),
+    ]);
+
+    // Count per user
+    function countBy(rows: any[]): Record<string, number> {
+      const m: Record<string, number> = {};
+      for (const r of rows || []) m[r.user_id] = (m[r.user_id] || 0) + 1;
+      return m;
+    }
+
+    const dayMsgCount = countBy(dayMsgs);
+    const weekMsgCount = countBy(weekMsgs);
+
+    // Per-user per-provider cost aggregation
+    const userProviderCosts: Record<string, Record<string, number>> = {};
+    const userTotalCosts: Record<string, number> = {};
+    const providerTotals: Record<string, number> = {};
+
+    for (const r of monthCosts || []) {
+      const uid = r.user_id;
+      const provider = r.provider || "claude";
+      const cost = r.cost_usd || 0;
+
+      if (!userProviderCosts[uid]) userProviderCosts[uid] = {};
+      userProviderCosts[uid][provider] = (userProviderCosts[uid][provider] || 0) + cost;
+      userTotalCosts[uid] = (userTotalCosts[uid] || 0) + cost;
+      providerTotals[provider] = (providerTotals[provider] || 0) + cost;
+    }
+
+    // Collect all providers seen
+    const allProviders = [...new Set((monthCosts || []).map((r: any) => r.provider || "claude"))].sort();
+
+    // Totals
+    const totals = {
+      msgs24h: (dayMsgs || []).length,
+      msgs7d: (weekMsgs || []).length,
+      costMonth: (monthCosts || []).reduce((s: number, r: any) => s + (r.cost_usd || 0), 0),
+      byProvider: providerTotals,
+    };
+
+    const result = users.map((u: any) => ({
+      id: u.id,
+      name: u.name,
+      role: u.role,
+      active: u.active,
+      msgs24h: dayMsgCount[u.id] || 0,
+      msgs7d: weekMsgCount[u.id] || 0,
+      costMonth: userTotalCosts[u.id] || 0,
+      byProvider: userProviderCosts[u.id] || {},
+    }));
+
+    return { users: result, totals, providers: allProviders };
   } catch (e: any) {
     return { error: e.message };
   }
@@ -1040,6 +1139,17 @@ function renderDashboard(): string {
       </div>
     </div>
 
+    <!-- USAGE BY USER -->
+    <div class="panel full-width">
+      <div class="panel-header">
+        <span>Usage by User</span>
+        <span class="indicator">30s</span>
+      </div>
+      <div class="panel-body" id="usage-by-user-panel" style="max-height:400px">
+        <div style="color:var(--dim)">Loading...</div>
+      </div>
+    </div>
+
     <!-- ACTIVITY FEED -->
     <div class="panel">
       <div class="panel-header">
@@ -1437,10 +1547,36 @@ async function loadLogs() {
 $('log-service').addEventListener('change', loadLogs);
 
 // ---- COSTS ----
-const MODEL_COLORS = ['#00ff41','#00e5ff','#ffb000','#a855f7','#ff3333','#ff6b9d','#00ccff','#66ff66'];
-function getModelColor(idx) { return MODEL_COLORS[idx % MODEL_COLORS.length]; }
+const PROVIDER_COLORS = {
+  claude: '#00ff41', openai: '#00e5ff', groq: '#ffb000', elevenlabs: '#a855f7',
+  ultravox: '#ff3333', fal: '#ff6b9d', heygen: '#00ccff'
+};
+const FALLBACK_COLORS = ['#66ff66','#ff9933','#33cccc','#cc66ff','#ff6666','#66ccff','#ffcc00'];
+function getProviderColor(name) { return PROVIDER_COLORS[name] || FALLBACK_COLORS[Object.keys(PROVIDER_COLORS).length % FALLBACK_COLORS.length]; }
+function getSeriesColor(idx) {
+  const all = Object.values(PROVIDER_COLORS).concat(FALLBACK_COLORS);
+  return all[idx % all.length];
+}
 
-function renderCostTable(byModel) {
+function renderProviderTable(byProvider) {
+  const providers = Object.entries(byProvider || {}).sort(function(a,b) { return b[1].cost - a[1].cost; });
+  if (!providers.length) return '<div style="color:var(--dim);font-size:11px">No data</div>';
+  let html = '<table class="cost-model-table"><tr><th>Provider</th><th>Calls</th><th style="text-align:right">Input Tok</th><th style="text-align:right">Output Tok</th><th style="text-align:right">Cost</th></tr>';
+  for (const [provider, d] of providers) {
+    const color = getProviderColor(provider);
+    html += '<tr>'
+      + '<td style="color:' + color + ';font-weight:700;text-transform:uppercase">' + esc(provider) + '</td>'
+      + '<td>' + d.count + '</td>'
+      + '<td style="text-align:right">' + (d.input_tokens || 0).toLocaleString() + '</td>'
+      + '<td style="text-align:right">' + (d.output_tokens || 0).toLocaleString() + '</td>'
+      + '<td class="cost-val">$' + d.cost.toFixed(4) + '</td>'
+      + '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function renderModelTable(byModel) {
   const models = Object.entries(byModel || {}).sort(function(a,b) { return b[1].cost - a[1].cost; });
   if (!models.length) return '<div style="color:var(--dim);font-size:11px">No data</div>';
   let html = '<table class="cost-model-table"><tr><th>Model</th><th>Calls</th><th style="text-align:right">Input Tok</th><th style="text-align:right">Output Tok</th><th style="text-align:right">Cost</th></tr>';
@@ -1449,8 +1585,8 @@ function renderCostTable(byModel) {
     html += '<tr>'
       + '<td style="color:var(--cyan)">' + esc(shortName) + '</td>'
       + '<td>' + d.count + '</td>'
-      + '<td style="text-align:right">' + d.input_tokens.toLocaleString() + '</td>'
-      + '<td style="text-align:right">' + d.output_tokens.toLocaleString() + '</td>'
+      + '<td style="text-align:right">' + (d.input_tokens || 0).toLocaleString() + '</td>'
+      + '<td style="text-align:right">' + (d.output_tokens || 0).toLocaleString() + '</td>'
       + '<td class="cost-val">$' + d.cost.toFixed(4) + '</td>'
       + '</tr>';
   }
@@ -1459,18 +1595,16 @@ function renderCostTable(byModel) {
 }
 
 function renderStackedChart(chartData, labelFn, maxBuckets) {
-  const models = Object.keys(chartData || {});
-  if (!models.length) return '<div style="color:var(--dim);font-size:11px">No chart data</div>';
-  // Collect all bucket keys
+  const series = Object.keys(chartData || {});
+  if (!series.length) return '<div style="color:var(--dim);font-size:11px">No chart data</div>';
   const allKeys = new Set();
-  for (const m of models) for (const k of Object.keys(chartData[m])) allKeys.add(k);
+  for (const s of series) for (const k of Object.keys(chartData[s])) allKeys.add(k);
   let buckets = Array.from(allKeys).sort();
   if (maxBuckets && buckets.length > maxBuckets) buckets = buckets.slice(-maxBuckets);
-  // Find max stacked height
   let maxVal = 0;
   for (const b of buckets) {
     let sum = 0;
-    for (const m of models) sum += (chartData[m][b] || 0);
+    for (const s of series) sum += (chartData[s][b] || 0);
     if (sum > maxVal) maxVal = sum;
   }
   if (maxVal === 0) maxVal = 1;
@@ -1479,13 +1613,14 @@ function renderStackedChart(chartData, labelFn, maxBuckets) {
   for (let i = 0; i < buckets.length; i++) {
     const b = buckets[i];
     let total = 0;
-    for (const m of models) total += (chartData[m][b] || 0);
+    for (const s of series) total += (chartData[s][b] || 0);
     html += '<div class="stacked-bar" style="height:100%" title="' + labelFn(b) + ': $' + total.toFixed(4) + '">';
-    for (let mi = 0; mi < models.length; mi++) {
-      const val = chartData[models[mi]][b] || 0;
+    for (let si = 0; si < series.length; si++) {
+      const val = chartData[series[si]][b] || 0;
       const pct = (val / maxVal) * 100;
+      const color = getProviderColor(series[si]) || getSeriesColor(si);
       if (pct > 0) {
-        html += '<div class="stacked-bar-segment" style="height:' + pct + '%;background:' + getModelColor(mi) + '" title="' + models[mi] + ': $' + val.toFixed(4) + '"></div>';
+        html += '<div class="stacked-bar-segment" style="height:' + pct + '%;background:' + color + '" title="' + series[si] + ': $' + val.toFixed(4) + '"></div>';
       }
     }
     const showLabel = buckets.length <= 12 || (i % Math.ceil(buckets.length / 12) === 0);
@@ -1494,11 +1629,10 @@ function renderStackedChart(chartData, labelFn, maxBuckets) {
   }
   html += '</div>';
 
-  // Legend
   html += '<div class="cost-legend">';
-  for (let mi = 0; mi < models.length; mi++) {
-    const shortName = models[mi].replace(/^claude-/, '').replace(/-\\d{8}$/, '');
-    html += '<div class="cost-legend-item"><div class="cost-legend-dot" style="background:' + getModelColor(mi) + '"></div><span>' + esc(shortName) + '</span></div>';
+  for (let si = 0; si < series.length; si++) {
+    const color = getProviderColor(series[si]) || getSeriesColor(si);
+    html += '<div class="cost-legend-item"><div class="cost-legend-dot" style="background:' + color + '"></div><span>' + esc(series[si]) + '</span></div>';
   }
   html += '</div>';
   return html;
@@ -1510,46 +1644,63 @@ async function loadCosts() {
     const d = await r.json();
     if (d.error) { $('costs-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
 
-    // Summary cards
+    // Summary cards — total + per provider
     let html = '<div class="cost-summary">';
     html += '<div class="cost-card"><div class="cost-card-label">Today</div><div class="cost-card-value">$' + (d.totalDaily || 0).toFixed(4) + '</div></div>';
     html += '<div class="cost-card"><div class="cost-card-label">This Month</div><div class="cost-card-value amber">$' + (d.totalMonthly || 0).toFixed(2) + '</div></div>';
     html += '<div class="cost-card"><div class="cost-card-label">Lifetime</div><div class="cost-card-value cyan">$' + (d.totalLifetime || 0).toFixed(2) + '</div></div>';
     html += '</div>';
 
-    // Daily section - hourly chart + model table
+    // Provider summary for the month
+    if (d.monthly.byProvider && Object.keys(d.monthly.byProvider).length > 0) {
+      html += '<div class="cost-summary" style="margin-top:8px">';
+      const provEntries = Object.entries(d.monthly.byProvider).sort(function(a,b) { return b[1].cost - a[1].cost; });
+      for (const [prov, pdata] of provEntries) {
+        const color = getProviderColor(prov);
+        html += '<div class="cost-card" style="border-color:' + color + '40"><div class="cost-card-label" style="color:' + color + '">' + esc(prov.toUpperCase()) + '</div><div class="cost-card-value" style="color:' + color + ';font-size:16px">$' + pdata.cost.toFixed(2) + '</div><div style="font-size:10px;color:var(--dim)">' + pdata.count + ' calls</div></div>';
+      }
+      html += '</div>';
+    }
+
+    // Today — hourly chart by provider + provider table + model table
     html += '<div class="cost-section">';
-    html += '<div class="cost-section-title">Today — Hourly Breakdown</div>';
+    html += '<div class="cost-section-title">Today — Hourly by Provider</div>';
     html += '<div class="cost-chart-container">';
     html += '<div class="cost-chart-block">';
     html += renderStackedChart(d.daily.hourlyChart, function(h) { return h + ':00'; }, 24);
     html += '</div>';
     html += '<div class="cost-chart-block">';
-    html += renderCostTable(d.daily.byModel);
+    html += renderProviderTable(d.daily.byProvider);
+    html += '<div style="margin-top:12px;font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
+    html += renderModelTable(d.daily.byModel);
     html += '</div>';
     html += '</div></div>';
 
-    // Monthly section - daily chart + model table
+    // This Month — daily chart by provider + tables
     html += '<div class="cost-section">';
-    html += '<div class="cost-section-title">This Month — Daily Breakdown</div>';
+    html += '<div class="cost-section-title">This Month — Daily by Provider</div>';
     html += '<div class="cost-chart-container">';
     html += '<div class="cost-chart-block">';
     html += renderStackedChart(d.monthly.dailyChart, function(day) { return 'Day ' + day; }, 31);
     html += '</div>';
     html += '<div class="cost-chart-block">';
-    html += renderCostTable(d.monthly.byModel);
+    html += renderProviderTable(d.monthly.byProvider);
+    html += '<div style="margin-top:12px;font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
+    html += renderModelTable(d.monthly.byModel);
     html += '</div>';
     html += '</div></div>';
 
-    // Lifetime section - monthly chart + model table
+    // Lifetime — monthly chart by provider + tables
     html += '<div class="cost-section">';
-    html += '<div class="cost-section-title">Lifetime — Monthly Breakdown</div>';
+    html += '<div class="cost-section-title">Lifetime — Monthly by Provider</div>';
     html += '<div class="cost-chart-container">';
     html += '<div class="cost-chart-block">';
     html += renderStackedChart(d.lifetime.monthlyChart, function(m) { return m; }, 24);
     html += '</div>';
     html += '<div class="cost-chart-block">';
-    html += renderCostTable(d.lifetime.byModel);
+    html += renderProviderTable(d.lifetime.byProvider);
+    html += '<div style="margin-top:12px;font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
+    html += renderModelTable(d.lifetime.byModel);
     html += '</div>';
     html += '</div></div>';
 
@@ -1585,11 +1736,70 @@ function userParam() {
   return selectedUserId ? '&user_id=' + selectedUserId : '';
 }
 
+// ---- USAGE BY USER ----
+async function loadUsageByUser() {
+  try {
+    const r = await fetch('/api/usage-by-user');
+    const d = await r.json();
+    if (d.error) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
+    if (!d.users || !d.users.length) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--dim)">No users found</div>'; return; }
+
+    const providers = d.providers || [];
+
+    let html = '<table class="data-table">';
+    html += '<tr><th>User</th><th>Status</th><th style="text-align:right">Msgs 24h</th><th style="text-align:right">Msgs 7d</th>';
+    // Dynamic provider columns
+    for (const p of providers) {
+      const color = getProviderColor(p);
+      html += '<th style="text-align:right;color:' + color + '">' + esc(p.toUpperCase()) + '</th>';
+    }
+    html += '<th style="text-align:right">TOTAL</th></tr>';
+
+    for (const u of d.users) {
+      const statusColor = u.active ? 'var(--green)' : 'var(--dim)';
+      const statusText = u.active ? 'ACTIVE' : 'INACTIVE';
+      html += '<tr>'
+        + '<td style="color:var(--cyan);font-weight:700">' + esc(u.name) + '</td>'
+        + '<td style="color:' + statusColor + ';font-size:10px;font-weight:700">' + statusText + '</td>'
+        + '<td style="text-align:right">' + u.msgs24h + '</td>'
+        + '<td style="text-align:right">' + u.msgs7d + '</td>';
+      for (const p of providers) {
+        const cost = (u.byProvider && u.byProvider[p]) || 0;
+        const color = getProviderColor(p);
+        html += '<td style="text-align:right;color:' + color + ';font-weight:700">$' + cost.toFixed(2) + '</td>';
+      }
+      html += '<td class="cost-val">$' + (u.costMonth || 0).toFixed(2) + '</td>';
+      html += '</tr>';
+    }
+
+    // Totals row
+    if (d.totals) {
+      const t = d.totals;
+      html += '<tr style="border-top:2px solid var(--border)">'
+        + '<td style="color:var(--amber);font-weight:700">TOTAL</td>'
+        + '<td></td>'
+        + '<td style="text-align:right;color:var(--amber);font-weight:700">' + t.msgs24h + '</td>'
+        + '<td style="text-align:right;color:var(--amber);font-weight:700">' + t.msgs7d + '</td>';
+      for (const p of providers) {
+        const cost = (t.byProvider && t.byProvider[p]) || 0;
+        const color = getProviderColor(p);
+        html += '<td style="text-align:right;color:' + color + ';font-weight:700">$' + cost.toFixed(2) + '</td>';
+      }
+      html += '<td class="cost-val" style="color:var(--amber)">$' + (t.costMonth || 0).toFixed(2) + '</td>';
+      html += '</tr>';
+    }
+
+    html += '</table>';
+    html += '<div style="font-size:10px;color:var(--dim);margin-top:8px">Costs shown for current month</div>';
+    $('usage-by-user-panel').innerHTML = html;
+  } catch(e) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+}
+
 // ---- INIT & INTERVALS ----
 loadUsers();
 loadStatus();  loadMetrics();  loadMessages();  loadMemory();
 loadTasks();   loadVoice();    loadSkills();     loadResources();  loadLogs();
-loadAgentTasks(); loadCosts();
+loadAgentTasks(); loadCosts(); loadUsageByUser();
 
 setInterval(loadStatus, 10000);
 setInterval(loadLogs, 10000);
@@ -1601,6 +1811,7 @@ setInterval(loadMemory, 30000);
 setInterval(loadTasks, 30000);
 setInterval(loadVoice, 30000);
 setInterval(loadCosts, 30000);
+setInterval(loadUsageByUser, 30000);
 setInterval(loadSkills, 60000);
 </script>
 </body>
@@ -1648,6 +1859,7 @@ const server = Bun.serve({
     }
     if (path === "/api/tasks") return jsonResponse(await getTasks());
     if (path === "/api/costs") return jsonResponse(await getCosts(userId));
+    if (path === "/api/usage-by-user") return jsonResponse(await getUsageByUser());
     if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks(userId));
     if (path === "/api/resources") return jsonResponse(await getResources());
     if (path === "/api/voice") return jsonResponse(await getVoice(userId));
@@ -1669,6 +1881,7 @@ console.log("  GET  /api/metrics   — Performance metrics");
 console.log("  GET  /api/logs      — Log viewer");
 console.log("  GET  /api/tasks     — Scheduled tasks");
 console.log("  GET  /api/costs      — API cost tracking");
+console.log("  GET  /api/usage-by-user — Per-user usage breakdown");
 console.log("  GET  /api/agent-tasks — Agent task tracking");
 console.log("  GET  /api/resources — System resources");
 console.log("  GET  /api/voice     — Voice call activity");

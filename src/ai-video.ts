@@ -9,6 +9,8 @@
  *   bun run src/ai-video.ts <command> [args]
  */
 
+import { trackCost } from "./cost-tracker.ts";
+
 // ─── Config ────────────────────────────────────────────────
 
 const HEYGEN_API_KEY = process.env.HEYGEN_API_KEY || "";
@@ -106,7 +108,8 @@ export async function generateAvatarVideo(params: HeyGenVideoParams) {
   if (!avatarId) throw new Error("No avatar_id provided and no heygen_avatar_id in user preferences");
   if (!voiceId) throw new Error("No voice_id provided and no heygen_voice_id in user preferences");
 
-  return heygenPost("/v2/video/generate", {
+  const start = Date.now();
+  const result = await heygenPost("/v2/video/generate", {
     title: params.title || "Nova Video",
     test: params.test ?? false,
     video_inputs: [
@@ -129,6 +132,21 @@ export async function generateAvatarVideo(params: HeyGenVideoParams) {
       height: params.height || 1920,
     },
   });
+
+  // HeyGen: ~$0.10/credit, 1 credit per minute of video
+  trackCost({
+    provider: "heygen",
+    model: "avatar-v2",
+    duration_ms: Date.now() - start,
+    metadata: {
+      video_id: result?.data?.video_id,
+      test: params.test ?? false,
+      script_length: params.script.length,
+      avatar_id: avatarId,
+    },
+  });
+
+  return result;
 }
 
 export async function getVideoStatus(videoId: string) {
@@ -178,7 +196,22 @@ export async function generateTextToVideo(params: TextToVideoParams) {
   if (params.image_url) body.image_url = params.image_url;
   if (params.negative_prompt) body.negative_prompt = params.negative_prompt;
 
-  return falPost(model, body);
+  const start = Date.now();
+  const result = await falPost(model, body);
+
+  trackCost({
+    provider: "fal",
+    model,
+    duration_ms: Date.now() - start,
+    metadata: {
+      request_id: result?.request_id,
+      prompt_length: params.prompt.length,
+      video_duration: params.duration || "5",
+      aspect_ratio: params.aspect_ratio,
+    },
+  });
+
+  return result;
 }
 
 export async function checkFalStatus(responseUrl: string) {

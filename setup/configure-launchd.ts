@@ -4,7 +4,7 @@
  * Generates and loads launchd plist files with correct paths
  * for the current user and project location.
  *
- * Usage: bun run setup/configure-launchd.ts [--service relay|checkin|briefing|all]
+ * Usage: bun run setup/configure-launchd.ts [--service relay|checkin|briefing|memory-review|all]
  */
 
 import { writeFile, readFile } from "fs/promises";
@@ -152,6 +152,13 @@ const SERVICES: Record<string, ServiceConfig> = {
     calendarIntervals: [{ Hour: 9, Minute: 0 }],
     description: "Morning briefing (daily at 9am)",
   },
+  "memory-review": {
+    label: "com.nova.memory-review",
+    script: "examples/memory-review.ts",
+    keepAlive: false,
+    calendarIntervals: [{ Hour: 3, Minute: 0 }],
+    description: "Memory cleanup (daily at 3am)",
+  },
 };
 
 async function installService(name: string, config: ServiceConfig): Promise<boolean> {
@@ -219,7 +226,7 @@ async function main() {
     const config = SERVICES[name];
     if (!config) {
       console.log(`  ${FAIL} Unknown service: ${name}`);
-      console.log(`      ${dim("Available: relay, checkin, briefing, all")}`);
+      console.log(`      ${dim("Available: relay, checkin, briefing, memory-review, all")}`);
       allOk = false;
       continue;
     }

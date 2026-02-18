@@ -7,6 +7,7 @@
 import { spawn } from "bun";
 import { writeFile, readFile, unlink } from "fs/promises";
 import { join } from "path";
+import { trackCost } from "./cost-tracker.ts";
 
 const VOICE_PROVIDER = process.env.VOICE_PROVIDER || "";
 
@@ -35,9 +36,19 @@ async function transcribeGroq(audioBuffer: Buffer): Promise<string> {
 
   const file = new File([audioBuffer], "voice.ogg", { type: "audio/ogg" });
 
+  const start = Date.now();
   const result = await groq.audio.transcriptions.create({
     file,
     model: "whisper-large-v3-turbo",
+  });
+  const durationMs = Date.now() - start;
+
+  // Groq Whisper: free tier, track for usage visibility
+  trackCost({
+    provider: "groq",
+    model: "whisper-large-v3-turbo",
+    duration_ms: durationMs,
+    metadata: { audio_bytes: audioBuffer.length, text_length: result.text.length },
   });
 
   return result.text.trim();

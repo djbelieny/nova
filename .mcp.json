@@ -67,6 +67,18 @@
         "ACCESS_TOKEN": "${SQUARE_ACCESS_TOKEN}",
         "PRODUCTION": "true"
       }
+    },
+    "gohighlevel": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@drausal/gohighlevel-mcp"
+      ],
+      "env": {
+        "BEARER_TOKEN_BEARERAUTH": "pit-be65de0c-49d3-4bfa-82f3-12dacc356563",
+        "BEARER_TOKEN_BEARER": "pit-be65de0c-49d3-4bfa-82f3-12dacc356563"
+      }
     }
   }
 }

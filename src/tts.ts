@@ -5,6 +5,8 @@
  * Returns an MP3 buffer ready to send via Telegram.
  */
 
+import { trackCost } from "./cost-tracker.ts";
+
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || "";
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb"; // Default: George
 
@@ -21,6 +23,7 @@ export async function textToSpeech(text: string): Promise<Buffer | null> {
   const truncated = text.length > 4500 ? text.substring(0, 4500) + "..." : text;
 
   try {
+    const start = Date.now();
     const response = await fetch(
       `${API_BASE}/text-to-speech/${ELEVENLABS_VOICE_ID}`,
       {
@@ -46,7 +49,21 @@ export async function textToSpeech(text: string): Promise<Buffer | null> {
       return null;
     }
 
-    return Buffer.from(await response.arrayBuffer());
+    const audioBuffer = Buffer.from(await response.arrayBuffer());
+    const durationMs = Date.now() - start;
+
+    // ElevenLabs pricing: ~$0.30/1K chars (Starter), varies by plan
+    const chars = truncated.length;
+    const estimatedCost = chars * 0.0003; // ~$0.30 per 1K chars
+    trackCost({
+      provider: "elevenlabs",
+      model: "eleven_turbo_v2_5",
+      duration_ms: durationMs,
+      cost_usd: estimatedCost,
+      metadata: { characters: chars, audio_bytes: audioBuffer.length },
+    });
+
+    return audioBuffer;
   } catch (error) {
     console.error("TTS error:", error);
     return null;

@@ -15,6 +15,7 @@
 import "dotenv/config";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
+import { trackCost } from "./cost-tracker.ts";
 
 // Twilio
 const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
@@ -514,6 +515,16 @@ async function outputCallResult(
   const durationStr = durationSec >= 60
     ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`
     : `${durationSec}s`;
+
+  // Ultravox: ~$0.065/min for voice AI calls
+  const estimatedCost = (durationSec / 60) * 0.065;
+  trackCost({
+    provider: "ultravox",
+    model: "fixie-ai/ultravox-70B",
+    duration_ms: durationSec * 1000,
+    cost_usd: estimatedCost,
+    metadata: { call_id: callId, callee_name: calleeName, end_reason: endReason, duration_sec: durationSec },
+  });
 
   // Handle no-answer / failed calls
   const failureReasons = new Set(["hangup_on_no_answer", "no_answer", "busy", "failed", "canceled", "denied"]);
