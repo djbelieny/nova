@@ -942,18 +942,75 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
   return false;
 }
 
+/**
+ * Convert Markdown to Telegram-compatible HTML.
+ * Telegram supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="">, <blockquote>
+ * Does NOT support headings, so we convert them to bold text.
+ */
+function markdownToTelegramHTML(text: string): string {
+  let html = text;
+
+  // Escape HTML entities first (before we add our own tags)
+  html = html
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // Code blocks (``` ... ```) — must be done before inline code
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => {
+    return `<pre>${code.trim()}</pre>`;
+  });
+
+  // Inline code (`...`)
+  html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+
+  // Headings → bold (### Title, ## Title, # Title)
+  html = html.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
+
+  // Bold+italic (***text*** or ___text___)
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<b><i>$1</i></b>");
+
+  // Bold (**text** or __text__)
+  html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  html = html.replace(/__(.+?)__/g, "<b>$1</b>");
+
+  // Italic (*text* or _text_) — avoid matching mid-word underscores
+  html = html.replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, "<i>$1</i>");
+  html = html.replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<i>$1</i>");
+
+  // Strikethrough (~~text~~)
+  html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
+
+  // Links [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Blockquotes (> text)
+  html = html.replace(/^&gt;\s?(.+)$/gm, "<blockquote>$1</blockquote>");
+  // Merge consecutive blockquotes
+  html = html.replace(/<\/blockquote>\n<blockquote>/g, "\n");
+
+  // Horizontal rules (---, ***, ___) → empty line
+  html = html.replace(/^[-*_]{3,}$/gm, "");
+
+  return html.trim();
+}
+
 async function sendResponse(ctx: Context, response: string): Promise<void> {
+  const html = markdownToTelegramHTML(response);
   // Telegram has a 4096 character limit
   const MAX_LENGTH = 4000;
 
-  if (response.length <= MAX_LENGTH) {
-    await ctx.reply(response);
+  if (html.length <= MAX_LENGTH) {
+    await ctx.reply(html, { parse_mode: "HTML" }).catch(async () => {
+      // Fallback to plain text if HTML parsing fails
+      await ctx.reply(response);
+    });
     return;
   }
 
   // Split long responses
   const chunks = [];
-  let remaining = response;
+  let remaining = html;
 
   while (remaining.length > 0) {
     if (remaining.length <= MAX_LENGTH) {
@@ -972,7 +1029,9 @@ async function sendResponse(ctx: Context, response: string): Promise<void> {
   }
 
   for (const chunk of chunks) {
-    await ctx.reply(chunk);
+    await ctx.reply(chunk, { parse_mode: "HTML" }).catch(async () => {
+      await ctx.reply(chunk);
+    });
   }
 }
 
@@ -1043,16 +1102,19 @@ async function sendResponseWithButtons(
   response: string,
   keyboard: InlineKeyboard
 ): Promise<void> {
+  const html = markdownToTelegramHTML(response);
   const MAX_LENGTH = 4000;
 
-  if (response.length <= MAX_LENGTH) {
-    await ctx.reply(response, { reply_markup: keyboard });
+  if (html.length <= MAX_LENGTH) {
+    await ctx.reply(html, { reply_markup: keyboard, parse_mode: "HTML" }).catch(async () => {
+      await ctx.reply(response, { reply_markup: keyboard });
+    });
     return;
   }
 
   // For long responses, split and put buttons on the last chunk
   const chunks: string[] = [];
-  let remaining = response;
+  let remaining = html;
 
   while (remaining.length > 0) {
     if (remaining.length <= MAX_LENGTH) {
@@ -1072,9 +1134,13 @@ async function sendResponseWithButtons(
 
   for (let i = 0; i < chunks.length; i++) {
     if (i === chunks.length - 1) {
-      await ctx.reply(chunks[i], { reply_markup: keyboard });
+      await ctx.reply(chunks[i], { reply_markup: keyboard, parse_mode: "HTML" }).catch(async () => {
+        await ctx.reply(chunks[i], { reply_markup: keyboard });
+      });
     } else {
-      await ctx.reply(chunks[i]);
+      await ctx.reply(chunks[i], { parse_mode: "HTML" }).catch(async () => {
+        await ctx.reply(chunks[i]);
+      });
     }
   }
 }
