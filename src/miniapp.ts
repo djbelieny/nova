@@ -1983,9 +1983,18 @@ function renderMiniApp(): string {
 
     async function doConnect(provider) {
       var data = await apiFetch('/integrations/' + encodeURIComponent(provider) + '/connect', { method: 'POST' });
+      if (data && data.error) {
+        showToast(data.error, 'error');
+        return;
+      }
       if (data && data.url) {
-        window.open(data.url, '_blank');
-        showToast('Complete the authorization in the new window', 'success');
+        // Telegram WebApp blocks window.open — use openLink instead
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.openLink) {
+          Telegram.WebApp.openLink(data.url);
+        } else {
+          window.open(data.url, '_blank');
+        }
+        showToast('Complete the authorization in the browser', 'success');
         // Poll for status change
         var pollCount = 0;
         var pollInterval = setInterval(async function() {

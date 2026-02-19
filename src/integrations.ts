@@ -105,6 +105,9 @@ export function getOAuthUrl(
       const clientId = process.env.GOOGLE_CLIENT_ID;
       if (!clientId) return { url: "", error: "GOOGLE_CLIENT_ID not configured in .env" };
 
+      // Desktop app type — Google only allows localhost redirects
+      const googleRedirectUri = "http://localhost:3034/api/integrations/callback";
+
       const label = provider === "google-personal" ? "personal" : "work";
       const state = JSON.stringify({ provider, userId, label });
       const stateEncoded = encodeURIComponent(Buffer.from(state).toString("base64"));
@@ -122,7 +125,7 @@ export function getOAuthUrl(
 
       const url = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${encodeURIComponent(clientId)}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&redirect_uri=${encodeURIComponent(googleRedirectUri)}` +
         `&response_type=code` +
         `&scope=${encodeURIComponent(scopes)}` +
         `&access_type=offline` +
@@ -201,7 +204,7 @@ export async function handleOAuthCallback(
             code,
             client_id: clientId,
             client_secret: clientSecret,
-            redirect_uri: `${process.env.MINIAPP_URL || "http://localhost:3034"}/api/integrations/callback`,
+            redirect_uri: "http://localhost:3034/api/integrations/callback",
             grant_type: "authorization_code",
           }),
         });
