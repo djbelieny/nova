@@ -1,14 +1,26 @@
+interface Env {
+  SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
+}
+
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    let html: string;
+    // API route: save lead
+    if (path === "/api/lead" && request.method === "POST") {
+      return handleLead(request, env);
+    }
+
     if (path === "/google447810c2e4246e67.html") {
       return new Response("google-site-verification: google447810c2e4246e67.html", {
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
-    } else if (path === "/privacy" || path === "/privacy/") {
+    }
+
+    let html: string;
+    if (path === "/privacy" || path === "/privacy/") {
       html = privacyPage();
     } else if (path === "/terms" || path === "/terms/") {
       html = termsPage();
@@ -21,6 +33,42 @@ export default {
     });
   },
 };
+
+async function handleLead(request: Request, env: Env): Promise<Response> {
+  try {
+    const body = await request.json() as { name?: string; email?: string; phone?: string };
+    const { name, email, phone } = body;
+
+    if (!name || !email || !phone) {
+      return Response.json({ error: "Name, email, and phone are required." }, { status: 400 });
+    }
+
+    // Save to Supabase
+    const res = await fetch(`${env.SUPABASE_URL}/rest/v1/leads`, {
+      method: "POST",
+      headers: {
+        "apikey": env.SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${env.SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+      },
+      body: JSON.stringify({ name, email, phone, source: "landing" }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      return Response.json({ error: "Failed to save. Please try again." }, { status: 500 });
+    }
+
+    // Build WhatsApp redirect URL
+    const waMessage = `Hi! I'm ${name}. I just signed up on the Nova landing page and I'd like to learn more.`;
+    const waUrl = `https://wa.me/18636047056?text=${encodeURIComponent(waMessage)}`;
+
+    return Response.json({ success: true, redirect: waUrl });
+  } catch {
+    return Response.json({ error: "Invalid request." }, { status: 400 });
+  }
+}
 
 function shell(title: string, body: string): string {
   return `<!DOCTYPE html>
@@ -51,6 +99,21 @@ function shell(title: string, body: string): string {
   footer{text-align:center;padding:3rem 1rem;color:var(--muted);font-size:0.8rem;border-top:1px solid var(--border);margin-top:4rem}
   footer a{color:var(--muted)}footer a:hover{color:var(--text)}
   .footer-links{display:flex;justify-content:center;gap:2rem;margin-bottom:0.75rem}
+
+  /* Lead form */
+  .lead-form-section{margin:3rem 0;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2.5rem;text-align:center}
+  .lead-form-section h2{font-size:1.5rem;margin-bottom:0.5rem;font-weight:700}
+  .lead-form-section .subtitle{color:var(--muted);margin-bottom:1.5rem;font-size:0.95rem}
+  .lead-form{display:flex;flex-direction:column;gap:1rem;max-width:400px;margin:0 auto}
+  .lead-form input{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0.85rem 1rem;color:var(--text);font-size:0.95rem;outline:none;transition:border-color 0.2s}
+  .lead-form input:focus{border-color:var(--accent)}
+  .lead-form input::placeholder{color:var(--muted)}
+  .lead-form button{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:none;border-radius:8px;padding:0.9rem;font-size:1rem;font-weight:600;cursor:pointer;transition:opacity 0.2s}
+  .lead-form button:hover{opacity:0.9}
+  .lead-form button:disabled{opacity:0.5;cursor:not-allowed}
+  .form-msg{font-size:0.85rem;margin-top:0.5rem;min-height:1.2em}
+  .form-msg.error{color:#ef4444}
+  .form-msg.success{color:#22c55e}
 
   /* Legal pages */
   .legal{padding:3rem 0}
@@ -116,6 +179,18 @@ function landingPage(): string {
     <p>Nova uses OAuth 2.0 to securely connect to your accounts. You authorize each service individually through the Mini App, and can disconnect at any time. Nova only requests the minimum permissions needed to assist you.</p>
   </div>
 
+  <div class="lead-form-section" id="get-started">
+    <h2>Apply for Early Access</h2>
+    <p class="subtitle">Leave your info and be among the first to get your own Nova assistant.</p>
+    <form class="lead-form" id="leadForm" onsubmit="return false">
+      <input type="text" name="name" placeholder="Your name" required autocomplete="name">
+      <input type="email" name="email" placeholder="Email address" required autocomplete="email">
+      <input type="tel" name="phone" placeholder="Phone number" required autocomplete="tel">
+      <button type="submit" id="submitBtn">Apply for Early Access →</button>
+    </form>
+    <p class="form-msg" id="formMsg"></p>
+  </div>
+
   <footer>
     <div class="footer-links">
       <a href="/privacy">Privacy Policy</a>
@@ -123,7 +198,54 @@ function landingPage(): string {
     </div>
     <p>&copy; ${new Date().getFullYear()} Nova Agent IA. All rights reserved.</p>
   </footer>
-</div>`);
+</div>
+
+<script>
+document.getElementById('leadForm').addEventListener('submit', async function(e) {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const msg = document.getElementById('formMsg');
+  const form = e.target;
+
+  const name = form.name.value.trim();
+  const email = form.email.value.trim();
+  const phone = form.phone.value.trim();
+
+  if (!name || !email || !phone) {
+    msg.textContent = 'Please fill in all fields.';
+    msg.className = 'form-msg error';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  msg.textContent = '';
+
+  try {
+    const res = await fetch('/api/lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, phone })
+    });
+    const data = await res.json();
+
+    if (data.success && data.redirect) {
+      msg.textContent = 'Success! Redirecting to WhatsApp...';
+      msg.className = 'form-msg success';
+      setTimeout(() => window.open(data.redirect, '_blank'), 600);
+    } else {
+      msg.textContent = data.error || 'Something went wrong. Please try again.';
+      msg.className = 'form-msg error';
+    }
+  } catch {
+    msg.textContent = 'Network error. Please try again.';
+    msg.className = 'form-msg error';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Apply for Early Access →';
+});
+</script>`);
 }
 
 function privacyPage(): string {
