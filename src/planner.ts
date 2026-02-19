@@ -178,7 +178,7 @@ export async function executePhase(
     }
     const subtask = plan.subtasks[i];
     if (supabase) {
-      const { data } = await supabase
+      const { data, error: insertErr } = await supabase
         .from("agent_tasks")
         .insert({
           agent: subtask.agent || "general",
@@ -189,6 +189,9 @@ export async function executePhase(
         })
         .select("id")
         .single();
+      if (insertErr) {
+        console.error(`[planner] Failed to insert subtask ${i} (${subtask.agent}):`, insertErr.message);
+      }
       subtaskIds.push(data?.id || null);
     } else {
       subtaskIds.push(null);
