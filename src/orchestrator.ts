@@ -20,6 +20,8 @@
 
 import { type Context, InlineKeyboard } from "grammy";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { mkdir, readdir, rm } from "fs/promises";
+import { join } from "path";
 import type { ExecutionPlan } from "./patterns.ts";
 import { findPattern, recordExecution } from "./patterns.ts";
 import {
@@ -53,6 +55,8 @@ let _runTask: (
 ) => void;
 let _saveMessage: (role: string, content: string, userId: string) => Promise<void>;
 let _sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
+let _sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
+let _relayDir: string;
 
 export function initOrchestrator(deps: {
   callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string) => Promise<string>;
@@ -60,12 +64,16 @@ export function initOrchestrator(deps: {
   runTask: typeof _runTask;
   saveMessage: (role: string, content: string, userId: string) => Promise<void>;
   sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
+  sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
+  relayDir: string;
 }): void {
   _callClaude = deps.callClaude;
   _buildPrompt = deps.buildPrompt;
   _runTask = deps.runTask;
   _saveMessage = deps.saveMessage;
   _sendResponseWithVoice = deps.sendResponseWithVoice;
+  _sendTelegramFile = deps.sendTelegramFile;
+  _relayDir = deps.relayDir;
 
   // Initialize planner with shared dependencies
   initPlanner(deps.callClaude, deps.buildPrompt);
@@ -86,6 +94,7 @@ export interface PendingApproval {
   artifacts: Artifact[];
   parentTaskId?: string;
   startTime: number;
+  workspaceDir?: string;
 }
 
 const pendingApprovals = new Map<string, PendingApproval>();
@@ -153,7 +162,9 @@ export async function handleApproval(
       pending.supabase,
       pending.parentTaskId,
       pending.artifacts,
-      pending.prepareResults
+      pending.prepareResults,
+      undefined,
+      pending.workspaceDir
     );
 
     const allResults = [...pending.prepareResults, ...executeResults];
@@ -163,6 +174,15 @@ export async function handleApproval(
     const aggregated = await aggregate(pending.originalText, allResults);
     const processed = await processMemoryIntents(pending.supabase, aggregated, pending.user.id, pending.user.timezone);
     await _saveMessage("assistant", processed, pending.user.id);
+
+    // Deliver workspace files before text response
+    const approvalChatId = ctx.chat?.id;
+    if (approvalChatId && pending.workspaceDir) {
+      const fileCount = await deliverWorkspaceFiles(approvalChatId, pending.workspaceDir);
+      if (fileCount > 0) {
+        console.log(`[orchestrator] Delivered ${fileCount} file(s) from workspace (post-approval)`);
+      }
+    }
     await _sendResponseWithVoice(ctx, processed, pending.user.id);
 
     // Mark parent task done
@@ -348,6 +368,48 @@ function routeSimple(
 }
 
 // ============================================================
+// WORKSPACE — shared directory for subtask file artifacts
+// ============================================================
+
+async function createWorkspace(userId: string, taskId?: string): Promise<string> {
+  const id = taskId || crypto.randomUUID();
+  const workspaceDir = join(_relayDir, "workspaces", userId, id);
+  await mkdir(workspaceDir, { recursive: true });
+  console.log(`[orchestrator] Workspace created: ${workspaceDir} (user=${userId})`);
+  return workspaceDir;
+}
+
+/**
+ * Scan workspace for files and send each to Telegram, then schedule cleanup.
+ * Each workspace is scoped to user+task, so concurrent tasks never cross-deliver.
+ */
+async function deliverWorkspaceFiles(chatId: number | string, workspaceDir: string): Promise<number> {
+  let delivered = 0;
+  try {
+    const entries = await readdir(workspaceDir, { withFileTypes: true });
+    const files = entries.filter((e) => e.isFile());
+    if (files.length === 0) return 0;
+
+    console.log(`[orchestrator] Delivering ${files.length} file(s) from ${workspaceDir} → chat ${chatId}`);
+    for (const entry of files) {
+      const filePath = join(workspaceDir, entry.name);
+      await _sendTelegramFile(chatId, filePath, entry.name);
+      delivered++;
+    }
+  } catch (error) {
+    console.error(`[orchestrator] Error scanning workspace ${workspaceDir}: ${error}`);
+  }
+
+  // Clean up workspace after 10 minutes
+  setTimeout(() => {
+    rm(workspaceDir, { recursive: true }).catch(() => {});
+    console.log(`[orchestrator] Workspace cleaned: ${workspaceDir}`);
+  }, 10 * 60 * 1000);
+
+  return delivered;
+}
+
+// ============================================================
 // COMPLEX PATH — two-phase with approval gate
 // Phase 1: prepare (safe) → show summary → wait for approval
 // Phase 2: execute (consequential) → run on approval
@@ -364,7 +426,9 @@ async function routeComplex(
   const autoApprove = detectAutoApprove(text);
 
   try {
-    // Create parent task
+    const chatId = ctx.chat?.id;
+
+    // Create parent task first — we use its ID for the workspace directory
     let parentTaskId: string | undefined;
     if (supabase) {
       const { data } = await supabase
@@ -379,6 +443,9 @@ async function routeComplex(
         .single();
       parentTaskId = data?.id;
     }
+
+    // Create workspace scoped to user + task (isolates concurrent tasks)
+    const workspaceDir = await createWorkspace(user.id, parentTaskId);
 
     // Decompose using Haiku (cheap) or use cached plan
     const plan = cachedPlan || (await decompose(text, user));
@@ -428,7 +495,7 @@ async function routeComplex(
         autoUpdateChecklist();
       };
 
-      const results = await executeSubtasks(plan, user, supabase, parentTaskId, autoOnProgress);
+      const results = await executeSubtasks(plan, user, supabase, parentTaskId, autoOnProgress, workspaceDir);
       const allSucceeded = results.every((r) => r.success);
 
       const aggregated = await aggregate(text, results);
@@ -441,6 +508,14 @@ async function routeComplex(
           await ctx.api.deleteMessage(ctx.chat!.id, autoChecklistMsg.message_id);
         }
       } catch {}
+
+      // Deliver workspace files before text response
+      if (chatId) {
+        const fileCount = await deliverWorkspaceFiles(chatId, workspaceDir);
+        if (fileCount > 0) {
+          console.log(`[orchestrator] Delivered ${fileCount} file(s) from workspace`);
+        }
+      }
       await _sendResponseWithVoice(ctx, processed, user.id);
 
       // Mark parent task done
@@ -501,7 +576,7 @@ async function routeComplex(
 
     // Phase 1: Run prepare subtasks
     console.log("[orchestrator] Phase 1: Running prepare subtasks");
-    const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress);
+    const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress, workspaceDir);
     const artifacts = collectArtifacts(prepareResults);
 
     // Delete checklist after prepare phase
@@ -532,6 +607,7 @@ async function routeComplex(
       artifacts,
       parentTaskId,
       startTime,
+      workspaceDir,
     });
 
     // Persist to Supabase so the Mini App can display and act on it

@@ -576,18 +576,27 @@ function extractToolNames(toolBlock: string): string {
   return names.slice(0, 5).join(", ") || "general tools";
 }
 
-const ARTIFACT_TAG_INSTRUCTIONS = `
+function getArtifactTagInstructions(workspaceDir?: string): string {
+  const saveInstructions = workspaceDir
+    ? `\nFILE WORKSPACE — Save ALL generated files (images, documents, etc.) to: ${workspaceDir}/
+Use descriptive filenames like: slide_1_cover.png, report.docx, chart.xlsx
+Do NOT save files to /tmp or random paths — always use the workspace directory above.
+`
+    : "";
+
+  return `
 ARTIFACT TAGGING — When you produce deliverables, tag them so the next phase can use them:
-  [ARTIFACT: image | /path/to/file.png]
+  [ARTIFACT: image | ${workspaceDir || "/path/to"}/slide_1_cover.png]
   [ARTIFACT: copy | "Your ad headline or body text here"]
   [ARTIFACT: audience | Women 25-45, interested in skincare]
   [ARTIFACT: url | https://example.com/landing-page]
-  [ARTIFACT: file | /path/to/document.docx]
+  [ARTIFACT: file | ${workspaceDir || "/path/to"}/document.docx]
   [ARTIFACT: data | key finding or structured data]
-
+${saveInstructions}
 Tag every file you create, every piece of copy you write, and every key data point.
 These tags are parsed automatically — the execute phase needs them to proceed.
 `;
+}
 
 /**
  * Build a subtask prompt with the agent's personality + tools/skills injected.
@@ -599,7 +608,8 @@ export function buildAgentPrompt(
   taskDescription: string,
   basePrompt: string,
   depContext?: string,
-  phase?: "prepare" | "execute"
+  phase?: "prepare" | "execute",
+  workspaceDir?: string
 ): string {
   const agent = agents.get(agentSlug.toLowerCase());
 
@@ -607,7 +617,7 @@ export function buildAgentPrompt(
     // No specialist — use the base prompt as-is
     // Still add artifact instructions for prepare phase
     if (phase === "prepare") {
-      return basePrompt + "\n\n" + ARTIFACT_TAG_INSTRUCTIONS;
+      return basePrompt + "\n\n" + getArtifactTagInstructions(workspaceDir);
     }
     return basePrompt;
   }
@@ -642,7 +652,7 @@ export function buildAgentPrompt(
 
   // Add artifact tagging for prepare-phase subtasks
   if (phase === "prepare") {
-    parts.push(ARTIFACT_TAG_INSTRUCTIONS);
+    parts.push(getArtifactTagInstructions(workspaceDir));
     parts.push("");
   }
 

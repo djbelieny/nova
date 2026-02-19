@@ -157,7 +157,8 @@ export async function executePhase(
   parentTaskId?: string,
   priorArtifacts?: Artifact[],
   priorResults?: SubtaskResult[],
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  workspaceDir?: string
 ): Promise<SubtaskResult[]> {
   const results: SubtaskResult[] = [...(priorResults || [])];
   const completed = new Set<number>(results.map((r) => r.index));
@@ -265,7 +266,8 @@ export async function executePhase(
           subtask.description,
           basePrompt,
           fullDepContext || undefined,
-          phase
+          phase,
+          workspaceDir
         );
 
         console.log(`[planner] Executing subtask ${idx} via ${agentSlug} [${phase}]: ${subtask.description.substring(0, 50)}`);
@@ -346,16 +348,17 @@ export async function executeSubtasks(
   user: any,
   supabase: SupabaseClient | null,
   parentTaskId?: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  workspaceDir?: string
 ): Promise<SubtaskResult[]> {
-  const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress);
+  const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress, workspaceDir);
   const artifacts = collectArtifacts(prepareResults);
 
   const hasExecute = plan.subtasks.some((s) => s.phase === "execute");
   if (!hasExecute) return prepareResults;
 
   const executeResults = await executePhase(
-    plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults, onProgress
+    plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults, onProgress, workspaceDir
   );
 
   return [...prepareResults, ...executeResults];

@@ -9,7 +9,7 @@
 
 import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { spawn } from "bun";
-import { writeFile, mkdir, readFile, unlink } from "fs/promises";
+import { writeFile, mkdir, readFile, unlink, stat } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { transcribe } from "./transcribe.ts";
@@ -1756,6 +1756,46 @@ async function sendResponseWithButtons(
 }
 
 // ============================================================
+// FILE DELIVERY — Send files to Telegram from workspace
+// ============================================================
+
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+/**
+ * Send a file to a Telegram chat. Uses sendPhoto for images, sendDocument for everything else.
+ */
+async function sendTelegramFile(
+  chatId: number | string,
+  filePath: string,
+  caption?: string
+): Promise<void> {
+  try {
+    await stat(filePath); // verify file exists
+  } catch {
+    console.warn(`[sendTelegramFile] File not found: ${filePath}`);
+    return;
+  }
+
+  const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
+  const inputFile = new InputFile(filePath);
+
+  try {
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      await bot.api.sendPhoto(chatId, inputFile, {
+        caption: caption || undefined,
+      });
+    } else {
+      await bot.api.sendDocument(chatId, inputFile, {
+        caption: caption || undefined,
+      });
+    }
+    console.log(`[sendTelegramFile] Sent: ${filePath}`);
+  } catch (error) {
+    console.error(`[sendTelegramFile] Failed to send ${filePath}:`, error);
+  }
+}
+
+// ============================================================
 // ORCHESTRATOR INIT
 // ============================================================
 
@@ -1765,6 +1805,8 @@ initOrchestrator({
   runTask,
   saveMessage,
   sendResponseWithVoice,
+  sendTelegramFile,
+  relayDir: RELAY_DIR,
 });
 
 // ============================================================
