@@ -562,27 +562,9 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
       const json = JSON.parse(output.trim());
       let result = typeof json.result === "string" ? json.result : output.trim();
 
-      // If result is empty, try to extract content from the conversation messages.
-      // This happens when Claude uses tools (image-gen, skills) without a final text reply.
-      if (!result.trim() && Array.isArray(json.messages)) {
-        const toolResults: string[] = [];
-        for (const msg of json.messages) {
-          if (msg.role === "assistant" && Array.isArray(msg.content)) {
-            for (const block of msg.content) {
-              if (block.type === "text" && block.text?.trim()) {
-                toolResults.push(block.text.trim());
-              }
-            }
-          }
-          if (msg.role === "tool" && typeof msg.content === "string" && msg.content.trim()) {
-            toolResults.push(msg.content.trim());
-          }
-        }
-        if (toolResults.length > 0) {
-          // Use the last substantive text from the conversation
-          result = toolResults[toolResults.length - 1];
-          console.log(`[callClaude] Empty result recovered from messages (${result.length} chars)`);
-        }
+      // Warn if result is empty — Claude used tools but produced no final text
+      if (!result.trim()) {
+        console.warn(`[callClaude] Empty result from Claude CLI (${json.num_turns || "?"} turns, ${durationMs}ms). This usually means Claude used tools without a final text reply.`);
       }
 
       const resolvedModel = json.model
@@ -1236,6 +1218,12 @@ function buildPrompt(
       "\n" + user.name + " can send you multiple requests at once — you handle them in parallel." +
       "\nJust do the work and deliver results. Keep responses focused and actionable." +
       "\nWhen a task involves creating a file that " + user.name + " needs, use the /telegram-file-sender skill to send it directly." +
+      "\n" +
+      "\nIMAGE GENERATION — When generating images with /image-gen:" +
+      "\n1. Generate the image(s) to file(s)" +
+      "\n2. ALWAYS send each image to " + user.name + " via /telegram-file-sender" +
+      "\n3. ALWAYS include a text summary describing what was created" +
+      "\nNEVER end your response with only tool calls and no text — " + user.name + " sees ONLY your text output, not tool results." +
       "\n" +
       "\nINLINE BUTTONS — Use buttons when asking for confirmation, selection, or quick input:" +
       "\nWhen you need " + user.name + " to choose between options, confirm an action, or approve something, " +
