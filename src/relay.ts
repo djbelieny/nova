@@ -560,7 +560,30 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
     // Parse JSON response to extract cost data
     try {
       const json = JSON.parse(output.trim());
-      const result = typeof json.result === "string" ? json.result : output.trim();
+      let result = typeof json.result === "string" ? json.result : output.trim();
+
+      // If result is empty, try to extract content from the conversation messages.
+      // This happens when Claude uses tools (image-gen, skills) without a final text reply.
+      if (!result.trim() && Array.isArray(json.messages)) {
+        const toolResults: string[] = [];
+        for (const msg of json.messages) {
+          if (msg.role === "assistant" && Array.isArray(msg.content)) {
+            for (const block of msg.content) {
+              if (block.type === "text" && block.text?.trim()) {
+                toolResults.push(block.text.trim());
+              }
+            }
+          }
+          if (msg.role === "tool" && typeof msg.content === "string" && msg.content.trim()) {
+            toolResults.push(msg.content.trim());
+          }
+        }
+        if (toolResults.length > 0) {
+          // Use the last substantive text from the conversation
+          result = toolResults[toolResults.length - 1];
+          console.log(`[callClaude] Empty result recovered from messages (${result.length} chars)`);
+        }
+      }
 
       const resolvedModel = json.model
         || json.metadata?.model
@@ -1622,6 +1645,12 @@ async function sendResponseWithVoice(
   response: string,
   userId?: string
 ): Promise<void> {
+  // Guard against empty responses (e.g., Claude used tools but produced no text)
+  if (!response || !response.trim()) {
+    await ctx.reply("Done — but I didn't have any text to send back. Let me know if something's missing.");
+    return;
+  }
+
   // Parse any inline buttons from the response
   const { text, keyboard } = parseButtons(response);
 
