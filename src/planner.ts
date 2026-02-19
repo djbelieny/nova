@@ -370,7 +370,12 @@ export async function aggregate(
   originalRequest: string,
   results: SubtaskResult[]
 ): Promise<string> {
-  if (results.length === 1) return results[0].result;
+  // Even for single subtask, clean up the response to remove internal artifacts
+  if (results.length === 1) {
+    const raw = results[0].result;
+    // Strip [ARTIFACT:] tags that are for internal planner use
+    return raw.replace(/\[ARTIFACT:\s*[^\]]+\]/g, "").trim();
+  }
 
   const resultSummary = results
     .sort((a, b) => a.index - b.index)

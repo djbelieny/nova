@@ -1219,11 +1219,16 @@ function buildPrompt(
       "\nJust do the work and deliver results. Keep responses focused and actionable." +
       "\nWhen a task involves creating a file that " + user.name + " needs, use the /telegram-file-sender skill to send it directly." +
       "\n" +
-      "\nIMAGE GENERATION — When generating images with /image-gen:" +
-      "\n1. Generate the image(s) to file(s)" +
-      "\n2. ALWAYS send each image to " + user.name + " via /telegram-file-sender" +
-      "\n3. ALWAYS include a text summary describing what was created" +
-      "\nNEVER end your response with only tool calls and no text — " + user.name + " sees ONLY your text output, not tool results." +
+      "\nIMAGE/FILE GENERATION — When generating images (/image-gen, /canvas-design) or any files:" +
+      "\n1. Generate the image(s)/file(s)" +
+      "\n2. ALWAYS send each file to " + user.name + " via /telegram-file-sender — this is HOW files reach the user" +
+      "\n3. ALWAYS include a clean text summary describing what was created" +
+      "\n" +
+      "\nCLEAN OUTPUT — " + user.name + " sees ONLY your final text response:" +
+      "\n- NEVER include file paths, tool invocation details, or internal process notes" +
+      "\n- NEVER show bash commands, script paths, or skill loading messages" +
+      "\n- NEVER describe the steps you took internally — just share the result" +
+      "\n- Write as if you're texting " + user.name + " — casual, clean, result-focused" +
       "\n" +
       "\nINLINE BUTTONS — Use buttons when asking for confirmation, selection, or quick input:" +
       "\nWhen you need " + user.name + " to choose between options, confirm an action, or approve something, " +
@@ -1628,19 +1633,54 @@ function parseButtons(response: string): { text: string; keyboard: InlineKeyboar
   return { text, keyboard };
 }
 
+/**
+ * Strip internal artifacts from Claude's response before sending to user.
+ * Removes tool-use details, file paths, skill invocation logs, and other
+ * internal chatter that the user should never see.
+ */
+function cleanResponseForUser(response: string): string {
+  let cleaned = response;
+
+  // Remove [ARTIFACT: ...] tags (already parsed by planner)
+  cleaned = cleaned.replace(/\[ARTIFACT:\s*[^\]]+\]/g, "");
+
+  // Remove [TASK: ...], [TASK_START: ...], [TASK_DONE: ...] etc. tags
+  cleaned = cleaned.replace(/\[TASK(?:_\w+)?:\s*[^\]]+\]/g, "");
+
+  // Remove [SCHEDULE: ...] and [SCHEDULE_CANCEL: ...] tags
+  cleaned = cleaned.replace(/\[SCHEDULE(?:_CANCEL)?:\s*[^\]]+\]/g, "");
+
+  // Remove lines that look like internal tool invocations or file operations
+  cleaned = cleaned.replace(/^.*(?:Running|Executing|Invoking|Loading skill|Tool call|bash:).*$/gm, "");
+
+  // Remove bare absolute file paths on their own line (e.g., /tmp/slide_1.png)
+  cleaned = cleaned.replace(/^\/(?:tmp|Users|var|home)\/\S+\s*$/gm, "");
+
+  // Remove lines referencing internal scripts
+  cleaned = cleaned.replace(/^.*(?:scripts\/generate_image\.py|send_telegram_file\.sh|\.claude\/skills\/).*$/gm, "");
+
+  // Collapse multiple blank lines into at most two
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+
+  return cleaned.trim();
+}
+
 async function sendResponseWithVoice(
   ctx: Context,
   response: string,
   userId?: string
 ): Promise<void> {
+  // Clean internal artifacts from response
+  const cleaned = cleanResponseForUser(response);
+
   // Guard against empty responses (e.g., Claude used tools but produced no text)
-  if (!response || !response.trim()) {
+  if (!cleaned) {
     await ctx.reply("Done — but I didn't have any text to send back. Let me know if something's missing.");
     return;
   }
 
   // Parse any inline buttons from the response
-  const { text, keyboard } = parseButtons(response);
+  const { text, keyboard } = parseButtons(cleaned);
 
   // Send text (with keyboard if present)
   if (keyboard) {
