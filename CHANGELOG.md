@@ -6,6 +6,14 @@ Each entry includes: when, what triggered it, which files changed, what happened
 
 ---
 
+## [2026-02-18 20:22] Add scheduled Meta Ads daily report
+**Trigger:** user-request
+**Files:** examples/meta-ads-report.ts (new)
+**Summary:** Created daily Meta Ads performance report that pulls yesterday's metrics + last 7 days overview + per-campaign breakdown from Meta Graph API and sends a formatted summary to Telegram. Scheduled via launchd at 8:30 AM ET daily.
+**Risk:** low
+
+---
+
 ## [2026-02-18 12:00] Initial changelog setup
 **Trigger:** user-request
 **Files:** CHANGELOG.md (new), src/relay.ts, src/orchestrator.ts, src/planner.ts, src/patterns.ts, src/agent-router.ts
