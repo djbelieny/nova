@@ -40,7 +40,7 @@ import {
   getScheduleContext,
 } from "./memory.ts";
 
-type ModelTier = "haiku" | "sonnet" | "opus";
+type ModelTier = "sonnet" | "sonnet" | "opus";
 
 // Injected dependencies from relay.ts
 let _callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string) => Promise<string>;
@@ -257,7 +257,7 @@ Message: "${text.substring(0, 300)}"
 
 Return ONLY one word: simple or complex`;
 
-  const result = await _callClaude(prompt, "haiku");
+  const result = await _callClaude(prompt, "sonnet");
   const lower = result.toLowerCase().trim();
 
   return { type: lower.includes("complex") ? "complex" : "simple" };
@@ -747,5 +747,5 @@ Write a brief Telegram-friendly summary (2-4 paragraphs max) of what was prepare
 Highlight the key deliverables. Do NOT mention "agents" or "subtasks" — just describe what was done.
 End by noting that the next step requires their approval to execute.`;
 
-  return _callClaude(prompt, "haiku");
+  return _callClaude(prompt, "sonnet");
 }

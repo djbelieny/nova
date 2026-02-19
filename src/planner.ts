@@ -24,7 +24,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ExecutionPlan } from "./patterns.ts";
 import { getAgentCatalog, buildAgentPrompt } from "./agent-router.ts";
 
-type ModelTier = "haiku" | "sonnet" | "opus";
+type ModelTier = "sonnet" | "sonnet" | "opus";
 
 let _callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string) => Promise<string>;
 let _buildPrompt: (...args: any[]) => string;
@@ -112,7 +112,7 @@ If unsure, default to "prepare" — it's safer to ask for approval than to act w
 User: ${user.name}
 Request: ${text}`;
 
-  const raw = await _callClaude(prompt, "haiku");
+  const raw = await _callClaude(prompt, "sonnet");
 
   try {
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -389,5 +389,5 @@ Instructions:
 - Preserve any actionable items, numbers, and specific recommendations.
 - Use Telegram-friendly formatting (bold for headers, bullet points for lists).`;
 
-  return _callClaude(prompt, "haiku");
+  return _callClaude(prompt, "sonnet");
 }

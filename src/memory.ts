@@ -32,14 +32,26 @@ export async function processMemoryIntents(
 
   let clean = response;
 
-  // [REMEMBER: fact to store]
+  // [REMEMBER: fact to store] — with duplicate detection
   for (const match of response.matchAll(/\[REMEMBER:\s*(.+?)\]/gi)) {
-    await supabase.from("memory").insert({
-      type: "fact",
-      content: match[1],
-      user_id: userId,
-      scope: "private",
-    });
+    const fact = match[1];
+    // Check for existing similar fact (case-insensitive substring match)
+    const { data: existing } = await supabase
+      .from("memory")
+      .select("id")
+      .eq("type", "fact")
+      .eq("user_id", userId)
+      .ilike("content", `%${escapeIlike(fact.substring(0, 100))}%`)
+      .limit(1);
+
+    if (!existing?.length) {
+      await supabase.from("memory").insert({
+        type: "fact",
+        content: fact,
+        user_id: userId,
+        scope: "private",
+      });
+    }
     clean = clean.replace(match[0], "");
   }
 
