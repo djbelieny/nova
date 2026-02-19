@@ -533,9 +533,13 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
     const durationMs = Date.now() - startTime;
 
     if (exitCode !== 0) {
-      console.error(`Claude error (exit ${exitCode}):`, stderr || "(empty stderr)");
+      // Log both stderr and stdout tail for diagnosis (stdout may contain error JSON)
+      const stderrSnippet = stderr.trim() || "(empty stderr)";
+      const stdoutTail = output.trim().slice(-500) || "(empty stdout)";
+      console.error(`Claude error (exit ${exitCode}): stderr=${stderrSnippet} | stdout_tail=${stdoutTail}`);
       recordCall(false, modelLabel, durationMs, stderr.includes("rate") || stderr.includes("overloaded"));
-      throw new Error(stderr || `Claude CLI exited with code ${exitCode}`);
+      const detail = stderr.trim() || stdoutTail || `exit code ${exitCode}`;
+      throw new Error(`Claude CLI exited with code ${exitCode}: ${detail}`);
     }
 
     // Parse JSON response to extract cost data
@@ -664,15 +668,30 @@ function runTask(
       }
       await sendResponseWithVoice(ctx, response, userId);
     } catch (error) {
-      console.error(`Task ${taskId} error:`, error);
-      // Edit the status message to show error, or send a new one
-      const msg = "Something went wrong processing that. Try sending your message again in a moment.";
+      const err = error as Error;
+      console.error(`Task ${taskId} error:`, err);
+
+      // Build a diagnostic error message instead of a generic one
+      const errMsg = err.message || String(error);
+      let msg: string;
+      if (errMsg.includes("rate") || errMsg.includes("overloaded")) {
+        msg = `⚠️ Claude API is rate-limited or overloaded. Try again in ~30 seconds.\n\n_Error: ${errMsg.substring(0, 200)}_`;
+      } else if (errMsg.includes("exited with code")) {
+        msg = `⚠️ Claude CLI crashed (non-zero exit).\n\n_Error: ${errMsg.substring(0, 200)}_`;
+      } else if (errMsg.includes("No JSON found") || errMsg.includes("parse")) {
+        msg = `⚠️ AI returned an unparseable response (likely a malformed reply from the model).\n\n_Error: ${errMsg.substring(0, 200)}_`;
+      } else if (errMsg.includes("timeout") || errMsg.includes("ETIMEDOUT")) {
+        msg = `⚠️ Request timed out — the task may have been too complex or the API is slow.\n\n_Error: ${errMsg.substring(0, 200)}_`;
+      } else {
+        msg = `⚠️ Something went wrong.\n\n_Error: ${errMsg.substring(0, 300)}_`;
+      }
+
       if (statusMsgId && chatId) {
-        try { await ctx.api.editMessageText(chatId, statusMsgId, msg); } catch {
-          await ctx.reply(msg).catch(() => {});
+        try { await ctx.api.editMessageText(chatId, statusMsgId, msg, { parse_mode: "Markdown" }); } catch {
+          await ctx.reply(msg, { parse_mode: "Markdown" }).catch(() => {});
         }
       } else {
-        await ctx.reply(msg).catch(() => {});
+        await ctx.reply(msg, { parse_mode: "Markdown" }).catch(() => {});
       }
     } finally {
       clearTimeout(statusTimer);
@@ -959,6 +978,43 @@ function buildMemoryExtractionPrompt(filePath: string, fileName: string, caption
   );
 }
 
+/**
+ * Truncate a section to fit within a character budget.
+ * For list-style sections (lines starting with -), drops middle items.
+ * For prose, keeps first and last portions.
+ */
+function truncateSection(text: string, maxChars: number): string {
+  if (!text || text.length <= maxChars) return text;
+
+  const lines = text.split("\n");
+  // First line is usually the header (e.g., "FACTS:", "ACTIVE TASKS:")
+  const header = lines[0];
+  const items = lines.slice(1);
+
+  if (items.length <= 2) {
+    // Too few items to drop from middle — hard truncate
+    const truncated = text.slice(0, maxChars - 40);
+    const lastNewline = truncated.lastIndexOf("\n");
+    return (lastNewline > 0 ? truncated.slice(0, lastNewline) : truncated) +
+      `\n[...truncated ${text.length - maxChars + 40} chars...]`;
+  }
+
+  // Drop items from the middle until within budget
+  let kept = [...items];
+  while (kept.join("\n").length + header.length + 1 > maxChars && kept.length > 2) {
+    const mid = Math.floor(kept.length / 2);
+    kept.splice(mid, 1);
+  }
+
+  const dropped = items.length - kept.length;
+  if (dropped > 0) {
+    const mid = Math.floor(kept.length / 2);
+    kept.splice(mid, 0, `[...${dropped} items truncated...]`);
+  }
+
+  return header + "\n" + kept.join("\n");
+}
+
 function buildPrompt(
   user: NovaUser,
   userMessage: string,
@@ -979,6 +1035,23 @@ function buildPrompt(
     minute: "2-digit",
   });
 
+  // Context budget — cap dynamic sections to prevent prompt overflow
+  const MAX_CONTEXT_CHARS = 24_000;
+  const budgets = {
+    recentHistory: Math.floor(MAX_CONTEXT_CHARS * 0.35),   // 8,400 chars
+    memoryContext: Math.floor(MAX_CONTEXT_CHARS * 0.25),    // 6,000 chars
+    relevantContext: Math.floor(MAX_CONTEXT_CHARS * 0.20),  // 4,800 chars
+    taskContext: Math.floor(MAX_CONTEXT_CHARS * 0.10),      // 2,400 chars
+    scheduleContext: Math.floor(MAX_CONTEXT_CHARS * 0.10),  // 2,400 chars
+  };
+
+  // Apply truncation to each dynamic section
+  const tRecentHistory = recentHistory ? truncateSection(recentHistory, budgets.recentHistory) : undefined;
+  const tMemoryContext = memoryContext ? truncateSection(memoryContext, budgets.memoryContext) : undefined;
+  const tRelevantContext = relevantContext ? truncateSection(relevantContext, budgets.relevantContext) : undefined;
+  const tTaskContext = taskContext ? truncateSection(taskContext, budgets.taskContext) : undefined;
+  const tScheduleContext = scheduleContext ? truncateSection(scheduleContext, budgets.scheduleContext) : undefined;
+
   const parts = [
     "You are a personal AI assistant responding via Telegram. Keep responses concise and conversational.",
   ];
@@ -986,11 +1059,11 @@ function buildPrompt(
   parts.push(`You are speaking with ${user.name}.`);
   parts.push(`Current time: ${timeStr}`);
   if (user.profile_text) parts.push(`\nProfile:\n${user.profile_text}`);
-  if (memoryContext) parts.push(`\n${memoryContext}`);
-  if (taskContext) parts.push(`\n${taskContext}`);
-  if (scheduleContext) parts.push(`\n${scheduleContext}`);
-  if (recentHistory) parts.push(`\n${recentHistory}`);
-  if (relevantContext) parts.push(`\n${relevantContext}`);
+  if (tMemoryContext) parts.push(`\n${tMemoryContext}`);
+  if (tTaskContext) parts.push(`\n${tTaskContext}`);
+  if (tScheduleContext) parts.push(`\n${tScheduleContext}`);
+  if (tRecentHistory) parts.push(`\n${tRecentHistory}`);
+  if (tRelevantContext) parts.push(`\n${tRelevantContext}`);
 
   parts.push(
     "\nMEMORY MANAGEMENT:" +
@@ -1264,7 +1337,9 @@ function buildPrompt(
 
   parts.push(`\nUser: ${userMessage}`);
 
-  return parts.join("\n");
+  const prompt = parts.join("\n");
+  console.log(`[prompt] ${prompt.length} chars (~${Math.round(prompt.length / 4)} tokens)`);
+  return prompt;
 }
 
 // ============================================================

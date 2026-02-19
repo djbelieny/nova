@@ -247,9 +247,14 @@ export async function getMemoryContext(
     const parts: string[] = [];
 
     if (factsResult.data?.length) {
+      // Cap at 50 facts to prevent unbounded growth
+      const facts = factsResult.data.slice(0, 50);
+      const suffix = factsResult.data.length > 50
+        ? `\n[...${factsResult.data.length - 50} more facts truncated...]`
+        : "";
       parts.push(
         "FACTS:\n" +
-          factsResult.data.map((f: any) => `- ${f.content}`).join("\n")
+          facts.map((f: any) => `- ${f.content}`).join("\n") + suffix
       );
     }
 
@@ -293,9 +298,14 @@ export async function getTaskContext(
 
     if (!data?.length) return "";
 
-    const lines = data.map(
+    // Cap at 20 tasks to prevent unbounded growth
+    const tasks = data.slice(0, 20);
+    const lines = tasks.map(
       (t: any) => `- [${t.agent}] ${t.description} (${t.status})`
     );
+    if (data.length > 20) {
+      lines.push(`[...${data.length - 20} more tasks truncated...]`);
+    }
 
     return "ACTIVE TASKS:\n" + lines.join("\n");
   } catch (error) {
@@ -340,6 +350,12 @@ export async function getRecentHistory(
       return `[${time} ${m.role}]: ${m.content}`;
     });
 
+    // Secondary char limit — drop oldest messages if total exceeds 8,000 chars
+    const MAX_HISTORY_CHARS = 8_000;
+    while (lines.length > 1 && lines.join("\n").length > MAX_HISTORY_CHARS) {
+      lines.shift();
+    }
+
     return "RECENT CONVERSATION:\n" + lines.join("\n");
   } catch (error) {
     console.warn("Recent history error:", error);
@@ -373,10 +389,17 @@ export async function getRelevantContext(
       return "";
     }
 
+    // Cap each result to 500 chars to prevent a single long message from dominating
+    const MAX_RESULT_CHARS = 500;
     return (
       "RELEVANT PAST MESSAGES:\n" +
       data
-        .map((m: any) => `[${m.role}]: ${m.content}`)
+        .map((m: any) => {
+          const content = m.content.length > MAX_RESULT_CHARS
+            ? m.content.slice(0, MAX_RESULT_CHARS) + "..."
+            : m.content;
+          return `[${m.role}]: ${content}`;
+        })
         .join("\n")
     );
   } catch (error) {
@@ -479,7 +502,9 @@ export async function getScheduleContext(
 
     if (!data?.length) return "";
 
-    const lines = data.map((t: any) => {
+    // Cap at 20 scheduled tasks
+    const tasks = data.slice(0, 20);
+    const lines = tasks.map((t: any) => {
       const triggerStr = t.trigger_at
         ? new Date(t.trigger_at).toLocaleString("en-US", {
             timeZone: userTimezone || t.timezone || "UTC",
@@ -495,6 +520,9 @@ export async function getScheduleContext(
       const creator = t.created_by === "nova" ? " [self-scheduled]" : "";
       return `- ${t.title} — ${triggerStr}${recur}${creator}`;
     });
+    if (data.length > 20) {
+      lines.push(`[...${data.length - 20} more scheduled tasks truncated...]`);
+    }
 
     return "SCHEDULED TASKS:\n" + lines.join("\n");
   } catch (error) {
