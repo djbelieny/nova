@@ -6,8 +6,9 @@
  * - Google Work (google-work)
  * - Notion (notion)
  * - Zoom (zoom)
+ * - Go High Level (gohighlevel) — API-key based, no OAuth
  *
- * Global MCP servers (cloudflare, square, ghl, playwright) are inherited from
+ * Global MCP servers (cloudflare, square, playwright) are inherited from
  * the project-level .mcp.json and included in every user's config.
  */
 
@@ -169,18 +170,23 @@ export async function getFilteredMcpConfigPath(userId: string, hint?: string): P
   }
 }
 
-// Providers that are per-user (OAuth-based)
+// Providers that are per-user (OAuth or API-key based)
 export const PER_USER_PROVIDERS = [
   "google-personal",
   "google-work",
   "notion",
   "zoom",
+  "gohighlevel",
 ] as const;
+
+// Providers that use API-key input (no OAuth redirect)
+export const API_KEY_PROVIDERS = ["gohighlevel"] as const;
+export type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
 
 export type Provider = (typeof PER_USER_PROVIDERS)[number];
 
 // Global servers that every user inherits (read from project .mcp.json)
-const GLOBAL_SERVERS = ["cloudflare", "square", "gohighlevel", "playwright"];
+const GLOBAL_SERVERS = ["cloudflare", "square", "playwright"];
 
 export interface IntegrationStatus {
   provider: Provider;
@@ -502,6 +508,55 @@ export async function handleOAuthCallback(
 }
 
 // ============================================================
+// API-KEY INTEGRATION (no OAuth)
+// ============================================================
+
+export async function saveApiKeyIntegration(
+  supabase: SupabaseClient,
+  userId: string,
+  provider: ApiKeyProvider,
+  credentials: Record<string, any>,
+  metadata: Record<string, any> = {}
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await supabase.rpc("upsert_user_integration", {
+      p_user_id: userId,
+      p_provider: provider,
+      p_status: "connected",
+      p_credentials: credentials,
+      p_metadata: metadata,
+    });
+
+    await regenerateMcpConfig(supabase, userId);
+    return { success: true };
+  } catch (error: any) {
+    console.error(`[integrations] saveApiKeyIntegration error for ${provider}:`, error);
+    return { success: false, error: error.message };
+  }
+}
+
+export async function getIntegrationCredentials(
+  supabase: SupabaseClient,
+  userId: string,
+  provider: string
+): Promise<{ credentials: Record<string, any>; metadata: Record<string, any> } | null> {
+  try {
+    const { data } = await supabase
+      .from("user_integrations")
+      .select("credentials, metadata")
+      .eq("user_id", userId)
+      .eq("provider", provider)
+      .eq("status", "connected")
+      .single();
+
+    if (!data) return null;
+    return { credentials: data.credentials || {}, metadata: data.metadata || {} };
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================
 // DISCONNECT
 // ============================================================
 
@@ -611,6 +666,23 @@ export async function regenerateMcpConfig(
                 ZOOM_CLIENT_ID: process.env.ZOOM_CLIENT_ID || "",
                 ZOOM_CLIENT_SECRET: process.env.ZOOM_CLIENT_SECRET || "",
                 ZOOM_ACCESS_TOKEN: creds.access_token,
+              },
+            };
+          }
+          break;
+        }
+
+        case "gohighlevel": {
+          const creds = integration.credentials || {};
+          if (creds.bearer_token) {
+            const ghlCmd = mcpCommand("@drausal/gohighlevel-mcp");
+            mcpServers["gohighlevel"] = {
+              type: "stdio",
+              command: ghlCmd.command,
+              args: ghlCmd.args,
+              env: {
+                BEARER_TOKEN_BEARERAUTH: creds.bearer_token,
+                BEARER_TOKEN_BEARER: creds.bearer_token,
               },
             };
           }

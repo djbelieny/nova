@@ -16,8 +16,11 @@ import {
   getOAuthUrl,
   handleOAuthCallback,
   disconnectIntegration,
+  saveApiKeyIntegration,
   PER_USER_PROVIDERS,
+  API_KEY_PROVIDERS,
   type Provider,
+  type ApiKeyProvider,
 } from "./integrations.ts";
 
 // ============================================================
@@ -482,6 +485,35 @@ async function disconnectIntegrationHandler(userId: string, provider: string): P
 
   const result = await disconnectIntegration(supabase, userId, provider as Provider);
   return result;
+}
+
+async function saveApiKeyHandler(userId: string, provider: string, req: Request): Promise<unknown> {
+  if (!supabase) return { error: "Supabase not configured" };
+  if (!API_KEY_PROVIDERS.includes(provider as ApiKeyProvider)) {
+    return { error: `Invalid API-key provider: ${provider}` };
+  }
+
+  const body = await req.json().catch(() => ({}));
+
+  switch (provider) {
+    case "gohighlevel": {
+      const { bearer_token, location_id } = body as { bearer_token?: string; location_id?: string };
+      if (!bearer_token) return { error: "Bearer token is required" };
+      if (!location_id) return { error: "Location ID is required" };
+
+      const result = await saveApiKeyIntegration(
+        supabase,
+        userId,
+        "gohighlevel",
+        { bearer_token },
+        { location_id }
+      );
+      return result;
+    }
+
+    default:
+      return { error: `Unknown API-key provider: ${provider}` };
+  }
 }
 
 // ============================================================
@@ -1937,7 +1969,8 @@ function renderMiniApp(): string {
       'google-personal': { name: 'Google Personal', icon: '\uD83D\uDCE7', color: '#4285F4' },
       'google-work': { name: 'Google Work', icon: '\uD83C\uDFE2', color: '#0F9D58' },
       'notion': { name: 'Notion', icon: '\uD83D\uDCDD', color: '#000000' },
-      'zoom': { name: 'Zoom', icon: '\uD83C\uDFA5', color: '#2D8CFF' }
+      'zoom': { name: 'Zoom', icon: '\uD83C\uDFA5', color: '#2D8CFF' },
+      'gohighlevel': { name: 'Go High Level', icon: '\uD83C\uDFE2', color: '#FF6B35', apiKey: true }
     };
 
     async function loadIntegrations() {
@@ -1961,9 +1994,10 @@ function renderMiniApp(): string {
         var pending = intg.status === 'pending';
         var statusText = connected ? 'Connected' : pending ? 'Pending...' : intg.status === 'error' ? 'Error' : 'Not connected';
         var statusColor = connected ? '#2ecc71' : pending ? '#f39c12' : intg.status === 'error' ? '#ff4444' : 'var(--hint)';
-        var accountInfo = intg.metadata && intg.metadata.email ? intg.metadata.email : (intg.metadata && intg.metadata.workspace_name ? intg.metadata.workspace_name : '');
+        var accountInfo = intg.metadata && intg.metadata.email ? intg.metadata.email : (intg.metadata && intg.metadata.workspace_name ? intg.metadata.workspace_name : (intg.metadata && intg.metadata.location_id ? 'Location: ' + intg.metadata.location_id : ''));
 
-        html += '<div class="card" style="display:flex;align-items:center;gap:14px;">';
+        html += '<div class="card" style="display:flex;flex-direction:column;gap:10px;">';
+        html += '<div style="display:flex;align-items:center;gap:14px;">';
         html += '<div class="avatar-sm" style="background:' + info.color + ';font-size:20px;">' + info.icon + '</div>';
         html += '<div style="flex:1;">';
         html += '<div style="font-weight:600;font-size:15px;">' + escapeStr(info.name) + '</div>';
@@ -1973,9 +2007,22 @@ function renderMiniApp(): string {
 
         if (connected) {
           html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="doDisconnect(\\'' + intg.provider + '\\')">Disconnect</button>';
-        } else if (!pending) {
+        } else if (!pending && !info.apiKey) {
           html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="doConnect(\\'' + intg.provider + '\\')">Connect</button>';
         }
+        html += '</div>';
+
+        // API-key providers: show input form when not connected
+        if (info.apiKey && !connected) {
+          html += '<div id="apikey-form-' + intg.provider + '" style="display:flex;flex-direction:column;gap:8px;padding-top:4px;">';
+          if (intg.provider === 'gohighlevel') {
+            html += '<input type="password" id="ghl-bearer-token" placeholder="Bearer Token" style="padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:14px;" />';
+            html += '<input type="text" id="ghl-location-id" placeholder="Location ID" style="padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:14px;" />';
+          }
+          html += '<button class="approval-btn approve" style="padding:10px 16px;font-size:14px;width:100%;" onclick="doSaveApiKey(\\'' + intg.provider + '\\')">Save</button>';
+          html += '</div>';
+        }
+
         html += '</div>';
       }
       container.innerHTML = html;
@@ -2012,6 +2059,33 @@ function renderMiniApp(): string {
       var data = await apiFetch('/integrations/' + encodeURIComponent(provider) + '/disconnect', { method: 'POST' });
       if (data && data.success) {
         showToast('Disconnected', 'success');
+        loadIntegrations();
+      }
+    }
+
+    async function doSaveApiKey(provider) {
+      var body = {};
+      if (provider === 'gohighlevel') {
+        var token = document.getElementById('ghl-bearer-token');
+        var locId = document.getElementById('ghl-location-id');
+        if (!token || !token.value.trim()) { showToast('Bearer Token is required', 'error'); return; }
+        if (!locId || !locId.value.trim()) { showToast('Location ID is required', 'error'); return; }
+        body = { bearer_token: token.value.trim(), location_id: locId.value.trim() };
+      }
+      var data = await apiFetch('/integrations/' + encodeURIComponent(provider) + '/save-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (data && data.error) {
+        showToast(data.error, 'error');
+        return;
+      }
+      if (data && data.success) {
+        showToast('Connected!', 'success');
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+          Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        }
         loadIntegrations();
       }
     }
@@ -2329,6 +2403,12 @@ const server = Bun.serve({
         return jsonResponse(await connectIntegration(userId, decodeURIComponent(connectMatch[1])));
       }
 
+      // Save API-key integration: /api/integrations/:provider/save-key
+      const saveKeyMatch = path.match(/^\/api\/integrations\/([^/]+)\/save-key$/);
+      if (saveKeyMatch && method === "POST") {
+        return jsonResponse(await saveApiKeyHandler(userId, decodeURIComponent(saveKeyMatch[1]), req));
+      }
+
       // Disconnect integration: /api/integrations/:provider/disconnect
       const disconnectMatch = path.match(/^\/api\/integrations\/([^/]+)\/disconnect$/);
       if (disconnectMatch && method === "POST") {
@@ -2381,6 +2461,7 @@ console.log("  PUT  /api/profile                         — Update profile fiel
 console.log("  PUT  /api/preferences                     — Update preference fields");
 console.log("  GET  /api/integrations                    — Integration statuses");
 console.log("  POST /api/integrations/:provider/connect  — Start OAuth flow");
+console.log("  POST /api/integrations/:provider/save-key  — Save API-key integration");
 console.log("  POST /api/integrations/:provider/disconnect — Disconnect");
 console.log("  GET  /api/integrations/callback           — OAuth callback");
 console.log("  GET  /api/agents                          — Agent list with stats");

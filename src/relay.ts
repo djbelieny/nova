@@ -26,7 +26,7 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
-import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath } from "./integrations.ts";
+import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials } from "./integrations.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -153,6 +153,8 @@ interface NovaUser {
 
 const USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const userCache = new Map<string, { user: NovaUser; cachedAt: number }>();
+// GHL location ID cache: userId → locationId
+const ghlLocationCache = new Map<string, string>();
 
 async function resolveUser(telegramId: string): Promise<NovaUser | null> {
   // Check cache first (with TTL)
@@ -181,6 +183,16 @@ async function resolveUser(telegramId: string): Promise<NovaUser | null> {
     };
 
     userCache.set(telegramId, { user, cachedAt: Date.now() });
+
+    // Pre-load GHL location ID (non-blocking)
+    if (supabase && !ghlLocationCache.has(user.id)) {
+      getIntegrationCredentials(supabase, user.id, "gohighlevel").then((ghl) => {
+        if (ghl?.metadata?.location_id) {
+          ghlLocationCache.set(user.id, ghl.metadata.location_id);
+        }
+      }).catch(() => {});
+    }
+
     return user;
   } catch (error) {
     console.error("User resolution error:", error);
@@ -191,8 +203,11 @@ async function resolveUser(telegramId: string): Promise<NovaUser | null> {
 function invalidateUserCache(telegramId?: string): void {
   if (telegramId) {
     userCache.delete(telegramId);
+    // Also clear GHL cache for this user (we don't have userId here, so clear all)
+    ghlLocationCache.clear();
   } else {
     userCache.clear();
+    ghlLocationCache.clear();
   }
 }
 
@@ -1022,7 +1037,8 @@ function buildPrompt(
   memoryContext?: string,
   recentHistory?: string,
   taskContext?: string,
-  scheduleContext?: string
+  scheduleContext?: string,
+  options?: { ghlLocationId?: string }
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -1051,6 +1067,9 @@ function buildPrompt(
   const tRelevantContext = relevantContext ? truncateSection(relevantContext, budgets.relevantContext) : undefined;
   const tTaskContext = taskContext ? truncateSection(taskContext, budgets.taskContext) : undefined;
   const tScheduleContext = scheduleContext ? truncateSection(scheduleContext, budgets.scheduleContext) : undefined;
+
+  // Resolve GHL location ID from cache or options
+  const ghlLocationId = options?.ghlLocationId || ghlLocationCache.get(user.id);
 
   const parts = [
     "You are a personal AI assistant responding via Telegram. Keep responses concise and conversational.",
@@ -1167,6 +1186,9 @@ function buildPrompt(
       "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
       "\n  - WRITE OPERATIONS: Always ask " + user.name + " which location to use BEFORE executing." +
       "\n• Go High Level (GHL): Full CRM and agency management via official MCP server." +
+      (ghlLocationId
+        ? `\n  - LOCATION ID: ${ghlLocationId} — use this for all GHL API calls that require a locationId.`
+        : "") +
       "\n  - CONTACTS: Create, update, search, tag, add to workflows, manage custom fields" +
       "\n  - MEMBERSHIPS & COURSES: Grant/revoke contact access to courses, memberships, and groups" +
       "\n  - CALENDARS: Create/edit/delete calendars, appointments, check free slots, block time" +
