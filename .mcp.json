@@ -2,10 +2,9 @@
   "mcpServers": {
     "notion": {
       "type": "stdio",
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@notionhq/notion-mcp-server"
+        "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@notionhq/notion-mcp-server/bin/cli.mjs"
       ],
       "env": {
         "OPENAPI_MCP_HEADERS": "${NOTION_MCP_HEADERS}"
@@ -13,28 +12,25 @@
     },
     "google-workspace": {
       "type": "stdio",
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@presto-ai/google-workspace-mcp"
+        "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@presto-ai/google-workspace-mcp/./bin/cli.js"
       ],
       "env": {}
     },
     "playwright": {
       "type": "stdio",
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@playwright/mcp@latest"
+        "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@playwright/mcp/cli.js"
       ],
       "env": {}
     },
     "cloudflare": {
       "type": "stdio",
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@cloudflare/mcp-server-cloudflare",
+        "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@cloudflare/mcp-server-cloudflare/dist/index.js",
         "run",
         "${CLOUDFLARE_ACCOUNT_ID}"
       ],
@@ -44,10 +40,9 @@
     },
     "zoom": {
       "type": "stdio",
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@prathamesh0901/zoom-mcp-server"
+        "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@prathamesh0901/zoom-mcp-server/dist/index.js"
       ],
       "env": {
         "ZOOM_ACCOUNT_ID": "${ZOOM_ACCOUNT_ID}",
@@ -57,10 +52,9 @@
     },
     "square": {
       "type": "stdio",
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "square-mcp-server",
+        "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/square-mcp-server/dist/index.js",
         "start"
       ],
       "env": {
@@ -70,10 +64,9 @@
     },
     "gohighlevel": {
       "type": "stdio",
-      "command": "npx",
+      "command": "node",
       "args": [
-        "-y",
-        "@drausal/gohighlevel-mcp"
+        "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@drausal/gohighlevel-mcp/build/index.js"
       ],
       "env": {
         "BEARER_TOKEN_BEARERAUTH": "${GHL_BEARER_TOKEN}",

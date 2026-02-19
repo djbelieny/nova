@@ -26,7 +26,7 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
-import { hasUserMcpConfig, getUserMcpConfigPath } from "./integrations.ts";
+import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath } from "./integrations.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -303,6 +303,7 @@ bot.on("callback_query:data", async (ctx) => {
           taskContext,
           scheduleContext
         ),
+        hint: selection,
       };
     }, {
       postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
@@ -455,7 +456,7 @@ function releaseClaudeSlot(): void {
 
 type ModelTier = "haiku" | "sonnet" | "opus";
 
-async function callClaude(prompt: string, model?: ModelTier, userId?: string): Promise<string> {
+async function callClaude(prompt: string, model?: ModelTier, userId?: string, hint?: string): Promise<string> {
   await acquireClaudeSlot(prompt.substring(0, 60));
 
   const maxRetries = 2;
@@ -470,7 +471,7 @@ async function callClaude(prompt: string, model?: ModelTier, userId?: string): P
           console.log(`[retry] Attempt ${attempt + 1}/${maxRetries + 1} after ${delay / 1000}s delay`);
           await new Promise((r) => setTimeout(r, delay));
         }
-        return await _callClaudeOnce(prompt, model, userId);
+        return await _callClaudeOnce(prompt, model, userId, hint);
       } catch (error) {
         lastError = error as Error;
         const isRateLimit = lastError.message.includes("rate") || lastError.message.includes("overloaded");
@@ -490,7 +491,7 @@ async function callClaude(prompt: string, model?: ModelTier, userId?: string): P
   }
 }
 
-async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: string): Promise<string> {
+async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: string, hint?: string): Promise<string> {
   const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions"];
 
   // Add model flag if specified (uses Max plan quota for all models)
@@ -499,8 +500,12 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
   }
 
   // Per-user MCP config: if user has connected integrations, use their config
+  // Smart routing: filter to only relevant servers based on hint
   if (userId && hasUserMcpConfig(userId)) {
-    args.push("--mcp-config", getUserMcpConfigPath(userId));
+    const mcpConfigPath = hint
+      ? await getFilteredMcpConfigPath(userId, hint)
+      : getUserMcpConfigPath(userId);
+    args.push("--mcp-config", mcpConfigPath);
   }
 
   const modelLabel = model || "default";
@@ -584,7 +589,7 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
 function runTask(
   ctx: Context,
   taskDescription: string,
-  buildTask: () => Promise<{ prompt: string; model?: ModelTier }>,
+  buildTask: () => Promise<{ prompt: string; model?: ModelTier; hint?: string }>,
   opts?: { postProcess?: (response: string) => Promise<string>; userId?: string }
 ): void {
   const taskId = `task-${++taskCounter}`;
@@ -633,13 +638,13 @@ function runTask(
   // Fire and forget — run the task asynchronously
   (async () => {
     try {
-      const { prompt, model } = await buildTask();
+      const { prompt, model, hint: taskHint } = await buildTask();
 
       // Skip calling Claude for orchestrator-handled prompts
       const taskUserId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
       const rawResponse = prompt === "__ORCHESTRATOR_HANDLED__"
         ? "__ORCHESTRATOR_HANDLED__"
-        : await callClaude(prompt, model, taskUserId);
+        : await callClaude(prompt, model, taskUserId, taskHint);
 
       const response = opts?.postProcess
         ? await opts.postProcess(rawResponse)
@@ -787,6 +792,7 @@ bot.on("message:voice", async (ctx) => {
           taskContext,
           scheduleContext
         ),
+        hint: transcription,
       };
     }, {
       postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
@@ -835,7 +841,7 @@ bot.on("message:photo", async (ctx) => {
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, `image_${fileId}.jpg`, caption)
         : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
-      return { prompt };
+      return { prompt, hint: caption };
     }, {
       postProcess: async (raw) => {
         // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
@@ -891,7 +897,7 @@ bot.on("message:document", async (ctx) => {
       const prompt = memoryMode
         ? buildMemoryExtractionPrompt(filePath, doc.file_name || "document", caption)
         : (contextPrefix ? contextPrefix + "\n\n" : "") + `[File: ${filePath}]\n\n${caption}`;
-      return { prompt };
+      return { prompt, hint: caption };
     }, {
       postProcess: async (raw) => {
         // Delay cleanup for memory ingestion — Claude may need the file longer

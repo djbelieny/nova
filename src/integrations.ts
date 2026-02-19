@@ -14,11 +14,160 @@
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
+import { execSync } from "child_process";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const NOVA_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const USERS_DIR = join(NOVA_DIR, "users");
+
+// ============================================================
+// GLOBAL BINARY RESOLUTION (skip npx overhead)
+// ============================================================
+
+const _binCache = new Map<string, string | null>();
+
+/**
+ * Resolve the global binary path for an npm package.
+ * Caches results so we only shell out once per package per process lifetime.
+ * Returns null if the package isn't installed globally.
+ */
+function resolveGlobalBin(packageName: string): string | null {
+  if (_binCache.has(packageName)) return _binCache.get(packageName)!;
+
+  try {
+    const npmGlobalRoot = execSync("npm root -g", { encoding: "utf-8" }).trim();
+    const pkgJsonPath = join(npmGlobalRoot, packageName, "package.json");
+    if (!existsSync(pkgJsonPath)) {
+      _binCache.set(packageName, null);
+      return null;
+    }
+    const pkgJson = JSON.parse(require("fs").readFileSync(pkgJsonPath, "utf-8"));
+    const bin = pkgJson.bin;
+    if (!bin) { _binCache.set(packageName, null); return null; }
+
+    // bin can be a string (single) or an object (multiple)
+    const binRelative = typeof bin === "string" ? bin : Object.values(bin)[0] as string;
+    const binPath = join(npmGlobalRoot, packageName, binRelative);
+
+    if (existsSync(binPath)) {
+      _binCache.set(packageName, binPath);
+      console.log(`[integrations] Resolved global bin: ${packageName} → ${binPath}`);
+      return binPath;
+    }
+    _binCache.set(packageName, null);
+    return null;
+  } catch {
+    _binCache.set(packageName, null);
+    return null;
+  }
+}
+
+/**
+ * Build the command + args for an MCP server, preferring global bin over npx.
+ */
+function mcpCommand(packageName: string, extraArgs: string[] = []): { command: string; args: string[] } {
+  const globalBin = resolveGlobalBin(packageName);
+  if (globalBin) {
+    return { command: "node", args: [globalBin, ...extraArgs] };
+  }
+  return { command: "npx", args: ["-y", packageName, ...extraArgs] };
+}
+
+// ============================================================
+// SMART MCP SERVER ROUTING
+// ============================================================
+
+/**
+ * Keyword → server name mapping for smart routing.
+ * If a hint matches keywords, only those servers are included.
+ */
+const MCP_ROUTING_MAP: Record<string, string[]> = {
+  "google-personal": ["email", "gmail", "calendar", "drive", "docs", "sheets", "slides", "meeting", "schedule", "event", "chat"],
+  "google-work": ["email", "gmail", "calendar", "drive", "docs", "sheets", "slides", "meeting", "schedule", "event", "chat"],
+  "notion": ["notion", "database", "page", "wiki", "notes", "workspace"],
+  "zoom": ["zoom", "video call", "conference"],
+  "cloudflare": ["cloudflare", "worker", "deploy", "dns", "domain", "r2", "d1", "kv"],
+  "square": ["square", "payment", "invoice", "pos", "transaction", "order"],
+  "gohighlevel": ["ghl", "highlevel", "crm", "pipeline", "opportunity", "funnel", "contact"],
+  "playwright": ["browse", "screenshot", "webpage", "scrape", "website", "click", "navigate"],
+};
+
+/** Agent slug → servers they commonly need */
+const AGENT_SERVER_MAP: Record<string, string[]> = {
+  orion: ["google-personal", "google-work"],
+  zen: ["google-personal", "google-work"],
+  digit: ["square"],
+  flux: ["square", "gohighlevel"],
+  helios: ["gohighlevel"],
+  echo: ["gohighlevel"],
+  cyra: ["playwright"],
+  architect: ["cloudflare", "playwright"],
+  joule: ["cloudflare"],
+};
+
+/**
+ * Determine which MCP server names are relevant for a given hint.
+ * Returns null if ALL servers should be included (fallback).
+ */
+function matchServers(hint: string): Set<string> | null {
+  const lower = hint.toLowerCase();
+  const matched = new Set<string>();
+
+  // Check keyword triggers
+  for (const [serverName, keywords] of Object.entries(MCP_ROUTING_MAP)) {
+    for (const kw of keywords) {
+      if (lower.includes(kw)) {
+        matched.add(serverName);
+      }
+    }
+  }
+
+  // Check agent slug triggers
+  for (const [agentSlug, servers] of Object.entries(AGENT_SERVER_MAP)) {
+    if (lower.includes(agentSlug)) {
+      for (const s of servers) matched.add(s);
+    }
+  }
+
+  return matched.size > 0 ? matched : null;
+}
+
+/**
+ * Generate a filtered MCP config file with only the servers relevant to the hint.
+ * Falls back to full config if no keywords match.
+ * Returns the path to the (possibly filtered) config file.
+ */
+export async function getFilteredMcpConfigPath(userId: string, hint?: string): Promise<string> {
+  const basePath = getUserMcpConfigPath(userId);
+  if (!hint || !existsSync(basePath)) return basePath;
+
+  const matched = matchServers(hint);
+  if (!matched) return basePath; // no keywords → use full config
+
+  try {
+    const raw = await readFile(basePath, "utf-8");
+    const config = JSON.parse(raw);
+    const allServers = config.mcpServers || {};
+    const filtered: Record<string, any> = {};
+
+    for (const [name, serverConfig] of Object.entries(allServers)) {
+      if (matched.has(name)) {
+        filtered[name] = serverConfig;
+      }
+    }
+
+    // If filtering removed everything, fall back to full config
+    if (Object.keys(filtered).length === 0) return basePath;
+
+    const activePath = join(getUserDir(userId), "mcp-active.json");
+    await writeFile(activePath, JSON.stringify({ mcpServers: filtered }, null, 2));
+    console.log(`[integrations] Filtered MCP config: ${Object.keys(filtered).length}/${Object.keys(allServers).length} servers for hint "${hint.substring(0, 50)}"`);
+    return activePath;
+  } catch {
+    return basePath;
+  }
+}
 
 // Providers that are per-user (OAuth-based)
 export const PER_USER_PROVIDERS = [
@@ -417,10 +566,11 @@ export async function regenerateMcpConfig(
         case "google-work": {
           const label = integration.provider === "google-personal" ? "personal" : "work";
           const mcpHome = getGoogleMcpHome(userId, label);
+          const googleCmd = mcpCommand("@presto-ai/google-workspace-mcp");
           mcpServers[`google-${label}`] = {
             type: "stdio",
-            command: "npx",
-            args: ["-y", "@presto-ai/google-workspace-mcp"],
+            command: googleCmd.command,
+            args: googleCmd.args,
             env: {
               GOOGLE_WORKSPACE_MCP_HOME: mcpHome,
             },
@@ -435,10 +585,11 @@ export async function regenerateMcpConfig(
               Authorization: `Bearer ${token}`,
               "Notion-Version": "2022-06-28",
             });
+            const notionCmd = mcpCommand("@notionhq/notion-mcp-server");
             mcpServers["notion"] = {
               type: "stdio",
-              command: "npx",
-              args: ["-y", "@notionhq/notion-mcp-server"],
+              command: notionCmd.command,
+              args: notionCmd.args,
               env: {
                 OPENAPI_MCP_HEADERS: headers,
               },
@@ -450,10 +601,11 @@ export async function regenerateMcpConfig(
         case "zoom": {
           const creds = integration.credentials || {};
           if (creds.access_token) {
+            const zoomCmd = mcpCommand("@prathamesh0901/zoom-mcp-server");
             mcpServers["zoom"] = {
               type: "stdio",
-              command: "npx",
-              args: ["-y", "@prathamesh0901/zoom-mcp-server"],
+              command: zoomCmd.command,
+              args: zoomCmd.args,
               env: {
                 ZOOM_ACCOUNT_ID: process.env.ZOOM_ACCOUNT_ID || "",
                 ZOOM_CLIENT_ID: process.env.ZOOM_CLIENT_ID || "",
