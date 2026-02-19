@@ -654,8 +654,21 @@ export async function regenerateMcpConfig(
         }
 
         case "zoom": {
-          const creds = integration.credentials || {};
-          if (creds.access_token) {
+          // Zoom MCP uses Server-to-Server OAuth (account_credentials grant).
+          // It generates its own access tokens from ACCOUNT_ID + CLIENT_ID + CLIENT_SECRET.
+          // Prefer the server config from .mcp.json (correct binary path) over mcpCommand().
+          const globalZoom = globalConfig.mcpServers?.["zoom"];
+          if (globalZoom) {
+            mcpServers["zoom"] = {
+              ...globalZoom,
+              env: {
+                ZOOM_ACCOUNT_ID: process.env.ZOOM_ACCOUNT_ID || "",
+                ZOOM_CLIENT_ID: process.env.ZOOM_CLIENT_ID || "",
+                ZOOM_CLIENT_SECRET: process.env.ZOOM_CLIENT_SECRET || "",
+              },
+            };
+          } else {
+            // Fallback if zoom not in .mcp.json
             const zoomCmd = mcpCommand("@prathamesh0901/zoom-mcp-server");
             mcpServers["zoom"] = {
               type: "stdio",
@@ -665,7 +678,6 @@ export async function regenerateMcpConfig(
                 ZOOM_ACCOUNT_ID: process.env.ZOOM_ACCOUNT_ID || "",
                 ZOOM_CLIENT_ID: process.env.ZOOM_CLIENT_ID || "",
                 ZOOM_CLIENT_SECRET: process.env.ZOOM_CLIENT_SECRET || "",
-                ZOOM_ACCESS_TOKEN: creds.access_token,
               },
             };
           }
