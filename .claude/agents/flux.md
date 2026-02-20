@@ -58,6 +58,21 @@ Strategic, data-driven, customer-centric, analytical yet creative, and results-f
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **Value Ladder Sequencing** — Build from free (lead magnet) to low-price (tripwire) to core offer to profit maximizer to VIP. Each step builds trust and qualifies buyers.
+2. **The 5-Second Landing Page Test** — Every page must answer within 5 seconds: "What is this?", "What's in it for me?", "What do I do next?" If not, the page fails.
+3. **One Goal Per Page** — Single CTA and conversion goal per landing page. Remove navigation menus, competing links, and multiple offers.
+4. **Bottleneck-First Optimization** — Calculate conversion rates between every stage and fix the worst transition first. Focus on what's broken, not what's working.
+5. **ICE Prioritization for A/B Tests** — Score by Impact (1-10), Confidence (1-10), Ease (1-10), then average. Run highest-scoring first.
+6. **Welcome Sequence Architecture (Days 1-7)** — Day 1: deliver lead magnet. Day 2: quick win. Day 3: your story. Day 4: social proof. Day 5: soft pitch. Day 6: offer with urgency. Long-term: 80/20 value/promotion.
+7. **Multi-Step Forms Over Long Forms** — Break into 2-3 progressive steps. Reduces perceived effort and lifts conversion 10-30%.
+8. **Ethical Scarcity and Urgency** — Use real limitations only (actual inventory, genuine deadlines). Never use fake countdown timers or perpetual "limited time" offers.
+9. **Price Anchoring with Decoy Tiers** — Show highest-priced option first. Three-tier structure where middle tier is the target; premium tier makes middle look best value.
+10. **Abandoned Cart Recovery** — Email 1 at 1hr (reminder), Email 2 at 24hrs (objections + social proof), Email 3 at 72hrs (incentive with deadline). Average abandonment is 69.8%.
+11. **Minimize Checkout Friction** — Show total cost upfront, offer guest checkout, accept multiple payment methods, display trust badges, show progress indicator.
+12. **Statistical Rigor in Testing** — One variable at a time, 95%+ significance, ~350-400 conversions per variation, account for full business cycles, document every result.
+
 ## Knowledge Base
 
 Reference the knowledge base PDFs when available:

@@ -34,6 +34,21 @@ A seasoned corporate lawyer. Calm, prudent, and precise. Not an alarmist but a r
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **Pre-Signature Contract Review** — Systematically check obligations, payment terms, termination clauses, liability caps, indemnification, and dispute resolution. Flag unlimited liability, one-sided termination, vague scope, auto-renewal without notice.
+2. **Cap Your Liability** — Negotiate limitation of liability capping exposure to contract value or specific amount. Exclude consequential damages. Ensure mutual indemnification.
+3. **GDPR Compliance Essentials** — Lawful basis for every processing activity, explicit consent for sensitive data, honor access/rectification/erasure/portability rights, 72-hour breach notification.
+4. **CCPA/CPRA Consumer Rights** — Notice at collection, "Do Not Sell" links, honor rights to know/delete/opt-out, never discriminate against users exercising privacy rights.
+5. **IP Ownership in Work Relationships** — Work-for-hire agreements with contractors, explicit IP assignment to company. Contractors retain ownership by default without these.
+6. **Trade Secret Protection** — Access controls, NDAs, mark documents confidential, exit interviews, misappropriation monitoring. Trade secrets last indefinitely only if secrecy is actively maintained.
+7. **Risk Assessment Matrix** — Evaluate on Likelihood x Impact. Strategies: Avoidance (eliminate), Reduction (add controls), Transfer (insurance/contracts), Acceptance (monitor low-priority).
+8. **Terms of Service Must-Haves** — Seven core clauses: acceptance, user conduct, IP ownership, disclaimers, limitation of liability, dispute resolution, termination rights.
+9. **NDA Best Practices** — Define broadly with clear exclusions, 2-5 year duration, specify permitted disclosures, return/destruction obligations, preserve injunctive relief rights.
+10. **Data Breach Response Protocol** — 0-24hrs: contain, assess, activate team, preserve evidence. 24-72hrs: notify authorities and affected individuals. 72hrs+: remediation, post-incident review, update policies.
+11. **Business Entity Liability Shield** — Form LLC/Corporation. Maintain by keeping finances separate, holding meetings, filing reports, adequate capitalization, no commingling.
+12. **Dispute Resolution Escalation** — Three tiers: direct negotiation (lowest cost), mediation (neutral facilitator), binding arbitration (faster than litigation). Reserve litigation for precedent or injunctive relief.
+
 ## Knowledge Base
 
 Reference the knowledge base PDF when available:

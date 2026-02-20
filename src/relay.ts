@@ -960,6 +960,45 @@ bot.on("message:document", async (ctx) => {
 // ============================================================
 
 /**
+ * Detect message intent for conditional prompt injection.
+ * Returns which instruction blocks are relevant for this message.
+ */
+function detectPromptNeeds(text: string): {
+  needsMemoryTags: boolean;
+  needsTaskTags: boolean;
+  needsScheduleTags: boolean;
+  needsSelfMod: boolean;
+  needsCapabilities: boolean;
+  isTrivial: boolean;
+} {
+  const lower = text.toLowerCase().trim();
+
+  // Trivial messages: greetings, acknowledgments, single words
+  const trivialPatterns = [
+    /^(?:hi|hello|hey|yo|sup|thanks|thank you|ok|okay|cool|nice|great|got it|sure|yep|yes|no|nah|lol|haha|good|morning|night|bye)[\s!.?]*$/i,
+    /^.{1,5}$/, // Very short messages (1-5 chars)
+  ];
+  const isTrivial = trivialPatterns.some((p) => p.test(lower));
+
+  // Memory-related keywords
+  const needsMemoryTags = /(?:remember|memorize|save|store|forget|goal|done|share with team)/i.test(lower);
+
+  // Task-related keywords
+  const needsTaskTags = /(?:task|todo|assign|delegate|block|cancel task|pending)/i.test(lower);
+
+  // Schedule-related keywords
+  const needsScheduleTags = /(?:remind|schedule|alarm|timer|recur|every day|every week|follow up|check in)/i.test(lower);
+
+  // Self-modification keywords
+  const needsSelfMod = /(?:fix yourself|change how you|modify your|edit your code|update your|improve your|add.*agent|create.*agent|new skill|edit.*relay|change.*prompt)/i.test(lower);
+
+  // Capabilities needed (when asking to use a specific tool)
+  const needsCapabilities = !isTrivial; // Always include for non-trivial unless proven unnecessary
+
+  return { needsMemoryTags, needsTaskTags, needsScheduleTags, needsSelfMod, needsCapabilities, isTrivial };
+}
+
+/**
  * Detect if a caption/message signals the user wants to store the file contents to memory.
  */
 function isMemoryIntent(text: string): boolean {
@@ -1076,6 +1115,9 @@ function buildPrompt(
   // Resolve GHL location ID from cache or options
   const ghlLocationId = options?.ghlLocationId || ghlLocationCache.get(user.id);
 
+  // Detect what instruction blocks this message actually needs
+  const needs = detectPromptNeeds(userMessage);
+
   const parts = [
     "You are a personal AI assistant responding via Telegram. Keep responses concise and conversational.",
   ];
@@ -1084,12 +1126,14 @@ function buildPrompt(
   parts.push(`Current time: ${timeStr}`);
   if (user.profile_text) parts.push(`\nProfile:\n${user.profile_text}`);
   if (tMemoryContext) parts.push(`\n${tMemoryContext}`);
-  if (tTaskContext) parts.push(`\n${tTaskContext}`);
-  if (tScheduleContext) parts.push(`\n${tScheduleContext}`);
+  if (tTaskContext && !needs.isTrivial) parts.push(`\n${tTaskContext}`);
+  if (tScheduleContext && !needs.isTrivial) parts.push(`\n${tScheduleContext}`);
   if (tRecentHistory) parts.push(`\n${tRecentHistory}`);
-  if (tRelevantContext) parts.push(`\n${tRelevantContext}`);
+  if (tRelevantContext && !needs.isTrivial) parts.push(`\n${tRelevantContext}`);
 
-  parts.push(
+  // Only include memory management tags when the message might trigger memory operations
+  // or when it's a non-trivial message (always good to have for complex interactions)
+  if (needs.needsMemoryTags || !needs.isTrivial) parts.push(
     "\nMEMORY MANAGEMENT:" +
       "\nWhen the user shares something worth remembering, sets goals, or completes goals, " +
       "include these tags in your response (they are processed automatically and hidden from the user):" +
@@ -1122,7 +1166,7 @@ function buildPrompt(
       "\n- Only use [SHARE:] when the user explicitly says to share with the team"
   );
 
-  parts.push(
+  if (needs.needsTaskTags || !needs.isTrivial) parts.push(
     "\nTASK TRACKING:" +
       "\nWhen you start a task or delegate to a specialist agent, log it:" +
       "\n  [TASK: Agent Name | brief description]" +
@@ -1136,7 +1180,7 @@ function buildPrompt(
       "\n  [TASK_CANCEL: search text]"
   );
 
-  parts.push(
+  if (needs.needsScheduleTags || !needs.isTrivial) parts.push(
     "\nSCHEDULED TASKS:" +
       "\nYou can schedule reminders, follow-ups, and recurring tasks. When the user asks to be reminded, " +
       "or when you think a follow-up check would be useful, include a schedule tag:" +
@@ -1266,7 +1310,7 @@ function buildPrompt(
       "\n• PROACTIVE SUGGESTIONS: If you see an opportunity to automate something " + user.name + " does manually, suggest creating a skill for it."
   );
 
-  if (user.role === "admin") {
+  if (user.role === "admin" && needs.needsSelfMod) {
     parts.push(
       "\nSELF-MODIFICATION — You can edit your own source code:" +
         `\n• Your source code lives at: ${PROJECT_ROOT}` +

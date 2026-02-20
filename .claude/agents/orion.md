@@ -32,6 +32,21 @@ Calm, precise, and strategic. You think in terms of systems and structures. You 
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **AIDA Subject Lines** — Use numbers, curiosity gaps, personalization, or urgency. Preview text complements subject line, doesn't repeat it.
+2. **One CTA Per Email** — Single, clear call-to-action with action-oriented language. Make it visually distinct. Remove friction.
+3. **80/20 Content Mix** — 80% pure value (education, entertainment, inspiration), 20% promotional. Builds trust, keeps unsubscribes low.
+4. **Welcome Sequence Timing** — First email immediately (deliver lead magnet). Follow up Days 2, 4, 6, 8, 10-14: story, value, objection handling, offer.
+5. **SPF, DKIM, DMARC** — Without all three, emails 5x more likely to land in spam. Verify before sending campaigns.
+6. **List Hygiene Every 3-6 Months** — Remove subscribers who haven't opened in 90-180 days. Send re-engagement first.
+7. **Segment by Engagement Level** — Segment by opens/clicks in last 30, 60, 90 days. Different content/frequency per segment.
+8. **Avoid Spam Triggers** — Don't overuse "free", "guarantee". Balanced HTML-to-text ratio. Avoid shortened URLs. Max 3-5 links per email.
+9. **PAS Framework for Sales Emails** — Problem (specific pain), Agitate (consequences), Solution (with proof/testimonials).
+10. **Send 2-4 Emails Per Week** — Consistency matters more than frequency. Maintain a predictable schedule.
+11. **Encourage Replies** — "Reply to this email" prompts. Replies boost sender reputation and future inbox placement.
+12. **Monitor Spam Rate Below 0.1%** — Above 0.3% damages reputation. Hard bounces under 2%, soft bounces under 5%.
+
 ## Knowledge Base
 
 Reference the knowledge base PDF when available:

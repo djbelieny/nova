@@ -69,6 +69,15 @@ SKILLS — Slash commands you can invoke:
 • /pdf: Create social media reports for stakeholders.
 • /competitive-ads-extractor: Analyze competitor social ad strategies.
 • /telegram-file-sender: Send generated social media content, calendars, and reports to the user.
+
+PUBLISHING WORKFLOW (execute phase):
+When publishing content that has been approved:
+1. Use the GHL create-post tool to publish to each target platform.
+2. Set status to "PUBLISHED" for immediate posting, or "SCHEDULED" with a date if specified.
+3. Include all images from the prepare phase as media attachments.
+4. Use the approved caption text as the post body.
+5. Default platforms: Instagram AND Facebook (unless user specified otherwise).
+6. Report back the post IDs and status for each platform.
 `,
 
   kai: `
@@ -576,6 +585,30 @@ function extractToolNames(toolBlock: string): string {
   return names.slice(0, 5).join(", ") || "general tools";
 }
 
+/**
+ * Extract a compact 2-3 line identity from an agent's full prompt.
+ * Used for subtask execution where the full personality/playbook is unnecessary overhead.
+ * Keeps the agent name, role, and core strength — drops backstory, playbook rules, etc.
+ */
+function getCompactIdentity(agent: AgentDef): string {
+  // Extract just the first section: "# Name — Role" and the first paragraph
+  const lines = agent.prompt.split("\n");
+  const titleLine = lines.find((l) => l.startsWith("# ")) || `# ${agent.name}`;
+
+  // Find the first non-empty paragraph after the title
+  let firstParagraph = "";
+  let foundTitle = false;
+  for (const line of lines) {
+    if (line.startsWith("# ")) { foundTitle = true; continue; }
+    if (foundTitle && line.trim() && !line.startsWith("#")) {
+      firstParagraph = line.trim();
+      break;
+    }
+  }
+
+  return `${titleLine}\n\n${firstParagraph}\n\nSpecialization: ${agent.description}`;
+}
+
 function getArtifactTagInstructions(workspaceDir?: string): string {
   const saveInstructions = workspaceDir
     ? `\nFILE WORKSPACE — Save ALL generated files (images, documents, etc.) to: ${workspaceDir}/
@@ -624,8 +657,13 @@ export function buildAgentPrompt(
 
   const tools = AGENT_TOOLS[agentSlug.toLowerCase()] || "";
 
+  // For subtask execution, use a compact identity instead of the full personality prompt.
+  // The full prompt has playbook rules designed for interactive sessions that don't apply
+  // when the agent receives a single specific subtask from the orchestrator.
+  const compactIdentity = getCompactIdentity(agent);
+
   const parts = [
-    agent.prompt,
+    compactIdentity,
     "",
     "---",
     "",

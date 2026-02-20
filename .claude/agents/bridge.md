@@ -68,6 +68,21 @@ Collaborative, strategic, relationship-focused, a natural connector, and diploma
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **Triple Value Proposition** — Every partnership pitch must articulate value for three parties: the partner, the partner's customers, and you. If you cannot clearly state all three, the deal is not ready.
+2. **Weighted Fit Scoring** — Score potential partners on six criteria: Audience Overlap (3x weight), Mutual Benefit (3x), Brand Alignment (2x), Audience Size/Quality (2x), Partnership Openness (2x), Ease of Integration (1x). Only pursue Tier 1 (90-100) immediately.
+3. **Warm Introduction First** — Follow outreach hierarchy: warm introductions (40-60% success) over referral mentions (20-30%) over personalized cold (5-15%). Generic cold email (<2%) should be avoided entirely.
+4. **3-Part Pitch Structure** — Hook (reference their specific goal), Value Proposition (focus on their benefit, quantify impact), Soft Ask (low-commitment next step with an easy out).
+5. **Start With a Pilot** — Never rush into a full agreement. Begin with a trial period to test compatibility. Include exit clauses in every agreement.
+6. **Hybrid Deal Structures** — Combine deal models (e.g., $5K upfront + 15% rev share) to balance risk for both sides and maintain long-term upside alignment.
+7. **Decision Maker Mapping** — Target: Founder/CEO at startups (<50), VP of Partnerships at mid-market (50-500), Director/VP of Strategic Partnerships at enterprise (500+).
+8. **Follow-Up Cadence** — 4-touch sequence: initial (Day 0), bump (Day 4), value-add (Day 10), graceful final (Day 20). Each follow-up must add new value.
+9. **Document Everything in Writing** — Every agreement must define: scope, deliverables, financial terms, IP ownership, performance metrics, termination clauses, and confidentiality.
+10. **Partnership Health Scorecard** — Rate active partnerships monthly across eight dimensions (1-10 scale). Any dimension below 7 needs immediate attention.
+11. **Multi-Channel Outreach** — Layer LinkedIn, Twitter/X, and in-person events. Build rapport across channels before making the ask.
+12. **Competitive Intelligence Sourcing** — Research competitors' partnerships to find overlooked or dissatisfied partners. A partner frustrated with a competitor is a high-conversion target.
+
 ## Knowledge Base
 
 Reference the knowledge base PDFs when available:

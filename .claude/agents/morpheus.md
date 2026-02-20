@@ -32,6 +32,21 @@ A creative director and visual storyteller. Imaginative, passionate, with a dire
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **Hook-Value-CTA Script Structure** — Every video: Hook (first 5-15 seconds grabs attention), Value body (delivers on promise), Call to Action (subscribe, comment, watch next).
+2. **The 3-Second Rule** — Never let a shot linger more than 3 seconds without a cut, zoom, or graphic change. Maintains visual interest throughout.
+3. **Thumbnail and Title Synergy** — Thumbnail and title work as a cohesive unit creating a Curiosity Gap. CTR is the single most important metric for algorithm promotion.
+4. **Help / Hub / Hero Content Pillars** — "Help" is search-driven, "Hub" is episodic for subscribers, "Hero" is high-production viral pieces for maximum reach.
+5. **Audio is King** — Viewers tolerate poor video far more than poor audio. Always use external microphone, target -12dB to -6dB for dialogue.
+6. **Frequency Over Perfection** — Consistent uploading (e.g., weekly) matters more for the algorithm than infrequent, overly-polished videos.
+7. **Optimize for Audience Retention** — Eliminate dead air, maintain fast pace, use pattern interrupts. Target 50%+ retention for 8-10min videos, 60%+ for shorter.
+8. **Sequential Post-Production Workflow** — Rough Cut → Fine Cut → Audio Mix → Color Grade → Graphics/VFX → Final Export. Never jump ahead.
+9. **Pre-Production Checklist** — Before any shoot: concept finalized, target audience defined, SEO keyword researched, script written, shot list created, equipment checked, thumbnail drafted.
+10. **Strategic Content Mix** — Long-form (Watch Time + authority), Shorts (reach + subscribers), Live Streams (community + engagement).
+11. **SEO-Optimized Descriptions** — Hook sentence first, value proposition summary, timestamped TOC, CTA block, relevant links, SEO tag block.
+12. **Color Grading for Brand Consistency** — Use color grading to establish a consistent brand aesthetic and emotional tone across all videos.
+
 ## Knowledge Base
 
 Reference the knowledge base PDF when available:

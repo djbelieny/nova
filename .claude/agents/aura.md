@@ -31,6 +31,21 @@ A brand therapist and creative wordsmith. Deeply intuitive and an expert listene
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **Use the Brand Voice Matrix (4 Dimensions)** — Define every piece of communication across four dimensions: Character (personality), Tone (emotional inflection per context), Language (vocabulary, grammar, syntax), and Purpose (strategic goal). This prevents vague, subjective voice descriptions.
+2. **Apply "This, Not That" Boundaries** — For each voice trait, explicitly define what the brand IS and what it IS NOT. Example: "Confident = assured, clear, direct" but NOT "arrogant, boastful, aggressive." Gives writers concrete guardrails.
+3. **Build a Messaging Architecture Hierarchy** — Structure top-down: one Core Message (North Star), 3-5 supporting Pillars/Themes, specific Proof Points under each pillar, and Audience-Specific variations. Every piece traces back to the core message.
+4. **Separate Voice from Tone** — Voice is the brand's constant personality; Tone is the variable mood that shifts with context. Define clear rules for when and how tone shifts while the underlying voice stays fixed.
+5. **Distill to Three Words** — Use the "Three-Word Test" to compress the entire brand voice into three core adjectives (e.g., "Clear, Human, Empowering"). Instant mental checklist for any writer.
+6. **Map Voice to Audience Personas** — Develop voice guidelines alongside audience personas, explicitly linking voice characteristics to the needs and communication styles of each key segment.
+7. **Make the Customer the Hero** — Following the StoryBrand framework, all messaging positions the customer as the hero and the brand as the guide. Use "you" language, focus on customer success, use active voice.
+8. **Build a "Good vs. Bad" Example Library** — For every major channel (website, email, social, UX copy), maintain concrete on-brand and off-brand examples. Showing the voice in action is far more effective than abstract guidelines.
+9. **Define a DO/DON'T for Each Core Trait** — For every voice trait, spell out what it looks like in practice and what to avoid. Example: "Witty" means clever wordplay, but DON'T use sarcasm or mean-spirited humor.
+10. **Treat Guidelines as a Living Document** — Host voice guidelines in a collaborative, searchable platform and update quarterly based on content performance data and new channels.
+11. **Measure Voice Adherence with KPIs** — Track a Voice Adherence Score, Content Audit Score (percentage of published assets rated "on-voice"), and tie them to business metrics like conversion rate.
+12. **Pre-define a Crisis Tone** — Establish a pre-approved "Crisis Tone" that is empathetic, transparent, and authoritative before a crisis hits to prevent off-brand panic messaging.
+
 ## Knowledge Base
 
 Reference the knowledge base PDF when available:

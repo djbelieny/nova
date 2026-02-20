@@ -27,6 +27,11 @@ import { findPattern, recordExecution } from "./patterns.ts";
 import {
   initPlanner,
   decompose,
+  buildSocialMediaPlan,
+  buildEmailCampaignPlan,
+  buildBlogPostPlan,
+  buildPresentationPlan,
+  buildAdCampaignPlan,
   executePhase,
   executeSubtasks,
   collectArtifacts,
@@ -95,9 +100,132 @@ export interface PendingApproval {
   parentTaskId?: string;
   startTime: number;
   workspaceDir?: string;
+  workflowType?: "social-media" | "generic";
 }
 
 const pendingApprovals = new Map<string, PendingApproval>();
+
+// ============================================================
+// REVISION SESSIONS — tracks pending revision context per user
+// ============================================================
+
+interface RevisionSession {
+  userId: string;
+  originalText: string;
+  plan: ExecutionPlan;
+  prepareResults: SubtaskResult[];
+  artifacts: Artifact[];
+  parentTaskId?: string;
+  workspaceDir?: string;
+  workflowType: "social-media" | "generic";
+  createdAt: number;
+}
+
+const revisionSessions = new Map<string, RevisionSession>(); // keyed by userId
+
+/**
+ * Check if a user has an active revision session.
+ * Auto-expires after 10 minutes.
+ */
+export function getRevisionSession(userId: string): RevisionSession | null {
+  const session = revisionSessions.get(userId);
+  if (!session) return null;
+  // Expire after 10 minutes
+  if (Date.now() - session.createdAt > 10 * 60 * 1000) {
+    revisionSessions.delete(userId);
+    return null;
+  }
+  return session;
+}
+
+/**
+ * Determine which step to resume from based on revision feedback.
+ * Returns the subtask index to restart from.
+ */
+function detectRevisionResumePoint(feedback: string, workflowType: string): number {
+  const lower = feedback.toLowerCase();
+
+  if (workflowType === "social-media") {
+    // Image-only changes → restart from step 2 (image generation)
+    if (/(?:image|photo|picture|graphic|visual|slide|color|blue|red|green|style|design|look)/i.test(lower) &&
+        !/(?:caption|text|copy|write|hashtag|hook|cta)/i.test(lower)) {
+      return 2;
+    }
+    // Copy/caption changes → restart from step 1 (content creation)
+    if (/(?:caption|text|copy|write|hashtag|hook|cta|wording|tone)/i.test(lower) &&
+        !/(?:image|photo|picture|graphic|visual|slide)/i.test(lower)) {
+      return 1;
+    }
+    // General or mixed → restart from step 0 (research)
+    return 0;
+  }
+
+  // For generic workflows, restart from step 0 (full redo of prepare phase)
+  return 0;
+}
+
+// ============================================================
+// WORKFLOW PREFERENCES — reuse approved plans for similar tasks
+// ============================================================
+
+/**
+ * Save a workflow preference when a plan is approved and executed successfully.
+ */
+async function saveWorkflowPreference(
+  supabase: SupabaseClient | null,
+  userId: string,
+  workflowType: string,
+  originalText: string,
+  plan: ExecutionPlan
+): Promise<void> {
+  if (!supabase) return;
+  // Normalize the request into a reusable signature (strip topic specifics, keep structure)
+  const sig = normalizeWorkflowSignature(originalText);
+  if (!sig) return;
+
+  try {
+    await supabase.from("workflow_preferences").upsert(
+      {
+        user_id: userId,
+        workflow_type: workflowType,
+        task_signature: sig,
+        plan,
+        success_count: 1,
+        last_used_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,task_signature" }
+    ).then(({ error }) => {
+      if (error) {
+        // Table may not exist yet — not critical
+        if (!error.message.includes("does not exist")) {
+          console.error("[orchestrator] Failed to save workflow preference:", error.message);
+        }
+      } else {
+        console.log(`[orchestrator] Saved workflow preference: ${sig}`);
+      }
+    });
+
+    // If it already exists, increment success_count
+    await supabase.rpc("increment_workflow_preference", { p_user_id: userId, p_sig: sig }).catch(() => {});
+  } catch {}
+}
+
+/**
+ * Normalize a task request into a structural signature.
+ * Strips the specific topic but preserves the task type + platforms.
+ * E.g., "create an instagram post about AI tools" → "create instagram post"
+ */
+function normalizeWorkflowSignature(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/(?:about|on|for|regarding|promoting)\s+.+$/i, "")
+    .replace(/[^a-z0-9 ]/g, "")
+    .trim()
+    .split(" ")
+    .slice(0, 6)
+    .join(" ");
+}
 
 /**
  * Handle an approval callback from the Telegram inline button.
@@ -144,8 +272,29 @@ export async function handleApproval(
   }
 
   if (action === "revise") {
+    // Store revision context so the next message resumes the workflow
+    revisionSessions.set(pending.user.id, {
+      userId: pending.user.id,
+      originalText: pending.originalText,
+      plan: pending.plan,
+      prepareResults: pending.prepareResults,
+      artifacts: pending.artifacts,
+      parentTaskId: pending.parentTaskId,
+      workspaceDir: pending.workspaceDir,
+      workflowType: pending.workflowType || "generic",
+      createdAt: Date.now(),
+    });
     pendingApprovals.delete(approvalId);
-    await _sendResponseWithVoice(ctx, "Send me your revision and I'll redo the prepare phase.", pending.user.id);
+
+    if (pending.workflowType === "social-media") {
+      await _sendResponseWithVoice(
+        ctx,
+        "Send me your revision. I'll figure out which steps to redo:\n• Copy/caption changes → skip research\n• Image changes only → skip research + copywriting\n• General feedback → full redo",
+        pending.user.id
+      );
+    } else {
+      await _sendResponseWithVoice(ctx, "Send me your revision and I'll redo the prepare phase.", pending.user.id);
+    }
     return;
   }
 
@@ -197,9 +346,12 @@ export async function handleApproval(
         .eq("id", pending.parentTaskId);
     }
 
-    // Record pattern
+    // Record pattern and save workflow preference
     const durationMs = Date.now() - pending.startTime;
     await recordExecution(pending.supabase, pending.originalText, pending.plan, allSucceeded, durationMs, pending.user.id);
+    if (allSucceeded) {
+      await saveWorkflowPreference(pending.supabase, pending.user.id, pending.workflowType || "generic", pending.originalText, pending.plan);
+    }
   } catch (error) {
     console.error("[orchestrator] Execute phase error:", error);
     await _sendResponseWithVoice(ctx, "Something went wrong during the execute phase. The prepare work is still saved — try again.", pending.user.id);
@@ -207,10 +359,316 @@ export async function handleApproval(
 }
 
 /**
+ * Handle a revision by re-running the workflow from the appropriate step.
+ * Uses stored context from the revision session to skip already-complete work.
+ */
+async function handleRevision(
+  ctx: Context,
+  feedback: string,
+  user: any,
+  supabase: SupabaseClient | null,
+  session: RevisionSession
+): Promise<void> {
+  const resumeFrom = detectRevisionResumePoint(feedback, session.workflowType);
+  const plan = session.plan;
+
+  console.log(`[orchestrator] Revision resume from step ${resumeFrom} (workflow: ${session.workflowType})`);
+
+  // Build a modified plan that only re-runs from resumeFrom onward (prepare phase only)
+  const modifiedPlan: ExecutionPlan = {
+    subtasks: plan.subtasks.map((s, i) => {
+      if (s.phase === "execute") return s; // execute phase stays as-is
+      if (i < resumeFrom) return s; // steps before resumeFrom are kept (already completed)
+      // Steps from resumeFrom onward get the revision feedback injected
+      return {
+        ...s,
+        description: i === resumeFrom
+          ? `REVISION — The user reviewed the previous output and wants changes: "${feedback}"\n\nOriginal task: ${s.description}`
+          : s.description,
+      };
+    }),
+  };
+
+  // Keep prior results for steps before resumeFrom
+  const keptResults = session.prepareResults.filter((r) => r.index < resumeFrom);
+
+  await ctx.replyWithChatAction("typing");
+
+  // Re-run the prepare phase from resumeFrom
+  const newPrepareResults = await executePhase(
+    modifiedPlan,
+    "prepare",
+    user,
+    supabase,
+    session.parentTaskId,
+    collectArtifacts(keptResults),
+    keptResults,
+    undefined,
+    session.workspaceDir
+  );
+
+  // Merge: kept results + new results
+  const allPrepareResults = [...keptResults, ...newPrepareResults.filter((r) => r.index >= resumeFrom)];
+  const allArtifacts = collectArtifacts(allPrepareResults);
+
+  // Build approval summary and present for re-approval
+  const approvalSummary = await buildApprovalSummary(session.originalText, allPrepareResults, allArtifacts, plan);
+
+  const approvalId = `apv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+  pendingApprovals.set(approvalId, {
+    id: approvalId,
+    ctx,
+    user,
+    supabase,
+    originalText: session.originalText,
+    plan,
+    prepareResults: allPrepareResults,
+    artifacts: allArtifacts,
+    parentTaskId: session.parentTaskId,
+    startTime: Date.now(),
+    workspaceDir: session.workspaceDir,
+    workflowType: session.workflowType,
+  });
+
+  // Persist to Supabase
+  if (supabase) {
+    const chatId = ctx.chat?.id || 0;
+    const execDescs = plan.subtasks
+      .filter((s) => s.phase === "execute")
+      .map((s) => s.description);
+    await supabase.from("pending_approvals").insert({
+      id: approvalId,
+      user_id: user.id,
+      chat_id: chatId,
+      original_text: session.originalText.substring(0, 2000),
+      plan: plan,
+      prepare_summary: approvalSummary.substring(0, 5000),
+      artifacts: allArtifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
+      execute_descriptions: execDescs,
+      parent_task_id: session.parentTaskId || null,
+      status: "pending",
+    }).then(({ error }) => {
+      if (error) console.error("[orchestrator] Failed to persist revision approval:", error.message);
+    });
+  }
+
+  // Auto-expire after 30 minutes
+  setTimeout(() => {
+    if (pendingApprovals.has(approvalId)) {
+      pendingApprovals.delete(approvalId);
+      if (supabase) {
+        supabase.from("pending_approvals")
+          .update({ status: "expired", updated_at: new Date().toISOString() })
+          .eq("id", approvalId)
+          .eq("status", "pending")
+          .then(() => {});
+      }
+    }
+  }, 30 * 60 * 1000);
+
+  const executeDescriptions = plan.subtasks
+    .filter((s) => s.phase === "execute")
+    .map((s) => `• ${s.description}`)
+    .join("\n");
+
+  await _saveMessage("assistant", approvalSummary, user.id);
+  await _sendResponseWithVoice(
+    ctx,
+    `${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}`,
+    user.id
+  );
+
+  const keyboard = new InlineKeyboard()
+    .text("Approve & Execute", `apv:${approvalId}:approve`)
+    .text("Revise", `apv:${approvalId}:revise`)
+    .text("Cancel", `apv:${approvalId}:cancel`);
+
+  await ctx.reply("Tap below to proceed:", { reply_markup: keyboard });
+}
+
+/**
  * Get pending approval count (for /status command).
  */
 export function getPendingApprovalCount(): number {
   return pendingApprovals.size;
+}
+
+// ============================================================
+// SOCIAL MEDIA WORKFLOW DETECTION
+// ============================================================
+
+interface SocialMediaRequest {
+  isSocial: boolean;
+  topic: string;
+  platforms: string[];
+}
+
+const SOCIAL_PATTERNS = [
+  /(?:create|make|design|draft|write|build|prepare|generate)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:instagram|ig|insta)\s+(?:post|reel|story|carousel|content)/i,
+  /(?:create|make|design|draft|write|build|prepare|generate)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:facebook|fb)\s+(?:post|story|content)/i,
+  /(?:create|make|design|draft|write|build|prepare|generate)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:linkedin|li)\s+(?:post|article|content)/i,
+  /(?:create|make|design|draft|write|build|prepare|generate)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:tiktok|tt)\s+(?:post|video|content)/i,
+  /(?:create|make|design|draft|write|build|prepare|generate)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:twitter|x)\s+(?:post|tweet|content|thread)/i,
+  /(?:create|make|design|draft|write|build|prepare|generate)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:post|carousel|content)\s+(?:about|on|for|regarding)/i,
+  /(?:create|make|design|draft|write|build|prepare|generate)\s+(?:a\s+|an\s+)?(?:carousel|post)\s+(?:about|on|for|regarding)/i,
+  /(?:schedule|publish)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:post|content)\s+(?:about|on|for|regarding)/i,
+  /(?:social\s+media\s+post)\s+(?:about|on|for|regarding)/i,
+];
+
+const PLATFORM_KEYWORDS: Record<string, string[]> = {
+  instagram: ["instagram", "ig", "insta"],
+  facebook: ["facebook", "fb"],
+  linkedin: ["linkedin", "li"],
+  tiktok: ["tiktok", "tt"],
+  twitter: ["twitter", "x", "tweet"],
+};
+
+function detectSocialMediaRequest(text: string): SocialMediaRequest | null {
+  const lower = text.toLowerCase();
+
+  // Check if any social pattern matches
+  const matched = SOCIAL_PATTERNS.some((p) => p.test(text));
+  if (!matched) return null;
+
+  // Extract platforms
+  const platforms: string[] = [];
+  for (const [platform, keywords] of Object.entries(PLATFORM_KEYWORDS)) {
+    if (keywords.some((kw) => lower.includes(kw))) {
+      platforms.push(platform);
+    }
+  }
+  // Default to instagram + facebook if no specific platform mentioned
+  if (platforms.length === 0) {
+    platforms.push("instagram", "facebook");
+  }
+
+  // Extract topic — take everything after "about", "on", "for", "regarding"
+  let topic = "";
+  const topicMatch = text.match(/(?:about|on|for|regarding)\s+(.+)/i);
+  if (topicMatch) {
+    // Clean up: remove trailing platform mentions and filler
+    topic = topicMatch[1]
+      .replace(/\s+on\s+(instagram|facebook|linkedin|tiktok|twitter|x)\b/gi, "")
+      .replace(/\s+for\s+(instagram|facebook|linkedin|tiktok|twitter|x)\b/gi, "")
+      .trim();
+  }
+
+  if (!topic) {
+    // Fallback: use the whole message minus the action verb prefix
+    topic = text
+      .replace(/^(?:create|make|design|draft|write|build|prepare|generate|schedule|publish)\s+(?:a\s+|an\s+)?(?:social\s+media\s+)?(?:post|carousel|content|reel|story)\s*/i, "")
+      .trim();
+  }
+
+  if (!topic) return null;
+
+  return { isSocial: true, topic, platforms };
+}
+
+// ============================================================
+// EMAIL CAMPAIGN WORKFLOW DETECTION
+// ============================================================
+
+const EMAIL_PATTERNS = [
+  /(?:create|make|build|send|draft|write|launch|set up)\s+(?:a\s+|an\s+)?(?:email\s+)?(?:campaign|newsletter|drip|sequence|blast|broadcast)\s+(?:about|for|to|targeting)/i,
+  /(?:email\s+campaign|email\s+marketing|newsletter|drip\s+sequence|email\s+blast)\s+(?:about|for|to|targeting)/i,
+  /(?:send|draft|create)\s+(?:a\s+|an\s+)?(?:marketing\s+)?email\s+(?:about|for|to|regarding)/i,
+];
+
+function detectEmailCampaignRequest(text: string): { topic: string; audience: string } | null {
+  const matched = EMAIL_PATTERNS.some((p) => p.test(text));
+  if (!matched) return null;
+
+  let topic = "";
+  const topicMatch = text.match(/(?:about|for|regarding)\s+(.+?)(?:\s+to\s+|\s+targeting\s+|$)/i);
+  if (topicMatch) topic = topicMatch[1].trim();
+  if (!topic) {
+    topic = text.replace(/^(?:create|make|build|send|draft|write|launch|set up)\s+(?:a\s+|an\s+)?(?:email\s+)?(?:campaign|newsletter|drip|sequence|blast|broadcast)\s*/i, "").trim();
+  }
+
+  let audience = "";
+  const audienceMatch = text.match(/(?:to|targeting|for)\s+(?:our\s+|the\s+)?(.+?)$/i);
+  if (audienceMatch && audienceMatch[1] !== topic) audience = audienceMatch[1].trim();
+
+  if (!topic) return null;
+  return { topic, audience };
+}
+
+// ============================================================
+// BLOG POST WORKFLOW DETECTION
+// ============================================================
+
+const BLOG_PATTERNS = [
+  /(?:write|create|draft|publish)\s+(?:a\s+|an\s+)?(?:blog\s+post|blog\s+article|article|blog)\s+(?:about|on|for|regarding)/i,
+  /(?:blog\s+post|blog\s+article)\s+(?:about|on|for|regarding)/i,
+];
+
+function detectBlogPostRequest(text: string): { topic: string } | null {
+  const matched = BLOG_PATTERNS.some((p) => p.test(text));
+  if (!matched) return null;
+
+  let topic = "";
+  const topicMatch = text.match(/(?:about|on|for|regarding)\s+(.+)/i);
+  if (topicMatch) topic = topicMatch[1].trim();
+  if (!topic) return null;
+  return { topic };
+}
+
+// ============================================================
+// PRESENTATION WORKFLOW DETECTION
+// ============================================================
+
+const PRESENTATION_PATTERNS = [
+  /(?:create|make|build|prepare|design)\s+(?:a\s+|an\s+)?(?:presentation|deck|slide\s*deck|pitch\s*deck|pptx|powerpoint|slides)\s+(?:about|on|for|regarding)/i,
+  /(?:presentation|deck|slide\s*deck|pitch\s*deck)\s+(?:about|on|for|regarding)/i,
+];
+
+function detectPresentationRequest(text: string): { topic: string } | null {
+  const matched = PRESENTATION_PATTERNS.some((p) => p.test(text));
+  if (!matched) return null;
+
+  let topic = "";
+  const topicMatch = text.match(/(?:about|on|for|regarding)\s+(.+)/i);
+  if (topicMatch) topic = topicMatch[1].trim();
+  if (!topic) return null;
+  return { topic };
+}
+
+// ============================================================
+// AD CAMPAIGN WORKFLOW DETECTION
+// ============================================================
+
+const AD_CAMPAIGN_PATTERNS = [
+  /(?:create|launch|build|set up|run)\s+(?:a\s+|an\s+)?(?:ad|ads|advertising|paid)\s+(?:campaign|ads?)\s+(?:about|for|on|promoting)/i,
+  /(?:create|launch|build|set up|run)\s+(?:a\s+|an\s+)?(?:facebook|google|linkedin|meta|instagram)\s+(?:ad|ads|campaign)\s+(?:about|for|on|promoting)/i,
+  /(?:ad\s+campaign|advertising\s+campaign|paid\s+campaign)\s+(?:about|for|on|promoting)/i,
+];
+
+const AD_PLATFORM_KEYWORDS: Record<string, string[]> = {
+  facebook: ["facebook", "fb", "meta"],
+  google: ["google", "google ads", "adwords"],
+  linkedin: ["linkedin"],
+  instagram: ["instagram", "ig"],
+};
+
+function detectAdCampaignRequest(text: string): { topic: string; platforms: string[] } | null {
+  const matched = AD_CAMPAIGN_PATTERNS.some((p) => p.test(text));
+  if (!matched) return null;
+
+  const lower = text.toLowerCase();
+  const platforms: string[] = [];
+  for (const [platform, keywords] of Object.entries(AD_PLATFORM_KEYWORDS)) {
+    if (keywords.some((kw) => lower.includes(kw))) platforms.push(platform);
+  }
+  if (platforms.length === 0) platforms.push("facebook", "instagram");
+
+  let topic = "";
+  const topicMatch = text.match(/(?:about|for|on|promoting)\s+(.+?)(?:\s+on\s+(?:facebook|google|linkedin|meta|instagram)\b|$)/i);
+  if (topicMatch) topic = topicMatch[1].trim();
+  if (!topic) return null;
+
+  return { topic, platforms };
 }
 
 // ============================================================
@@ -265,22 +723,78 @@ function isSimpleMessage(text: string): boolean {
 // CLASSIFY — uses Haiku for cheap classification (~200 tokens)
 // ============================================================
 
+/**
+ * Single-agent routing keywords.
+ * Maps keywords to agent slugs for tasks that clearly need one specialist
+ * but aren't complex enough for full orchestration.
+ */
+const SINGLE_AGENT_ROUTES: Array<{ pattern: RegExp; agent: string }> = [
+  { pattern: /(?:seo|keyword research|backlink|ranking|search engine)/i, agent: "magnus" },
+  { pattern: /(?:audit|ux review|website review|conversion rate|cro)\s+(?:of|for|on)\s/i, agent: "cyra" },
+  { pattern: /(?:brand voice|brand identity|tone of voice|messaging framework|brand personality)/i, agent: "aura" },
+  { pattern: /(?:data analysis|dashboard|kpi|metrics|analytics report|sales data)/i, agent: "digit" },
+  { pattern: /(?:security audit|vulnerability|penetration test|infosec|cybersecurity)/i, agent: "rift" },
+  { pattern: /(?:automate|automation|workflow|zapier|make\.com|webhook|integration)/i, agent: "joule" },
+  { pattern: /(?:community|discord|circle|moderation|engagement strategy)/i, agent: "nexus" },
+  { pattern: /(?:video script|storyboard|video strategy|youtube|video content)/i, agent: "morpheus" },
+  { pattern: /(?:grant|proposal|funding|rfp|business proposal)/i, agent: "quill" },
+  { pattern: /(?:legal|contract|compliance|gdpr|privacy policy|terms of service|nda)/i, agent: "lex" },
+  { pattern: /(?:press release|media outreach|pr strategy|public relations|crisis comm)/i, agent: "helia" },
+  { pattern: /(?:partnership|strategic partner|collaboration|co-marketing|joint venture)/i, agent: "bridge" },
+  { pattern: /(?:trend forecast|scenario planning|future|foresight|emerging tech)/i, agent: "oracle" },
+  { pattern: /(?:funnel|landing page|conversion|offer sequence|lead magnet)/i, agent: "flux" },
+  { pattern: /(?:systems thinking|causal loop|leverage point|feedback loop|interconnect)/i, agent: "tesseract" },
+  { pattern: /(?:productivity|time management|focus|habit|workflow optimization)/i, agent: "zen" },
+];
+
+/**
+ * Try to match a message to a single specialist agent.
+ * Returns the agent slug if it's a clear single-agent task, null otherwise.
+ */
+function detectSingleAgentRoute(text: string): string | null {
+  const lower = text.toLowerCase();
+  const matches: string[] = [];
+
+  for (const route of SINGLE_AGENT_ROUTES) {
+    if (route.pattern.test(text)) {
+      matches.push(route.agent);
+    }
+  }
+
+  // Only route if exactly one agent matched — ambiguity means decomposition
+  return matches.length === 1 ? matches[0] : null;
+}
+
 async function classify(
   text: string
-): Promise<{ type: "simple" | "complex" }> {
-  const prompt = `Classify this message as "simple" or "complex".
+): Promise<{ type: "simple" | "routed" | "complex"; agent?: string }> {
+  // Pre-check: does this clearly route to a single agent?
+  const singleAgent = detectSingleAgentRoute(text);
+  if (singleAgent) {
+    // Still need to check if it's truly single-step or needs decomposition
+    // Short requests with a single agent match → routed
+    const words = text.trim().split(/\s+/);
+    if (words.length < 40) {
+      return { type: "routed", agent: singleAgent };
+    }
+  }
 
-Simple: greetings, questions, single requests, short commands, casual conversation.
-Complex: multi-step tasks, requests involving research + writing + analysis, tasks with multiple deliverables.
+  const prompt = `Classify this message as "simple", "routed", or "complex".
+
+Simple: greetings, questions, single requests, short commands, casual conversation, lookups.
+Routed: single-domain task needing a specialist (e.g., "audit my website", "analyze our sales data", "write a press release") — one agent can handle the whole thing.
+Complex: multi-step tasks, requests involving research + writing + analysis, tasks with multiple deliverables, cross-domain work.
 
 Message: "${text.substring(0, 300)}"
 
-Return ONLY one word: simple or complex`;
+Return ONLY one word: simple, routed, or complex`;
 
   const result = await _callClaude(prompt, "sonnet");
   const lower = result.toLowerCase().trim();
 
-  return { type: lower.includes("complex") ? "complex" : "simple" };
+  if (lower.includes("complex")) return { type: "complex" };
+  if (lower.includes("routed")) return { type: "routed", agent: singleAgent || undefined };
+  return { type: "simple" };
 }
 
 // ============================================================
@@ -293,10 +807,100 @@ export function orchestrate(
   user: any,
   supabase: SupabaseClient | null
 ): void {
+  // Step 0: Check for active revision session — the user's message is feedback on prior work
+  const revSession = getRevisionSession(user.id);
+  if (revSession) {
+    revisionSessions.delete(user.id);
+    console.log(`[orchestrator] Revision session detected for ${user.name}: "${text.substring(0, 50)}"`);
+    _runTask(ctx, `Revision: ${text.substring(0, 40)}`, async () => {
+      await handleRevision(ctx, text, user, supabase, revSession);
+      return { prompt: "__ORCHESTRATOR_HANDLED__" };
+    }, {
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      userId: user.id,
+    });
+    return;
+  }
+
   // Step 1: Fast heuristic — no Claude call needed
   if (isSimpleMessage(text)) {
     console.log(`[orchestrator] Simple path (heuristic): ${text.substring(0, 50)}`);
     routeSimple(ctx, text, user, supabase);
+    return;
+  }
+
+  // Step 1.5: Detect social media workflow — hard-coded pipeline
+  const socialReq = detectSocialMediaRequest(text);
+  if (socialReq) {
+    console.log(`[orchestrator] Social media workflow: "${socialReq.topic}" → ${socialReq.platforms.join(", ")}`);
+    _runTask(ctx, text.substring(0, 50), async () => {
+      const plan = buildSocialMediaPlan(socialReq.topic, socialReq.platforms);
+      await routeComplex(ctx, text, user, supabase, plan, "social-media");
+      return { prompt: "__ORCHESTRATOR_HANDLED__" };
+    }, {
+      postProcess: async (raw) => {
+        if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
+        return processMemoryIntents(supabase, raw, user.id, user.timezone);
+      },
+      userId: user.id,
+    });
+    return;
+  }
+
+  // Step 1.6: Detect other deterministic workflows
+  const emailReq = detectEmailCampaignRequest(text);
+  if (emailReq) {
+    console.log(`[orchestrator] Email campaign workflow: "${emailReq.topic}"`);
+    _runTask(ctx, text.substring(0, 50), async () => {
+      const plan = buildEmailCampaignPlan(emailReq.topic, emailReq.audience);
+      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      return { prompt: "__ORCHESTRATOR_HANDLED__" };
+    }, {
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      userId: user.id,
+    });
+    return;
+  }
+
+  const blogReq = detectBlogPostRequest(text);
+  if (blogReq) {
+    console.log(`[orchestrator] Blog post workflow: "${blogReq.topic}"`);
+    _runTask(ctx, text.substring(0, 50), async () => {
+      const plan = buildBlogPostPlan(blogReq.topic);
+      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      return { prompt: "__ORCHESTRATOR_HANDLED__" };
+    }, {
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      userId: user.id,
+    });
+    return;
+  }
+
+  const presReq = detectPresentationRequest(text);
+  if (presReq) {
+    console.log(`[orchestrator] Presentation workflow: "${presReq.topic}"`);
+    _runTask(ctx, text.substring(0, 50), async () => {
+      const plan = buildPresentationPlan(presReq.topic);
+      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      return { prompt: "__ORCHESTRATOR_HANDLED__" };
+    }, {
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      userId: user.id,
+    });
+    return;
+  }
+
+  const adReq = detectAdCampaignRequest(text);
+  if (adReq) {
+    console.log(`[orchestrator] Ad campaign workflow: "${adReq.topic}" → ${adReq.platforms.join(", ")}`);
+    _runTask(ctx, text.substring(0, 50), async () => {
+      const plan = buildAdCampaignPlan(adReq.topic, adReq.platforms);
+      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      return { prompt: "__ORCHESTRATOR_HANDLED__" };
+    }, {
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      userId: user.id,
+    });
     return;
   }
 
@@ -326,6 +930,21 @@ export function orchestrate(
         prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext),
         hint: text,
       };
+    }
+
+    if (classification.type === "routed" && classification.agent) {
+      // Single-agent task — build a 1-subtask plan and route directly
+      console.log(`[orchestrator] Routed to ${classification.agent}`);
+      const singlePlan: ExecutionPlan = {
+        subtasks: [{
+          description: text,
+          agent: classification.agent,
+          dependsOn: [],
+          phase: "prepare",
+        }],
+      };
+      await routeComplex(ctx, text, user, supabase, singlePlan);
+      return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }
 
     // Complex — decompose and execute
@@ -420,7 +1039,8 @@ async function routeComplex(
   text: string,
   user: any,
   supabase: SupabaseClient | null,
-  cachedPlan?: ExecutionPlan
+  cachedPlan?: ExecutionPlan,
+  workflowType?: "social-media" | "generic"
 ): Promise<void> {
   const startTime = Date.now();
   const autoApprove = detectAutoApprove(text);
@@ -608,6 +1228,7 @@ async function routeComplex(
       parentTaskId,
       startTime,
       workspaceDir,
+      workflowType: workflowType || "generic",
     });
 
     // Persist to Supabase so the Mini App can display and act on it

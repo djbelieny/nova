@@ -22,7 +22,8 @@ export interface ExecutionPattern {
 
 /**
  * Normalize task text into a signature for matching.
- * Strips filler words, lowercases, and sorts key terms.
+ * Strips filler words and lowercases, but preserves word order
+ * to differentiate "create post about AI" from "create AI about post".
  */
 function normalizeSignature(text: string): string {
   const stopWords = new Set([
@@ -36,7 +37,6 @@ function normalizeSignature(text: string): string {
     .replace(/[^a-z0-9\s]/g, "")
     .split(/\s+/)
     .filter((w) => w.length > 1 && !stopWords.has(w))
-    .sort()
     .join(" ");
 }
 
@@ -69,19 +69,28 @@ export async function findPattern(
 
     if (error || !data?.length) return null;
 
-    // Score each pattern by keyword overlap
+    // Score each pattern by keyword overlap — use full signature, not just first 5
+    const signatureWords = signature.split(" ");
     let bestMatch: ExecutionPattern | null = null;
     let bestScore = 0;
 
     for (const row of data) {
       const patternWords = new Set(row.task_signature.split(" "));
-      const overlap = keywords.filter((k) => patternWords.has(k)).length;
-      const score = overlap / Math.max(keywords.length, patternWords.size);
+      const overlap = signatureWords.filter((k) => patternWords.has(k)).length;
 
-      if (score > 0.5 && score > bestScore) {
+      // Require at least 3 matching words to prevent spurious matches
+      if (overlap < 3) continue;
+
+      const score = overlap / Math.max(signatureWords.length, patternWords.size);
+
+      if (score > 0.7 && score > bestScore) {
         bestScore = score;
         bestMatch = row as ExecutionPattern;
       }
+    }
+
+    if (bestMatch) {
+      console.log(`[patterns] Matched with score ${bestScore.toFixed(2)}: "${bestMatch.task_signature.substring(0, 60)}"`);
     }
 
     return bestMatch;

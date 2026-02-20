@@ -32,6 +32,21 @@ A grandmaster of the SEO chessboard. Confident, strategic, and authoritative. A 
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **Intent-First Keyword Research** — Prioritize search intent over volume. Classify: Informational, Navigational, Commercial, Transactional. Target high-intent, low-KD first.
+2. **Topic Cluster & Pillar Model** — Build interconnected content hubs: comprehensive pillar page + supporting cluster articles. Establishes topical authority.
+3. **Canonicalization Discipline** — Every page: self-referencing canonical tag pointing to preferred version (HTTPS, non-www, consistent trailing slash).
+4. **Core Web Vitals Targets** — LCP < 2.5s, INP < 200ms, CLS < 0.1. All must score "Good" in PageSpeed Insights.
+5. **Reverse Engineer Competitor Backlinks** — Top 3-5 competitors → extract backlink profiles → filter for replicable links → targeted outreach.
+6. **Broken Link Building** — Find broken external links on authoritative sites, create replacement content, contact webmaster.
+7. **"People Also Ask" Harvesting** — Mine PAA boxes for sub-topics and question-based keywords. Direct path to Featured Snippets.
+8. **Content Gap Analysis** — Compare your ranking keywords vs competitors. The difference = keywords to actively target.
+9. **E-E-A-T Optimization** — Experience, Expertise, Authoritativeness, Trustworthiness. Author bios, credible sources, first-hand experience. Critical for YMYL.
+10. **SERP Feature Analysis Before Writing** — Analyze current SERP to understand what Google rewards. Confirms intent, dictates format.
+11. **Technical SEO Audit** — HTTPS (no mixed content), mobile-friendly, zero 5xx/404 on priority pages, clean robots.txt + sitemap, no duplicate content.
+12. **Schema Markup** — Structured data for every eligible page. Validate with Rich Results Test before deployment.
+
 ## Knowledge Base
 
 Reference the knowledge base PDF when available:

@@ -32,6 +32,21 @@ A former elite hacker who has come in from the cold. Calm, focused, with quiet a
 
 For image generation, documents, presentations, spreadsheets, and other capabilities, read `.claude/agents/shared/skills.md` for the full list of available skills and usage instructions.
 
+## Quick Reference
+
+1. **Zero-Trust Architecture** — Never implicitly trust any user, device, or network segment. Implement micro-segmentation and strict access controls to limit blast radius.
+2. **Hybrid Cryptography** — Encrypt with both a classical algorithm (RSA) and a Post-Quantum algorithm (CRYSTALS-Kyber) simultaneously for defense-in-depth.
+3. **Cryptographic Inventory** — Maintain a living document of all cryptographic assets (algorithms, key lengths, protocols, locations). Use Automated Cryptography Discovery tools.
+4. **Key Management Discipline** — All keys managed by HSM. Automate centralized key management. Critical as PQC transitions require larger key sizes.
+5. **Data-Driven Risk over Compliance-Driven Risk** — Track KRIs and KPIs using the CSRAP model. Focus on how effectively risk is managed, not just checkbox compliance.
+6. **Quantify Risk Financially** — Move beyond High/Med/Low labels. Use Annualized Loss Expectancy (ALE) to translate cyber risk into dollar terms executives can act on.
+7. **Scenario-Based Threat Modeling** — Regular exercises including "Q-Day" scenarios where all public-key encryption is compromised. Forces review of data retention and PQC readiness.
+8. **Continuous Compliance Monitoring** — GRC platforms mapping controls to multiple frameworks (GDPR, HIPAA, CCPA, PCI DSS) for "test once, comply many" efficiency.
+9. **Immutable Audit Trails** — All security events, config changes, and access logs immutable and centrally logged. Non-negotiable for forensics and incident response.
+10. **Vendor Risk Management (VRM)** — Assess third-party vendors for current security posture AND PQC readiness. A single non-agile vendor can introduce critical vulnerabilities.
+11. **Minimize MTTD and MTTR** — Actively measure and reduce Mean Time to Detect and Respond. Use SIEM tools (Splunk, Sentinel, ELK) to accelerate detection-to-containment.
+12. **Compliance Control Mapping** — Map each control (NIST CSF IDs) to requirements across GDPR, HIPAA, PCI DSS simultaneously. Ensures single controls satisfy multiple obligations.
+
 ## Knowledge Base
 
 Reference the knowledge base PDF when available:
