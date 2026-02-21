@@ -1,13 +1,14 @@
 /**
  * Nova — Personal AI Assistant
  *
- * Relay that connects Telegram to Claude Code CLI.
- * Customize this for your own needs.
+ * Multi-channel relay that connects Telegram, WhatsApp, and Slack to Claude Code CLI.
+ * Channel adapters handle platform-specific I/O; this file is the coordinator.
  *
  * Run: bun run src/relay.ts
  */
 
-import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
+import { InputFile } from "grammy";
+import type { Context } from "grammy";
 import { spawn } from "bun";
 import { writeFile, mkdir, readFile, unlink, stat } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
@@ -27,6 +28,17 @@ import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials } from "./integrations.ts";
+import {
+  ChannelRegistry,
+  type IncomingMessage,
+  type PlatformContext,
+} from "./channels/index.ts";
+import { startHeartbeat, appendToHeartbeat } from "./heartbeat.ts";
+import {
+  markdownToTelegramHTML,
+  parseButtons,
+  cleanResponseForUser,
+} from "./channels/telegram.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -111,12 +123,14 @@ process.on("SIGTERM", async () => {
 // SETUP
 // ============================================================
 
-if (!BOT_TOKEN) {
-  console.error("TELEGRAM_BOT_TOKEN not set!");
-  console.log("\nTo set up:");
-  console.log("1. Message @BotFather on Telegram");
-  console.log("2. Create a new bot with /newbot");
-  console.log("3. Copy the token to .env");
+// At least one channel must be configured
+const hasAnyChannel = BOT_TOKEN || process.env.WHATSAPP_ENABLED === "true" || (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN);
+if (!hasAnyChannel) {
+  console.error("No messaging channel configured!");
+  console.log("\nConfigure at least one:");
+  console.log("  Telegram: Set TELEGRAM_BOT_TOKEN in .env");
+  console.log("  WhatsApp: Set WHATSAPP_ENABLED=true in .env");
+  console.log("  Slack: Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN in .env");
   process.exit(1);
 }
 
@@ -156,17 +170,26 @@ const userCache = new Map<string, { user: NovaUser; cachedAt: number }>();
 // GHL location ID cache: userId → locationId
 const ghlLocationCache = new Map<string, string>();
 
-async function resolveUser(telegramId: string): Promise<NovaUser | null> {
-  // Check cache first (with TTL)
-  const cached = userCache.get(telegramId);
+/**
+ * Resolve a user by platform-specific ID.
+ * Supports Telegram ID, WhatsApp phone, or Slack user ID.
+ */
+async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" | "slack" = "telegram"): Promise<NovaUser | null> {
+  const cacheKey = `${channel}:${platformId}`;
+  const cached = userCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < USER_CACHE_TTL_MS) return cached.user;
 
   if (!supabase) return null;
 
   try {
-    const { data, error } = await supabase.rpc("get_user_by_telegram_id", {
-      p_telegram_id: telegramId,
-    });
+    const rpcMap = {
+      telegram: { fn: "get_user_by_telegram_id", param: "p_telegram_id" },
+      whatsapp: { fn: "get_user_by_whatsapp_id", param: "p_whatsapp_id" },
+      slack: { fn: "get_user_by_slack_id", param: "p_slack_id" },
+    };
+
+    const { fn, param } = rpcMap[channel];
+    const { data, error } = await supabase.rpc(fn, { [param]: platformId });
 
     if (error || !data?.length) return null;
 
@@ -182,7 +205,7 @@ async function resolveUser(telegramId: string): Promise<NovaUser | null> {
       profile_text: row.profile_text || "",
     };
 
-    userCache.set(telegramId, { user, cachedAt: Date.now() });
+    userCache.set(cacheKey, { user, cachedAt: Date.now() });
 
     // Pre-load GHL location ID (non-blocking)
     if (supabase && !ghlLocationCache.has(user.id)) {
@@ -200,10 +223,12 @@ async function resolveUser(telegramId: string): Promise<NovaUser | null> {
   }
 }
 
-function invalidateUserCache(telegramId?: string): void {
-  if (telegramId) {
-    userCache.delete(telegramId);
-    // Also clear GHL cache for this user (we don't have userId here, so clear all)
+function invalidateUserCache(platformId?: string): void {
+  if (platformId) {
+    // Clear all cache entries containing this platform ID
+    for (const key of userCache.keys()) {
+      if (key.includes(platformId)) userCache.delete(key);
+    }
     ghlLocationCache.clear();
   } else {
     userCache.clear();
@@ -215,14 +240,15 @@ async function saveMessage(
   role: string,
   content: string,
   userId: string,
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
+  channel: string = "telegram"
 ): Promise<void> {
   if (!supabase) return;
   try {
     await supabase.from("messages").insert({
       role,
       content,
-      channel: "telegram",
+      channel,
       metadata: metadata || {},
       user_id: userId,
     });
@@ -237,80 +263,88 @@ if (!(await acquireLock())) {
   process.exit(1);
 }
 
-const bot = new Bot(BOT_TOKEN);
-
 // ============================================================
-// SECURITY: User resolution middleware (multi-user)
+// CHANNEL REGISTRY — Initialize all enabled channel adapters
 // ============================================================
 
-bot.use(async (ctx, next) => {
-  const telegramId = ctx.from?.id.toString();
-  if (!telegramId) return;
+const channels = new ChannelRegistry();
+channels.init(RELAY_DIR);
 
-  const user = await resolveUser(telegramId);
-  if (!user) {
-    console.log(`Unauthorized: ${telegramId}`);
-    await ctx.reply("This bot is private. Ask the admin to add you.");
-    return;
-  }
+// Set up Telegram middleware for user resolution (if Telegram is enabled)
+const telegramAdapter = channels.getTelegram();
+if (telegramAdapter) {
+  telegramAdapter.use(async (ctx, next) => {
+    const telegramId = ctx.from?.id.toString();
+    if (!telegramId) return;
 
-  (ctx as any).novaUser = user;
-  await next();
-});
+    const user = await resolveUser(telegramId, "telegram");
+    if (!user) {
+      console.log(`Unauthorized: ${telegramId}`);
+      await ctx.reply("This bot is private. Ask the admin to add you.");
+      return;
+    }
 
-// ============================================================
-// INLINE BUTTON CALLBACKS
-// ============================================================
+    (ctx as any).novaUser = user;
+    await next();
+  });
 
-bot.on("callback_query:data", async (ctx) => {
-  const data = ctx.callbackQuery.data;
-  const user = (ctx as any).novaUser as NovaUser;
-
-  // Handle approval buttons with embedded approval ID (apv:ID:action)
-  if (data.startsWith("apv:")) {
+  // Register approval handler — this needs the raw grammY Context
+  telegramAdapter.onApproval(async (data, ctx) => {
     const parts = data.split(":");
     const approvalId = parts[1];
     const action = parts[2] as "approve" | "revise" | "cancel";
-    if (approvalId && action) {
+    const user = (ctx as any).novaUser as NovaUser;
+    if (approvalId && action && user) {
       console.log(`Approval ${action} by ${user.name}: ${approvalId}`);
       await handleApproval(approvalId, action, ctx);
-      return;
     }
+  });
+}
+
+// ============================================================
+// INLINE BUTTON CALLBACKS (all channels)
+// ============================================================
+
+channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply, editOriginal) => {
+  // Resolve user from cache (should already be cached from the message that triggered buttons)
+  let user: NovaUser | null = null;
+  for (const [_key, cached] of userCache) {
+    if (cached.user.id === userId) { user = cached.user; break; }
   }
+  // Fallback: try to resolve by telegram ID
+  if (!user) user = await resolveUser(platformUserId, "telegram");
+  if (!user) return;
 
-  if (data.startsWith("btn:")) {
-    const selection = data.substring(4);
+  // Approval buttons (apv:...) are handled directly by the Telegram adapter's onApproval handler
 
-    // Regular button press
+  if (buttonData.startsWith("btn:")) {
+    const selection = buttonData.substring(4);
     console.log(`Button pressed by ${user.name}: ${selection}`);
 
-    // Acknowledge the button press immediately
-    await ctx.answerCallbackQuery({ text: `Got it: ${selection}` });
+    if (editOriginal) {
+      await editOriginal(`>> ${selection}`);
+    }
 
-    // Update the original message to show the selection (remove buttons)
-    try {
-      const originalText = ctx.callbackQuery.message?.text || "";
-      await ctx.editMessageText(`${originalText}\n\n>> ${selection}`, {
-        reply_markup: undefined,
-      });
-    } catch {}
-
-    // Process the button selection as a new user message
     await saveMessage("user", selection, user.id);
 
-    await ctx.replyWithChatAction("typing");
+    // Build a PlatformContext for the button handler
+    const adapter = channels.get("telegram") || channels.getAll()[0];
+    if (!adapter) return;
 
-    runTask(ctx, `Button: ${selection.substring(0, 40)}`, async () => {
+    const platformCtx = createGenericPlatformContext(adapter, chatId, user);
+    await platformCtx.replyWithChatAction("typing");
+
+    runTask(platformCtx, `Button: ${selection.substring(0, 40)}`, async () => {
       const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
-        getRelevantContext(supabase, selection, user.id),
-        getMemoryContext(supabase, user.id),
-        getRecentHistory(supabase, user.id),
-        getTaskContext(supabase, user.id),
-        getScheduleContext(supabase, user.id, user.timezone),
+        getRelevantContext(supabase, selection, user!.id),
+        getMemoryContext(supabase, user!.id),
+        getRecentHistory(supabase, user!.id),
+        getTaskContext(supabase, user!.id),
+        getScheduleContext(supabase, user!.id, user!.timezone),
       ]);
       return {
         prompt: buildPrompt(
-          user,
+          user!,
           `[Button selected in response to a question]: ${selection}`,
           relevantContext,
           memoryContext,
@@ -321,7 +355,7 @@ bot.on("callback_query:data", async (ctx) => {
         hint: selection,
       };
     }, {
-      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
+      postProcess: (raw) => processMemoryIntents(supabase, raw, user!.id, user!.timezone),
     });
   }
 });
@@ -609,9 +643,11 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
  * Run a Claude task asynchronously — sends typing indicator, handles long-running
  * tasks with progress updates, and delivers the result when done.
  * Does NOT block the message handler, so Nova can work on multiple tasks at once.
+ *
+ * Accepts either a grammY Context (backward compat) or a PlatformContext (new channels).
  */
 function runTask(
-  ctx: Context,
+  ctx: Context | PlatformContext | any,
   taskDescription: string,
   buildTask: () => Promise<{ prompt: string; model?: ModelTier; hint?: string }>,
   opts?: { postProcess?: (response: string) => Promise<string>; userId?: string }
@@ -631,7 +667,7 @@ function runTask(
   }, 4000);
 
   // Edit-in-place status indicator
-  let statusMsgId: number | null = null;
+  let statusMsgId: number | string | null = null;
   const chatId = ctx.chat?.id;
 
   // Send "Working on it..." after 8 seconds, edit to "taking longer" after 60s
@@ -677,14 +713,21 @@ function runTask(
       // Orchestrator handled the response internally — skip sending
       if (response === "__SKIP__") return;
 
+      // Self-scheduling: if response contains <follow_up> tags, add to heartbeat checklist
+      const followUpMatch = response.match(/<follow_up>([\s\S]*?)<\/follow_up>/i);
+      if (followUpMatch) {
+        appendToHeartbeat(followUpMatch[1].trim()).catch(() => {});
+      }
+
       // Delete the status message before sending the real response
       if (statusMsgId && chatId) {
         try { await ctx.api.deleteMessage(chatId, statusMsgId); } catch {}
       }
 
       const userId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
+      const channelType = (ctx as any).channelType || "telegram";
       if (userId) {
-        await saveMessage("assistant", response, userId);
+        await saveMessage("assistant", response, userId, undefined, channelType);
       }
       await sendResponseWithVoice(ctx, response, userId);
     } catch (error) {
@@ -740,218 +783,221 @@ function isRateLimited(userId: string): boolean {
 }
 
 // ============================================================
-// MESSAGE HANDLERS
+// MESSAGE HANDLERS (all channels via adapter pattern)
 // ============================================================
 
-// Text messages
-bot.on("message:text", async (ctx) => {
-  const text = ctx.message.text;
-  const user = (ctx as any).novaUser as NovaUser;
-  (ctx as any).novaReplyTo = ctx.message.message_id; // for reply threading
-  console.log(`Message from ${user.name}: ${text.substring(0, 50)}...`);
+channels.onMessage(async (msg: IncomingMessage, reply) => {
+  // Get platform context (attached by adapter)
+  const platformCtx: PlatformContext | any = (msg as any)._platformContext;
 
-  // Rate limit check (skip for admin commands)
-  if (!text.startsWith("/") && isRateLimited(user.id)) {
-    await ctx.reply("You're sending messages too fast. Please wait a moment.");
-    return;
-  }
-
-  // /voice toggle migrated to Mini App (Profile > Preferences)
-  if (text.trim().toLowerCase() === "/voice") {
-    if (!isTTSEnabled()) {
-      await ctx.reply("Voice responses are not set up yet. Add ELEVENLABS_API_KEY to .env to enable.");
+  // --- User resolution for non-Telegram channels ---
+  // Telegram resolves users in middleware; WhatsApp/Slack resolve here
+  let user: NovaUser | null = null;
+  if (msg.channelType === "telegram") {
+    user = platformCtx?.novaUser || null;
+  } else {
+    user = await resolveUser(msg.platformUserId, msg.channelType);
+    if (!user) {
+      console.log(`Unauthorized ${msg.channelType}: ${msg.platformUserId}`);
+      await reply({ text: "This bot is private. Ask the admin to add you." });
       return;
     }
-    const enabled = await toggleVoiceResponses(supabase, user.id);
-    await ctx.reply(
-      enabled
-        ? "Voice mode on. You can also toggle this in the Nova Mini App (Profile > Preferences)."
-        : "Voice mode off. You can also toggle this in the Nova Mini App (Profile > Preferences)."
-    );
-    return;
+    if (platformCtx) platformCtx.novaUser = user;
   }
 
-  // Handle admin commands
-  if (text.startsWith("/") && user.role === "admin") {
-    const handled = await handleAdminCommand(ctx, text, user);
-    if (handled) return;
-  }
+  if (!user) return;
 
-  await ctx.replyWithChatAction("typing");
-  await saveMessage("user", text, user.id);
+  // Use the platform context for all subsequent operations
+  const ctx = platformCtx || createGenericPlatformContext(msg.channelType === "telegram"
+    ? channels.getTelegram()!
+    : channels.get(msg.channelType)!, msg.channelChatId, user);
+  (ctx as any).novaUser = user;
+  (ctx as any).channelType = msg.channelType;
 
-  orchestrate(ctx, text, user, supabase);
-});
+  // --- TEXT MESSAGES ---
+  if (msg.text) {
+    const text = msg.text;
+    (ctx as any).novaReplyTo = msg.channelMessageId;
+    console.log(`[${msg.channelType}] Message from ${user.name}: ${text.substring(0, 50)}...`);
 
-// Voice messages
-bot.on("message:voice", async (ctx) => {
-  const voice = ctx.message.voice;
-  const user = (ctx as any).novaUser as NovaUser;
-  (ctx as any).novaReplyTo = ctx.message.message_id;
-  console.log(`Voice message from ${user.name}: ${voice.duration}s`);
-  await ctx.replyWithChatAction("typing");
-
-  if (!process.env.VOICE_PROVIDER) {
-    await ctx.reply(
-      "Voice transcription is not set up yet. " +
-        "Run the setup again and choose a voice provider (Groq or local Whisper)."
-    );
-    return;
-  }
-
-  try {
-    const file = await ctx.getFile();
-    const url = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
-    const response = await fetch(url);
-    const buffer = Buffer.from(await response.arrayBuffer());
-
-    const transcription = await transcribe(buffer);
-    if (!transcription) {
-      await ctx.reply("Could not transcribe voice message.");
+    // Rate limit check (skip for admin commands)
+    if (!text.startsWith("/") && isRateLimited(user.id)) {
+      await ctx.reply("You're sending messages too fast. Please wait a moment.");
       return;
     }
 
-    await saveMessage("user", `[Voice ${voice.duration}s]: ${transcription}`, user.id);
-
-    runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
-        getRelevantContext(supabase, transcription, user.id),
-        getMemoryContext(supabase, user.id),
-        getRecentHistory(supabase, user.id),
-        getTaskContext(supabase, user.id),
-        getScheduleContext(supabase, user.id, user.timezone),
-      ]);
-      return {
-        prompt: buildPrompt(
-          user,
-          `[Voice message transcribed]: ${transcription}`,
-          relevantContext,
-          memoryContext,
-          recentHistory,
-          taskContext,
-          scheduleContext
-        ),
-        hint: transcription,
-      };
-    }, {
-      postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
-    });
-  } catch (error) {
-    console.error("Voice error:", error);
-    await ctx.reply("Could not process voice message. Check logs for details.");
-  }
-});
-
-// Photos/Images
-bot.on("message:photo", async (ctx) => {
-  const user = (ctx as any).novaUser as NovaUser;
-  (ctx as any).novaReplyTo = ctx.message.message_id;
-  console.log(`Image received from ${user.name}`);
-  await ctx.replyWithChatAction("typing");
-
-  try {
-    // Get highest resolution photo
-    const photos = ctx.message.photo;
-    const photo = photos[photos.length - 1];
-    const file = await ctx.api.getFile(photo.file_id);
-
-    // Download the image
-    const fileId = crypto.randomUUID();
-    const filePath = join(UPLOADS_DIR, `image_${fileId}.jpg`);
-
-    const response = await fetch(
-      `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`
-    );
-    const buffer = await response.arrayBuffer();
-    await writeFile(filePath, Buffer.from(buffer));
-
-    const caption = ctx.message.caption || "Analyze this image.";
-    const memoryMode = isMemoryIntent(caption);
-    await saveMessage("user", `[Image]: ${caption}`, user.id);
-
-    runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
-      const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
-        getMemoryContext(supabase, user.id),
-        getRecentHistory(supabase, user.id),
-        getTaskContext(supabase, user.id),
-        getScheduleContext(supabase, user.id, user.timezone),
-      ]);
-      const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
-      const prompt = memoryMode
-        ? buildMemoryExtractionPrompt(filePath, `image_${fileId}.jpg`, caption)
-        : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
-      return { prompt, hint: caption };
-    }, {
-      postProcess: async (raw) => {
-        // Delayed cleanup — keep image for 10 minutes to allow follow-up questions
-        setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
-        return processMemoryIntents(supabase, raw, user.id, user.timezone);
-      },
-    });
-  } catch (error) {
-    console.error("Image error:", error);
-    await ctx.reply("Could not process image.");
-  }
-});
-
-// Documents
-bot.on("message:document", async (ctx) => {
-  const doc = ctx.message.document;
-  const user = (ctx as any).novaUser as NovaUser;
-  (ctx as any).novaReplyTo = ctx.message.message_id;
-  console.log(`Document from ${user.name}: ${doc.file_name}`);
-  await ctx.replyWithChatAction("typing");
-
-  try {
-    const file = await ctx.getFile();
-    const timestamp = Date.now();
-    // Sanitize filename to prevent path traversal
-    const rawName = doc.file_name || `file_${timestamp}`;
-    const safeName = basename(rawName).replace(/[^a-zA-Z0-9._-]/g, "_").substring(0, 100);
-    const filePath = join(UPLOADS_DIR, `${timestamp}_${safeName}`);
-    // Verify path is within UPLOADS_DIR
-    if (!resolve(filePath).startsWith(resolve(UPLOADS_DIR))) {
-      await ctx.reply("Invalid file name.");
+    // /voice toggle
+    if (text.trim().toLowerCase() === "/voice") {
+      if (!isTTSEnabled()) {
+        await ctx.reply("Voice responses are not set up yet. Add ELEVENLABS_API_KEY to .env to enable.");
+        return;
+      }
+      const enabled = await toggleVoiceResponses(supabase, user.id);
+      await ctx.reply(
+        enabled
+          ? "Voice mode on. You can also toggle this in the Nova Mini App (Profile > Preferences)."
+          : "Voice mode off. You can also toggle this in the Nova Mini App (Profile > Preferences)."
+      );
       return;
     }
 
-    const response = await fetch(
-      `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`
-    );
-    const buffer = await response.arrayBuffer();
-    await writeFile(filePath, Buffer.from(buffer));
+    // Handle admin commands (Telegram only — uses ctx.reply for rich formatting)
+    if (text.startsWith("/") && user.role === "admin" && msg.channelType === "telegram") {
+      const handled = await handleAdminCommand(ctx._raw || ctx, text, user);
+      if (handled) return;
+    }
 
-    const caption = ctx.message.caption || `Analyze: ${doc.file_name}`;
-    const memoryMode = isMemoryIntent(caption);
-    await saveMessage("user", `[Document: ${doc.file_name}]: ${caption}`, user.id);
+    await ctx.replyWithChatAction("typing");
+    await saveMessage("user", text, user.id, undefined, msg.channelType);
 
-    runTask(ctx, `Doc: ${doc.file_name}`, async () => {
-      const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
-        getMemoryContext(supabase, user.id),
-        getRecentHistory(supabase, user.id),
-        getTaskContext(supabase, user.id),
-        getScheduleContext(supabase, user.id, user.timezone),
-      ]);
-      const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
-      const prompt = memoryMode
-        ? buildMemoryExtractionPrompt(filePath, doc.file_name || "document", caption)
-        : (contextPrefix ? contextPrefix + "\n\n" : "") + `[File: ${filePath}]\n\n${caption}`;
-      return { prompt, hint: caption };
-    }, {
-      postProcess: async (raw) => {
-        // Delay cleanup for memory ingestion — Claude may need the file longer
-        const delay = memoryMode ? 2 * 60 * 1000 : 0;
-        if (delay > 0) {
-          setTimeout(() => unlink(filePath).catch(() => {}), delay);
-        } else {
-          await unlink(filePath).catch(() => {});
-        }
-        return processMemoryIntents(supabase, raw, user.id, user.timezone);
-      },
-    });
-  } catch (error) {
-    console.error("Document error:", error);
-    await ctx.reply("Could not process document.");
+    orchestrate(ctx._raw || ctx, text, user, supabase);
+    return;
+  }
+
+  // --- VOICE MESSAGES ---
+  if (msg.voice) {
+    (ctx as any).novaReplyTo = msg.channelMessageId;
+    console.log(`[${msg.channelType}] Voice message from ${user.name}: ${msg.voice.durationSec}s`);
+    await ctx.replyWithChatAction("typing");
+
+    if (!process.env.VOICE_PROVIDER) {
+      await ctx.reply(
+        "Voice transcription is not set up yet. " +
+          "Run the setup again and choose a voice provider (Groq or local Whisper)."
+      );
+      return;
+    }
+
+    try {
+      const transcription = await transcribe(msg.voice.buffer);
+      if (!transcription) {
+        await ctx.reply("Could not transcribe voice message.");
+        return;
+      }
+
+      await saveMessage("user", `[Voice ${msg.voice.durationSec}s]: ${transcription}`, user.id, undefined, msg.channelType);
+
+      runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
+        const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+          getRelevantContext(supabase, transcription, user!.id),
+          getMemoryContext(supabase, user!.id),
+          getRecentHistory(supabase, user!.id),
+          getTaskContext(supabase, user!.id),
+          getScheduleContext(supabase, user!.id, user!.timezone),
+        ]);
+        return {
+          prompt: buildPrompt(
+            user!,
+            `[Voice message transcribed]: ${transcription}`,
+            relevantContext,
+            memoryContext,
+            recentHistory,
+            taskContext,
+            scheduleContext
+          ),
+          hint: transcription,
+        };
+      }, {
+        postProcess: (raw) => processMemoryIntents(supabase, raw, user!.id, user!.timezone),
+      });
+    } catch (error) {
+      console.error("Voice error:", error);
+      await ctx.reply("Could not process voice message. Check logs for details.");
+    }
+    return;
+  }
+
+  // --- IMAGE MESSAGES ---
+  if (msg.image) {
+    (ctx as any).novaReplyTo = msg.channelMessageId;
+    console.log(`[${msg.channelType}] Image received from ${user.name}`);
+    await ctx.replyWithChatAction("typing");
+
+    try {
+      // Save image to disk
+      const fileId = crypto.randomUUID();
+      const filePath = join(UPLOADS_DIR, `image_${fileId}.jpg`);
+      await writeFile(filePath, msg.image.buffer);
+
+      const caption = msg.image.caption || "Analyze this image.";
+      const memoryMode = isMemoryIntent(caption);
+      await saveMessage("user", `[Image]: ${caption}`, user.id, undefined, msg.channelType);
+
+      runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
+        const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+          getMemoryContext(supabase, user!.id),
+          getRecentHistory(supabase, user!.id),
+          getTaskContext(supabase, user!.id),
+          getScheduleContext(supabase, user!.id, user!.timezone),
+        ]);
+        const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
+        const prompt = memoryMode
+          ? buildMemoryExtractionPrompt(filePath, `image_${fileId}.jpg`, caption)
+          : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
+        return { prompt, hint: caption };
+      }, {
+        postProcess: async (raw) => {
+          setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
+          return processMemoryIntents(supabase, raw, user!.id, user!.timezone);
+        },
+      });
+    } catch (error) {
+      console.error("Image error:", error);
+      await ctx.reply("Could not process image.");
+    }
+    return;
+  }
+
+  // --- DOCUMENT MESSAGES ---
+  if (msg.document) {
+    (ctx as any).novaReplyTo = msg.channelMessageId;
+    console.log(`[${msg.channelType}] Document from ${user.name}: ${msg.document.filename}`);
+    await ctx.replyWithChatAction("typing");
+
+    try {
+      const timestamp = Date.now();
+      const rawName = msg.document.filename || `file_${timestamp}`;
+      const safeName = basename(rawName).replace(/[^a-zA-Z0-9._-]/g, "_").substring(0, 100);
+      const filePath = join(UPLOADS_DIR, `${timestamp}_${safeName}`);
+      if (!resolve(filePath).startsWith(resolve(UPLOADS_DIR))) {
+        await ctx.reply("Invalid file name.");
+        return;
+      }
+
+      await writeFile(filePath, msg.document.buffer);
+
+      const caption = msg.document.caption || `Analyze: ${msg.document.filename}`;
+      const memoryMode = isMemoryIntent(caption);
+      await saveMessage("user", `[Document: ${msg.document.filename}]: ${caption}`, user.id, undefined, msg.channelType);
+
+      runTask(ctx, `Doc: ${msg.document.filename}`, async () => {
+        const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+          getMemoryContext(supabase, user!.id),
+          getRecentHistory(supabase, user!.id),
+          getTaskContext(supabase, user!.id),
+          getScheduleContext(supabase, user!.id, user!.timezone),
+        ]);
+        const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
+        const prompt = memoryMode
+          ? buildMemoryExtractionPrompt(filePath, msg.document!.filename || "document", caption)
+          : (contextPrefix ? contextPrefix + "\n\n" : "") + `[File: ${filePath}]\n\n${caption}`;
+        return { prompt, hint: caption };
+      }, {
+        postProcess: async (raw) => {
+          const delay = memoryMode ? 2 * 60 * 1000 : 0;
+          if (delay > 0) {
+            setTimeout(() => unlink(filePath).catch(() => {}), delay);
+          } else {
+            await unlink(filePath).catch(() => {});
+          }
+          return processMemoryIntents(supabase, raw, user!.id, user!.timezone);
+        },
+      });
+    } catch (error) {
+      console.error("Document error:", error);
+      await ctx.reply("Could not process document.");
+    }
+    return;
   }
 });
 
@@ -1119,7 +1165,7 @@ function buildPrompt(
   const needs = detectPromptNeeds(userMessage);
 
   const parts = [
-    "You are a personal AI assistant responding via Telegram. Keep responses concise and conversational.",
+    "You are a personal AI assistant responding via messaging. Keep responses concise and conversational.",
   ];
 
   parts.push(`You are speaking with ${user.name}.`);
@@ -1543,300 +1589,211 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
   return false;
 }
 
+// markdownToTelegramHTML, parseButtons, cleanResponseForUser are imported from ./channels/telegram.ts
+
 /**
- * Convert Markdown to Telegram-compatible HTML.
- * Telegram supports: <b>, <i>, <u>, <s>, <code>, <pre>, <a href="">, <blockquote>
- * Does NOT support headings, so we convert them to bold text.
+ * Send a text response to any channel. Uses Telegram HTML for Telegram, plain text for others.
  */
-function markdownToTelegramHTML(text: string): string {
-  let html = text;
+async function sendResponse(ctx: Context | PlatformContext | any, response: string): Promise<void> {
+  const channelType = (ctx as any).channelType || "telegram";
 
-  // Escape HTML entities first (before we add our own tags)
-  html = html
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  if (channelType === "telegram") {
+    // Telegram: send with HTML formatting
+    const html = markdownToTelegramHTML(response);
+    const MAX_LENGTH = 4000;
+    const replyTo = (ctx as any).novaReplyTo as number | undefined;
+    const replyOpts = replyTo ? { reply_parameters: { message_id: replyTo } } : {};
 
-  // Code blocks (``` ... ```) — must be done before inline code
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_m, _lang, code) => {
-    return `<pre>${code.trim()}</pre>`;
-  });
+    if (html.length <= MAX_LENGTH) {
+      await ctx.reply(html, { parse_mode: "HTML", ...replyOpts }).catch(async () => {
+        await ctx.reply(response, replyOpts);
+      });
+      delete (ctx as any).novaReplyTo;
+      return;
+    }
 
-  // Inline code (`...`)
-  html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-  // Headings → bold (### Title, ## Title, # Title)
-  html = html.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
-
-  // Bold+italic (***text*** or ___text___)
-  html = html.replace(/\*\*\*(.+?)\*\*\*/g, "<b><i>$1</i></b>");
-
-  // Bold (**text** or __text__)
-  html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-  html = html.replace(/__(.+?)__/g, "<b>$1</b>");
-
-  // Italic (*text* or _text_) — avoid matching mid-word underscores
-  html = html.replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, "<i>$1</i>");
-  html = html.replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, "<i>$1</i>");
-
-  // Strikethrough (~~text~~)
-  html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
-
-  // Links [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-
-  // Blockquotes (> text)
-  html = html.replace(/^&gt;\s?(.+)$/gm, "<blockquote>$1</blockquote>");
-  // Merge consecutive blockquotes
-  html = html.replace(/<\/blockquote>\n<blockquote>/g, "\n");
-
-  // Horizontal rules (---, ***, ___) → empty line
-  html = html.replace(/^[-*_]{3,}$/gm, "");
-
-  return html.trim();
-}
-
-async function sendResponse(ctx: Context, response: string): Promise<void> {
-  const html = markdownToTelegramHTML(response);
-  // Telegram has a 4096 character limit
-  const MAX_LENGTH = 4000;
-
-  // Reply threading: reply to the original user message if available
-  const replyTo = (ctx as any).novaReplyTo as number | undefined;
-  const replyOpts = replyTo ? { reply_parameters: { message_id: replyTo } } : {};
-
-  if (html.length <= MAX_LENGTH) {
-    await ctx.reply(html, { parse_mode: "HTML", ...replyOpts }).catch(async () => {
-      await ctx.reply(response, replyOpts);
-    });
-    // Only reply-thread the first message
+    const chunks: string[] = [];
+    let remaining = html;
+    while (remaining.length > 0) {
+      if (remaining.length <= MAX_LENGTH) { chunks.push(remaining); break; }
+      let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
+      if (splitIndex === -1) splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
+      if (splitIndex === -1) splitIndex = remaining.lastIndexOf(" ", MAX_LENGTH);
+      if (splitIndex === -1) splitIndex = MAX_LENGTH;
+      chunks.push(remaining.substring(0, splitIndex));
+      remaining = remaining.substring(splitIndex).trim();
+    }
+    for (let i = 0; i < chunks.length; i++) {
+      const opts = i === 0 ? { parse_mode: "HTML" as const, ...replyOpts } : { parse_mode: "HTML" as const };
+      await ctx.reply(chunks[i], opts).catch(async () => { await ctx.reply(chunks[i]); });
+    }
     delete (ctx as any).novaReplyTo;
-    return;
-  }
-
-  // Split long responses
-  const chunks = [];
-  let remaining = html;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_LENGTH) {
-      chunks.push(remaining);
-      break;
+  } else {
+    // WhatsApp/Slack: send plain text via adapter
+    const adapter = (ctx as PlatformContext).adapter;
+    if (adapter) {
+      const chatId = String(ctx.chat?.id || "");
+      await adapter.send(chatId, { text: response });
+    } else {
+      await ctx.reply(response);
     }
-
-    let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
-    if (splitIndex === -1) splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
-    if (splitIndex === -1) splitIndex = remaining.lastIndexOf(" ", MAX_LENGTH);
-    if (splitIndex === -1) splitIndex = MAX_LENGTH;
-
-    chunks.push(remaining.substring(0, splitIndex));
-    remaining = remaining.substring(splitIndex).trim();
   }
-
-  for (let i = 0; i < chunks.length; i++) {
-    const opts = i === 0 ? { parse_mode: "HTML" as const, ...replyOpts } : { parse_mode: "HTML" as const };
-    await ctx.reply(chunks[i], opts).catch(async () => {
-      await ctx.reply(chunks[i]);
-    });
-  }
-  delete (ctx as any).novaReplyTo;
 }
 
 /**
- * Parse inline button markup from Claude's response.
- * Format: [BUTTONS: Label 1 | Label 2 | Label 3]
- * Each label becomes an inline keyboard button.
- * Returns { text: cleaned response, keyboard: InlineKeyboard | null }
+ * Send response with voice and button support — works across all channels.
  */
-function parseButtons(response: string): { text: string; keyboard: InlineKeyboard | null } {
-  const buttonPattern = /\[BUTTONS:\s*(.+?)\]/g;
-  let keyboard: InlineKeyboard | null = null;
-  let text = response;
-
-  const matches = [...response.matchAll(buttonPattern)];
-  if (matches.length > 0) {
-    // Use the last button block found
-    const match = matches[matches.length - 1];
-    const labels = match[1].split("|").map((l) => l.trim()).filter(Boolean);
-
-    if (labels.length > 0) {
-      keyboard = new InlineKeyboard();
-      // Up to 3 buttons per row
-      for (let i = 0; i < labels.length; i++) {
-        keyboard.text(labels[i], `btn:${labels[i]}`);
-        if ((i + 1) % 3 === 0 && i < labels.length - 1) {
-          keyboard.row();
-        }
-      }
-    }
-
-    // Remove all button tags from the text
-    text = response.replace(buttonPattern, "").trim();
-  }
-
-  return { text, keyboard };
-}
-
-/**
- * Strip internal artifacts from Claude's response before sending to user.
- * Removes tool-use details, file paths, skill invocation logs, and other
- * internal chatter that the user should never see.
- */
-function cleanResponseForUser(response: string): string {
-  let cleaned = response;
-
-  // Remove [ARTIFACT: ...] tags (already parsed by planner)
-  cleaned = cleaned.replace(/\[ARTIFACT:\s*[^\]]+\]/g, "");
-
-  // Remove [TASK: ...], [TASK_START: ...], [TASK_DONE: ...] etc. tags
-  cleaned = cleaned.replace(/\[TASK(?:_\w+)?:\s*[^\]]+\]/g, "");
-
-  // Remove [SCHEDULE: ...] and [SCHEDULE_CANCEL: ...] tags
-  cleaned = cleaned.replace(/\[SCHEDULE(?:_CANCEL)?:\s*[^\]]+\]/g, "");
-
-  // Remove lines that look like internal tool invocations or file operations
-  cleaned = cleaned.replace(/^.*(?:Running|Executing|Invoking|Loading skill|Tool call|bash:).*$/gm, "");
-
-  // Remove bare absolute file paths on their own line (e.g., /tmp/slide_1.png)
-  cleaned = cleaned.replace(/^\/(?:tmp|Users|var|home)\/\S+\s*$/gm, "");
-
-  // Remove lines referencing internal scripts
-  cleaned = cleaned.replace(/^.*(?:scripts\/generate_image\.py|send_telegram_file\.sh|\.claude\/skills\/).*$/gm, "");
-
-  // Collapse multiple blank lines into at most two
-  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
-
-  return cleaned.trim();
-}
-
 async function sendResponseWithVoice(
-  ctx: Context,
+  ctx: Context | PlatformContext | any,
   response: string,
   userId?: string
 ): Promise<void> {
-  // Clean internal artifacts from response
   const cleaned = cleanResponseForUser(response);
 
-  // Guard against empty responses (e.g., Claude used tools but produced no text)
   if (!cleaned) {
     await ctx.reply("Done — but I didn't have any text to send back. Let me know if something's missing.");
     return;
   }
 
-  // Parse any inline buttons from the response
-  const { text, keyboard } = parseButtons(cleaned);
+  const channelType = (ctx as any).channelType || "telegram";
+  const { text, buttons } = parseButtons(cleaned);
 
-  // Send text (with keyboard if present)
-  if (keyboard) {
-    await sendResponseWithButtons(ctx, text, keyboard);
+  if (buttons && buttons.length > 0) {
+    const adapter = (ctx as PlatformContext)?.adapter || channels.get(channelType);
+    if (adapter) {
+      // For Telegram, use the rich HTML + inline keyboard path
+      if (channelType === "telegram") {
+        const { InlineKeyboard } = await import("grammy");
+        const keyboard = new InlineKeyboard();
+        for (let i = 0; i < buttons.length; i++) {
+          keyboard.text(buttons[i].label, buttons[i].callbackData);
+          if ((i + 1) % 3 === 0 && i < buttons.length - 1) keyboard.row();
+        }
+        const html = markdownToTelegramHTML(text);
+        const MAX_LENGTH = 4000;
+        const replyTo = (ctx as any).novaReplyTo as number | undefined;
+        const replyOpts = replyTo ? { reply_parameters: { message_id: replyTo } } : {};
+
+        if (html.length <= MAX_LENGTH) {
+          await ctx.reply(html, { reply_markup: keyboard, parse_mode: "HTML", ...replyOpts }).catch(async () => {
+            await ctx.reply(text, { reply_markup: keyboard, ...replyOpts });
+          });
+        } else {
+          // Split and put buttons on last chunk
+          const chunks: string[] = [];
+          let remaining = html;
+          while (remaining.length > 0) {
+            if (remaining.length <= MAX_LENGTH) { chunks.push(remaining); break; }
+            let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
+            if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
+            if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) splitIndex = MAX_LENGTH;
+            chunks.push(remaining.substring(0, splitIndex));
+            remaining = remaining.substring(splitIndex).trim();
+          }
+          for (let i = 0; i < chunks.length; i++) {
+            const baseOpts = i === 0 ? replyOpts : {};
+            const isLast = i === chunks.length - 1;
+            await ctx.reply(chunks[i], {
+              ...(isLast ? { reply_markup: keyboard } : {}),
+              parse_mode: "HTML",
+              ...baseOpts,
+            }).catch(async () => {
+              await ctx.reply(chunks[i], isLast ? { reply_markup: keyboard, ...baseOpts } : baseOpts);
+            });
+          }
+        }
+        delete (ctx as any).novaReplyTo;
+      } else {
+        // WhatsApp/Slack: send via adapter with buttons
+        const chatId = String(ctx.chat?.id || "");
+        await adapter.send(chatId, { text, buttons });
+      }
+    }
   } else {
     await sendResponse(ctx, text);
   }
 
-  // Send voice ONLY when /voice toggle is on (user explicitly wants all replies as audio).
+  // Send voice ONLY when /voice toggle is on
   if (isTTSEnabled()) {
     const settings = await loadSettings(supabase, userId);
     if (settings.voiceResponses) {
       const audio = await textToSpeech(text);
       if (audio) {
-        await ctx.replyWithVoice(new InputFile(audio, "response.ogg"));
+        const channelType = (ctx as any).channelType || "telegram";
+        if (channelType === "telegram" && ctx.replyWithVoice) {
+          await ctx.replyWithVoice(new InputFile(audio, "response.ogg"));
+        } else {
+          // Send voice via adapter
+          const adapter = (ctx as PlatformContext)?.adapter || channels.get(channelType);
+          if (adapter) {
+            await adapter.send(String(ctx.chat?.id || ""), { voice: audio });
+          }
+        }
       }
     }
   }
 }
 
-async function sendResponseWithButtons(
-  ctx: Context,
-  response: string,
-  keyboard: InlineKeyboard
-): Promise<void> {
-  const html = markdownToTelegramHTML(response);
-  const MAX_LENGTH = 4000;
-
-  const replyTo = (ctx as any).novaReplyTo as number | undefined;
-  const replyOpts = replyTo ? { reply_parameters: { message_id: replyTo } } : {};
-
-  if (html.length <= MAX_LENGTH) {
-    await ctx.reply(html, { reply_markup: keyboard, parse_mode: "HTML", ...replyOpts }).catch(async () => {
-      await ctx.reply(response, { reply_markup: keyboard, ...replyOpts });
-    });
-    delete (ctx as any).novaReplyTo;
-    return;
-  }
-
-  // For long responses, split and put buttons on the last chunk
-  const chunks: string[] = [];
-  let remaining = html;
-
-  while (remaining.length > 0) {
-    if (remaining.length <= MAX_LENGTH) {
-      chunks.push(remaining);
-      break;
-    }
-    let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
-    if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) {
-      splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
-    }
-    if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) {
-      splitIndex = MAX_LENGTH;
-    }
-    chunks.push(remaining.substring(0, splitIndex));
-    remaining = remaining.substring(splitIndex).trim();
-  }
-
-  for (let i = 0; i < chunks.length; i++) {
-    const baseOpts = i === 0 ? replyOpts : {};
-    if (i === chunks.length - 1) {
-      await ctx.reply(chunks[i], { reply_markup: keyboard, parse_mode: "HTML", ...baseOpts }).catch(async () => {
-        await ctx.reply(chunks[i], { reply_markup: keyboard, ...baseOpts });
-      });
-    } else {
-      await ctx.reply(chunks[i], { parse_mode: "HTML", ...baseOpts }).catch(async () => {
-        await ctx.reply(chunks[i], baseOpts);
-      });
-    }
-  }
-  delete (ctx as any).novaReplyTo;
-}
-
 // ============================================================
-// FILE DELIVERY — Send files to Telegram from workspace
+// FILE DELIVERY — Send files via any channel adapter
 // ============================================================
-
-const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
 /**
- * Send a file to a Telegram chat. Uses sendPhoto for images, sendDocument for everything else.
+ * Send a file to a chat. Routes to the appropriate channel adapter.
+ * For backward compat, defaults to Telegram if no adapter context is available.
  */
-async function sendTelegramFile(
+async function sendFile(
   chatId: number | string,
   filePath: string,
   caption?: string
 ): Promise<void> {
   try {
-    await stat(filePath); // verify file exists
+    await stat(filePath);
   } catch {
-    console.warn(`[sendTelegramFile] File not found: ${filePath}`);
+    console.warn(`[sendFile] File not found: ${filePath}`);
     return;
   }
 
-  const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
-  const inputFile = new InputFile(filePath);
-
-  try {
-    if (IMAGE_EXTENSIONS.has(ext)) {
-      await bot.api.sendPhoto(chatId, inputFile, {
-        caption: caption || undefined,
-      });
-    } else {
-      await bot.api.sendDocument(chatId, inputFile, {
-        caption: caption || undefined,
-      });
-    }
-    console.log(`[sendTelegramFile] Sent: ${filePath}`);
-  } catch (error) {
-    console.error(`[sendTelegramFile] Failed to send ${filePath}:`, error);
+  // Try Telegram first (most common), then fall back to any available adapter
+  const adapter = channels.getTelegram() || channels.getAll()[0];
+  if (adapter) {
+    await adapter.sendFile(String(chatId), filePath, caption);
+  } else {
+    console.warn(`[sendFile] No adapter available to send ${filePath}`);
   }
+}
+
+/**
+ * Create a generic PlatformContext for channels without a native ctx object.
+ * Used by WhatsApp, Slack, and the button handler.
+ */
+function createGenericPlatformContext(
+  adapter: import("./channels/types.ts").ChannelAdapter,
+  chatId: string,
+  user: NovaUser,
+): PlatformContext {
+  let lastMessageId = 0;
+  return {
+    adapter,
+    chat: { id: chatId },
+    channelType: adapter.type,
+    novaUser: user,
+    async reply(text: string, _opts?: any) {
+      await adapter.send(chatId, { text });
+      lastMessageId++;
+      return { message_id: lastMessageId };
+    },
+    async replyWithChatAction(_action: string) {
+      await adapter.sendTyping(chatId);
+    },
+    api: {
+      async editMessageText(_chatId, _messageId, _text, _opts?) { /* no-op for generic */ },
+      async deleteMessage(_chatId, _messageId) { /* no-op for generic */ },
+      async sendMessage(targetChatId, text, _opts?) {
+        await adapter.send(String(targetChatId), { text });
+      },
+    },
+  };
 }
 
 // ============================================================
@@ -1849,9 +1806,28 @@ initOrchestrator({
   runTask,
   saveMessage,
   sendResponseWithVoice,
-  sendTelegramFile,
+  sendTelegramFile: sendFile,
   relayDir: RELAY_DIR,
 });
+
+// ============================================================
+// HEARTBEAT — In-process proactive check-in loop
+// ============================================================
+
+if (supabase) {
+  startHeartbeat({
+    supabase,
+    callClaude,
+    saveMessage,
+    sendAlert: async (user, message) => {
+      // Route heartbeat alerts through the user's preferred channel
+      // Default to Telegram since all users have a telegram_id
+      const adapter = channels.getTelegram() || channels.getAll()[0];
+      if (!adapter) return;
+      await adapter.send(user.telegram_id, { text: message });
+    },
+  });
+}
 
 // ============================================================
 // START
@@ -1861,8 +1837,15 @@ initOrchestrator({
 await loadAgents();
 
 // Startup config validation — report which features are active/disabled
-console.log("Starting Nova (multi-user mode)...");
+console.log("Starting Nova (multi-channel mode)...");
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
+
+// Channel status
+const channelStatus = channels.getStatus();
+for (const [channel, active] of channelStatus) {
+  console.log(`  ${active ? "+" : "-"} ${channel}: ${active ? "enabled" : "not configured"}`);
+}
+
 const configStatus = [
   ["Supabase (memory/tasks)", !!supabase],
   ["Voice transcription", !!process.env.VOICE_PROVIDER],
@@ -1879,35 +1862,26 @@ if (!supabase) {
 // Start Mini App approval polling (checks Supabase for approvals made via Mini App)
 startMiniAppApprovalPolling(supabase);
 
-// Register Mini App menu button (if MINIAPP_URL is configured)
+// Register Mini App menu button for Telegram (if configured)
 const MINIAPP_URL = process.env.MINIAPP_URL;
-if (MINIAPP_URL) {
-  bot.api.setChatMenuButton({
-    menu_button: { type: "web_app", text: "Nova App", web_app: { url: MINIAPP_URL } },
-  }).then(() => {
-    console.log(`Mini App menu button registered: ${MINIAPP_URL}`);
-  }).catch((err) => {
-    console.warn(`Could not set Mini App menu button: ${err.message}`);
-  });
+if (MINIAPP_URL && telegramAdapter) {
+  telegramAdapter.setMenuButton(MINIAPP_URL);
 }
 
-bot.start({
-  onStart: async () => {
-    console.log("Bot is running! Users are managed via the 'users' table in Supabase.");
+// Start all channel adapters
+await channels.startAll();
+console.log("All channels started! Users are managed via the 'users' table in Supabase.");
 
-    // Notify admin users that Nova is back online
-    if (supabase) {
-      try {
-        const { data: admins } = await supabase
-          .from("users")
-          .select("telegram_id")
-          .eq("role", "admin");
-        if (admins?.length) {
-          for (const admin of admins) {
-            bot.api.sendMessage(admin.telegram_id, "Nova is back online.").catch(() => {});
-          }
-        }
-      } catch {}
+// Notify admin users that Nova is back online (via Telegram if available)
+if (supabase && telegramAdapter) {
+  try {
+    const { data: admins } = await supabase
+      .from("users")
+      .select("telegram_id")
+      .eq("role", "admin");
+    if (admins?.length) {
+      const adminIds = admins.map((a: any) => a.telegram_id).filter(Boolean);
+      telegramAdapter.notifyAdmins(adminIds, "Nova is back online.");
     }
-  },
-});
+  } catch {}
+}
