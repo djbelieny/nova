@@ -127,6 +127,12 @@ function getTimeStr(): string {
   });
 }
 
+/** Redact phone numbers in log output to prevent PII leaks */
+function redactPhone(phone: string): string {
+  if (!phone || phone.length < 6) return "***";
+  return phone.slice(0, 4) + "****" + phone.slice(-2);
+}
+
 /** Log to stderr (visible in logs but doesn't pollute stdout for the caller) */
 function log(msg: string): void {
   process.stderr.write(msg + "\n");
@@ -495,7 +501,7 @@ async function pollForCallCompletion(
   }
 
   // Timeout — output failure
-  console.log(`CALL RESULT: TIMEOUT\nCallee: ${calleeName}\nPhone: ${phone}\nSubject: ${subject}\nCall timed out after 15 minutes waiting for completion.`);
+  console.log(`CALL RESULT: TIMEOUT\nCallee: ${calleeName}\nPhone: ${redactPhone(phone)}\nSubject: ${subject}\nCall timed out after 15 minutes waiting for completion.`);
 }
 
 /**
@@ -544,7 +550,7 @@ async function outputCallResult(
       status: "No Answer", transcript: "", callStart,
     });
 
-    console.log(`CALL RESULT: ${statusLabel.toUpperCase()}\nCallee: ${calleeName}\nPhone: ${phone}\nSubject: ${subject}\nEnd reason: ${endReason}`);
+    console.log(`CALL RESULT: ${statusLabel.toUpperCase()}\nCallee: ${calleeName}\nPhone: ${redactPhone(phone)}\nSubject: ${subject}\nEnd reason: ${endReason}`);
     return;
   }
 
@@ -597,7 +603,7 @@ async function outputCallResult(
   const output = [
     `CALL RESULT: COMPLETED`,
     `Callee: ${calleeName}`,
-    `Phone: ${phone}`,
+    `Phone: ${redactPhone(phone)}`,
     `Subject: ${subject}`,
     `Duration: ${durationStr}`,
     `Call ID: ${callId}`,

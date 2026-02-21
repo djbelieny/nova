@@ -99,25 +99,32 @@ process.on("exit", () => {
   } catch {}
 });
 let shuttingDown = false;
-process.on("SIGINT", async () => {
+
+async function gracefulShutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log("[shutdown] SIGINT received, draining...");
-  // Give in-flight tasks a few seconds to finish
-  setTimeout(async () => {
-    await releaseLock();
-    process.exit(0);
-  }, 3000);
-});
-process.on("SIGTERM", async () => {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log("[shutdown] SIGTERM received, draining...");
-  setTimeout(async () => {
-    await releaseLock();
-    process.exit(0);
-  }, 3000);
-});
+  console.log(`[shutdown] ${signal} received, draining in-flight tasks...`);
+
+  // Wait up to 30s for active tasks to finish, checking every 500ms
+  const maxWaitMs = 30_000;
+  const start = Date.now();
+  while (activeTasks.size > 0 && Date.now() - start < maxWaitMs) {
+    console.log(`[shutdown] Waiting for ${activeTasks.size} task(s)...`);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (activeTasks.size > 0) {
+    console.warn(`[shutdown] Force-exiting with ${activeTasks.size} task(s) still running.`);
+  } else {
+    console.log("[shutdown] All tasks drained. Exiting cleanly.");
+  }
+
+  await releaseLock();
+  process.exit(0);
+}
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 // ============================================================
 // SETUP
@@ -137,6 +144,31 @@ if (!hasAnyChannel) {
 // Create directories
 await mkdir(TEMP_DIR, { recursive: true });
 await mkdir(UPLOADS_DIR, { recursive: true });
+
+// ============================================================
+// STARTUP CONFIG VALIDATION
+// ============================================================
+
+const configWarnings: string[] = [];
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+  configWarnings.push("SUPABASE_URL/SUPABASE_ANON_KEY missing — memory, tasks, patterns, and cost tracking are DISABLED");
+}
+if (!process.env.USER_NAME) {
+  configWarnings.push("USER_NAME not set — bot won't know your name");
+}
+if (!process.env.USER_TIMEZONE) {
+  configWarnings.push("USER_TIMEZONE not set — defaulting to UTC (time-aware features may be inaccurate)");
+}
+if (BOT_TOKEN && !process.env.TELEGRAM_USER_ID) {
+  configWarnings.push("TELEGRAM_USER_ID not set — user resolution may fail for admin features");
+}
+if (configWarnings.length > 0) {
+  console.warn("=== CONFIG WARNINGS ===");
+  for (const w of configWarnings) {
+    console.warn(`  ⚠ ${w}`);
+  }
+  console.warn("=======================");
+}
 
 // ============================================================
 // SUPABASE (optional — only if configured)
@@ -740,6 +772,19 @@ function isRateLimited(userId: string): boolean {
   return recent.length > RATE_LIMIT_MAX;
 }
 
+// Cleanup stale rate limit entries every 5 minutes to prevent memory bloat
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, timestamps] of rateLimitMap) {
+    const recent = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+    if (recent.length === 0) {
+      rateLimitMap.delete(userId);
+    } else {
+      rateLimitMap.set(userId, recent);
+    }
+  }
+}, 5 * 60 * 1000);
+
 // ============================================================
 // MESSAGE HANDLERS (all channels via adapter pattern)
 // ============================================================
@@ -964,42 +1009,50 @@ channels.onMessage(async (msg: IncomingMessage, reply) => {
 // ============================================================
 
 /**
- * Detect message intent for conditional prompt injection.
- * Returns which instruction blocks are relevant for this message.
+ * Prompt tier system — 3 levels of context injection:
+ *   Tier 1 (minimal):  Greetings, acks, emojis → identity + history only (~500 tokens)
+ *   Tier 2 (standard): General conversation → + memory + compact instructions (~3,000 tokens)
+ *   Tier 3 (full):     Tool/integration requests → + capabilities + scheduling + full instructions (~6,000 tokens)
  */
-function detectPromptNeeds(text: string): {
+type PromptTier = 1 | 2 | 3;
+
+interface PromptNeeds {
+  tier: PromptTier;
   needsMemoryTags: boolean;
   needsTaskTags: boolean;
   needsScheduleTags: boolean;
   needsSelfMod: boolean;
   needsCapabilities: boolean;
-  isTrivial: boolean;
-} {
+}
+
+function detectPromptNeeds(text: string): PromptNeeds {
   const lower = text.toLowerCase().trim();
 
-  // Trivial messages: greetings, acknowledgments, single words
-  const trivialPatterns = [
-    /^(?:hi|hello|hey|yo|sup|thanks|thank you|ok|okay|cool|nice|great|got it|sure|yep|yes|no|nah|lol|haha|good|morning|night|bye)[\s!.?]*$/i,
-    /^.{1,5}$/, // Very short messages (1-5 chars)
+  // Tier 1: trivial — greetings, acks, emojis, short affirmations
+  const tier1Patterns = [
+    /^(?:hi|hello|hey|yo|sup|thanks|thank you|thx|ty|ok|okay|k|cool|nice|great|got it|sure|yep|yes|no|nah|nope|lol|haha|lmao|good|morning|gm|night|gn|bye|see ya|later|word|bet|dope|sick|awesome|perfect|sounds good|will do|on it|noted|roger|copy|ack|aight|right|exactly|true|same|agreed|fair|interesting|wow|damn|whoa|oh|ah|hmm|hm|mhm|yup|yea|yeah|naw)[\s!.?~]*$/i,
+    /^.{1,5}$/,                  // Very short (1-5 chars)
+    /^[\p{Emoji}\s!?.]+$/u,      // Emoji-only messages
+    /^(?:ok|got it|sounds good|thank(?:s| you)|perfect|great|nice|cool|awesome|good one|love it|haha\w*|lol\w*|right on)\s*[!.?]*$/i,
   ];
-  const isTrivial = trivialPatterns.some((p) => p.test(lower));
+  const isTier1 = tier1Patterns.some((p) => p.test(lower));
 
-  // Memory-related keywords
+  if (isTier1) {
+    return { tier: 1, needsMemoryTags: false, needsTaskTags: false, needsScheduleTags: false, needsSelfMod: false, needsCapabilities: false };
+  }
+
+  // Detect specific instruction needs
   const needsMemoryTags = /(?:remember|memorize|save|store|forget|goal|done|share with team)/i.test(lower);
-
-  // Task-related keywords
   const needsTaskTags = /(?:task|todo|assign|delegate|block|cancel task|pending)/i.test(lower);
-
-  // Schedule-related keywords
   const needsScheduleTags = /(?:remind|schedule|alarm|timer|recur|every day|every week|follow up|check in)/i.test(lower);
-
-  // Self-modification keywords
   const needsSelfMod = /(?:fix yourself|change how you|modify your|edit your code|update your|improve your|add.*agent|create.*agent|new skill|edit.*relay|change.*prompt)/i.test(lower);
 
-  // Capabilities needed (when asking to use a specific tool)
-  const needsCapabilities = !isTrivial; // Always include for non-trivial unless proven unnecessary
+  // Tier 3: needs integrations/tools — trigger on action verbs + tool mentions
+  const needsCapabilities = /(?:email|gmail|send|draft|calendar|event|meeting|zoom|call|phone|sms|text|notion|page|database|square|invoice|order|payment|revenue|ghl|high.?level|contact|crm|pipeline|opportunity|lead|cloudflare|deploy|worker|dns|browse|website|screenshot|navigate|search.*(?:web|online|google)|create.*(?:file|doc|pdf|slide|sheet|presentation|image|video|poster|design)|download|upload|organize|file)/i.test(lower);
 
-  return { needsMemoryTags, needsTaskTags, needsScheduleTags, needsSelfMod, needsCapabilities, isTrivial };
+  const tier: PromptTier = needsCapabilities || needsScheduleTags || needsSelfMod ? 3 : 2;
+
+  return { tier, needsMemoryTags, needsTaskTags, needsScheduleTags, needsSelfMod, needsCapabilities };
 }
 
 /**
@@ -1128,191 +1181,100 @@ function buildPrompt(
 
   parts.push(`You are speaking with ${user.name}.`);
   parts.push(`Current time: ${timeStr}`);
+
+  // ── TIER 1 (minimal): identity + history only ──
   if (user.profile_text) parts.push(`\nProfile:\n${user.profile_text}`);
-  if (tMemoryContext) parts.push(`\n${tMemoryContext}`);
-  if (tTaskContext && !needs.isTrivial) parts.push(`\n${tTaskContext}`);
-  if (tScheduleContext && !needs.isTrivial) parts.push(`\n${tScheduleContext}`);
   if (tRecentHistory) parts.push(`\n${tRecentHistory}`);
-  if (tRelevantContext && !needs.isTrivial) parts.push(`\n${tRelevantContext}`);
 
-  // Only include memory management tags when the message might trigger memory operations
-  // or when it's a non-trivial message (always good to have for complex interactions)
-  if (needs.needsMemoryTags || !needs.isTrivial) parts.push(
-    "\nMEMORY MANAGEMENT:" +
-      "\nWhen the user shares something worth remembering, sets goals, or completes goals, " +
-      "include these tags in your response (they are processed automatically and hidden from the user):" +
-      "\n[REMEMBER: fact to store] — private to this user" +
-      "\n[SHARE: fact to share] — visible to all team members" +
-      "\n[GOAL: goal text | DEADLINE: optional date]" +
-      "\n[DONE: search text for completed goal]" +
-      "\n" +
-      "\nWhat to REMEMBER (ONLY durable, long-term facts — things still true months from now):" +
-      "\n- Personal identity: names, relationships, birthdays, locations, contact info" +
-      "\n- Business identity: company details, pricing, clients, partners, revenue figures" +
-      "\n- Stable preferences: communication style, favorite tools, recurring workflows" +
-      "\n- Major life decisions: strategies adopted, long-term commitments, career changes" +
-      "\n- Recurring patterns: weekly routines, standing meetings, regular habits" +
-      "\n" +
-      "\nWhat NOT to remember (DO NOT use [REMEMBER:] for any of these):" +
-      "\n- One-time events: dinner plans, lunch dates, appointments, meetings, reservations" +
-      "\n- Calendar items: anything with a specific date/time that happens once — these belong in Google Calendar, NOT memory" +
-      "\n- Schedule changes: moved/rescheduled events — update the calendar instead" +
-      "\n- Transient tasks: things being done today/this week that won't matter next month" +
-      "\n- Conversations: debugging, troubleshooting, technical discussions, corrections" +
-      "\n- System details: file paths, tool access, configuration, implementation details" +
-      "\n- Anything only relevant to the current conversation or the next few days" +
-      "\n" +
-      "\nRule of thumb: If it won't matter in 30 days, don't remember it. Use the calendar for events." +
-      "\n" +
-      "\nWhat to SHARE (team-wide knowledge, not personal):" +
-      "\n- Company policies, shared processes, team contacts" +
-      "\n- Decisions that affect the whole team" +
-      "\n- Only use [SHARE:] when the user explicitly says to share with the team"
-  );
+  if (needs.tier === 1) {
+    // Minimal prompt — just respond naturally
+    parts.push(`\nUser: ${userMessage}`);
+    const prompt = parts.join("\n");
+    console.log(`[prompt] T1 ${prompt.length} chars (~${Math.round(prompt.length / 4)} tokens)`);
+    return prompt;
+  }
 
-  if (needs.needsTaskTags || !needs.isTrivial) parts.push(
-    "\nTASK TRACKING:" +
-      "\nWhen you start a task or delegate to a specialist agent, log it:" +
-      "\n  [TASK: Agent Name | brief description]" +
-      "\nWhen you begin working on a pending task:" +
-      "\n  [TASK_START: search text matching description]" +
-      "\nWhen you complete a task:" +
-      "\n  [TASK_DONE: search text | brief result]" +
-      "\nWhen a task is blocked:" +
-      "\n  [TASK_BLOCKED: search text | what's blocking it]" +
-      "\nTo cancel a task:" +
-      "\n  [TASK_CANCEL: search text]"
-  );
+  // ── TIER 2+ (standard): add memory, tasks, context ──
+  if (tMemoryContext) parts.push(`\n${tMemoryContext}`);
+  if (tTaskContext) parts.push(`\n${tTaskContext}`);
+  if (tScheduleContext) parts.push(`\n${tScheduleContext}`);
+  if (tRelevantContext) parts.push(`\n${tRelevantContext}`);
 
-  if (needs.needsScheduleTags || !needs.isTrivial) parts.push(
-    "\nSCHEDULED TASKS:" +
-      "\nYou can schedule reminders, follow-ups, and recurring tasks. When the user asks to be reminded, " +
-      "or when you think a follow-up check would be useful, include a schedule tag:" +
-      "\n  [SCHEDULE: title | datetime | instructions]" +
-      "\n  [SCHEDULE: title | datetime | instructions | RECUR: rule]" +
-      "\n  [SCHEDULE: title | datetime | instructions | RECUR: rule | IF: condition]" +
-      "\n  [SCHEDULE_CANCEL: search text matching title]" +
-      "\n" +
-      "\nDatetime formats:" +
-      "\n  - Absolute: 2026-02-19T15:00:00 (ISO format, user's timezone)" +
-      "\n  - Relative: +30m, +2h, +1d (from now)" +
-      "\n" +
-      "\nRecurrence rules (RECUR:):" +
-      "\n  - daily:HH:MM — every day at HH:MM" +
-      "\n  - weekly:DAY:HH:MM — every week (DAY: 0=Sun, 1=Mon, ...)" +
-      "\n  - weekdays:HH:MM — Monday through Friday at HH:MM" +
-      "\n  - interval:SECONDS — every N seconds" +
-      "\n" +
-      "\nConditions (IF:): Optional. Claude evaluates this at trigger time and skips if false." +
-      "\n" +
-      "\nExamples:" +
-      "\n  [SCHEDULE: Call dentist | 2026-02-19T15:00:00 | Remind " + user.name + " to call the dentist for a cleaning appointment]" +
-      "\n  [SCHEDULE: Weekly calendar preview | 2026-02-24T08:30:00 | Check " + user.name + "'s Google Calendar for the week ahead and send a summary | RECUR: weekly:1:08:30]" +
-      "\n  [SCHEDULE: Q1 Report check | +2h | Check Notion for Q1 Report status | IF: Q1 Report task exists in Notion]" +
-      "\n" +
-      "\nSelf-scheduling: When you realize a follow-up would help (e.g., checking if a task got done, " +
-      "following up on a request), proactively schedule one. " + user.name + " benefits from you being anticipatory."
-  );
-
+  // Compact memory tags (always included at tier 2+)
   parts.push(
-    "\nCAPABILITIES — You have access to these tools and should use them when relevant:" +
-      "\n" +
-      "\n• Gmail & Google Calendar: Read, search, draft, and send emails. View, create, and update calendar events." +
-      "\n• Notion: Search pages, read content, create and update pages and databases." +
-      "\n• Zoom: Create, update, and delete Zoom meetings. Get meeting details and recordings. When scheduling meetings, create the Zoom meeting first to get the join link, then add it to Google Calendar with the Zoom link in the description/location." +
-      "\n• Web Browser (Playwright): Navigate to URLs, take screenshots, fill forms, click buttons. Use for any website interaction." +
-      "\n• Web Search: You have built-in web search. Use it to answer questions about current events, look up information, etc." +
-      "\n• Apple Notes: Read and create notes using osascript. Example: osascript -e 'tell application \"Notes\" to get name of every note'" +
-      "\n• Apple Contacts: Search and look up contacts synced via iCloud." +
-      "\n  - Search by name: osascript -e 'tell application \"Contacts\" to get {name, value of phones, value of emails} of (every person whose name contains \"John\")'" +
-      "\n  - Always look up a contact before calling or texting someone mentioned by name." +
-      "\n• Phone Calls & SMS (Twilio + ElevenLabs): Make voice calls and send text messages." +
-      (user.phone
-        ? `\n  - ${user.name}'s phone: ${user.phone}. Use this when ${user.name} says "call me", "text me", or when something is urgent.`
-        : "") +
-      `\n  - SMS: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts sms "<phone>" "message"\`` +
-      `\n  - Call: Run \`bun run ${PROJECT_ROOT}/src/twilio.ts call "<phone>" "context"\`` +
-      "\n  - Call third parties:" +
-      `\n    bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Contact Name" "subject" [--lang language]` +
-      "\n• Square: Query orders and transactions by date range, view payment history, check account balances, create payment links, manage customers and catalog items." +
-      "\n  - LOCATIONS: Open Source Mind (Main) ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
-      "\n  - REPORTS/QUERIES: Always include BOTH locations and show results per-location plus a combined total." +
-      "\n  - WRITE OPERATIONS: Always ask " + user.name + " which location to use BEFORE executing." +
-      "\n• Go High Level (GHL): Full CRM and agency management via official MCP server." +
-      (ghlLocationId
-        ? `\n  - LOCATION ID: ${ghlLocationId} — use this for all GHL API calls that require a locationId.`
-        : "") +
-      "\n  - CONTACTS: Create, update, search, tag, add to workflows, manage custom fields" +
-      "\n  - MEMBERSHIPS & COURSES: Grant/revoke contact access to courses, memberships, and groups" +
-      "\n  - CALENDARS: Create/edit/delete calendars, appointments, check free slots, block time" +
-      "\n  - OPPORTUNITIES: Create/update deals in existing pipelines, change deal status" +
-      "\n  - CONVERSATIONS: Send SMS/email to contacts, manage conversation threads" +
-      "\n  - EMAIL TEMPLATES: Create, edit, delete email templates" +
-      "\n  - BLOG POSTS: Create, update, list blog posts, manage categories and authors" +
-      "\n  - SOCIAL MEDIA: Create/schedule/manage social posts across connected accounts" +
-      "\n  - PAYMENTS & INVOICES: List orders, manage subscriptions, create invoices" +
-      "\n  - LIMITATIONS: Cannot create pipelines/stages, cannot create/edit forms, cannot edit funnel pages, cannot create/edit workflows (only add/remove contacts)" +
-      "\n  - Always confirm before modifying contacts, sending messages, or changing access." +
-      "\n• Cloudflare: Manage DNS records, deploy and manage Cloudflare Workers." +
-      "\n• Task Scheduler: Create, list, and manage recurring scheduled tasks." +
-      `\n  - List tasks: \`bun run ${PROJECT_ROOT}/src/scheduler.ts list\`` +
-      `\n  - Create: \`bun run ${PROJECT_ROOT}/src/scheduler.ts create "<name>" "<schedule>" "<command>"\`` +
-      "\n• File System: You can read, write, and manage files on the user's computer." +
-      "\n• Terminal: You can run any shell command the user needs." +
-      "\n" +
-      "\nUse the right tool for the job. Always confirm before taking consequential actions (sending emails, making calls, etc.)." +
-      "\n" +
-      "\nRESPONSE PROTOCOL:" +
-      "\n" + user.name + " can send you multiple requests at once — you handle them in parallel." +
-      "\nJust do the work and deliver results. Keep responses focused and actionable." +
-      "\nWhen a task involves creating a file that " + user.name + " needs, use the /telegram-file-sender skill to send it directly." +
-      "\n" +
-      "\nIMAGE/FILE GENERATION — When generating images (/image-gen, /canvas-design) or any files:" +
-      "\n1. Generate the image(s)/file(s)" +
-      "\n2. ALWAYS send each file to " + user.name + " via /telegram-file-sender — this is HOW files reach the user" +
-      "\n3. ALWAYS include a clean text summary describing what was created" +
-      "\n" +
-      "\nCLEAN OUTPUT — " + user.name + " sees ONLY your final text response:" +
-      "\n- NEVER include file paths, tool invocation details, or internal process notes" +
-      "\n- NEVER show bash commands, script paths, or skill loading messages" +
-      "\n- NEVER describe the steps you took internally — just share the result" +
-      "\n- Write as if you're texting " + user.name + " — casual, clean, result-focused" +
-      "\n" +
-      "\nINLINE BUTTONS — Use buttons when asking for confirmation, selection, or quick input:" +
-      "\nWhen you need " + user.name + " to choose between options, confirm an action, or approve something, " +
-      "add a button tag at the end of your message:" +
-      "\n  [BUTTONS: Option A | Option B | Option C]" +
-      "\nThis renders as tappable buttons in Telegram — much faster than typing." +
-      "\nKeep labels short (1-3 words). Max 6 buttons. The tag is hidden from the user — they only see the buttons." +
-      "\nUse buttons whenever you would otherwise ask " + user.name + " to type a simple choice."
+    "\nMEMORY TAGS (auto-processed, hidden from user):" +
+      "\n[REMEMBER: fact] — durable facts (identity, business, preferences, patterns). Skip if it won't matter in 30 days." +
+      "\n[SHARE: fact] — team-visible. Only when user explicitly says to share." +
+      "\n[GOAL: text | DEADLINE: date] / [DONE: search text]" +
+      "\nNEVER remember: one-time events, calendar items, transient tasks, conversations, system details. Use calendar for events."
   );
 
-  parts.push(
-    "\nSKILLS — Specialized slash commands you can invoke:" +
-      "\n• /canvas-design — Create visual designs, posters, and art as PNG/PDF" +
-      "\n• /competitive-ads-extractor — Extract and analyze competitor ads from ad libraries" +
-      "\n• /content-research-writer — Research-backed writing with citations and iterative feedback" +
-      "\n• /docx — Create, edit, and analyze Word documents with tracked changes" +
-      "\n• /file-organizer — Intelligently organize files and folders, find duplicates, suggest structures" +
-      "\n• /ghostwriter — Transform transcriptions into complete, formatted books (DOCX + PDF)" +
-      "\n• /lead-research-assistant — Identify and research high-quality business leads" +
-      "\n• /notebooklm — Query Google NotebookLM for source-grounded, citation-backed answers" +
-      "\n• /pdf — Extract text/tables, create, merge/split, and fill PDF forms" +
-      "\n• /platform-maker — Generate complete SaaS platforms from YAML configuration" +
-      "\n• /pptx — Create, edit, and analyze PowerPoint presentations" +
-      "\n• /xlsx — Create, edit, and analyze spreadsheets with formulas and formatting" +
-      "\n• /skill-creator — Create new skills to extend your own capabilities." +
-      "\n• /telegram-file-sender — Send files as document attachments via Telegram."
+  // Compact task tags
+  if (needs.needsTaskTags || needs.tier >= 2) parts.push(
+    "\nTASK TAGS: [TASK: Agent | desc] [TASK_START: text] [TASK_DONE: text | result] [TASK_BLOCKED: text | reason] [TASK_CANCEL: text]"
   );
 
-  parts.push(
-    "\nSELF-IMPROVEMENT — You learn and evolve over time:" +
-      "\n• PATTERN DETECTION: When you notice " + user.name + " repeatedly asks you to do the same kind of task, note the pattern." +
-      "\n• SKILL CREATION: When you detect a recurring workflow or " + user.name + " asks you to create a skill, " +
-      "use the /skill-creator skill to build it." +
-      "\n• MEMORY TAGS: Continue using [REMEMBER: ...] tags for facts and context. Use [GOAL: ...] and [DONE: ...] for goal tracking." +
-      "\n• PROACTIVE SUGGESTIONS: If you see an opportunity to automate something " + user.name + " does manually, suggest creating a skill for it."
+  // Schedule tags — compact at tier 2, full syntax at tier 3
+  if (needs.needsScheduleTags) parts.push(
+    "\nSCHEDULING:" +
+      "\n[SCHEDULE: title | datetime | instructions] [SCHEDULE: ... | RECUR: rule] [SCHEDULE: ... | RECUR: rule | IF: condition]" +
+      "\n[SCHEDULE_CANCEL: title] Datetime: ISO (2026-02-21T15:00:00) or relative (+30m, +2h, +1d)" +
+      "\nRECUR: daily:HH:MM | weekly:DAY:HH:MM | weekdays:HH:MM | interval:SECONDS" +
+      "\nProactively schedule follow-ups when useful. " + user.name + " benefits from anticipatory check-ins."
   );
+
+  // Response protocol (tier 2+)
+  parts.push(
+    "\nRESPONSE RULES:" +
+      "\n• Casual, clean, result-focused. No file paths, no internal steps, no bash commands in output." +
+      "\n• Send files via /telegram-file-sender. Generated images/files MUST be sent this way." +
+      "\n• [BUTTONS: A | B | C] for quick choices (max 6, short labels). Hidden tag — user sees buttons only." +
+      "\n• Handle multiple requests in parallel."
+  );
+
+  // ── TIER 3 (full): add capabilities, skills, self-improvement ──
+  if (needs.tier === 3) {
+    parts.push(
+      "\nCAPABILITIES:" +
+        "\n• Gmail & Calendar: Read, search, draft, send emails. View, create, update events." +
+        "\n• Notion: Search, read, create, update pages and databases." +
+        "\n• Zoom: Create/update meetings. Create Zoom meeting first, then add to Calendar with join link." +
+        "\n• Web Browser (Playwright): Navigate URLs, screenshots, fill forms, click buttons." +
+        "\n• Web Search: Built-in. Use for current events and lookups." +
+        "\n• Apple Notes/Contacts: Via osascript. Always look up contacts before calling/texting." +
+        "\n• Phone/SMS (Twilio):" +
+        (user.phone ? ` ${user.name}'s phone: ${user.phone}.` : "") +
+        `\n  SMS: bun run ${PROJECT_ROOT}/src/twilio.ts sms "<phone>" "msg"` +
+        `\n  Call: bun run ${PROJECT_ROOT}/src/twilio.ts call "<phone>" "context"` +
+        `\n  Third-party: bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Name" "subject"` +
+        "\n• Square: Orders, payments, catalog. Locations: Open Source Mind ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
+        "\n  Reports: always BOTH locations + combined total. Writes: ask which location first." +
+        "\n• GHL (CRM): Contacts, calendars, opportunities, conversations, templates, blog, social, invoices." +
+        (ghlLocationId ? ` Location: ${ghlLocationId}.` : "") +
+        " Cannot create pipelines/forms/funnels/workflows. Confirm before modifying." +
+        "\n• Cloudflare: DNS, Workers. Task Scheduler: bun run " + PROJECT_ROOT + "/src/scheduler.ts list|create" +
+        "\n• File System & Terminal: Full access." +
+        "\nAlways confirm before consequential actions (sending emails, calls, modifying contacts)."
+    );
+
+    parts.push(
+      "\nSKILLS:" +
+        "\n/ai-video-creator, /book-formatter, /canvas-design, /competitive-ads-extractor," +
+        "\n/content-architect, /content-research-writer, /customer-support, /docx," +
+        "\n/email-marketing, /file-organizer, /ghostwriter, /image-gen," +
+        "\n/lead-research-assistant, /md-to-docx, /meta-ads-manager, /notebooklm," +
+        "\n/pdf, /platform-maker, /pptx, /reviews-testimonials," +
+        "\n/social-media-manager, /voice-extractor, /xlsx," +
+        "\n/skill-creator, /telegram-file-sender"
+    );
+
+    parts.push(
+      "\nSELF-IMPROVEMENT:" +
+        "\n• Detect repeating patterns → suggest or create skills via /skill-creator." +
+        "\n• Use [REMEMBER:] for durable facts, [GOAL:]/[DONE:] for tracking." +
+        "\n• Suggest automating manual workflows."
+    );
+  }
 
   if (user.role === "admin" && needs.needsSelfMod) {
     parts.push(
@@ -1424,7 +1386,7 @@ function buildPrompt(
   parts.push(`\nUser: ${userMessage}`);
 
   const prompt = parts.join("\n");
-  console.log(`[prompt] ${prompt.length} chars (~${Math.round(prompt.length / 4)} tokens)`);
+  console.log(`[prompt] T${needs.tier} ${prompt.length} chars (~${Math.round(prompt.length / 4)} tokens)`);
   return prompt;
 }
 
@@ -1552,6 +1514,72 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
 /**
  * Send a text response to any channel. Uses Telegram HTML for Telegram, plain text for others.
  */
+/**
+ * Split text into chunks that respect code blocks, tables, and list boundaries.
+ * Avoids splitting inside ``` blocks or mid-table.
+ */
+function smartSplit(text: string, maxLength: number): string[] {
+  if (text.length <= maxLength) return [text];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLength) { chunks.push(remaining); break; }
+
+    // Find a safe split point within maxLength
+    const window = remaining.substring(0, maxLength);
+
+    // Don't split inside a code block — find the last complete code block boundary
+    const codeBlockPositions: number[] = [];
+    let searchFrom = 0;
+    while (true) {
+      const idx = window.indexOf("```", searchFrom);
+      if (idx === -1) break;
+      codeBlockPositions.push(idx);
+      searchFrom = idx + 3;
+    }
+
+    // If odd number of ``` markers, we're inside a code block — split before the last opening ```
+    const insideCodeBlock = codeBlockPositions.length % 2 !== 0;
+    let splitIndex: number;
+
+    if (insideCodeBlock && codeBlockPositions.length > 0) {
+      // Split before the unclosed code block
+      splitIndex = codeBlockPositions[codeBlockPositions.length - 1];
+      // Back up to the previous newline for a clean break
+      const nlBefore = remaining.lastIndexOf("\n", splitIndex);
+      if (nlBefore > maxLength / 4) splitIndex = nlBefore;
+    } else {
+      // Split at paragraph boundary, then line boundary
+      splitIndex = window.lastIndexOf("\n\n");
+      // Avoid splitting inside a table (lines starting with |)
+      if (splitIndex > 0) {
+        const afterSplit = remaining.substring(splitIndex + 2, splitIndex + 50);
+        if (afterSplit.trimStart().startsWith("|")) {
+          // Inside a table — look for the table start and split before it
+          const tableStart = remaining.lastIndexOf("\n\n", splitIndex - 1);
+          if (tableStart > maxLength / 4) splitIndex = tableStart;
+        }
+      }
+      if (splitIndex === -1 || splitIndex < maxLength / 4) {
+        splitIndex = window.lastIndexOf("\n");
+      }
+      if (splitIndex === -1 || splitIndex < maxLength / 4) {
+        splitIndex = window.lastIndexOf(" ");
+      }
+      if (splitIndex === -1 || splitIndex < maxLength / 4) {
+        splitIndex = maxLength;
+      }
+    }
+
+    chunks.push(remaining.substring(0, splitIndex));
+    remaining = remaining.substring(splitIndex).trim();
+  }
+
+  return chunks;
+}
+
 async function sendResponse(ctx: Context | PlatformContext | any, response: string): Promise<void> {
   const channelType = (ctx as any).channelType || "telegram";
 
@@ -1570,17 +1598,7 @@ async function sendResponse(ctx: Context | PlatformContext | any, response: stri
       return;
     }
 
-    const chunks: string[] = [];
-    let remaining = html;
-    while (remaining.length > 0) {
-      if (remaining.length <= MAX_LENGTH) { chunks.push(remaining); break; }
-      let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
-      if (splitIndex === -1) splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
-      if (splitIndex === -1) splitIndex = remaining.lastIndexOf(" ", MAX_LENGTH);
-      if (splitIndex === -1) splitIndex = MAX_LENGTH;
-      chunks.push(remaining.substring(0, splitIndex));
-      remaining = remaining.substring(splitIndex).trim();
-    }
+    const chunks = smartSplit(html, MAX_LENGTH);
     for (let i = 0; i < chunks.length; i++) {
       const opts = i === 0 ? { parse_mode: "HTML" as const, ...replyOpts } : { parse_mode: "HTML" as const };
       await ctx.reply(chunks[i], opts).catch(async () => { await ctx.reply(chunks[i]); });
@@ -1638,16 +1656,7 @@ async function sendResponseWithVoice(
           });
         } else {
           // Split and put buttons on last chunk
-          const chunks: string[] = [];
-          let remaining = html;
-          while (remaining.length > 0) {
-            if (remaining.length <= MAX_LENGTH) { chunks.push(remaining); break; }
-            let splitIndex = remaining.lastIndexOf("\n\n", MAX_LENGTH);
-            if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) splitIndex = remaining.lastIndexOf("\n", MAX_LENGTH);
-            if (splitIndex === -1 || splitIndex < MAX_LENGTH / 2) splitIndex = MAX_LENGTH;
-            chunks.push(remaining.substring(0, splitIndex));
-            remaining = remaining.substring(splitIndex).trim();
-          }
+          const chunks = smartSplit(html, MAX_LENGTH);
           for (let i = 0; i < chunks.length; i++) {
             const baseOpts = i === 0 ? replyOpts : {};
             const isLast = i === chunks.length - 1;
@@ -1815,6 +1824,26 @@ for (const [feature, active] of configStatus) {
 }
 if (!supabase) {
   console.warn("WARNING: No SUPABASE_URL — memory, tasks, patterns, and cost tracking are all disabled.");
+}
+
+// Sync config/profile.md to Supabase (so file edits are reflected in the bot)
+if (supabase) {
+  try {
+    const profilePath = join(PROJECT_ROOT, "config", "profile.md");
+    const profileText = await readFile(profilePath, "utf-8");
+    if (profileText.trim()) {
+      const { data: admins } = await supabase
+        .from("users")
+        .select("id, profile_text")
+        .eq("role", "admin");
+      for (const admin of admins || []) {
+        if (admin.profile_text !== profileText) {
+          await supabase.from("users").update({ profile_text: profileText }).eq("id", admin.id);
+          console.log(`[profile-sync] Updated profile for admin ${admin.id}`);
+        }
+      }
+    }
+  } catch {}
 }
 
 // Start Mini App approval polling (checks Supabase for approvals made via Mini App)

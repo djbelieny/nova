@@ -47,7 +47,7 @@ import {
   getScheduleContext,
 } from "./memory.ts";
 
-type ModelTier = "sonnet" | "sonnet" | "opus";
+type ModelTier = "haiku" | "sonnet" | "opus";
 
 // Injected dependencies from relay.ts
 let _callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string) => Promise<string>;
@@ -685,10 +685,10 @@ const AUTO_APPROVE_PHRASES = [
 ];
 
 function detectAutoApprove(text: string): boolean {
-  // Only match phrases at the start of the message (first 60 chars) to avoid
-  // false positives from embedded/quoted text
-  const lower = text.toLowerCase().substring(0, 60);
-  return AUTO_APPROVE_PHRASES.some((p) => lower.includes(p));
+  // Only match if the phrase appears at the very start of the message
+  // (after trimming whitespace) to prevent false positives from quoted/embedded text
+  const lower = text.toLowerCase().trim();
+  return AUTO_APPROVE_PHRASES.some((p) => lower.startsWith(p));
 }
 
 // ============================================================
