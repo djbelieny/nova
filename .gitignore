@@ -27,6 +27,14 @@ workspace/
 agent-team/
 output/
 
+# Generated reports / docs (from Claude sessions)
+GHL_*.md
+GHL_*.txt
+NOTION_*.md
+
+# Binary assets (pitch decks, presentations)
+*.pptx
+
 # Wrangler
 .wrangler/
 
