@@ -19,8 +19,10 @@ import {
   type WASocket,
   type BaileysEventMap,
 } from "@whiskeysockets/baileys";
-import { mkdir } from "fs/promises";
+import QRCode from "qrcode";
+import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
+import { tmpdir } from "os";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -42,9 +44,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private stopping = false;
+  private onQR: ((qrImagePath: string) => void) | null = null;
 
-  constructor(relayDir: string) {
+  constructor(relayDir: string, opts?: { onQR?: (qrImagePath: string) => void }) {
     this.authDir = join(relayDir, AUTH_DIR_NAME);
+    this.onQR = opts?.onQR || null;
   }
 
   onMessage(handler: MessageHandler): void {
@@ -65,18 +69,35 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     this.sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
     });
 
     // Save credentials on update
     this.sock.ev.on("creds.update", saveCreds);
 
     // Connection updates (QR code, reconnection)
-    this.sock.ev.on("connection.update", (update) => {
+    this.sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log("[whatsapp] Scan the QR code above with your WhatsApp app");
+        console.log("[whatsapp] QR code received — generating image...");
+        try {
+          // Generate QR image and save to temp file
+          const qrPath = join(tmpdir(), `nova-whatsapp-qr-${Date.now()}.png`);
+          await QRCode.toFile(qrPath, qr, { width: 512, margin: 2 });
+          console.log(`[whatsapp] QR code saved to: ${qrPath}`);
+
+          // Also log text version to stdout for terminal access
+          const qrText = await QRCode.toString(qr, { type: "terminal", small: true });
+          console.log(qrText);
+          console.log("[whatsapp] Scan the QR code with your WhatsApp app (Settings → Linked Devices → Link a Device)");
+
+          // Send to Telegram if callback provided
+          if (this.onQR) {
+            this.onQR(qrPath);
+          }
+        } catch (err) {
+          console.error("[whatsapp] Failed to generate QR code:", err);
+        }
       }
 
       if (connection === "close") {

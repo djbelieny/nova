@@ -41,7 +41,19 @@ export class ChannelRegistry {
 
     // WhatsApp
     if (process.env.WHATSAPP_ENABLED === "true") {
-      const wa = new WhatsAppAdapter(relayDir);
+      const wa = new WhatsAppAdapter(relayDir, {
+        onQR: (qrImagePath) => {
+          // Send QR code to Telegram so user can scan it
+          if (this.telegramAdapter && process.env.TELEGRAM_USER_ID) {
+            const chatId = process.env.TELEGRAM_USER_ID;
+            this.telegramAdapter.sendFile(
+              chatId,
+              qrImagePath,
+              "Scan this QR code with WhatsApp to link your device:\nSettings → Linked Devices → Link a Device",
+            ).catch((err: any) => console.error("[channels] Failed to send WA QR to Telegram:", err));
+          }
+        },
+      });
       this.adapters.push(wa);
       console.log("[channels] WhatsApp adapter initialized");
     }
