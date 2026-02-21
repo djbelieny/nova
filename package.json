@@ -20,7 +20,9 @@
     "miniapp:dev": "bun run --watch src/miniapp.ts"
   },
   "dependencies": {
+    "@slack/bolt": "^4.6.0",
     "@supabase/supabase-js": "^2.45.0",
+    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "docx": "^9.5.3",
     "dotenv": "^17.3.1",
     "grammy": "^1.21.1",

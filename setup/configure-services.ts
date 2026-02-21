@@ -1,9 +1,9 @@
 /**
  * Nova — Configure Services (Windows/Linux)
  *
- * Sets up PM2 for process management on non-macOS systems.
+ * Sets up PM2 or Docker for process management on non-macOS systems.
  *
- * Usage: bun run setup/configure-services.ts [--service relay|checkin|briefing|all]
+ * Usage: bun run setup/configure-services.ts [--service relay|checkin|briefing|all] [--runtime pm2|docker]
  */
 
 import { existsSync, mkdirSync } from "fs";
@@ -100,17 +100,92 @@ async function installService(config: ServiceDef): Promise<boolean> {
   return false;
 }
 
+async function checkDocker(): Promise<boolean> {
+  const docker = await run(["docker", "--version"]);
+  if (!docker.ok) {
+    console.log(`  ${FAIL} Docker not found`);
+    console.log(`      ${dim("Install: https://docs.docker.com/get-docker/")}`);
+    return false;
+  }
+  console.log(`  ${PASS} Docker: ${docker.stdout.split(",")[0]}`);
+
+  const compose = await run(["docker", "compose", "version"]);
+  if (!compose.ok) {
+    console.log(`  ${FAIL} Docker Compose not found`);
+    console.log(`      ${dim("Install: https://docs.docker.com/compose/install/")}`);
+    return false;
+  }
+  console.log(`  ${PASS} Compose: ${compose.stdout}`);
+  return true;
+}
+
+async function installDocker(): Promise<boolean> {
+  // Check for docker-compose.yml
+  const composeFile = join(PROJECT_ROOT, "docker-compose.yml");
+  if (!existsSync(composeFile)) {
+    console.log(`  ${FAIL} docker-compose.yml not found in project root`);
+    return false;
+  }
+
+  // Check for .env
+  const envFile = join(PROJECT_ROOT, ".env");
+  if (!existsSync(envFile)) {
+    console.log(`  ${FAIL} .env not found — run ${dim("bun run setup")} first`);
+    return false;
+  }
+
+  console.log("");
+  console.log(`  Building and starting containers...`);
+
+  const build = await run(["docker", "compose", "up", "--build", "-d"]);
+  if (!build.ok) {
+    console.log(`  ${FAIL} Docker build failed: ${build.stderr}`);
+    return false;
+  }
+  console.log(`  ${PASS} Nova container started`);
+  return true;
+}
+
 async function main() {
   if (process.platform === "darwin") {
     console.log(`\n  You're on macOS. Use launchd instead:`);
     console.log(`      ${dim("bun run setup/configure-launchd.ts")}`);
-    process.exit(0);
+    console.log(`      ${dim("Or use --runtime docker for Docker deployment")}`);
   }
 
-  // Parse --service flag
+  // Parse flags
   const args = process.argv.slice(2);
   const serviceIdx = args.indexOf("--service");
   const serviceArg = serviceIdx !== -1 ? args[serviceIdx + 1] : "relay";
+  const runtimeIdx = args.indexOf("--runtime");
+  const runtime = runtimeIdx !== -1 ? args[runtimeIdx + 1] : "pm2";
+
+  // --- Docker runtime ---
+  if (runtime === "docker") {
+    console.log("");
+    console.log(bold("  Configure Services (Docker)"));
+    console.log("");
+
+    const dockerOk = await checkDocker();
+    if (!dockerOk) process.exit(1);
+
+    const ok = await installDocker();
+    if (!ok) process.exit(1);
+
+    console.log("");
+    console.log(`  ${dim("Check status:")}  docker compose ps`);
+    console.log(`  ${dim("View logs:")}     docker compose logs -f`);
+    console.log(`  ${dim("Stop:")}          docker compose down`);
+    console.log(`  ${dim("Restart:")}       docker compose restart`);
+    console.log("");
+    return;
+  }
+
+  // --- PM2 runtime (default) ---
+  if (process.platform === "darwin" && runtime !== "pm2") {
+    process.exit(0);
+  }
+
   const toInstall = serviceArg === "all" ? Object.keys(SERVICES) : [serviceArg];
 
   console.log("");
