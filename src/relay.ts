@@ -666,35 +666,6 @@ function runTask(
     ctx.replyWithChatAction("typing").catch(() => {});
   }, 4000);
 
-  // Edit-in-place status indicator
-  let statusMsgId: number | string | null = null;
-  const chatId = ctx.chat?.id;
-
-  // Send "Working on it..." after 8 seconds, edit to "taking longer" after 60s
-  const statusTimer = setTimeout(async () => {
-    if (!activeTasks.has(taskId) || !chatId) return;
-    try {
-      const queueLen = claudeQueue.length;
-      const otherTasks = activeTasks.size - 1;
-      let msg = "Working on it...";
-      if (queueLen > 0) {
-        msg = `Working on it... (${queueLen} queued ahead)`;
-      } else if (otherTasks > 0) {
-        msg = `Working on it... (${otherTasks + 1} tasks in progress)`;
-      }
-      const sent = await ctx.reply(msg);
-      statusMsgId = sent.message_id;
-      task.notified = true;
-    } catch {}
-  }, 8_000);
-
-  const longerTimer = setTimeout(async () => {
-    if (!activeTasks.has(taskId) || !chatId || !statusMsgId) return;
-    try {
-      await ctx.api.editMessageText(chatId, statusMsgId, "Taking longer than usual, still working on it...");
-    } catch {}
-  }, 60_000);
-
   // Fire and forget — run the task asynchronously
   (async () => {
     try {
@@ -717,11 +688,6 @@ function runTask(
       const followUpMatch = response.match(/<follow_up>([\s\S]*?)<\/follow_up>/i);
       if (followUpMatch) {
         appendToHeartbeat(followUpMatch[1].trim()).catch(() => {});
-      }
-
-      // Delete the status message before sending the real response
-      if (statusMsgId && chatId) {
-        try { await ctx.api.deleteMessage(chatId, statusMsgId); } catch {}
       }
 
       const userId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
@@ -749,16 +715,8 @@ function runTask(
         msg = `⚠️ Something went wrong.\n\n_Error: ${errMsg.substring(0, 300)}_`;
       }
 
-      if (statusMsgId && chatId) {
-        try { await ctx.api.editMessageText(chatId, statusMsgId, msg, { parse_mode: "Markdown" }); } catch {
-          await ctx.reply(msg, { parse_mode: "Markdown" }).catch(() => {});
-        }
-      } else {
-        await ctx.reply(msg, { parse_mode: "Markdown" }).catch(() => {});
-      }
+      await ctx.reply(msg, { parse_mode: "Markdown" }).catch(() => {});
     } finally {
-      clearTimeout(statusTimer);
-      clearTimeout(longerTimer);
       clearInterval(typingInterval);
       activeTasks.delete(taskId);
     }
