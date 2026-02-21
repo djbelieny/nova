@@ -25,6 +25,13 @@ supabase/.temp/
 # Generated output / artifacts
 workspace/
 agent-team/
+output/
+
+# Wrangler
+.wrangler/
+
+# npm lockfile (project uses bun)
+package-lock.json
 
 # OS
 .DS_Store
