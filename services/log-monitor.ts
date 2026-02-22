@@ -7,7 +7,7 @@
  *
  * Runs ~3x/day via scheduler (every 8 hours).
  *
- * Run: bun run examples/log-monitor.ts
+ * Run: bun run services/log-monitor.ts
  */
 
 import { spawn } from "bun";
@@ -376,7 +376,7 @@ main();
 //
 // Run every 8 hours (~3x/day):
 //
-//   bun run src/scheduler.ts create "log-monitor" "interval:28800" "bun run examples/log-monitor.ts"
+//   bun run src/scheduler.ts create "log-monitor" "interval:28800" "bun run services/log-monitor.ts"
 //
 // Verify:
 //   bun run src/scheduler.ts list

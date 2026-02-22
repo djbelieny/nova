@@ -139,7 +139,7 @@ const SERVICES: Record<string, ServiceConfig> = {
   },
   checkin: {
     label: "com.nova.smart-checkin",
-    script: "examples/smart-checkin.ts",
+    script: "services/smart-checkin.ts",
     keepAlive: false,
     calendarIntervals: [
       { Hour: 9, Minute: 0 },
@@ -153,21 +153,21 @@ const SERVICES: Record<string, ServiceConfig> = {
   },
   briefing: {
     label: "com.nova.morning-briefing",
-    script: "examples/morning-briefing.ts",
+    script: "services/morning-briefing.ts",
     keepAlive: false,
     calendarIntervals: [{ Hour: 9, Minute: 0 }],
     description: "Morning briefing (daily at 9am)",
   },
   "memory-review": {
     label: "com.nova.memory-review",
-    script: "examples/memory-review.ts",
+    script: "services/memory-review.ts",
     keepAlive: false,
     calendarIntervals: [{ Hour: 3, Minute: 0 }],
     description: "Memory cleanup (daily at 3am)",
   },
   dispatcher: {
     label: "com.nova.task-dispatcher",
-    script: "examples/task-dispatcher.ts",
+    script: "services/task-dispatcher.ts",
     keepAlive: false,
     startInterval: 60,
     description: "Scheduled task dispatcher (runs every 60s)",

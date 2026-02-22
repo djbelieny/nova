@@ -5,7 +5,7 @@
  * Covers: yesterday's spend, last 7 days overview, active campaign breakdowns.
  *
  * Schedule: daily at 8:30 AM ET (after morning briefing)
- * Run manually: bun run examples/meta-ads-report.ts
+ * Run manually: bun run services/meta-ads-report.ts
  */
 
 import { dirname, join } from "path";

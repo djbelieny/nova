@@ -175,10 +175,10 @@ Uses PM2 for process management.
 Two features that turn a chatbot into an assistant.
 
 ### Smart Check-ins
-`examples/smart-checkin.ts` — runs on a schedule, gathers context, asks Claude if it should reach out. If yes, sends a brief message. If no, stays silent.
+`services/smart-checkin.ts` — runs on a schedule, gathers context, asks Claude if it should reach out. If yes, sends a brief message. If no, stays silent.
 
 ### Morning Briefing
-`examples/morning-briefing.ts` — sends a daily summary. Pattern file with placeholder data fetchers.
+`services/morning-briefing.ts` — sends a daily summary. Pattern file with placeholder data fetchers.
 
 **macOS — schedule both:**
 ```

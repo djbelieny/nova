@@ -121,7 +121,7 @@ export async function getMemoryContext(): Promise<string> {
 If you want cloud persistence and semantic search, use Supabase:
 
 1. Create a Supabase project at https://supabase.com
-2. Run the schema from examples/supabase-schema.sql
+2. Run the schema from services/supabase-schema.sql
 3. Set SUPABASE_URL and SUPABASE_ANON_KEY in .env
 
 Example Supabase implementation:

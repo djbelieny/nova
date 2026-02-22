@@ -18,7 +18,7 @@
  *   "hourly:MM"            — every hour at :MM
  *
  * Examples:
- *   bun run src/scheduler.ts create "weekly-metrics" "weekly:1:09:00" "bun run examples/smart-checkin.ts"
+ *   bun run src/scheduler.ts create "weekly-metrics" "weekly:1:09:00" "bun run services/smart-checkin.ts"
  *   bun run src/scheduler.ts create "check-email" "interval:3600" "bun run src/check-email.ts"
  *   bun run src/scheduler.ts list
  *   bun run src/scheduler.ts delete "weekly-metrics"

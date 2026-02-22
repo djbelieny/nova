@@ -7,7 +7,7 @@
  *
  * Runs once daily (e.g., 3am) via scheduler or launchd.
  *
- * Run: bun run examples/memory-review.ts
+ * Run: bun run services/memory-review.ts
  */
 
 import "dotenv/config";
@@ -293,7 +293,7 @@ main();
 // Run once daily at 3am:
 //
 // CRON (Linux):
-//   0 3 * * * cd /path/to/nova && bun run examples/memory-review.ts
+//   0 3 * * * cd /path/to/nova && bun run services/memory-review.ts
 //
 // LAUNCHD (macOS):
 //   bun run setup:launchd -- --service memory-review

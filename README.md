@@ -90,7 +90,7 @@ src/
   relay.ts                   # Core relay daemon
   transcribe.ts              # Voice transcription (Groq / whisper.cpp)
   memory.ts                  # Persistent memory (facts, goals, semantic search)
-examples/
+services/
   smart-checkin.ts           # Proactive check-ins
   morning-briefing.ts        # Daily briefing
   memory.ts                  # Memory persistence patterns

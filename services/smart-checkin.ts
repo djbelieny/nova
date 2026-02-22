@@ -10,7 +10,7 @@
  * Run periodically (e.g., every 30 minutes) and Claude
  * intelligently decides whether to message each user.
  *
- * Run: bun run examples/smart-checkin.ts
+ * Run: bun run services/smart-checkin.ts
  */
 
 import { spawn } from "bun";
@@ -327,7 +327,7 @@ main();
 // Run every 30 minutes:
 //
 // CRON (Linux):
-//   0,30 * * * * cd /path/to/relay && bun run examples/smart-checkin.ts
+//   0,30 * * * * cd /path/to/relay && bun run services/smart-checkin.ts
 //
 // LAUNCHD (macOS):
 //   See ~/Library/LaunchAgents/com.nova.smart-checkin.plist

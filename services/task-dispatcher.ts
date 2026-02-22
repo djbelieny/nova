@@ -5,7 +5,7 @@
  * Each task gets its own Claude subprocess with the stored instructions + user context.
  * Results are sent to the user via Telegram Bot API.
  *
- * Run: bun run examples/task-dispatcher.ts
+ * Run: bun run services/task-dispatcher.ts
  * Schedule: every 60 seconds via launchd (StartInterval)
  */
 

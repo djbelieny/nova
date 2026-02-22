@@ -13,7 +13,7 @@
  * - Linux: cron or systemd timer
  * - Windows: Task Scheduler
  *
- * Run manually: bun run examples/morning-briefing.ts
+ * Run manually: bun run services/morning-briefing.ts
  */
 
 import { spawn } from "bun";
@@ -322,7 +322,7 @@ Runs hourly; the script itself checks each user's timezone and briefing_hour.
     <array>
         <string>/Users/YOUR_USERNAME/.bun/bin/bun</string>
         <string>run</string>
-        <string>examples/morning-briefing.ts</string>
+        <string>services/morning-briefing.ts</string>
     </array>
     <key>WorkingDirectory</key>
     <string>/path/to/nova</string>

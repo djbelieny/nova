@@ -48,13 +48,13 @@ const SERVICES: Record<string, ServiceDef> = {
   },
   checkin: {
     name: "nova-smart-checkin",
-    script: "examples/smart-checkin.ts",
+    script: "services/smart-checkin.ts",
     cron: "*/30 9-18 * * *",
     description: "Smart check-ins (every 30 min, 9am-6pm)",
   },
   briefing: {
     name: "nova-morning-briefing",
-    script: "examples/morning-briefing.ts",
+    script: "services/morning-briefing.ts",
     cron: "0 9 * * *",
     description: "Morning briefing (daily at 9am)",
   },
