@@ -21,6 +21,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { stat } from "fs/promises";
 import type { ExecutionPlan } from "./patterns.ts";
 import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents } from "./agent-router.ts";
 
@@ -94,6 +95,64 @@ export function extractArtifacts(text: string, sourceIndex: number): Artifact[] 
  */
 export function collectArtifacts(results: SubtaskResult[]): Artifact[] {
   return results.flatMap((r) => r.artifacts);
+}
+
+/**
+ * Verify artifacts exist on disk and register them in the task_artifacts table.
+ * Returns the number of verified artifacts and appends warnings for missing ones.
+ */
+export async function verifyAndRegisterArtifacts(
+  taskId: string | null,
+  userId: string,
+  artifacts: Artifact[],
+  supabase: SupabaseClient | null,
+): Promise<{ verified: number; missing: string[] }> {
+  const missing: string[] = [];
+  let verified = 0;
+
+  for (const artifact of artifacts) {
+    // Only verify file-based artifacts (not copy/data/audience/url)
+    const isFileBased = ["image", "file", "document", "project", "code"].includes(artifact.type);
+    let fileExists = false;
+    let fileSize: number | null = null;
+
+    if (isFileBased && artifact.value) {
+      try {
+        const fileStat = await stat(artifact.value);
+        fileExists = true;
+        fileSize = fileStat.size;
+        verified++;
+      } catch {
+        missing.push(artifact.value);
+      }
+    } else {
+      // Non-file artifacts (copy, data, url) are always "verified"
+      fileExists = true;
+      verified++;
+    }
+
+    // Register in DB
+    if (supabase) {
+      try {
+        await supabase.from("task_artifacts").insert({
+          task_id: taskId,
+          user_id: userId,
+          artifact_type: artifact.type,
+          file_path: isFileBased ? artifact.value : null,
+          file_name: isFileBased ? artifact.value.split("/").pop() : null,
+          file_size: fileSize,
+          description: !isFileBased ? artifact.value : null,
+          verified: fileExists,
+          delivered: false,
+          metadata: { source_subtask: artifact.source },
+        });
+      } catch {
+        // Table may not exist yet — non-critical
+      }
+    }
+  }
+
+  return { verified, missing };
 }
 
 /**
@@ -547,6 +606,21 @@ export async function executePhase(
             }
           }
 
+          // Verify file artifacts exist on disk
+          if (artifacts.length > 0) {
+            const verification = await verifyAndRegisterArtifacts(
+              subtaskIds[idx],
+              user.id,
+              artifacts,
+              supabase,
+            );
+            if (verification.missing.length > 0) {
+              const warning = `\nWARNING: ${verification.missing.length} file(s) not found on disk: ${verification.missing.join(", ")}`;
+              result += warning;
+              console.warn(`[planner] Subtask ${idx}: ${warning.trim()}`);
+            }
+          }
+
           if (supabase && subtaskIds[idx]) {
             await supabase
               .from("agent_tasks")
@@ -665,7 +739,11 @@ Instructions:
 - Keep it concise and actionable.
 - Do NOT mention "agents" or "subtasks" — present it as one unified answer.
 - Preserve any actionable items, numbers, and specific recommendations.
-- Use Telegram-friendly formatting (bold for headers, bullet points for lists).`;
+- Use Telegram-friendly formatting (bold for headers, bullet points for lists).
+- If any subtask failed or produced no verified output, clearly state what did NOT work.
+- Do NOT present partial work as fully complete. Be explicit about failures.
+- Never list files that weren't verified to exist on disk.
+- If a WARNING about missing files appears in any result, surface it to the user.`;
 
   return _callClaude(prompt, "sonnet");
 }

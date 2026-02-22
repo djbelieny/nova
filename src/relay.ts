@@ -55,6 +55,14 @@ const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova"
 const TEMP_DIR = join(RELAY_DIR, "temp");
 const UPLOADS_DIR = join(RELAY_DIR, "uploads");
 
+// Persistent workspace directories
+const WORKSPACE_DIR = join(RELAY_DIR, "workspace");
+const WORKSPACE_PROJECTS = join(WORKSPACE_DIR, "projects");
+const WORKSPACE_DOCUMENTS = join(WORKSPACE_DIR, "documents");
+const WORKSPACE_IMAGES = join(WORKSPACE_DIR, "images");
+const WORKSPACE_MEDIA = join(WORKSPACE_DIR, "media");
+const WORKSPACE_TASKS = join(WORKSPACE_DIR, ".tasks");
+
 // ============================================================
 // LOCK FILE (prevent multiple instances)
 // ============================================================
@@ -144,6 +152,13 @@ if (!hasAnyChannel) {
 // Create directories
 await mkdir(TEMP_DIR, { recursive: true });
 await mkdir(UPLOADS_DIR, { recursive: true });
+
+// Create persistent workspace directories
+await mkdir(WORKSPACE_PROJECTS, { recursive: true });
+await mkdir(WORKSPACE_DOCUMENTS, { recursive: true });
+await mkdir(WORKSPACE_IMAGES, { recursive: true });
+await mkdir(WORKSPACE_MEDIA, { recursive: true });
+await mkdir(WORKSPACE_TASKS, { recursive: true });
 
 // ============================================================
 // STARTUP CONFIG VALIDATION
@@ -1229,7 +1244,19 @@ function buildPrompt(
       "\n• Casual, clean, result-focused. No file paths, no internal steps, no bash commands in output." +
       "\n• Send files via /telegram-file-sender. Generated images/files MUST be sent this way." +
       "\n• [BUTTONS: A | B | C] for quick choices (max 6, short labels). Hidden tag — user sees buttons only." +
-      "\n• Handle multiple requests in parallel."
+      "\n• Handle multiple requests in parallel." +
+      "\n" +
+      "\nHONESTY PROTOCOL:" +
+      "\n• NEVER report work as complete unless you verified output exists (check files with ls/stat)." +
+      "\n• If a tool call fails, tell the user immediately — do not pretend it succeeded." +
+      "\n• If a task is partially complete, say exactly what succeeded and what failed." +
+      "\n• When building projects: run ls on the output directory before saying \"it's ready.\"" +
+      "\n• NEVER fabricate file paths, line counts, or build results." +
+      "\n" +
+      "\nPERMISSIONS:" +
+      "\n• If you encounter EACCES/EPERM, ask: \"I need permission to [action]. Can you grant access or suggest another path?\"" +
+      "\n• Before creating directories outside the workspace, tell the user where and ask for confirmation." +
+      "\n• Never silently skip steps due to permission errors."
   );
 
   // ── TIER 3 (full): add capabilities, skills, self-improvement ──

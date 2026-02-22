@@ -20,8 +20,8 @@
 
 import { type Context, InlineKeyboard } from "grammy";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { mkdir, readdir, rm } from "fs/promises";
-import { join } from "path";
+import { mkdir, readdir, rename, stat } from "fs/promises";
+import { join, extname } from "path";
 import type { ExecutionPlan } from "./patterns.ts";
 import { findPattern, recordExecution } from "./patterns.ts";
 import {
@@ -327,7 +327,7 @@ export async function handleApproval(
     // Deliver workspace files before text response
     const approvalChatId = ctx.chat?.id;
     if (approvalChatId && pending.workspaceDir) {
-      const fileCount = await deliverWorkspaceFiles(approvalChatId, pending.workspaceDir);
+      const fileCount = await deliverWorkspaceFiles(approvalChatId, pending.workspaceDir, pending.parentTaskId, pending.user.id, pending.supabase);
       if (fileCount > 0) {
         console.log(`[orchestrator] Delivered ${fileCount} file(s) from workspace (post-approval)`);
       }
@@ -992,17 +992,39 @@ function routeSimple(
 
 async function createWorkspace(userId: string, taskId?: string): Promise<string> {
   const id = taskId || crypto.randomUUID();
-  const workspaceDir = join(_relayDir, "workspaces", userId, id);
+  const workspaceDir = join(_relayDir, "workspace", ".tasks", id);
   await mkdir(workspaceDir, { recursive: true });
-  console.log(`[orchestrator] Workspace created: ${workspaceDir} (user=${userId})`);
+  console.log(`[orchestrator] Workspace created: ${workspaceDir} (task=${id})`);
   return workspaceDir;
 }
 
 /**
- * Scan workspace for files and send each to Telegram, then schedule cleanup.
- * Each workspace is scoped to user+task, so concurrent tasks never cross-deliver.
+ * Determine the persistent workspace subdirectory for a file based on its extension.
  */
-async function deliverWorkspaceFiles(chatId: number | string, workspaceDir: string): Promise<number> {
+function classifyFileDestination(fileName: string): { dir: string; type: string } {
+  const ext = extname(fileName).toLowerCase();
+  const imageExts = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"]);
+  const docExts = new Set([".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".csv", ".txt", ".md", ".rtf"]);
+  const mediaExts = new Set([".mp4", ".mp3", ".wav", ".ogg", ".webm", ".mov", ".avi", ".m4a"]);
+
+  if (imageExts.has(ext)) return { dir: "images", type: "image" };
+  if (docExts.has(ext)) return { dir: "documents", type: "document" };
+  if (mediaExts.has(ext)) return { dir: "media", type: "media" };
+  return { dir: "documents", type: "file" };
+}
+
+/**
+ * Move files from the task staging directory to the persistent workspace,
+ * register them in the artifact DB, and send each to the user.
+ * Never auto-deletes — staging dir is kept on failure for inspection.
+ */
+async function deliverWorkspaceFiles(
+  chatId: number | string,
+  workspaceDir: string,
+  taskId?: string,
+  userId?: string,
+  supabase?: SupabaseClient | null,
+): Promise<number> {
   let delivered = 0;
   try {
     const entries = await readdir(workspaceDir, { withFileTypes: true });
@@ -1011,20 +1033,52 @@ async function deliverWorkspaceFiles(chatId: number | string, workspaceDir: stri
 
     console.log(`[orchestrator] Delivering ${files.length} file(s) from ${workspaceDir} → chat ${chatId}`);
     for (const entry of files) {
-      const filePath = join(workspaceDir, entry.name);
-      await _sendTelegramFile(chatId, filePath, entry.name);
+      const srcPath = join(workspaceDir, entry.name);
+
+      // Determine persistent destination
+      const { dir, type } = classifyFileDestination(entry.name);
+      const destDir = join(_relayDir, "workspace", dir);
+      await mkdir(destDir, { recursive: true });
+      const destPath = join(destDir, entry.name);
+
+      // Send to user first
+      await _sendTelegramFile(chatId, srcPath, entry.name);
       delivered++;
+
+      // Move to persistent location
+      try {
+        await rename(srcPath, destPath);
+      } catch {
+        // rename fails across filesystems — fall back to copy+keep
+        console.warn(`[orchestrator] Could not move ${entry.name} to ${destDir}, keeping in staging`);
+      }
+
+      // Register artifact in DB
+      if (supabase && userId) {
+        try {
+          const fileStat = await stat(destPath).catch(() => null);
+          await supabase.from("task_artifacts").insert({
+            task_id: taskId || null,
+            user_id: userId,
+            artifact_type: type,
+            file_path: destPath,
+            file_name: entry.name,
+            file_size: fileStat?.size || null,
+            verified: !!fileStat,
+            delivered: true,
+            metadata: {},
+          });
+        } catch (e) {
+          // Table may not exist yet — non-critical
+          console.warn(`[orchestrator] Could not register artifact: ${e}`);
+        }
+      }
     }
   } catch (error) {
     console.error(`[orchestrator] Error scanning workspace ${workspaceDir}: ${error}`);
   }
 
-  // Clean up workspace after 10 minutes
-  setTimeout(() => {
-    rm(workspaceDir, { recursive: true }).catch(() => {});
-    console.log(`[orchestrator] Workspace cleaned: ${workspaceDir}`);
-  }, 10 * 60 * 1000);
-
+  // Do NOT auto-delete the staging dir — user cleans up explicitly
   return delivered;
 }
 
@@ -1131,7 +1185,7 @@ async function routeComplex(
 
       // Deliver workspace files before text response
       if (chatId) {
-        const fileCount = await deliverWorkspaceFiles(chatId, workspaceDir);
+        const fileCount = await deliverWorkspaceFiles(chatId, workspaceDir, parentTaskId, user.id, supabase);
         if (fileCount > 0) {
           console.log(`[orchestrator] Delivered ${fileCount} file(s) from workspace`);
         }

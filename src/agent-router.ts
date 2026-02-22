@@ -610,10 +610,21 @@ function getCompactIdentity(agent: AgentDef): string {
 }
 
 function getArtifactTagInstructions(workspaceDir?: string): string {
+  const homeDir = process.env.HOME || "~";
+  const persistentWorkspace = `${homeDir}/.nova/workspace`;
+
   const saveInstructions = workspaceDir
-    ? `\nFILE WORKSPACE — Save ALL generated files (images, documents, etc.) to: ${workspaceDir}/
+    ? `\nWORKSPACE: ${persistentWorkspace}/
+Save generated files here. Structure:
+- projects/{name}/ — full codebases and applications
+- documents/ — reports, docs, spreadsheets
+- images/ — generated visuals
+- media/ — videos, audio
+
+Current task staging: ${workspaceDir}/
+Files saved here will be moved to the permanent location on completion.
 Use descriptive filenames like: slide_1_cover.png, report.docx, chart.xlsx
-Do NOT save files to /tmp or random paths — always use the workspace directory above.
+Do NOT save files to /tmp or random paths — always use the staging directory above.
 `
     : "";
 
@@ -626,6 +637,7 @@ ARTIFACT TAGGING — When you produce deliverables, tag them so the next phase c
   [ARTIFACT: file | ${workspaceDir || "/path/to"}/document.docx]
   [ARTIFACT: data | key finding or structured data]
 ${saveInstructions}
+After creating files, VERIFY they exist (ls or stat) before tagging as [ARTIFACT].
 Tag every file you create, every piece of copy you write, and every key data point.
 These tags are parsed automatically — the execute phase needs them to proceed.
 `;
@@ -684,7 +696,10 @@ export function buildAgentPrompt(
     "- Create real files using /docx, /xlsx, /pptx when documents are needed.",
     "- Use MCP tools to interact with real APIs (Meta Ads, Google, Notion, etc.).",
     "- Send deliverables to the user via /telegram-file-sender.",
-    "- If a tool fails, note the error and try an alternative approach.",
+    "- If a tool fails, report the error clearly — do NOT pretend it succeeded.",
+    "- If you encounter EACCES/EPERM, report it — do NOT silently skip the step.",
+    "- After creating files, run ls or stat to VERIFY they exist before reporting success.",
+    "- NEVER fabricate file paths or claim files were created without verification.",
     ""
   );
 
