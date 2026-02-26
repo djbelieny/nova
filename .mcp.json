@@ -96,6 +96,20 @@
       "env": {
         "EXA_API_KEY": "${EXA_API_KEY}"
       }
+    },
+    "browserbase": {
+      "type": "stdio",
+      "command": "/Users/djbelieny/.nvm/versions/node/v23.11.1/bin/npx",
+      "args": [
+        "-y",
+        "@browserbasehq/mcp-server-browserbase",
+        "--browserbaseApiKey", "bb_live_WbZiNPO-u_UfBx1qPir5QSl_3dM",
+        "--browserbaseProjectId", "759b8e71-5d93-4f44-992d-598bd67b44a2",
+        "--modelApiKey", "${GEMINI_API_KEY}"
+      ],
+      "env": {
+        "GEMINI_API_KEY": "${GEMINI_API_KEY}"
+      }
     }
   }
 }

@@ -371,15 +371,54 @@ async function handleApprovalAction(
 async function getTaskHistory(userId: string): Promise<unknown> {
   if (!supabase) return { tasks: [], error: "Supabase not configured" };
   try {
+    // Fetch only parent tasks (no parent_task_id)
     const { data, error } = await supabase
       .from("agent_tasks")
       .select("*")
       .eq("user_id", userId)
+      .is("parent_task_id", null)
       .order("created_at", { ascending: false })
       .limit(50);
 
     if (error) return { tasks: [], error: error.message };
-    return { tasks: data || [] };
+    const parents = data || [];
+    if (parents.length === 0) return { tasks: [] };
+
+    // Fetch subtask counts per parent in one query
+    const parentIds = parents.map((t: any) => t.id);
+    const { data: subtasks } = await supabase
+      .from("agent_tasks")
+      .select("parent_task_id, status")
+      .in("parent_task_id", parentIds);
+
+    // Build count maps
+    const totalMap: Record<string, number> = {};
+    const doneMap: Record<string, number> = {};
+    for (const st of subtasks || []) {
+      const pid = st.parent_task_id;
+      totalMap[pid] = (totalMap[pid] || 0) + 1;
+      const ns = (st.status || "").toLowerCase();
+      if (ns === "done" || ns === "completed") {
+        doneMap[pid] = (doneMap[pid] || 0) + 1;
+      }
+    }
+
+    // Attach counts and sort: active first, then completed by recency
+    const tasks = parents.map((t: any) => ({
+      ...t,
+      subtask_total: totalMap[t.id] || 0,
+      subtask_done: doneMap[t.id] || 0,
+    }));
+
+    const activeStatuses = ["in_progress", "running", "executing", "pending", "blocked"];
+    tasks.sort((a: any, b: any) => {
+      const aActive = activeStatuses.includes((a.status || "").toLowerCase()) ? 0 : 1;
+      const bActive = activeStatuses.includes((b.status || "").toLowerCase()) ? 0 : 1;
+      if (aActive !== bActive) return aActive - bActive;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+
+    return { tasks };
   } catch (e: any) {
     return { tasks: [], error: e.message };
   }
@@ -388,7 +427,7 @@ async function getTaskHistory(userId: string): Promise<unknown> {
 async function getTaskDetail(userId: string, taskId: string): Promise<unknown> {
   if (!supabase) return { error: "Supabase not configured" };
   try {
-    const [{ data: task, error: taskErr }, { data: subtasks, error: subErr }] = await Promise.all([
+    const [{ data: task, error: taskErr }, { data: subtasks }] = await Promise.all([
       supabase.from("agent_tasks").select("*").eq("id", taskId).eq("user_id", userId).single(),
       supabase
         .from("agent_tasks")
@@ -398,7 +437,16 @@ async function getTaskDetail(userId: string, taskId: string): Promise<unknown> {
     ]);
 
     if (taskErr) return { error: taskErr.message };
-    return { task, subtasks: subtasks || [] };
+
+    // Fetch artifacts for this task and all its subtasks
+    const allTaskIds = [taskId, ...(subtasks || []).map((s: any) => s.id)];
+    const { data: artifacts } = await supabase
+      .from("task_artifacts")
+      .select("*")
+      .in("task_id", allTaskIds)
+      .order("created_at", { ascending: true });
+
+    return { task, subtasks: subtasks || [], artifacts: artifacts || [] };
   } catch (e: any) {
     return { error: e.message };
   }
@@ -1108,6 +1156,77 @@ function renderMiniApp(): string {
     }
     .subtask-item:last-child { border-bottom: none; }
 
+    /* ---- Tasks view enhancements ---- */
+    .subtask-progress {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--hint);
+      background: rgba(255,255,255,0.06);
+      padding: 2px 8px;
+      border-radius: 10px;
+      white-space: nowrap;
+    }
+    .subtask-progress .progress-fill {
+      display: inline-block;
+      height: 4px;
+      border-radius: 2px;
+      background: #2ecc71;
+      min-width: 2px;
+    }
+    .subtask-progress .progress-track {
+      display: inline-block;
+      width: 32px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.1);
+      overflow: hidden;
+    }
+    .section-divider {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--hint);
+      padding: 12px 0 6px;
+      margin-top: 4px;
+    }
+    .section-divider:first-child { margin-top: 0; }
+    .artifact-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .artifact-item:last-child { border-bottom: none; }
+    .artifact-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 14px;
+    }
+    .artifact-badges {
+      display: flex;
+      gap: 4px;
+      margin-top: 2px;
+    }
+    .artifact-badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 8px;
+      font-weight: 500;
+    }
+    .artifact-badge.verified { background: rgba(46,204,113,0.15); color: #2ecc71; }
+    .artifact-badge.delivered { background: rgba(52,152,219,0.15); color: #3498db; }
+    .artifact-badge.pending-badge { background: rgba(255,255,255,0.06); color: var(--hint); }
+
     /* ---- Loading spinner ---- */
     .loading {
       text-align: center;
@@ -1258,9 +1377,10 @@ function renderMiniApp(): string {
       <div class="ptr-indicator" id="ptrHistory">Pull to refresh</div>
       <div class="filter-bar" id="filterBar">
         <div class="filter-chip active" data-filter="all" onclick="setFilter('all')">All</div>
-        <div class="filter-chip" data-filter="done" onclick="setFilter('done')">Done</div>
-        <div class="filter-chip" data-filter="blocked" onclick="setFilter('blocked')">Blocked</div>
+        <div class="filter-chip" data-filter="pending" onclick="setFilter('pending')">Pending</div>
         <div class="filter-chip" data-filter="in_progress" onclick="setFilter('in_progress')">In Progress</div>
+        <div class="filter-chip" data-filter="blocked" onclick="setFilter('blocked')">Blocked</div>
+        <div class="filter-chip" data-filter="done" onclick="setFilter('done')">Done</div>
       </div>
       <div id="taskList">
         <div class="loading"><div class="spinner"></div>Loading tasks...</div>
@@ -1347,8 +1467,8 @@ function renderMiniApp(): string {
         <span>Approvals</span>
       </div>
       <div class="tab-item" data-tab="pageHistory" onclick="switchTab('pageHistory')">
-        <svg viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
-        <span>History</span>
+        <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zM7 17h5v-1H7v1zm7-4H7v-1h7v1zm-3-4h-4v1h4V9z"/></svg>
+        <span>Tasks</span>
       </div>
     </div>
   </div>
@@ -1367,6 +1487,7 @@ function renderMiniApp(): string {
     let approvalsData = [];
     let tasksData = [];
     let openDetailType = null; // 'agent' or 'task'
+    let tasksPollingTimer = null;
     let approvalRefreshInterval = null;
 
     // ============================================================
@@ -1468,6 +1589,12 @@ function renderMiniApp(): string {
         } else {
           Telegram.WebApp.MainButton.hide();
         }
+      }
+
+      // Auto-refresh polling for Tasks tab
+      if (tasksPollingTimer) { clearInterval(tasksPollingTimer); tasksPollingTimer = null; }
+      if (tabId === 'pageHistory') {
+        tasksPollingTimer = setInterval(function() { loadTasks(true); }, 5000);
       }
     }
 
@@ -1810,6 +1937,37 @@ function renderMiniApp(): string {
       }
     }
 
+    function renderTaskRow(t) {
+      var statusClass = normalizeStatus(t.status);
+      var color = agentColor(t.agent || 'default');
+      var desc = escapeStr(t.description || t.task || 'Task');
+      var agentName = escapeStr(t.agent || 'general');
+      var duration = '';
+      if (t.started_at && t.completed_at) {
+        var ms = new Date(t.completed_at) - new Date(t.started_at);
+        if (ms < 60000) duration = Math.round(ms / 1000) + 's';
+        else if (ms < 3600000) duration = Math.round(ms / 60000) + 'm';
+        else duration = Math.round(ms / 3600000) + 'h';
+      }
+
+      var html = '<div class="task-item" onclick="showTaskDetail(\\'' + t.id + '\\')">';
+      html += '<div class="task-header">';
+      html += '<div class="status-dot ' + statusClass + '"></div>';
+      html += '<div class="task-desc">' + desc + '</div>';
+      html += '<div class="task-agent-badge" style="background:' + color + ';">' + agentName + '</div>';
+      html += '</div>';
+      html += '<div class="task-meta">';
+      html += '<span>' + timeAgo(t.created_at) + '</span>';
+      if (duration) html += '<span>' + duration + '</span>';
+      if (t.subtask_total > 0) {
+        var pct = t.subtask_total > 0 ? Math.round((t.subtask_done / t.subtask_total) * 100) : 0;
+        html += '<span class="subtask-progress"><span class="progress-track"><span class="progress-fill" style="width:' + pct + '%;"></span></span>' + t.subtask_done + '/' + t.subtask_total + '</span>';
+      }
+      html += '</div>';
+      html += '</div>';
+      return html;
+    }
+
     function renderTasks() {
       var container = document.getElementById('taskList');
       var filtered = tasksData;
@@ -1819,36 +1977,31 @@ function renderMiniApp(): string {
 
       if (!filtered.length) {
         var label = currentFilter === 'all' ? 'No tasks yet' : 'No ' + currentFilter.replace('_', ' ') + ' tasks';
-        container.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg><h3>' + label + '</h3><p>Tasks will appear here as agents work.</p></div>';
+        container.innerHTML = '<div class="empty-state"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13zM7 17h5v-1H7v1zm7-4H7v-1h7v1zm-3-4h-4v1h4V9z"/></svg><h3>' + label + '</h3><p>Tasks will appear here as agents work.</p></div>';
         return;
       }
 
-      var html = '';
+      // Group into active and completed
+      var active = [];
+      var completed = [];
       for (var i = 0; i < filtered.length; i++) {
-        var t = filtered[i];
-        var statusClass = normalizeStatus(t.status);
-        var color = agentColor(t.agent || 'default');
-        var desc = escapeStr(t.description || t.task || 'Task');
-        var agentName = escapeStr(t.agent || 'general');
-        var duration = '';
-        if (t.started_at && t.completed_at) {
-          var ms = new Date(t.completed_at) - new Date(t.started_at);
-          if (ms < 60000) duration = Math.round(ms / 1000) + 's';
-          else if (ms < 3600000) duration = Math.round(ms / 60000) + 'm';
-          else duration = Math.round(ms / 3600000) + 'h';
-        }
+        var ns = normalizeStatus(filtered[i].status);
+        if (ns === 'done') completed.push(filtered[i]);
+        else active.push(filtered[i]);
+      }
 
-        html += '<div class="task-item" onclick="showTaskDetail(\\'' + t.id + '\\')">';
-        html += '<div class="task-header">';
-        html += '<div class="status-dot ' + statusClass + '"></div>';
-        html += '<div class="task-desc">' + desc + '</div>';
-        html += '<div class="task-agent-badge" style="background:' + color + ';">' + agentName + '</div>';
-        html += '</div>';
-        html += '<div class="task-meta">';
-        html += '<span>' + timeAgo(t.created_at) + '</span>';
-        if (duration) html += '<span>' + duration + '</span>';
-        html += '</div>';
-        html += '</div>';
+      var html = '';
+      if (currentFilter === 'all' || currentFilter === 'pending' || currentFilter === 'in_progress' || currentFilter === 'blocked') {
+        if (active.length > 0) {
+          if (completed.length > 0 || currentFilter === 'all') html += '<div class="section-divider">Active</div>';
+          for (var j = 0; j < active.length; j++) html += renderTaskRow(active[j]);
+        }
+      }
+      if (currentFilter === 'all' || currentFilter === 'done') {
+        if (completed.length > 0) {
+          if (active.length > 0 || currentFilter === 'all') html += '<div class="section-divider">Completed</div>';
+          for (var k = 0; k < completed.length; k++) html += renderTaskRow(completed[k]);
+        }
       }
       container.innerHTML = html;
     }
@@ -1870,6 +2023,7 @@ function renderMiniApp(): string {
 
       var t = data.task;
       var subtasks = data.subtasks || [];
+      var artifacts = data.artifacts || [];
       var statusClass = normalizeStatus(t.status);
       var color = agentColor(t.agent || 'default');
 
@@ -1897,7 +2051,8 @@ function renderMiniApp(): string {
 
       // Subtasks
       if (subtasks.length > 0) {
-        html += '<div class="detail-section"><h3>Subtasks (' + subtasks.length + ')</h3>';
+        var doneCount = subtasks.filter(function(s) { var ns = normalizeStatus(s.status); return ns === 'done'; }).length;
+        html += '<div class="detail-section"><h3>Subtasks (' + doneCount + '/' + subtasks.length + ')</h3>';
         for (var i = 0; i < subtasks.length; i++) {
           var st = subtasks[i];
           var stStatus = normalizeStatus(st.status);
@@ -1906,6 +2061,28 @@ function renderMiniApp(): string {
           html += '<div style="flex:1;">';
           html += '<div style="font-size:14px;">' + escapeStr(st.description || st.task || 'Subtask') + '</div>';
           html += '<div style="font-size:12px;color:var(--hint);">' + escapeStr(st.agent || '') + ' &middot; ' + escapeStr(st.status || '') + '</div>';
+          html += '</div></div>';
+        }
+        html += '</div>';
+      }
+
+      // Artifacts
+      if (artifacts.length > 0) {
+        html += '<div class="detail-section"><h3>Artifacts (' + artifacts.length + ')</h3>';
+        for (var ai = 0; ai < artifacts.length; ai++) {
+          var a = artifacts[ai];
+          var typeIcon = {file:'📄',image:'🖼',document:'📋',project:'📁',code:'💻'}[a.artifact_type] || '📎';
+          html += '<div class="artifact-item">';
+          html += '<div class="artifact-icon">' + typeIcon + '</div>';
+          html += '<div style="flex:1;min-width:0;">';
+          html += '<div style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeStr(a.file_name || a.description || 'Artifact') + '</div>';
+          html += '<div class="artifact-badges">';
+          if (a.file_size) html += '<span class="artifact-badge pending-badge">' + formatFileSize(a.file_size) + '</span>';
+          if (a.verified) html += '<span class="artifact-badge verified">Verified</span>';
+          else html += '<span class="artifact-badge pending-badge">Unverified</span>';
+          if (a.delivered) html += '<span class="artifact-badge delivered">Delivered</span>';
+          html += '</div>';
+          if (a.description && a.file_name) html += '<div style="font-size:12px;color:var(--hint);margin-top:2px;">' + escapeStr(a.description) + '</div>';
           html += '</div></div>';
         }
         html += '</div>';
@@ -2235,6 +2412,15 @@ function renderMiniApp(): string {
     function formatDate(dateStr) {
       if (!dateStr) return '-';
       return new Date(dateStr).toLocaleString();
+    }
+
+    function formatFileSize(bytes) {
+      if (!bytes || bytes <= 0) return '0 B';
+      var units = ['B', 'KB', 'MB', 'GB'];
+      var i = 0;
+      var size = bytes;
+      while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+      return (i === 0 ? size : size.toFixed(1)) + ' ' + units[i];
     }
   </script>
 </body>

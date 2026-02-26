@@ -61,6 +61,7 @@ let _runTask: (
 let _saveMessage: (role: string, content: string, userId: string) => Promise<void>;
 let _sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
 let _sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
+let _sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
 let _relayDir: string;
 
 export function initOrchestrator(deps: {
@@ -70,6 +71,7 @@ export function initOrchestrator(deps: {
   saveMessage: (role: string, content: string, userId: string) => Promise<void>;
   sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
   sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
+  sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
   relayDir: string;
 }): void {
   _callClaude = deps.callClaude;
@@ -78,6 +80,7 @@ export function initOrchestrator(deps: {
   _saveMessage = deps.saveMessage;
   _sendResponseWithVoice = deps.sendResponseWithVoice;
   _sendTelegramFile = deps.sendTelegramFile;
+  _sendMessageToChat = deps.sendMessageToChat;
   _relayDir = deps.relayDir;
 
   // Initialize planner with shared dependencies
@@ -91,6 +94,7 @@ export function initOrchestrator(deps: {
 export interface PendingApproval {
   id: string;
   ctx: Context;
+  chatId: number | string;  // stored for response delivery (survives ctx staleness)
   user: any;
   supabase: SupabaseClient | null;
   originalText: string;
@@ -416,9 +420,12 @@ async function handleRevision(
 
   const approvalId = `apv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
+  const revisionChatId = ctx.chat?.id || 0;
+
   pendingApprovals.set(approvalId, {
     id: approvalId,
     ctx,
+    chatId: revisionChatId,
     user,
     supabase,
     originalText: session.originalText,
@@ -431,19 +438,21 @@ async function handleRevision(
     workflowType: session.workflowType,
   });
 
-  // Persist to Supabase
+  console.log(`[orchestrator] Approval created (revision): ${approvalId} | request: "${session.originalText.substring(0, 60)}" | total pending: ${pendingApprovals.size}`);
+
+  // Persist to Supabase — includes prepareResults for potential restart recovery
   if (supabase) {
-    const chatId = ctx.chat?.id || 0;
     const execDescs = plan.subtasks
       .filter((s) => s.phase === "execute")
       .map((s) => s.description);
     await supabase.from("pending_approvals").insert({
       id: approvalId,
       user_id: user.id,
-      chat_id: chatId,
+      chat_id: revisionChatId,
       original_text: session.originalText.substring(0, 2000),
       plan: plan,
       prepare_summary: approvalSummary.substring(0, 5000),
+      prepare_results: allPrepareResults,
       artifacts: allArtifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
       execute_descriptions: execDescs,
       parent_task_id: session.parentTaskId || null,
@@ -453,31 +462,18 @@ async function handleRevision(
     });
   }
 
-  // Auto-expire after 30 minutes
-  setTimeout(() => {
-    if (pendingApprovals.has(approvalId)) {
-      pendingApprovals.delete(approvalId);
-      if (supabase) {
-        supabase.from("pending_approvals")
-          .update({ status: "expired", updated_at: new Date().toISOString() })
-          .eq("id", approvalId)
-          .eq("status", "pending")
-          .then(() => {});
-      }
-    }
-  }, 30 * 60 * 1000);
+  // Note: approvals do NOT expire — they remain pending until the user acts on them.
 
   const executeDescriptions = plan.subtasks
     .filter((s) => s.phase === "execute")
     .map((s) => `• ${s.description}`)
     .join("\n");
 
+  const requestLabel = session.originalText.length > 80 ? `${session.originalText.substring(0, 80)}...` : session.originalText;
+  const approvalMessage = `📋 **Task:** ${requestLabel}\n\n${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}`;
+
   await _saveMessage("assistant", approvalSummary, user.id);
-  await _sendResponseWithVoice(
-    ctx,
-    `${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}`,
-    user.id
-  );
+  await _sendResponseWithVoice(ctx, approvalMessage, user.id);
 
   const keyboard = new InlineKeyboard()
     .text("Approve & Execute", `apv:${approvalId}:approve`)
@@ -1270,9 +1266,12 @@ async function routeComplex(
     // Generate approval ID and store pending approval
     const approvalId = `apv-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
+    const taskChatId = chatId || 0;
+
     pendingApprovals.set(approvalId, {
       id: approvalId,
       ctx,
+      chatId: taskChatId,
       user,
       supabase,
       originalText: text,
@@ -1285,19 +1284,21 @@ async function routeComplex(
       workflowType: workflowType || "generic",
     });
 
-    // Persist to Supabase so the Mini App can display and act on it
+    console.log(`[orchestrator] Approval created: ${approvalId} | request: "${text.substring(0, 60)}" | total pending: ${pendingApprovals.size}`);
+
+    // Persist to Supabase — includes prepareResults for potential restart recovery
     if (supabase) {
-      const chatId = ctx.chat?.id || 0;
       const execDescs = plan.subtasks
         .filter((s) => s.phase === "execute")
         .map((s) => s.description);
       await supabase.from("pending_approvals").insert({
         id: approvalId,
         user_id: user.id,
-        chat_id: chatId,
+        chat_id: taskChatId,
         original_text: text.substring(0, 2000),
         plan: plan,
         prepare_summary: approvalSummary.substring(0, 5000),
+        prepare_results: prepareResults,
         artifacts: artifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
         execute_descriptions: execDescs,
         parent_task_id: parentTaskId || null,
@@ -1307,21 +1308,7 @@ async function routeComplex(
       });
     }
 
-    // Auto-expire after 30 minutes
-    setTimeout(() => {
-      if (pendingApprovals.has(approvalId)) {
-        pendingApprovals.delete(approvalId);
-        // Also expire in Supabase
-        if (supabase) {
-          supabase.from("pending_approvals")
-            .update({ status: "expired", updated_at: new Date().toISOString() })
-            .eq("id", approvalId)
-            .eq("status", "pending")
-            .then(() => {});
-        }
-        console.log(`[orchestrator] Approval ${approvalId} expired`);
-      }
-    }, 30 * 60 * 1000);
+    // Note: approvals do NOT expire — they remain pending until the user acts on them.
 
     // Send the summary with approval buttons (embedded approval ID in callback data)
     const executeDescriptions = plan.subtasks
@@ -1329,12 +1316,11 @@ async function routeComplex(
       .map((s) => `• ${s.description}`)
       .join("\n");
 
+    const requestLabel = text.length > 80 ? `${text.substring(0, 80)}...` : text;
+    const approvalMessage = `📋 **Task:** ${requestLabel}\n\n${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}`;
+
     await _saveMessage("assistant", approvalSummary, user.id);
-    await _sendResponseWithVoice(
-      ctx,
-      `${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}`,
-      user.id
-    );
+    await _sendResponseWithVoice(ctx, approvalMessage, user.id);
 
     // Send approval buttons with embedded approval ID directly
     const keyboard = new InlineKeyboard()
@@ -1424,6 +1410,93 @@ export function startMiniAppApprovalPolling(supabase: SupabaseClient | null): vo
       // Silent — polling errors are non-critical
     }
   }, 5000);
+}
+
+// ============================================================
+// APPROVAL RECOVERY — reload pending approvals after bot restart
+// ============================================================
+
+/**
+ * On startup, reload any pending approvals from Supabase that were never acted on.
+ * This handles the case where the bot restarted while the user had approval requests open.
+ * For each recovered approval, the old Telegram buttons remain valid because the approval ID
+ * is embedded in the button callback data — we just need to restore the in-memory state.
+ * If prepareResults are available (stored since this fix), the execute phase can run normally.
+ * For older records without prepareResults, we send a fresh prompt to the chat.
+ */
+export async function recoverPendingApprovals(
+  supabase: SupabaseClient | null,
+  userId: string,
+): Promise<void> {
+  if (!supabase) return;
+
+  try {
+    const { data, error } = await supabase
+      .from("pending_approvals")
+      .select("id, chat_id, original_text, plan, prepare_results, artifacts, parent_task_id, prepare_summary, execute_descriptions, created_at")
+      .eq("user_id", userId)
+      .eq("status", "pending");
+
+    if (error || !data?.length) return;
+
+    console.log(`[orchestrator] Recovering ${data.length} pending approval(s) from Supabase`);
+
+    for (const row of data) {
+      if (pendingApprovals.has(row.id)) continue; // already in memory
+
+      const chatId = row.chat_id || 0;
+      const prepareResults: SubtaskResult[] = Array.isArray(row.prepare_results) ? row.prepare_results : [];
+      const artifacts: Artifact[] = Array.isArray(row.artifacts) ? row.artifacts.map((a: any) => ({
+        type: a.type || "file",
+        value: a.value || "",
+        source: a.source ?? 0,
+      })) : [];
+
+      // Build a minimal fake ctx that routes send/reply to the actual chat
+      const fakeCtx = {
+        chat: { id: chatId },
+        reply: async (text: string, opts?: any) => {
+          await _sendMessageToChat(chatId, text, opts?.reply_markup);
+        },
+        replyWithChatAction: async () => {},
+        editMessageText: async () => {},
+        answerCallbackQuery: async () => {},
+      } as unknown as Context;
+
+      pendingApprovals.set(row.id, {
+        id: row.id,
+        ctx: fakeCtx,
+        chatId,
+        user: { id: userId },
+        supabase,
+        originalText: row.original_text || "",
+        plan: row.plan || { subtasks: [] },
+        prepareResults,
+        artifacts,
+        parentTaskId: row.parent_task_id || undefined,
+        startTime: new Date(row.created_at).getTime(),
+        workflowType: "generic",
+      });
+
+      // Notify the user that this approval survived the restart and is still actionable
+      const requestLabel = (row.original_text || "").substring(0, 80);
+      const execList = Array.isArray(row.execute_descriptions)
+        ? row.execute_descriptions.map((d: string) => `• ${d}`).join("\n")
+        : "";
+
+      const keyboard = new InlineKeyboard()
+        .text("Approve & Execute", `apv:${row.id}:approve`)
+        .text("Revise", `apv:${row.id}:revise`)
+        .text("Cancel", `apv:${row.id}:cancel`);
+
+      const recoveryMsg = `🔄 **Recovered approval** (from before restart)\n📋 **Task:** ${requestLabel}\n\n${row.prepare_summary || "Prepare phase results are ready."}\n\n**Pending actions:**\n${execList}`;
+
+      await _sendMessageToChat(chatId, recoveryMsg, keyboard);
+      console.log(`[orchestrator] Recovered approval ${row.id} — notified chat ${chatId}`);
+    }
+  } catch (err) {
+    console.error("[orchestrator] Failed to recover pending approvals:", err);
+  }
 }
 
 // ============================================================

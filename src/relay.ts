@@ -25,7 +25,7 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
-import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling } from "./orchestrator.ts";
+import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials } from "./integrations.ts";
 import {
@@ -1802,6 +1802,18 @@ initOrchestrator({
   sendResponseWithVoice,
   sendTelegramFile: sendFile,
   relayDir: RELAY_DIR,
+  sendMessageToChat: async (chatId, text, keyboard) => {
+    const bot = telegramAdapter?.getBot();
+    if (!bot) return;
+    const html = markdownToTelegramHTML(text);
+    await bot.api.sendMessage(Number(chatId), html, {
+      parse_mode: "HTML",
+      ...(keyboard ? { reply_markup: keyboard } : {}),
+    }).catch(async () => {
+      // Fallback to plain text if HTML fails
+      await bot.api.sendMessage(Number(chatId), text, keyboard ? { reply_markup: keyboard } : {});
+    });
+  },
 });
 
 // ============================================================
@@ -1887,15 +1899,23 @@ await channels.startAll();
 console.log("All channels started! Users are managed via the 'users' table in Supabase.");
 
 // Notify admin users that Nova is back online (via Telegram if available)
+// Also recover any pending approvals that survived the restart
 if (supabase && telegramAdapter) {
   try {
     const { data: admins } = await supabase
       .from("users")
-      .select("telegram_id")
+      .select("id, telegram_id")
       .eq("role", "admin");
     if (admins?.length) {
       const adminIds = admins.map((a: any) => a.telegram_id).filter(Boolean);
       telegramAdapter.notifyAdmins(adminIds, "Nova is back online.");
+
+      // Recover pending approvals for each admin user
+      for (const admin of admins) {
+        if (admin.id) {
+          await recoverPendingApprovals(supabase, admin.id);
+        }
+      }
     }
   } catch {}
 }

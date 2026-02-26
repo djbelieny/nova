@@ -1,0 +1,14 @@
+csm.07labs.com {
+	# Telegram Mini App (default)
+	reverse_proxy miniapp:3034
+
+	# Dashboard under /dashboard
+	handle_path /dashboard/* {
+		reverse_proxy dashboard:3033
+	}
+
+	# Voice server under /voice
+	handle_path /voice/* {
+		reverse_proxy voice:8080
+	}
+}

@@ -3,97 +3,564 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nova — Your Personal AI Assistant</title>
+<title>Nova — Your Personal AI Assistant on Telegram</title>
+<meta name="description" content="Nova is a personal AI assistant that lives on Telegram. Powered by Claude, it remembers your context, runs proactive check-ins, and helps you get things done.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #1a1a2e;
-    --text: #ffffff;
-    --hint: #999999;
-    --accent: #6ab2f2;
-    --btn: #5288c1;
-    --btn-text: #ffffff;
-    --secondary-bg: #0f0f23;
-    --section-bg: #1e1e3a;
-    --destructive: #ff4444;
-    --card-radius: 14px;
-    --success: #2ecc71;
+    --bg: #000000;
+    --bg-elevated: #0a0a1a;
+    --bg-card: rgba(255,255,255,0.04);
+    --text: #f0f0f0;
+    --text-secondary: #8a8aa0;
+    --cyan: #00d4ff;
+    --cyan-dim: rgba(0,212,255,0.15);
+    --purple: #a855f7;
+    --purple-dim: rgba(168,85,247,0.15);
+    --gradient: linear-gradient(135deg, var(--cyan), var(--purple));
+    --success: #22c55e;
+    --radius: 16px;
+    --radius-sm: 10px;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
+  html { scroll-behavior: smooth; }
+
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg);
     color: var(--text);
-    font-size: 15px;
-    line-height: 1.4;
+    font-size: 16px;
+    line-height: 1.6;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Nav ──────────────────────────────────────────────── */
+  nav {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 100;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    transition: background 0.3s;
+  }
+
+  .nav-logo {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 3px;
+    background: var(--gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .nav-links { display: flex; gap: 28px; align-items: center; }
+
+  .nav-links a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    transition: color 0.2s;
+  }
+
+  .nav-links a:hover { color: var(--text); }
+
+  .nav-cta {
+    padding: 8px 20px;
+    background: var(--gradient);
+    border: none;
+    border-radius: 8px;
+    color: #000;
+    font-weight: 600;
+    font-size: 13px;
+    text-decoration: none;
+    transition: opacity 0.2s;
+    cursor: pointer;
+  }
+
+  .nav-cta:hover { opacity: 0.85; color: #000 !important; }
+
+  /* ── Hero ─────────────────────────────────────────────── */
+  .hero {
+    position: relative;
     min-height: 100vh;
     display: flex;
-    flex-direction: column;
     align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 120px 24px 80px;
+    overflow: hidden;
   }
 
-  .top-bar {
-    width: 100%;
-    height: 4px;
-    background: var(--accent);
+  .hero-bg {
+    position: absolute;
+    inset: 0;
+    background:
+      url('https://images.unsplash.com/photo-1534972195531-d756b9bfa9f2?w=1920&q=80') center/cover no-repeat;
+    opacity: 0.25;
+    filter: brightness(0.6);
   }
 
-  .container {
-    width: 100%;
-    max-width: 480px;
-    padding: 40px 20px 60px;
+  .hero-gradient {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 50% 40%, rgba(0,212,255,0.12) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 40% at 70% 60%, rgba(168,85,247,0.08) 0%, transparent 60%),
+      linear-gradient(180deg, transparent 0%, var(--bg) 95%);
   }
 
-  .logo {
-    font-size: 32px;
+  .hero-content {
+    position: relative;
+    max-width: 720px;
+    z-index: 2;
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(0,212,255,0.2);
+    background: rgba(0,212,255,0.06);
+    color: var(--cyan);
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 28px;
+  }
+
+  .hero-badge .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .hero h1 {
+    font-size: clamp(40px, 7vw, 72px);
     font-weight: 800;
-    letter-spacing: 2px;
-    text-align: center;
-    margin-bottom: 8px;
-  }
-
-  .logo span { color: var(--accent); }
-
-  .tagline {
-    text-align: center;
-    color: var(--hint);
-    font-size: 14px;
-    margin-bottom: 36px;
-  }
-
-  .card {
-    background: var(--section-bg);
-    border-radius: var(--card-radius);
-    padding: 24px 20px;
-    margin-bottom: 16px;
-  }
-
-  .card-title {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: var(--hint);
+    line-height: 1.05;
+    letter-spacing: -1.5px;
     margin-bottom: 20px;
   }
 
-  .field-group { margin-bottom: 16px; }
+  .hero h1 .gradient-text {
+    background: var(--gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-sub {
+    font-size: clamp(16px, 2.2vw, 20px);
+    color: var(--text-secondary);
+    max-width: 520px;
+    margin: 0 auto 40px;
+    line-height: 1.7;
+  }
+
+  .hero-actions {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    background: var(--gradient);
+    color: #000;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.15s;
+    font-family: inherit;
+  }
+
+  .btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+
+  .btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 32px;
+    background: transparent;
+    color: var(--text);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    font-family: inherit;
+  }
+
+  .btn-secondary:hover {
+    border-color: rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.04);
+  }
+
+  /* ── Section common ──────────────────────────────────── */
+  section {
+    padding: 100px 24px;
+    position: relative;
+  }
+
+  .section-header {
+    text-align: center;
+    max-width: 600px;
+    margin: 0 auto 64px;
+  }
+
+  .section-label {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--cyan);
+    margin-bottom: 16px;
+  }
+
+  .section-title {
+    font-size: clamp(28px, 4vw, 42px);
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.5px;
+    margin-bottom: 16px;
+  }
+
+  .section-desc {
+    font-size: 17px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  /* ── Features ────────────────────────────────────────── */
+  #features {
+    background: var(--bg-elevated);
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+
+  .feature-card {
+    background: var(--bg-card);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+    transition: border-color 0.3s, transform 0.2s;
+  }
+
+  .feature-card:hover {
+    border-color: rgba(0,212,255,0.15);
+    transform: translateY(-2px);
+  }
+
+  .feature-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+    font-size: 20px;
+  }
+
+  .feature-icon.cyan { background: var(--cyan-dim); }
+  .feature-icon.purple { background: var(--purple-dim); }
+
+  .feature-card h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+
+  .feature-card p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+  }
+
+  /* ── How it works ────────────────────────────────────── */
+  #how-it-works {
+    overflow: hidden;
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 40px;
+    max-width: 960px;
+    margin: 0 auto;
+    counter-reset: step;
+  }
+
+  .step {
+    text-align: center;
+    counter-increment: step;
+    position: relative;
+  }
+
+  .step::before {
+    content: counter(step);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: var(--gradient);
+    color: #000;
+    font-weight: 700;
+    font-size: 18px;
+    margin: 0 auto 20px;
+  }
+
+  .step h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+
+  .step p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+    max-width: 260px;
+    margin: 0 auto;
+  }
+
+  /* ── Showcase / image band ───────────────────────────── */
+  .showcase {
+    position: relative;
+    padding: 0;
+    height: 360px;
+    overflow: hidden;
+  }
+
+  .showcase-img {
+    position: absolute;
+    inset: 0;
+    background:
+      url('https://images.unsplash.com/photo-1639322537228-f710d846310a?w=1920&q=80') center/cover no-repeat;
+    opacity: 0.3;
+  }
+
+  .showcase-overlay {
+    position: absolute;
+    inset: 0;
+    background:
+      linear-gradient(180deg, var(--bg) 0%, transparent 30%, transparent 70%, var(--bg-elevated) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .showcase-text {
+    text-align: center;
+    position: relative;
+    z-index: 2;
+    padding: 0 24px;
+  }
+
+  .showcase-text h2 {
+    font-size: clamp(24px, 4vw, 38px);
+    font-weight: 700;
+    margin-bottom: 12px;
+    letter-spacing: -0.5px;
+  }
+
+  .showcase-text p {
+    font-size: 17px;
+    color: var(--text-secondary);
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  /* ── Capabilities ────────────────────────────────────── */
+  #capabilities {
+    background: var(--bg-elevated);
+  }
+
+  .capabilities-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    max-width: 1000px;
+    margin: 0 auto;
+    align-items: center;
+  }
+
+  .cap-visual {
+    position: relative;
+    border-radius: var(--radius);
+    overflow: hidden;
+    aspect-ratio: 4/3;
+  }
+
+  .cap-visual img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.5;
+    border-radius: var(--radius);
+  }
+
+  .cap-visual::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .cap-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .cap-list li {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .cap-dot {
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 8px;
+  }
+
+  .cap-dot.cyan { background: var(--cyan); }
+  .cap-dot.purple { background: var(--purple); }
+
+  .cap-list h4 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .cap-list p {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  /* ── CTA ─────────────────────────────────────────────── */
+  .cta {
+    text-align: center;
+    padding: 100px 24px 120px;
+    position: relative;
+  }
+
+  .cta-glow {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 600px;
+    height: 400px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse, rgba(0,212,255,0.06) 0%, rgba(168,85,247,0.04) 40%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .cta h2 {
+    font-size: clamp(28px, 5vw, 48px);
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 16px;
+    position: relative;
+  }
+
+  .cta p {
+    font-size: 17px;
+    color: var(--text-secondary);
+    margin-bottom: 36px;
+    max-width: 460px;
+    margin-left: auto;
+    margin-right: auto;
+    position: relative;
+  }
+
+  .cta .hero-actions { position: relative; }
+
+  /* ── Contact form ────────────────────────────────────── */
+  .contact {
+    background: var(--bg-elevated);
+    padding: 80px 24px;
+  }
+
+  .contact-inner {
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  .contact-inner .section-header { margin-bottom: 36px; }
+
+  .form-card {
+    background: var(--bg-card);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius);
+    padding: 32px 28px;
+  }
+
+  .field-group { margin-bottom: 20px; }
 
   .field-label {
     font-size: 12px;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--hint);
-    margin-bottom: 6px;
+    letter-spacing: 1px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
     display: block;
+    font-weight: 500;
   }
 
   .field-input {
     width: 100%;
-    background: var(--secondary-bg);
+    background: rgba(0,0,0,0.4);
     border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    padding: 12px 14px;
+    border-radius: var(--radius-sm);
+    padding: 13px 16px;
     color: var(--text);
     font-size: 15px;
     outline: none;
@@ -101,114 +568,364 @@
     font-family: inherit;
   }
 
-  .field-input:focus { border-color: var(--accent); }
+  .field-input:focus { border-color: var(--cyan); }
+  .field-input::placeholder { color: rgba(255,255,255,0.2); }
+  .field-input.invalid { border-color: #ef4444; }
 
-  .field-input::placeholder { color: rgba(255,255,255,0.25); }
-
-  textarea.field-input {
-    resize: vertical;
-    min-height: 80px;
-  }
+  textarea.field-input { resize: vertical; min-height: 90px; }
 
   .optional-tag {
     font-size: 10px;
-    color: rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.25);
     text-transform: none;
     letter-spacing: 0;
     margin-left: 4px;
+  }
+
+  .error-msg {
+    color: #ef4444;
+    font-size: 12px;
+    margin-top: 6px;
+    display: none;
   }
 
   .submit-btn {
     width: 100%;
     padding: 14px;
     border: none;
-    border-radius: 10px;
-    background: var(--success);
-    color: var(--btn-text);
+    border-radius: var(--radius-sm);
+    background: var(--gradient);
+    color: #000;
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
+    transition: opacity 0.2s, transform 0.15s;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 10px;
     font-family: inherit;
+    margin-top: 4px;
   }
 
-  .submit-btn:hover { opacity: 0.9; }
+  .submit-btn:hover { opacity: 0.85; }
   .submit-btn:active { transform: scale(0.98); }
 
-  .wa-icon {
-    width: 20px;
-    height: 20px;
-    fill: #fff;
-  }
+  .wa-icon { width: 18px; height: 18px; fill: #000; }
 
-  .footer {
+  /* ── Footer ──────────────────────────────────────────── */
+  footer {
+    padding: 40px 24px;
     text-align: center;
-    color: rgba(255,255,255,0.2);
-    font-size: 11px;
-    margin-top: 24px;
+    border-top: 1px solid rgba(255,255,255,0.05);
   }
 
-  .footer a {
-    color: var(--accent);
+  .footer-logo {
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    background: var(--gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 12px;
+  }
+
+  .footer-links {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 16px;
+  }
+
+  .footer-links a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 13px;
+    transition: color 0.2s;
+  }
+
+  .footer-links a:hover { color: var(--text); }
+
+  .footer-copy {
+    color: rgba(255,255,255,0.2);
+    font-size: 12px;
+  }
+
+  .footer-copy a {
+    color: var(--cyan);
     text-decoration: none;
   }
 
-  .error-msg {
-    color: var(--destructive);
-    font-size: 12px;
-    margin-top: 4px;
-    display: none;
+  /* ── Responsive ──────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .nav-links a:not(.nav-cta) { display: none; }
+
+    .capabilities-grid {
+      grid-template-columns: 1fr;
+      gap: 32px;
+    }
+
+    .cap-visual { max-height: 240px; }
+
+    .features-grid {
+      grid-template-columns: 1fr;
+    }
+
+    section { padding: 72px 20px; }
+
+    .showcase { height: 280px; }
   }
 
-  .field-input.invalid {
-    border-color: var(--destructive);
+  /* ── Animations ──────────────────────────────────────── */
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
   }
+
+  .animate {
+    opacity: 0;
+    animation: fade-up 0.6s ease forwards;
+  }
+
+  .animate.delay-1 { animation-delay: 0.1s; }
+  .animate.delay-2 { animation-delay: 0.2s; }
+  .animate.delay-3 { animation-delay: 0.3s; }
+  .animate.delay-4 { animation-delay: 0.4s; }
 </style>
 </head>
 <body>
 
-<div class="top-bar"></div>
+<!-- ── Nav ──────────────────────────────────────────────── -->
+<nav>
+  <div class="nav-logo">NOVA</div>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#how-it-works">How It Works</a>
+    <a href="#capabilities">Capabilities</a>
+    <a href="#contact" class="nav-cta">Get Started</a>
+  </div>
+</nav>
 
-<div class="container">
-  <div class="logo">NOVA<span>:</span></div>
-  <p class="tagline">Your personal AI assistant — let's talk about building yours.</p>
-
-  <form id="lead-form" class="card" novalidate>
-    <div class="card-title">Get in touch</div>
-
-    <div class="field-group">
-      <label class="field-label" for="name">Name</label>
-      <input class="field-input" type="text" id="name" name="name" placeholder="Your name" required autocomplete="name">
-      <div class="error-msg" id="name-error">Please enter your name</div>
+<!-- ── Hero ─────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-gradient"></div>
+  <div class="hero-content">
+    <div class="hero-badge animate">
+      <span class="dot"></span>
+      Powered by Claude
     </div>
-
-    <div class="field-group">
-      <label class="field-label" for="email">Email</label>
-      <input class="field-input" type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
-      <div class="error-msg" id="email-error">Please enter a valid email</div>
+    <h1 class="animate delay-1">
+      Your Personal<br><span class="gradient-text">AI Assistant</span>
+    </h1>
+    <p class="hero-sub animate delay-2">
+      Nova lives on Telegram. It remembers your context, runs proactive check-ins, and helps you get things done — all from a chat.
+    </p>
+    <div class="hero-actions animate delay-3">
+      <a href="#contact" class="btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+        Start Building Yours
+      </a>
+      <a href="https://youtube.com/@GodaGo" target="_blank" class="btn-secondary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Watch Tutorial
+      </a>
     </div>
+  </div>
+</section>
 
-    <div class="field-group">
-      <label class="field-label" for="message">Message <span class="optional-tag">(optional)</span></label>
-      <textarea class="field-input" id="message" name="message" placeholder="Tell us about your project or what you're looking for..."></textarea>
+<!-- ── Features ─────────────────────────────────────────── -->
+<section id="features">
+  <div class="section-header">
+    <span class="section-label">Features</span>
+    <h2 class="section-title">Everything you need in a personal AI</h2>
+    <p class="section-desc">Built for people who want an assistant that actually knows them — not a generic chatbot.</p>
+  </div>
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon cyan">&#x1f9e0;</div>
+      <h3>Persistent Memory</h3>
+      <p>Nova remembers your conversations, preferences, and context across every interaction using semantic search.</p>
     </div>
+    <div class="feature-card">
+      <div class="feature-icon purple">&#x1f50d;</div>
+      <h3>Proactive Check-ins</h3>
+      <p>Smart scheduling that reaches out when it makes sense — not on a timer, but based on your context and needs.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon cyan">&#x1f399;</div>
+      <h3>Voice Messages</h3>
+      <p>Send voice notes on Telegram and Nova transcribes and understands them instantly via Whisper.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon purple">&#x1f4cb;</div>
+      <h3>Morning Briefings</h3>
+      <p>Start your day with a personalized summary of what's ahead, what's pending, and what needs attention.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon cyan">&#x1f512;</div>
+      <h3>Private by Design</h3>
+      <p>Self-hosted on your machine. Your data stays yours — no third-party servers, no data harvesting.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon purple">&#x26a1;</div>
+      <h3>Always On</h3>
+      <p>Runs as a background service via launchd or PM2. Survives reboots, restarts on crash, and just works.</p>
+    </div>
+  </div>
+</section>
 
-    <button type="submit" class="submit-btn">
-      <svg class="wa-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-      </svg>
-      Chat on WhatsApp
-    </button>
-  </form>
-
-  <p class="footer">Powered by Claude &nbsp;|&nbsp; Built by <a href="https://youtube.com/@GodaGo" target="_blank">GodaGo</a></p>
+<!-- ── Showcase band ───────────────────────────────────── -->
+<div class="showcase">
+  <div class="showcase-img"></div>
+  <div class="showcase-overlay">
+    <div class="showcase-text">
+      <h2>Built on <span class="gradient-text">Claude</span>, lives on <span class="gradient-text">Telegram</span></h2>
+      <p>No app to install. No dashboard to check. Just open Telegram and talk to your AI.</p>
+    </div>
+  </div>
 </div>
 
+<!-- ── How It Works ────────────────────────────────────── -->
+<section id="how-it-works">
+  <div class="section-header">
+    <span class="section-label">How It Works</span>
+    <h2 class="section-title">Up and running in 20 minutes</h2>
+    <p class="section-desc">Clone the repo, follow the guided setup, and your personal AI is live on Telegram.</p>
+  </div>
+  <div class="steps">
+    <div class="step">
+      <h3>Create Your Bot</h3>
+      <p>Get a bot token from Telegram's BotFather. Takes 60 seconds.</p>
+    </div>
+    <div class="step">
+      <h3>Set Up Memory</h3>
+      <p>Connect Supabase for persistent memory with semantic search and embeddings.</p>
+    </div>
+    <div class="step">
+      <h3>Personalize</h3>
+      <p>Tell Nova about yourself — your name, timezone, workflow, and communication style.</p>
+    </div>
+    <div class="step">
+      <h3>Go Live</h3>
+      <p>Run it as a background service. It's always on, always learning, always ready.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Capabilities ────────────────────────────────────── -->
+<section id="capabilities">
+  <div class="section-header">
+    <span class="section-label">Capabilities</span>
+    <h2 class="section-title">From free relay to full AI infrastructure</h2>
+    <p class="section-desc">Start with the essentials. Unlock the full platform when you're ready.</p>
+  </div>
+  <div class="capabilities-grid">
+    <div class="cap-visual">
+      <img src="https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=800&q=80" alt="AI visualization" loading="lazy">
+    </div>
+    <ul class="cap-list">
+      <li>
+        <span class="cap-dot cyan"></span>
+        <div>
+          <h4>6 Specialized AI Agents</h4>
+          <p>Research, Content, Finance, Strategy, Critic, and General orchestrator working together.</p>
+        </div>
+      </li>
+      <li>
+        <span class="cap-dot purple"></span>
+        <div>
+          <h4>Real Integrations</h4>
+          <p>Gmail, Google Calendar, and Notion connected through MCP for real data, not patterns.</p>
+        </div>
+      </li>
+      <li>
+        <span class="cap-dot cyan"></span>
+        <div>
+          <h4>Human-in-the-Loop</h4>
+          <p>Nova takes actions but asks first via inline Telegram buttons. You stay in control.</p>
+        </div>
+      </li>
+      <li>
+        <span class="cap-dot purple"></span>
+        <div>
+          <h4>Voice & Phone Calls</h4>
+          <p>Your bot speaks back via ElevenLabs. Calls you when something is urgent.</p>
+        </div>
+      </li>
+      <li>
+        <span class="cap-dot cyan"></span>
+        <div>
+          <h4>VPS Deployment</h4>
+          <p>Cloud server that never sleeps. Hybrid mode: free local when awake, API when sleeping.</p>
+        </div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- ── CTA ──────────────────────────────────────────────── -->
+<section class="cta">
+  <div class="cta-glow"></div>
+  <h2>Ready to build <span class="gradient-text">yours</span>?</h2>
+  <p>The free version gives you a real, working AI assistant. The full version gives you a personal AI infrastructure.</p>
+  <div class="hero-actions">
+    <a href="#contact" class="btn-primary">Get Started Free</a>
+    <a href="https://skool.com/autonomee" target="_blank" class="btn-secondary">Join the Community</a>
+  </div>
+</section>
+
+<!-- ── Contact ─────────────────────────────────────────── -->
+<section id="contact" class="contact">
+  <div class="contact-inner">
+    <div class="section-header">
+      <span class="section-label">Contact</span>
+      <h2 class="section-title">Let's talk</h2>
+      <p class="section-desc">Tell us about your project or what you're looking for.</p>
+    </div>
+
+    <form id="lead-form" class="form-card" novalidate>
+      <div class="field-group">
+        <label class="field-label" for="name">Name</label>
+        <input class="field-input" type="text" id="name" name="name" placeholder="Your name" required autocomplete="name">
+        <div class="error-msg" id="name-error">Please enter your name</div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="email">Email</label>
+        <input class="field-input" type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
+        <div class="error-msg" id="email-error">Please enter a valid email</div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label" for="message">Message <span class="optional-tag">(optional)</span></label>
+        <textarea class="field-input" id="message" name="message" placeholder="Tell us about your project..."></textarea>
+      </div>
+
+      <button type="submit" class="submit-btn">
+        <svg class="wa-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+        </svg>
+        Chat on WhatsApp
+      </button>
+    </form>
+  </div>
+</section>
+
+<!-- ── Footer ──────────────────────────────────────────── -->
+<footer>
+  <div class="footer-logo">NOVA</div>
+  <div class="footer-links">
+    <a href="https://youtube.com/@GodaGo" target="_blank">YouTube</a>
+    <a href="https://skool.com/autonomee" target="_blank">Community</a>
+    <a href="https://github.com" target="_blank">GitHub</a>
+  </div>
+  <p class="footer-copy">Powered by Claude &nbsp;&middot;&nbsp; Built by <a href="https://youtube.com/@GodaGo" target="_blank">GodaGo</a></p>
+</footer>
+
 <script>
+  // ── Form validation (preserved from original) ──
   const form = document.getElementById('lead-form');
   const nameInput = document.getElementById('name');
   const emailInput = document.getElementById('email');
@@ -256,6 +973,31 @@
 
     const waUrl = `https://wa.me/18636047056?text=${encodeURIComponent(text)}`;
     window.open(waUrl, '_blank');
+  });
+
+  // ── Scroll animations ──
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.style.opacity = '1';
+        entry.target.style.transform = 'translateY(0)';
+      }
+    });
+  }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+  document.querySelectorAll('.feature-card, .step, .cap-list li').forEach(el => {
+    el.style.opacity = '0';
+    el.style.transform = 'translateY(20px)';
+    el.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
+    observer.observe(el);
+  });
+
+  // ── Nav background on scroll ──
+  const nav = document.querySelector('nav');
+  window.addEventListener('scroll', () => {
+    nav.style.background = window.scrollY > 50
+      ? 'rgba(0,0,0,0.9)'
+      : 'rgba(0,0,0,0.7)';
   });
 </script>
 

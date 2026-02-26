@@ -354,12 +354,15 @@ export async function getRecentHistory(
     const messages = [...data].reverse();
 
     const lines = messages.map((m: any) => {
-      const time = new Date(m.created_at).toLocaleTimeString("en-US", {
+      const ts = new Date(m.created_at).toLocaleString("en-US", {
+        timeZone: "America/New_York",
+        month: "short",
+        day: "numeric",
         hour: "numeric",
         minute: "2-digit",
         hour12: true,
       });
-      return `[${time} ${m.role}]: ${m.content}`;
+      return `[${ts} ${m.role}]: ${m.content}`;
     });
 
     // Secondary char limit — drop oldest messages if total exceeds 8,000 chars

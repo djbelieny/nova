@@ -1,18 +1,118 @@
+# ============================================================
+# Nova — Docker Compose
+# ============================================================
+# Services:
+#   relay     — Main Telegram bot (always on)
+#   caddy     — Reverse proxy with automatic HTTPS (csm.07labs.com)
+#   dashboard — Web dashboard (optional)
+#   miniapp   — Telegram Mini App (optional)
+#   voice     — Voice call server (optional)
+#
+# Usage:
+#   docker compose up -d              → relay only
+#   docker compose --profile web up -d → relay + caddy + dashboard + miniapp
+#   docker compose --profile all up -d → everything
+#
+# Domain: csm.07labs.com
+#   /          → Mini App (port 3034)
+#   /dashboard → Dashboard (port 3033)
+#   /voice     → Voice server (port 8080)
+# ============================================================
+
+x-common: &common
+  build: .
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    # Override host-specific paths for container context
+    CLAUDE_PATH: /usr/bin/claude
+    PROJECT_DIR: /app
+    RELAY_DIR: /app/.nova
+    # Voice server listens on 8080 inside container
+    VOICE_SERVER_PORT: "8080"
+  volumes:
+    - ~/.claude:/root/.claude:ro    # Claude Code auth tokens (read-only)
+    - nova-data:/app/.nova          # Persistent data (WhatsApp auth, uploads, workspace)
+  networks:
+    - nova
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
-  nova:
-    build: .
+  # ── Main bot (always runs) ───────────────────────────────
+  relay:
+    <<: *common
+    container_name: nova-relay
+    # No ports needed — Telegram uses outbound long polling
+
+  # ── Reverse proxy with automatic HTTPS ─────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: nova-caddy
     restart: unless-stopped
-    env_file: .env
-    volumes:
-      - ~/.claude:/root/.claude          # Claude Code auth tokens
-      - nova-data:/app/.nova             # Persistent data (WhatsApp auth, uploads, temp)
     ports:
-      - "3034:3034"                      # Mini App (if enabled)
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - nova
+    profiles: ["web", "all"]
+
+  # ── Web dashboard (optional) ─────────────────────────────
+  dashboard:
+    <<: *common
+    container_name: nova-dashboard
+    command: ["bun", "run", "src/dashboard.ts"]
+    # No host ports — Caddy proxies via internal network
+    profiles: ["web", "all"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3033/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Telegram Mini App (optional) ─────────────────────────
+  miniapp:
+    <<: *common
+    container_name: nova-miniapp
+    command: ["bun", "run", "src/miniapp.ts"]
+    # No host ports — Caddy proxies via internal network
+    profiles: ["web", "all"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3034/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Voice server (optional) ──────────────────────────────
+  voice:
+    <<: *common
+    container_name: nova-voice
+    command: ["bun", "run", "src/voice-server.ts"]
+    # No host ports — Caddy proxies via internal network
+    profiles: ["voice", "all"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 volumes:
   nova-data:
+    name: nova-data
+  caddy-data:
+    name: nova-caddy-data
+  caddy-config:
+    name: nova-caddy-config
+
+networks:
+  nova:
+    name: nova
+    driver: bridge

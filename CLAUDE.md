@@ -229,6 +229,32 @@ Lets the bot understand voice messages sent on Telegram.
 
 ---
 
+## Phase 8: Web Research — Perplexity (Optional, ~2 min)
+
+Gives Nova the ability to search the web and do deep research using Perplexity AI.
+
+**You need from the user:**
+- A Perplexity API key
+
+**What to tell them:**
+1. Go to perplexity.ai/settings/api
+2. Create an API key, copy it
+
+**What you do:**
+1. Save `PERPLEXITY_API_KEY` to `.env`
+2. The Perplexity MCP server is already registered in `.mcp.json` — no extra setup needed
+
+**Available models (configured via env vars):**
+- `sonar-pro` — conversational search with real-time web results (default for ask)
+- `sonar-deep-research` — thorough multi-step research (default for research)
+- `sonar-reasoning-pro` — advanced reasoning with citations (default for reason)
+
+**When to use Perplexity:** For any question that needs current web data — news, docs, pricing, competitors, market research, technical lookups. Prefer Perplexity over raw web search for questions that benefit from synthesized answers with citations.
+
+**Done when:** `PERPLEXITY_API_KEY` is set in `.env`.
+
+---
+
 ## After Setup
 
 Run the full health check:
