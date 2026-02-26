@@ -118,6 +118,7 @@ const pendingApprovals = new Map<string, PendingApproval>();
 // ============================================================
 
 interface RevisionSession {
+  sessionId: string;   // unique ID for this revision session
   userId: string;
   originalText: string;
   plan: ExecutionPlan;
@@ -130,7 +131,24 @@ interface RevisionSession {
   requestId?: string;  // links back to originating user message
 }
 
-const revisionSessions = new Map<string, RevisionSession>(); // keyed by userId
+// Keyed by sessionId — supports multiple concurrent revision sessions per user
+const revisionSessions = new Map<string, RevisionSession>();
+
+/**
+ * Find the most recent pending revision session for a user.
+ * When a user sends feedback, it applies to their latest revision request.
+ */
+function findLatestRevisionForUser(userId: string): RevisionSession | null {
+  let latest: RevisionSession | null = null;
+  for (const session of revisionSessions.values()) {
+    if (session.userId === userId) {
+      if (!latest || session.createdAt > latest.createdAt) {
+        latest = session;
+      }
+    }
+  }
+  return latest;
+}
 
 /**
  * Persist a revision session to Supabase so it survives restarts and long delays.
@@ -141,8 +159,9 @@ async function persistRevisionSession(
 ): Promise<void> {
   if (!supabase) return;
   try {
-    // Upsert by user_id — only one active revision session per user
-    await supabase.from("revision_sessions").upsert({
+    // Insert with unique session ID — supports multiple concurrent sessions per user
+    await supabase.from("revision_sessions").insert({
+      id: session.sessionId,
       user_id: session.userId,
       original_text: session.originalText.substring(0, 2000),
       plan: session.plan,
@@ -154,9 +173,9 @@ async function persistRevisionSession(
       request_id: session.requestId || null,
       status: "pending",
       updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" }).then(({ error }) => {
+    }).then(({ error }) => {
       if (error) console.error("[orchestrator] Failed to persist revision session:", error.message);
-      else console.log(`[orchestrator] Revision session persisted for user ${session.userId}`);
+      else console.log(`[orchestrator] Revision session ${session.sessionId} persisted for user ${session.userId}`);
     });
   } catch (err) {
     console.error("[orchestrator] Error persisting revision session:", err);
@@ -166,19 +185,18 @@ async function persistRevisionSession(
 /**
  * Check if a user has an active revision session.
  * Revision sessions do NOT expire — they persist until the user sends feedback
- * or explicitly cancels. Falls back to Supabase if not in memory.
+ * or explicitly cancels. Returns the most recent session for the user.
+ * Falls back to Supabase if not in memory.
  */
 export function getRevisionSession(userId: string): RevisionSession | null {
-  const session = revisionSessions.get(userId);
-  if (session) return session;
-  return null;
+  return findLatestRevisionForUser(userId);
 }
 
 /**
  * Async version that checks Supabase when not in memory.
  */
 export async function getRevisionSessionAsync(userId: string): Promise<RevisionSession | null> {
-  const inMemory = revisionSessions.get(userId);
+  const inMemory = findLatestRevisionForUser(userId);
   if (inMemory) return inMemory;
 
   // Try to recover from Supabase
@@ -195,7 +213,9 @@ export async function getRevisionSessionAsync(userId: string): Promise<RevisionS
 
     if (error || !data) return null;
 
+    const sessionId = data.id || `rev-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const session: RevisionSession = {
+      sessionId,
       userId: data.user_id,
       originalText: data.original_text || "",
       plan: data.plan || { subtasks: [] },
@@ -212,15 +232,15 @@ export async function getRevisionSessionAsync(userId: string): Promise<RevisionS
       requestId: data.request_id || undefined,
     };
 
-    // Restore to in-memory cache
-    revisionSessions.set(userId, session);
+    // Restore to in-memory cache (keyed by sessionId)
+    revisionSessions.set(sessionId, session);
 
     // Mark as consumed in Supabase
     await _supabase.from("revision_sessions")
       .update({ status: "consumed", updated_at: new Date().toISOString() })
       .eq("id", data.id);
 
-    console.log(`[orchestrator] Recovered revision session from Supabase for user ${userId}`);
+    console.log(`[orchestrator] Recovered revision session ${sessionId} from Supabase for user ${userId}`);
     return session;
   } catch {
     return null;
@@ -321,6 +341,27 @@ function normalizeWorkflowSignature(text: string): string {
  * Used when a user taps an approval button but the bot has restarted
  * or the approval fell out of memory. Returns the PendingApproval if found.
  */
+/**
+ * Load a full user object from Supabase by user ID.
+ * Used when recovering approvals/revision sessions where only the user_id was persisted.
+ */
+async function loadFullUser(supabase: SupabaseClient, userId: string): Promise<any> {
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("id, telegram_id, name, timezone, phone, role, preferences, profile_text")
+      .eq("id", userId)
+      .single();
+    if (error || !data) {
+      console.warn(`[orchestrator] Could not load full user ${userId}, using minimal object`);
+      return { id: userId };
+    }
+    return data;
+  } catch {
+    return { id: userId };
+  }
+}
+
 async function recoverSingleApproval(
   approvalId: string,
   ctx: Context
@@ -345,11 +386,14 @@ async function recoverSingleApproval(
       source: a.source ?? 0,
     })) : [];
 
+    // Load full user object (name, timezone, etc.) — needed for execute phase context
+    const user = await loadFullUser(_supabase, data.user_id);
+
     const pending: PendingApproval = {
       id: data.id,
       ctx,
       chatId,
-      user: { id: data.user_id },
+      user,
       supabase: _supabase,
       originalText: data.original_text || "",
       plan: data.plan || { subtasks: [] },
@@ -422,7 +466,9 @@ export async function handleApproval(
 
   if (action === "revise") {
     // Store revision context so the next message resumes the workflow
+    const revSessionId = `rev-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const revSession: RevisionSession = {
+      sessionId: revSessionId,
       userId: pending.user.id,
       originalText: pending.originalText,
       plan: pending.plan,
@@ -434,7 +480,7 @@ export async function handleApproval(
       createdAt: Date.now(),
       requestId: pending.requestId,
     };
-    revisionSessions.set(pending.user.id, revSession);
+    revisionSessions.set(revSessionId, revSession);
 
     // Persist to Supabase so it survives restarts and long delays
     await persistRevisionSession(pending.supabase || _supabase, revSession);
@@ -965,7 +1011,7 @@ export function orchestrate(
   // First check in-memory (fast), then Supabase (async) inside _runTask
   const revSession = getRevisionSession(user.id);
   if (revSession) {
-    revisionSessions.delete(user.id);
+    revisionSessions.delete(revSession.sessionId);
     console.log(`[orchestrator] Revision session detected for ${user.name}: "${text.substring(0, 50)}"`);
     _runTask(ctx, `Revision: ${text.substring(0, 40)}`, async () => {
       await handleRevision(ctx, text, user, supabase, revSession);
@@ -984,7 +1030,7 @@ export function orchestrate(
     _runTask(ctx, `Check revision: ${text.substring(0, 30)}`, async () => {
       const recoveredSession = await getRevisionSessionAsync(user.id);
       if (recoveredSession) {
-        revisionSessions.delete(user.id);
+        revisionSessions.delete(recoveredSession.sessionId);
         console.log(`[orchestrator] Recovered revision session from Supabase for ${user.name}`);
         await handleRevision(ctx, text, user, supabase, recoveredSession);
         return { prompt: "__ORCHESTRATOR_HANDLED__" };
@@ -1641,13 +1687,16 @@ export async function recoverPendingApprovals(
   try {
     const { data, error } = await supabase
       .from("pending_approvals")
-      .select("id, chat_id, original_text, plan, prepare_results, artifacts, parent_task_id, prepare_summary, execute_descriptions, created_at")
+      .select("id, chat_id, original_text, plan, prepare_results, artifacts, parent_task_id, prepare_summary, execute_descriptions, workspace_dir, workflow_type, request_id, created_at")
       .eq("user_id", userId)
       .eq("status", "pending");
 
     if (error || !data?.length) return;
 
     console.log(`[orchestrator] Recovering ${data.length} pending approval(s) from Supabase`);
+
+    // Load full user object once for all approvals (name, timezone, etc.)
+    const user = await loadFullUser(supabase, userId);
 
     for (const row of data) {
       if (pendingApprovals.has(row.id)) continue; // already in memory
@@ -1675,7 +1724,7 @@ export async function recoverPendingApprovals(
         id: row.id,
         ctx: fakeCtx,
         chatId,
-        user: { id: userId },
+        user,
         supabase,
         originalText: row.original_text || "",
         plan: row.plan || { subtasks: [] },
@@ -1683,7 +1732,9 @@ export async function recoverPendingApprovals(
         artifacts,
         parentTaskId: row.parent_task_id || undefined,
         startTime: new Date(row.created_at).getTime(),
-        workflowType: "generic",
+        workspaceDir: row.workspace_dir || undefined,
+        workflowType: (row.workflow_type as any) || "generic",
+        requestId: row.request_id || undefined,
       });
 
       // Notify the user that this approval survived the restart and is still actionable

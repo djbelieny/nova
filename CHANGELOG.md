@@ -6,6 +6,17 @@ Each entry includes: when, what triggered it, which files changed, what happened
 
 ---
 
+## [2026-02-26 11:38] Fix concurrent message flow tracking and approval recovery
+**Trigger:** user-request
+**Files:** src/orchestrator.ts, db/migration-concurrent-revisions.sql (new)
+**Summary:** Fixed three bugs that broke multi-message concurrent task flows:
+1. `recoverPendingApprovals()` was missing `workspace_dir`, `workflow_type`, and `request_id` columns — recovered approvals lost context and defaulted to "generic" workflow type
+2. Both `recoverSingleApproval()` and `recoverPendingApprovals()` created minimal `{ id: userId }` user objects — execute phase would fail accessing `user.name`/`user.timezone`. Now loads full user data from Supabase.
+3. Revision sessions had a `UNIQUE(user_id)` constraint — concurrent revision flows for the same user would overwrite each other. Now keyed by unique `sessionId` with most-recent-first lookup.
+**Risk:** medium
+
+---
+
 ## [2026-02-26 11:38] Fix message flow tracking and approval persistence
 **Trigger:** user-request
 **Files:** src/orchestrator.ts, src/relay.ts, db/migration-message-flow.sql (new)
