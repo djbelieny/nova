@@ -63,6 +63,7 @@ let _sendResponseWithVoice: (ctx: Context, response: string, userId?: string) =>
 let _sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
 let _sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
 let _relayDir: string;
+let _supabase: SupabaseClient | null = null;
 
 export function initOrchestrator(deps: {
   callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string) => Promise<string>;
@@ -73,6 +74,7 @@ export function initOrchestrator(deps: {
   sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
   sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
   relayDir: string;
+  supabase?: SupabaseClient | null;
 }): void {
   _callClaude = deps.callClaude;
   _buildPrompt = deps.buildPrompt;
@@ -82,6 +84,7 @@ export function initOrchestrator(deps: {
   _sendTelegramFile = deps.sendTelegramFile;
   _sendMessageToChat = deps.sendMessageToChat;
   _relayDir = deps.relayDir;
+  _supabase = deps.supabase || null;
 
   // Initialize planner with shared dependencies
   initPlanner(deps.callClaude, deps.buildPrompt);
@@ -105,6 +108,7 @@ export interface PendingApproval {
   startTime: number;
   workspaceDir?: string;
   workflowType?: "social-media" | "generic";
+  requestId?: string;  // links back to originating user message for flow tracking
 }
 
 const pendingApprovals = new Map<string, PendingApproval>();
@@ -123,23 +127,104 @@ interface RevisionSession {
   workspaceDir?: string;
   workflowType: "social-media" | "generic";
   createdAt: number;
+  requestId?: string;  // links back to originating user message
 }
 
 const revisionSessions = new Map<string, RevisionSession>(); // keyed by userId
 
 /**
+ * Persist a revision session to Supabase so it survives restarts and long delays.
+ */
+async function persistRevisionSession(
+  supabase: SupabaseClient | null,
+  session: RevisionSession
+): Promise<void> {
+  if (!supabase) return;
+  try {
+    // Upsert by user_id — only one active revision session per user
+    await supabase.from("revision_sessions").upsert({
+      user_id: session.userId,
+      original_text: session.originalText.substring(0, 2000),
+      plan: session.plan,
+      prepare_results: session.prepareResults,
+      artifacts: (session.artifacts || []).map((a: any) => ({ type: a.type, value: a.value, source: a.source })),
+      parent_task_id: session.parentTaskId || null,
+      workspace_dir: session.workspaceDir || null,
+      workflow_type: session.workflowType,
+      request_id: session.requestId || null,
+      status: "pending",
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" }).then(({ error }) => {
+      if (error) console.error("[orchestrator] Failed to persist revision session:", error.message);
+      else console.log(`[orchestrator] Revision session persisted for user ${session.userId}`);
+    });
+  } catch (err) {
+    console.error("[orchestrator] Error persisting revision session:", err);
+  }
+}
+
+/**
  * Check if a user has an active revision session.
- * Auto-expires after 10 minutes.
+ * Revision sessions do NOT expire — they persist until the user sends feedback
+ * or explicitly cancels. Falls back to Supabase if not in memory.
  */
 export function getRevisionSession(userId: string): RevisionSession | null {
   const session = revisionSessions.get(userId);
-  if (!session) return null;
-  // Expire after 10 minutes
-  if (Date.now() - session.createdAt > 10 * 60 * 1000) {
-    revisionSessions.delete(userId);
+  if (session) return session;
+  return null;
+}
+
+/**
+ * Async version that checks Supabase when not in memory.
+ */
+export async function getRevisionSessionAsync(userId: string): Promise<RevisionSession | null> {
+  const inMemory = revisionSessions.get(userId);
+  if (inMemory) return inMemory;
+
+  // Try to recover from Supabase
+  if (!_supabase) return null;
+  try {
+    const { data, error } = await _supabase
+      .from("revision_sessions")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error || !data) return null;
+
+    const session: RevisionSession = {
+      userId: data.user_id,
+      originalText: data.original_text || "",
+      plan: data.plan || { subtasks: [] },
+      prepareResults: Array.isArray(data.prepare_results) ? data.prepare_results : [],
+      artifacts: Array.isArray(data.artifacts) ? data.artifacts.map((a: any) => ({
+        type: a.type || "file",
+        value: a.value || "",
+        source: a.source ?? 0,
+      })) : [],
+      parentTaskId: data.parent_task_id || undefined,
+      workspaceDir: data.workspace_dir || undefined,
+      workflowType: data.workflow_type || "generic",
+      createdAt: new Date(data.created_at).getTime(),
+      requestId: data.request_id || undefined,
+    };
+
+    // Restore to in-memory cache
+    revisionSessions.set(userId, session);
+
+    // Mark as consumed in Supabase
+    await _supabase.from("revision_sessions")
+      .update({ status: "consumed", updated_at: new Date().toISOString() })
+      .eq("id", data.id);
+
+    console.log(`[orchestrator] Recovered revision session from Supabase for user ${userId}`);
+    return session;
+  } catch {
     return null;
   }
-  return session;
 }
 
 /**
@@ -232,6 +317,60 @@ function normalizeWorkflowSignature(text: string): string {
 }
 
 /**
+ * Recover a single approval from Supabase into the in-memory map.
+ * Used when a user taps an approval button but the bot has restarted
+ * or the approval fell out of memory. Returns the PendingApproval if found.
+ */
+async function recoverSingleApproval(
+  approvalId: string,
+  ctx: Context
+): Promise<PendingApproval | null> {
+  if (!_supabase) return null;
+
+  try {
+    const { data, error } = await _supabase
+      .from("pending_approvals")
+      .select("id, user_id, chat_id, original_text, plan, prepare_results, artifacts, parent_task_id, workspace_dir, workflow_type, request_id, created_at")
+      .eq("id", approvalId)
+      .eq("status", "pending")
+      .single();
+
+    if (error || !data) return null;
+
+    const chatId = data.chat_id || ctx.chat?.id || 0;
+    const prepareResults: SubtaskResult[] = Array.isArray(data.prepare_results) ? data.prepare_results : [];
+    const artifacts: Artifact[] = Array.isArray(data.artifacts) ? data.artifacts.map((a: any) => ({
+      type: a.type || "file",
+      value: a.value || "",
+      source: a.source ?? 0,
+    })) : [];
+
+    const pending: PendingApproval = {
+      id: data.id,
+      ctx,
+      chatId,
+      user: { id: data.user_id },
+      supabase: _supabase,
+      originalText: data.original_text || "",
+      plan: data.plan || { subtasks: [] },
+      prepareResults,
+      artifacts,
+      parentTaskId: data.parent_task_id || undefined,
+      startTime: new Date(data.created_at).getTime(),
+      workspaceDir: data.workspace_dir || undefined,
+      workflowType: (data.workflow_type as any) || "generic",
+      requestId: data.request_id || undefined,
+    };
+
+    pendingApprovals.set(approvalId, pending);
+    return pending;
+  } catch (err) {
+    console.error(`[orchestrator] Failed to recover approval ${approvalId}:`, err);
+    return null;
+  }
+}
+
+/**
  * Handle an approval callback from the Telegram inline button.
  * Called by relay.ts when user taps Approve/Revise/Cancel.
  */
@@ -241,10 +380,16 @@ export async function handleApproval(
   ctx: Context,
   feedback?: string
 ): Promise<void> {
-  const pending = pendingApprovals.get(approvalId);
+  let pending = pendingApprovals.get(approvalId);
+
+  // If not in memory, try to recover from Supabase (handles restarts, long delays)
   if (!pending) {
-    await ctx.answerCallbackQuery({ text: "This approval has expired." });
-    return;
+    pending = await recoverSingleApproval(approvalId, ctx);
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: "Approval not found. It may have already been processed." });
+      return;
+    }
+    console.log(`[orchestrator] Recovered approval ${approvalId} from Supabase on-demand`);
   }
 
   await ctx.answerCallbackQuery({ text: action === "approve" ? "Executing..." : action === "revise" ? "Send your revision" : "Cancelled" });
@@ -277,7 +422,7 @@ export async function handleApproval(
 
   if (action === "revise") {
     // Store revision context so the next message resumes the workflow
-    revisionSessions.set(pending.user.id, {
+    const revSession: RevisionSession = {
       userId: pending.user.id,
       originalText: pending.originalText,
       plan: pending.plan,
@@ -287,7 +432,13 @@ export async function handleApproval(
       workspaceDir: pending.workspaceDir,
       workflowType: pending.workflowType || "generic",
       createdAt: Date.now(),
-    });
+      requestId: pending.requestId,
+    };
+    revisionSessions.set(pending.user.id, revSession);
+
+    // Persist to Supabase so it survives restarts and long delays
+    await persistRevisionSession(pending.supabase || _supabase, revSession);
+
     pendingApprovals.delete(approvalId);
 
     if (pending.workflowType === "social-media") {
@@ -436,9 +587,10 @@ async function handleRevision(
     startTime: Date.now(),
     workspaceDir: session.workspaceDir,
     workflowType: session.workflowType,
+    requestId: session.requestId,
   });
 
-  console.log(`[orchestrator] Approval created (revision): ${approvalId} | request: "${session.originalText.substring(0, 60)}" | total pending: ${pendingApprovals.size}`);
+  console.log(`[orchestrator] Approval created (revision): ${approvalId} | request="${session.originalText.substring(0, 60)}" | requestId=${session.requestId} | total pending: ${pendingApprovals.size}`);
 
   // Persist to Supabase — includes prepareResults for potential restart recovery
   if (supabase) {
@@ -456,6 +608,9 @@ async function handleRevision(
       artifacts: allArtifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
       execute_descriptions: execDescs,
       parent_task_id: session.parentTaskId || null,
+      workspace_dir: session.workspaceDir || null,
+      workflow_type: session.workflowType || "generic",
+      request_id: session.requestId || null,
       status: "pending",
     }).then(({ error }) => {
       if (error) console.error("[orchestrator] Failed to persist revision approval:", error.message);
@@ -803,7 +958,11 @@ export function orchestrate(
   user: any,
   supabase: SupabaseClient | null
 ): void {
+  // Generate a request_id for message flow tracking
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
   // Step 0: Check for active revision session — the user's message is feedback on prior work
+  // First check in-memory (fast), then Supabase (async) inside _runTask
   const revSession = getRevisionSession(user.id);
   if (revSession) {
     revisionSessions.delete(user.id);
@@ -818,6 +977,49 @@ export function orchestrate(
     return;
   }
 
+  // Step 0b: Check Supabase for persisted revision sessions (survives restarts + long delays)
+  // This runs inside _runTask since it's async
+  if (supabase) {
+    // Quick sync check failed, try async Supabase recovery
+    _runTask(ctx, `Check revision: ${text.substring(0, 30)}`, async () => {
+      const recoveredSession = await getRevisionSessionAsync(user.id);
+      if (recoveredSession) {
+        revisionSessions.delete(user.id);
+        console.log(`[orchestrator] Recovered revision session from Supabase for ${user.name}`);
+        await handleRevision(ctx, text, user, supabase, recoveredSession);
+        return { prompt: "__ORCHESTRATOR_HANDLED__" };
+      }
+      // Not a revision — fall through to normal routing
+      return { prompt: "__NOT_REVISION__" };
+    }, {
+      postProcess: async (raw) => {
+        if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
+        if (raw === "__NOT_REVISION__") {
+          // Continue with normal orchestration
+          orchestrateMain(ctx, text, user, supabase, requestId);
+          return "__SKIP__";
+        }
+        return processMemoryIntents(supabase, raw, user.id, user.timezone);
+      },
+      userId: user.id,
+    });
+    return;
+  }
+
+  // No supabase — go directly to main orchestration
+  orchestrateMain(ctx, text, user, supabase, requestId);
+}
+
+/**
+ * Main orchestration logic — split out so revision recovery can fall through to it.
+ */
+function orchestrateMain(
+  ctx: Context,
+  text: string,
+  user: any,
+  supabase: SupabaseClient | null,
+  requestId: string
+): void {
   // Step 1: Fast heuristic — no Claude call needed
   if (isSimpleMessage(text)) {
     console.log(`[orchestrator] Simple path (heuristic): ${text.substring(0, 50)}`);
@@ -831,7 +1033,7 @@ export function orchestrate(
     console.log(`[orchestrator] Social media workflow: "${socialReq.topic}" → ${socialReq.platforms.join(", ")}`);
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildSocialMediaPlan(socialReq.topic, socialReq.platforms);
-      await routeComplex(ctx, text, user, supabase, plan, "social-media");
+      await routeComplex(ctx, text, user, supabase, plan, "social-media", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => {
@@ -849,7 +1051,7 @@ export function orchestrate(
     console.log(`[orchestrator] Email campaign workflow: "${emailReq.topic}"`);
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildEmailCampaignPlan(emailReq.topic, emailReq.audience);
-      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
@@ -863,7 +1065,7 @@ export function orchestrate(
     console.log(`[orchestrator] Blog post workflow: "${blogReq.topic}"`);
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildBlogPostPlan(blogReq.topic);
-      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
@@ -877,7 +1079,7 @@ export function orchestrate(
     console.log(`[orchestrator] Presentation workflow: "${presReq.topic}"`);
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildPresentationPlan(presReq.topic);
-      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
@@ -891,7 +1093,7 @@ export function orchestrate(
     console.log(`[orchestrator] Ad campaign workflow: "${adReq.topic}" → ${adReq.platforms.join(", ")}`);
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildAdCampaignPlan(adReq.topic, adReq.platforms);
-      await routeComplex(ctx, text, user, supabase, plan, "generic");
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
@@ -906,7 +1108,7 @@ export function orchestrate(
     const pattern = await findPattern(supabase, text, user.id);
     if (pattern) {
       console.log(`[orchestrator] Pattern cache hit: ${pattern.task_signature.substring(0, 50)}`);
-      await routeComplex(ctx, text, user, supabase, pattern.plan);
+      await routeComplex(ctx, text, user, supabase, pattern.plan, undefined, requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }
 
@@ -939,12 +1141,12 @@ export function orchestrate(
           phase: "prepare",
         }],
       };
-      await routeComplex(ctx, text, user, supabase, singlePlan);
+      await routeComplex(ctx, text, user, supabase, singlePlan, undefined, requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }
 
     // Complex — decompose and execute
-    await routeComplex(ctx, text, user, supabase);
+    await routeComplex(ctx, text, user, supabase, undefined, undefined, requestId);
     return { prompt: "__ORCHESTRATOR_HANDLED__" };
   }, {
     postProcess: async (raw) => {
@@ -1090,7 +1292,8 @@ async function routeComplex(
   user: any,
   supabase: SupabaseClient | null,
   cachedPlan?: ExecutionPlan,
-  workflowType?: "social-media" | "generic"
+  workflowType?: "social-media" | "generic",
+  requestId?: string
 ): Promise<void> {
   const startTime = Date.now();
   const autoApprove = detectAutoApprove(text);
@@ -1108,6 +1311,7 @@ async function routeComplex(
           description: text.substring(0, 200),
           status: "in_progress",
           user_id: user.id,
+          request_id: requestId || null,
         })
         .select("id")
         .single();
@@ -1282,9 +1486,10 @@ async function routeComplex(
       startTime,
       workspaceDir,
       workflowType: workflowType || "generic",
+      requestId,
     });
 
-    console.log(`[orchestrator] Approval created: ${approvalId} | request: "${text.substring(0, 60)}" | total pending: ${pendingApprovals.size}`);
+    console.log(`[orchestrator] Approval created: ${approvalId} | request="${text.substring(0, 60)}" | requestId=${requestId} | total pending: ${pendingApprovals.size}`);
 
     // Persist to Supabase — includes prepareResults for potential restart recovery
     if (supabase) {
@@ -1302,6 +1507,9 @@ async function routeComplex(
         artifacts: artifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
         execute_descriptions: execDescs,
         parent_task_id: parentTaskId || null,
+        workspace_dir: workspaceDir || null,
+        workflow_type: workflowType || "generic",
+        request_id: requestId || null,
         status: "pending",
       }).then(({ error }) => {
         if (error) console.error("[orchestrator] Failed to persist approval:", error.message);

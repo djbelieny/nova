@@ -1802,6 +1802,7 @@ initOrchestrator({
   sendResponseWithVoice,
   sendTelegramFile: sendFile,
   relayDir: RELAY_DIR,
+  supabase,
   sendMessageToChat: async (chatId, text, keyboard) => {
     const bot = telegramAdapter?.getBot();
     if (!bot) return;
