@@ -13,7 +13,7 @@ csm.07labs.com, nova.07labs.com, novaapp.07labs.com, miniapp.07labs.com, mininov
 	}
 }
 
-nova.1osm.com {
+nova.1osm.com, mininova.1osm.com {
 	# Voice server (Twilio webhook)
 	handle /voice/* {
 		reverse_proxy localhost:8080

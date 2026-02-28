@@ -11,7 +11,7 @@ From your local machine, after making changes:
 
 ```bash
 # 1. Sync files to server
-rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
+rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' --exclude='.mcp.json' \
   ./ root@nova.07labs.com:/opt/nova/
 
 # 2. SSH in and restart the changed service(s)
@@ -85,7 +85,7 @@ git log --oneline -10
 
 # Checkout that commit locally, then re-sync
 git checkout <commit-hash>
-rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
+rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' --exclude='.mcp.json' \
   ./ root@nova.07labs.com:/opt/nova/
 ssh root@nova.07labs.com "cd /opt/nova && bun install && systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp"
 
