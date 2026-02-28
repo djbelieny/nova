@@ -749,10 +749,11 @@ function runTask(
     try {
       const { prompt, model, hint: taskHint } = await buildTask();
 
-      // Skip calling Claude for orchestrator-handled prompts
+      // Skip calling Claude for orchestrator sentinel prompts
       const taskUserId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
-      const rawResponse = prompt === "__ORCHESTRATOR_HANDLED__"
-        ? "__ORCHESTRATOR_HANDLED__"
+      const isSentinel = prompt.startsWith("__") && prompt.endsWith("__");
+      const rawResponse = isSentinel
+        ? prompt
         : await callClaude(prompt, model, taskUserId, taskHint);
 
       const response = opts?.postProcess

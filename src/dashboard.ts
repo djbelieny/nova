@@ -225,40 +225,70 @@ function formatBytes(bytes: number): string {
 // ============================================================
 
 async function getStatus(): Promise<unknown> {
-  const services = [
-    { name: "relay", label: "Relay" },
-    { name: "voice-server", label: "Voice Server" },
-    { name: "smart-checkin", label: "Smart Check-in" },
-    { name: "morning-briefing", label: "Morning Briefing" },
-    { name: "dashboard", label: "Dashboard" },
-  ];
+  const isMac = process.platform === "darwin";
+
+  const services = isMac
+    ? [
+        { name: "relay", label: "Relay", unit: "com.nova.relay" },
+        { name: "voice-server", label: "Voice Server", unit: "com.nova.voice-server" },
+        { name: "smart-checkin", label: "Smart Check-in", unit: "com.nova.smart-checkin" },
+        { name: "morning-briefing", label: "Morning Briefing", unit: "com.nova.morning-briefing" },
+        { name: "dashboard", label: "Dashboard", unit: "com.nova.dashboard" },
+      ]
+    : [
+        { name: "relay", label: "Relay", unit: "nova-relay" },
+        { name: "voice", label: "Voice Server", unit: "nova-voice" },
+        { name: "dashboard", label: "Dashboard", unit: "nova-dashboard" },
+        { name: "miniapp", label: "Mini App", unit: "nova-miniapp" },
+        { name: "caddy", label: "Caddy (HTTPS)", unit: "caddy" },
+        { name: "cron", label: "Scheduler (cron)", unit: "cron" },
+      ];
 
   const results = [];
-  for (const svc of services) {
-    const id = `com.nova.${svc.name}`;
-    try {
-      const proc = Bun.spawn(["launchctl", "list", id], { stdout: "pipe", stderr: "pipe" });
-      const out = await new Response(proc.stdout).text();
-      const exitCode = await proc.exited;
 
-      if (exitCode === 0) {
-        const pidMatch = out.match(/"PID"\s*=\s*(\d+)/);
-        const statusMatch = out.match(/"LastExitStatus"\s*=\s*(\d+)/);
+  if (isMac) {
+    for (const svc of services) {
+      try {
+        const proc = Bun.spawn(["launchctl", "list", svc.unit], { stdout: "pipe", stderr: "pipe" });
+        const out = await new Response(proc.stdout).text();
+        const exitCode = await proc.exited;
+
+        if (exitCode === 0) {
+          const pidMatch = out.match(/"PID"\s*=\s*(\d+)/);
+          const statusMatch = out.match(/"LastExitStatus"\s*=\s*(\d+)/);
+          const pid = pidMatch ? parseInt(pidMatch[1]) : null;
+          const lastExit = statusMatch ? parseInt(statusMatch[1]) : 0;
+          results.push({ name: svc.name, label: svc.label, status: pid ? "running" : lastExit === 0 ? "idle" : "error", pid, lastExitCode: lastExit });
+        } else {
+          results.push({ name: svc.name, label: svc.label, status: "not_installed", pid: null, lastExitCode: null });
+        }
+      } catch {
+        results.push({ name: svc.name, label: svc.label, status: "unknown", pid: null, lastExitCode: null });
+      }
+    }
+  } else {
+    // Linux — use systemctl
+    for (const svc of services) {
+      try {
+        const proc = Bun.spawn(["systemctl", "show", svc.unit, "--property=ActiveState,MainPID"], { stdout: "pipe", stderr: "pipe" });
+        const out = await new Response(proc.stdout).text();
+        await proc.exited;
+
+        const activeMatch = out.match(/ActiveState=(\w+)/);
+        const pidMatch = out.match(/MainPID=(\d+)/);
+        const active = activeMatch?.[1] || "unknown";
         const pid = pidMatch ? parseInt(pidMatch[1]) : null;
-        const lastExit = statusMatch ? parseInt(statusMatch[1]) : 0;
 
         results.push({
           name: svc.name,
           label: svc.label,
-          status: pid ? "running" : lastExit === 0 ? "idle" : "error",
-          pid,
-          lastExitCode: lastExit,
+          status: active === "active" ? "running" : active === "inactive" ? "idle" : active === "failed" ? "error" : active,
+          pid: pid && pid > 0 ? pid : null,
+          lastExitCode: null,
         });
-      } else {
-        results.push({ name: svc.name, label: svc.label, status: "not_installed", pid: null, lastExitCode: null });
+      } catch {
+        results.push({ name: svc.name, label: svc.label, status: "unknown", pid: null, lastExitCode: null });
       }
-    } catch {
-      results.push({ name: svc.name, label: svc.label, status: "unknown", pid: null, lastExitCode: null });
     }
   }
 
@@ -383,36 +413,55 @@ async function getLogs(service: string, lines: number): Promise<unknown> {
 }
 
 async function getTasks(): Promise<unknown> {
-  const services = [
-    { name: "smart-checkin", label: "Smart Check-in" },
-    { name: "morning-briefing", label: "Morning Briefing" },
-  ];
-
+  const isMac = process.platform === "darwin";
   const results = [];
-  for (const svc of services) {
-    const plistPath = join(process.env.HOME || "~", "Library", "LaunchAgents", `com.nova.${svc.name}.plist`);
+
+  if (isMac) {
+    const services = [
+      { name: "smart-checkin", label: "Smart Check-in" },
+      { name: "morning-briefing", label: "Morning Briefing" },
+    ];
+
+    for (const svc of services) {
+      const plistPath = join(process.env.HOME || "~", "Library", "LaunchAgents", `com.nova.${svc.name}.plist`);
+      try {
+        const content = await readFile(plistPath, "utf-8");
+        const calendarMatch = content.match(/<key>StartCalendarInterval<\/key>[\s\S]*?<dict>([\s\S]*?)<\/dict>/);
+        let schedule = "unknown";
+        if (calendarMatch) {
+          const hourMatch = calendarMatch[1].match(/<key>Hour<\/key>\s*<integer>(\d+)<\/integer>/);
+          const minMatch = calendarMatch[1].match(/<key>Minute<\/key>\s*<integer>(\d+)<\/integer>/);
+          if (hourMatch && minMatch) {
+            schedule = `Daily at ${hourMatch[1].padStart(2, "0")}:${minMatch[1].padStart(2, "0")}`;
+          }
+        }
+        const intervalMatch = content.match(/<key>StartInterval<\/key>\s*<integer>(\d+)<\/integer>/);
+        if (intervalMatch) {
+          const secs = parseInt(intervalMatch[1]);
+          if (secs >= 3600) schedule = `Every ${Math.round(secs / 3600)}h`;
+          else if (secs >= 60) schedule = `Every ${Math.round(secs / 60)}m`;
+          else schedule = `Every ${secs}s`;
+        }
+        results.push({ name: svc.name, label: svc.label, schedule, installed: true });
+      } catch {
+        results.push({ name: svc.name, label: svc.label, schedule: "not installed", installed: false });
+      }
+    }
+  } else {
+    // Linux — read crontab
     try {
-      const content = await readFile(plistPath, "utf-8");
-      const calendarMatch = content.match(/<key>StartCalendarInterval<\/key>[\s\S]*?<dict>([\s\S]*?)<\/dict>/);
-      let schedule = "unknown";
-      if (calendarMatch) {
-        const hourMatch = calendarMatch[1].match(/<key>Hour<\/key>\s*<integer>(\d+)<\/integer>/);
-        const minMatch = calendarMatch[1].match(/<key>Minute<\/key>\s*<integer>(\d+)<\/integer>/);
-        if (hourMatch && minMatch) {
-          schedule = `Daily at ${hourMatch[1].padStart(2, "0")}:${minMatch[1].padStart(2, "0")}`;
+      const content = await readFile("/etc/cron.d/nova", "utf-8");
+      const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("#") && !l.startsWith("SHELL") && !l.startsWith("PATH"));
+      for (const line of lines) {
+        const match = line.match(/^([\d*,\/\s]+)\s+nova\s+.*bun run (\S+)/);
+        if (match) {
+          const cron = match[1].trim();
+          const script = match[2].replace("services/", "").replace(".ts", "");
+          results.push({ name: script, label: script.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()), schedule: cron, installed: true });
         }
       }
-      const intervalMatch = content.match(/<key>StartInterval<\/key>\s*<integer>(\d+)<\/integer>/);
-      if (intervalMatch) {
-        const secs = parseInt(intervalMatch[1]);
-        if (secs >= 3600) schedule = `Every ${Math.round(secs / 3600)}h`;
-        else if (secs >= 60) schedule = `Every ${Math.round(secs / 60)}m`;
-        else schedule = `Every ${secs}s`;
-      }
-
-      results.push({ name: svc.name, label: svc.label, schedule, installed: true });
     } catch {
-      results.push({ name: svc.name, label: svc.label, schedule: "not installed", installed: false });
+      results.push({ name: "cron", label: "Cron", schedule: "not found", installed: false });
     }
   }
 
@@ -1409,6 +1458,7 @@ function renderDashboard(): string {
 </div>
 
 <script>
+const BASE = '${DASHBOARD_BASE}';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => {
   const d = document.createElement('div');
@@ -1445,7 +1495,7 @@ setInterval(() => {
 // ---- STATUS ----
 async function loadStatus() {
   try {
-    const r = await fetch('/api/status');
+    const r = await fetch(BASE + '/api/status');
     const d = await r.json();
     $('header-uptime').textContent = fmtUptime(d.uptime);
     let html = '';
@@ -1464,7 +1514,7 @@ async function loadStatus() {
 // ---- METRICS ----
 async function loadMetrics() {
   try {
-    const r = await fetch('/api/metrics' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
+    const r = await fetch(BASE + '/api/metrics' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
     if (d.error) { $('metrics-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
 
@@ -1501,7 +1551,7 @@ async function loadMetrics() {
 // ---- MESSAGES ----
 async function loadMessages() {
   try {
-    const r = await fetch('/api/messages?limit=50' + userParam());
+    const r = await fetch(BASE + '/api/messages?limit=50' + userParam());
     const d = await r.json();
     if (!d.messages.length) { $('messages-panel').innerHTML = '<div style="color:var(--dim)">No messages yet</div>'; return; }
 
@@ -1522,7 +1572,7 @@ async function loadMessages() {
 let memoryType = 'all';
 async function loadMemory() {
   try {
-    const r = await fetch('/api/memory?type=' + memoryType + userParam());
+    const r = await fetch(BASE + '/api/memory?type=' + memoryType + userParam());
     const d = await r.json();
 
     let html = '<div class="tabs">';
@@ -1550,7 +1600,7 @@ async function loadMemory() {
 // ---- TASKS ----
 async function loadTasks() {
   try {
-    const r = await fetch('/api/tasks');
+    const r = await fetch(BASE + '/api/tasks');
     const d = await r.json();
     if (!d.tasks.length) { $('tasks-panel').innerHTML = '<div style="color:var(--dim)">No scheduled tasks</div>'; return; }
 
@@ -1567,7 +1617,7 @@ async function loadTasks() {
 // ---- VOICE ----
 async function loadVoice() {
   try {
-    const r = await fetch('/api/voice' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
+    const r = await fetch(BASE + '/api/voice' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
     if (!d.calls || !d.calls.length) { $('voice-panel').innerHTML = '<div style="color:var(--dim)">No recent voice activity</div>'; return; }
 
@@ -1586,7 +1636,7 @@ async function loadVoice() {
 // ---- SKILLS ----
 async function loadSkills() {
   try {
-    const r = await fetch('/api/skills');
+    const r = await fetch(BASE + '/api/skills');
     const d = await r.json();
 
     let html = '';
@@ -1617,7 +1667,7 @@ async function loadSkills() {
 let agentTaskFilter = 'all';
 async function loadAgentTasks() {
   try {
-    const r = await fetch('/api/agent-tasks' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
+    const r = await fetch(BASE + '/api/agent-tasks' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
 
     let html = '<div class="tabs">';
@@ -1656,7 +1706,7 @@ async function loadAgentTasks() {
 // ---- RESOURCES ----
 async function loadResources() {
   try {
-    const r = await fetch('/api/resources');
+    const r = await fetch(BASE + '/api/resources');
     const d = await r.json();
 
     const maxDisk = Math.max(1, d.disk.uploads.size, d.disk.temp.size, d.disk.logs.size);
@@ -1688,7 +1738,7 @@ async function loadResources() {
 async function loadLogs() {
   try {
     const service = $('log-service').value;
-    const r = await fetch('/api/logs?service=' + service + '&lines=80');
+    const r = await fetch(BASE + '/api/logs?service=' + service + '&lines=80');
     const d = await r.json();
 
     if (!d.logs.length) { $('logs-content').innerHTML = '<div style="color:var(--dim)">No log files found</div>'; return; }
@@ -1798,7 +1848,7 @@ function renderStackedChart(chartData, labelFn, maxBuckets) {
 
 async function loadCosts() {
   try {
-    const r = await fetch('/api/costs' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
+    const r = await fetch(BASE + '/api/costs' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
     if (d.error) { $('costs-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
 
@@ -1871,7 +1921,7 @@ let selectedUserId = '';
 
 async function loadUsers() {
   try {
-    const r = await fetch('/api/users');
+    const r = await fetch(BASE + '/api/users');
     const d = await r.json();
     const sel = $('user-selector');
     // Keep the "All Users" option
@@ -1897,7 +1947,7 @@ function userParam() {
 // ---- USAGE BY USER ----
 async function loadUsageByUser() {
   try {
-    const r = await fetch('/api/usage-by-user');
+    const r = await fetch(BASE + '/api/usage-by-user');
     const d = await r.json();
     if (d.error) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
     if (!d.users || !d.users.length) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--dim)">No users found</div>'; return; }
