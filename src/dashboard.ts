@@ -29,6 +29,164 @@ const supabase: SupabaseClient | null =
 const startTime = Date.now();
 
 // ============================================================
+// AUTH — cookie-based session login
+// ============================================================
+
+const DASHBOARD_USER = process.env.DASHBOARD_USER || "admin";
+const DASHBOARD_PASS = process.env.DASHBOARD_PASS || "";
+const DASHBOARD_BASE = process.env.DASHBOARD_BASE || "/dashboard";
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// In-memory session store (survives for container lifetime)
+const sessions = new Map<string, { user: string; expiresAt: number }>();
+
+function generateSessionId(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function isAuthenticated(req: Request): boolean {
+  if (!DASHBOARD_PASS) return true; // No password set = auth disabled
+  const cookie = req.headers.get("cookie") || "";
+  const match = cookie.match(/nova_session=([a-f0-9]+)/);
+  if (!match) return false;
+  const session = sessions.get(match[1]);
+  if (!session || session.expiresAt < Date.now()) {
+    if (match[1]) sessions.delete(match[1]);
+    return false;
+  }
+  return true;
+}
+
+function loginPage(error?: string): Response {
+  const errorHtml = error ? `<div class="error">${error}</div>` : "";
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova — Login</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0a;
+      color: #00ff41;
+      font-family: 'Share Tech Mono', monospace;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .login-box {
+      border: 1px solid #00ff41;
+      padding: 2rem;
+      width: 340px;
+      background: rgba(0, 255, 65, 0.03);
+      box-shadow: 0 0 20px rgba(0, 255, 65, 0.1);
+    }
+    h1 {
+      font-size: 1.4rem;
+      text-align: center;
+      margin-bottom: 1.5rem;
+      text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+    }
+    label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; opacity: 0.7; }
+    input {
+      width: 100%;
+      padding: 0.6rem;
+      background: #111;
+      border: 1px solid #333;
+      color: #00ff41;
+      font-family: inherit;
+      font-size: 0.95rem;
+      margin-bottom: 1rem;
+      outline: none;
+    }
+    input:focus { border-color: #00ff41; box-shadow: 0 0 5px rgba(0, 255, 65, 0.3); }
+    button {
+      width: 100%;
+      padding: 0.7rem;
+      background: transparent;
+      border: 1px solid #00ff41;
+      color: #00ff41;
+      font-family: inherit;
+      font-size: 1rem;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    button:hover { background: rgba(0, 255, 65, 0.1); }
+    .error {
+      background: rgba(255, 0, 0, 0.1);
+      border: 1px solid #ff4444;
+      color: #ff4444;
+      padding: 0.5rem;
+      margin-bottom: 1rem;
+      text-align: center;
+      font-size: 0.85rem;
+    }
+    .scanline {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 999;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    }
+  </style>
+</head>
+<body>
+  <div class="scanline"></div>
+  <div class="login-box">
+    <h1>// NOVA COMMAND CENTER</h1>
+    ${errorHtml}
+    <form method="POST" action="${DASHBOARD_BASE}/login">
+      <label>USERNAME</label>
+      <input type="text" name="username" autocomplete="username" required autofocus>
+      <label>PASSWORD</label>
+      <input type="password" name="password" autocomplete="current-password" required>
+      <button type="submit">ACCESS</button>
+    </form>
+  </div>
+</body>
+</html>`;
+  return new Response(html, {
+    status: 401,
+    headers: { "Content-Type": "text/html" },
+  });
+}
+
+async function handleLogin(req: Request): Promise<Response> {
+  const body = await req.text();
+  const params = new URLSearchParams(body);
+  const username = params.get("username") || "";
+  const password = params.get("password") || "";
+
+  if (username === DASHBOARD_USER && password === DASHBOARD_PASS) {
+    const sessionId = generateSessionId();
+    sessions.set(sessionId, { user: username, expiresAt: Date.now() + SESSION_TTL_MS });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: `${DASHBOARD_BASE}/`,
+        "Set-Cookie": `nova_session=${sessionId}; Path=${DASHBOARD_BASE}; HttpOnly; SameSite=Strict; Max-Age=86400; Secure`,
+      },
+    });
+  }
+
+  return loginPage("Invalid credentials");
+}
+
+function handleLogout(): Response {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: `${DASHBOARD_BASE}/`,
+      "Set-Cookie": `nova_session=; Path=${DASHBOARD_BASE}; HttpOnly; Max-Age=0`,
+    },
+  });
+}
+
+// ============================================================
 // HELPERS
 // ============================================================
 
@@ -1828,9 +1986,22 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    // Health check
+    // Health check (no auth required)
     if (path === "/health") {
       return jsonResponse({ status: "ok", service: "nova-dashboard", uptime: Math.floor((Date.now() - startTime) / 1000) });
+    }
+
+    // Login/logout routes
+    if (path === "/login" && req.method === "POST") {
+      return handleLogin(req);
+    }
+    if (path === "/logout") {
+      return handleLogout();
+    }
+
+    // Auth gate — everything below requires login
+    if (!isAuthenticated(req)) {
+      return loginPage();
     }
 
     // Dashboard HTML

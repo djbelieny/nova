@@ -127,13 +127,40 @@ async function getRecentActivity(supabase: SupabaseClient, userId: string): Prom
   }
 }
 
-async function getLastActivity(userId: string): Promise<string> {
+async function getLastActivity(supabase: SupabaseClient, userId: string): Promise<string> {
+  // Query DB directly for the actual last user message — state file is unreliable
+  try {
+    const { data } = await supabase
+      .from("messages")
+      .select("created_at")
+      .eq("user_id", userId)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (data?.length) {
+      const lastMsg = new Date(data[0].created_at);
+      const now = new Date();
+      const hoursSince = (now.getTime() - lastMsg.getTime()) / (1000 * 60 * 60);
+      const timeStr = lastMsg.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+      return `Last message: ${timeStr} (${hoursSince.toFixed(1)} hours ago)`;
+    }
+  } catch (error) {
+    console.error("Last activity query error:", error);
+  }
+
+  // Fallback to state file only if DB query fails
   const state = await loadState(userId);
   const lastMsg = new Date(state.lastMessageTime);
   const now = new Date();
   const hoursSince = (now.getTime() - lastMsg.getTime()) / (1000 * 60 * 60);
-
-  return `Last message: ${hoursSince.toFixed(1)} hours ago`;
+  return `Last message: ~${hoursSince.toFixed(1)} hours ago (estimated)`;
 }
 
 // ============================================================
@@ -171,7 +198,7 @@ async function askClaudeToDecide(
   const [goals, recentActivity, activity] = await Promise.all([
     getGoals(supabase, user.id),
     getRecentActivity(supabase, user.id),
-    getLastActivity(user.id),
+    getLastActivity(supabase, user.id),
   ]);
 
   const now = new Date();

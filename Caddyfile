@@ -1,14 +1,35 @@
-csm.07labs.com {
+csm.07labs.com, nova.07labs.com, novaapp.07labs.com, miniapp.07labs.com, mininova.07labs.com {
 	# Telegram Mini App (default)
-	reverse_proxy miniapp:3034
+	reverse_proxy localhost:3034
 
 	# Dashboard under /dashboard
 	handle_path /dashboard/* {
-		reverse_proxy dashboard:3033
+		reverse_proxy localhost:3033
 	}
 
 	# Voice server under /voice
-	handle_path /voice/* {
-		reverse_proxy voice:8080
+	handle /voice/* {
+		reverse_proxy localhost:8080
 	}
+}
+
+nova.1osm.com {
+	# Voice server (Twilio webhook)
+	handle /voice/* {
+		reverse_proxy localhost:8080
+	}
+
+	# SMS + audio endpoints
+	handle /sms/* {
+		reverse_proxy localhost:8080
+	}
+	handle /audio/* {
+		reverse_proxy localhost:8080
+	}
+	handle /health {
+		reverse_proxy localhost:8080
+	}
+
+	# Fallback to miniapp
+	reverse_proxy localhost:3034
 }

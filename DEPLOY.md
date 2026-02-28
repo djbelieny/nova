@@ -1,49 +1,44 @@
 # Nova — Deployment Guide
 
-> Production server: `root@nova.07labs.com`
+> Production server: `root@nova.07labs.com` (Ubuntu 24.04)
 > Project directory: `/opt/nova`
-> Domain: `nova.1osm.com` (voice/SMS), `csm.07labs.com` (web/dashboard)
+> Domains: `nova.1osm.com` (voice/SMS), `csm.07labs.com` (web/dashboard)
+> Runs natively via systemd (no Docker)
 
 ## Quick Deploy (most common)
 
-From your local machine, after pushing changes to `master`:
+From your local machine, after making changes:
 
 ```bash
 # 1. Sync files to server
 rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
   ./ root@nova.07labs.com:/opt/nova/
 
-# 2. SSH in and rebuild + restart the changed service(s)
+# 2. SSH in and restart the changed service(s)
 ssh root@nova.07labs.com
-cd /opt/nova
 
-# Rebuild and restart a specific service:
-docker compose build voice && docker compose --profile voice up -d voice
-docker compose build relay && docker compose up -d relay
-docker compose build scheduler && docker compose up -d scheduler
-docker compose build dashboard && docker compose --profile web up -d dashboard
-docker compose build miniapp && docker compose --profile web up -d miniapp
+cd /opt/nova && bun install
 
-# Or rebuild and restart everything:
-docker compose build && docker compose --profile all up -d
+# Restart a specific service:
+systemctl restart nova-relay
+systemctl restart nova-voice
+systemctl restart nova-dashboard
+systemctl restart nova-miniapp
+
+# Or restart everything:
+systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 ```
 
-## Services & Profiles
+## Services
 
-| Service     | Container        | Profile  | Port (internal) | Description                    |
-|-------------|------------------|----------|-----------------|--------------------------------|
-| `relay`     | `nova-relay`     | (always) | —               | Main Telegram bot              |
-| `scheduler` | `nova-scheduler` | (always) | —               | Cron-based periodic services   |
-| `caddy`     | `nova-caddy`     | `web`    | 80, 443         | Reverse proxy, auto HTTPS      |
-| `dashboard` | `nova-dashboard` | `web`    | 3033            | Web dashboard                  |
-| `miniapp`   | `nova-miniapp`   | `web`    | 3034            | Telegram Mini App              |
-| `voice`     | `nova-voice`     | `voice`  | 8080            | Voice call server (Twilio)     |
-
-**Profile shortcuts:**
-- `docker compose up -d` — relay + scheduler only
-- `docker compose --profile web up -d` — + caddy, dashboard, miniapp
-- `docker compose --profile voice up -d` — + voice server
-- `docker compose --profile all up -d` — everything
+| Service          | Unit                     | Port | Description                  |
+|------------------|--------------------------|------|------------------------------|
+| Relay            | `nova-relay.service`     | —    | Main Telegram bot            |
+| Voice            | `nova-voice.service`     | 8080 | Voice/SMS server (Twilio)    |
+| Dashboard        | `nova-dashboard.service` | 3033 | Web dashboard                |
+| Mini App         | `nova-miniapp.service`   | 3034 | Telegram Mini App            |
+| Scheduler        | cron (`/etc/cron.d/nova`) | —   | Periodic services            |
+| Caddy            | `caddy.service`          | 80, 443 | Reverse proxy, auto HTTPS |
 
 ## Server Structure
 
@@ -51,23 +46,23 @@ docker compose build && docker compose --profile all up -d
 /opt/nova/           — Project files (synced from local via rsync)
 /opt/nova/.env       — Environment variables (server-only, never synced)
 /opt/nova/config/    — profile.md and other config (preserved across deploys)
-~/.claude/           — Claude Code auth tokens (mounted into containers)
+/home/nova/.claude/  — Claude Code auth tokens and runtime data
 ```
-
-## Environment
-
-The `.env` file on the server is **not** tracked in git and is excluded from rsync. If you need to update env vars, edit `/opt/nova/.env` directly on the server and restart the affected service.
 
 ## Logs
 
 ```bash
 # Tail logs for a specific service
-docker logs -f nova-voice
-docker logs -f nova-relay
-docker logs -f nova-scheduler
+journalctl -u nova-relay -f
+journalctl -u nova-voice -f
+journalctl -u nova-dashboard -f
+journalctl -u nova-miniapp -f
 
-# All services
-docker compose --profile all logs -f
+# All nova services
+journalctl -u 'nova-*' -f
+
+# Scheduler (cron) logs
+grep nova /var/log/syslog
 ```
 
 ## Health Checks
@@ -76,8 +71,8 @@ docker compose --profile all logs -f
 # Voice server
 curl https://nova.1osm.com/health
 
-# All container statuses
-docker compose --profile all ps
+# Service statuses
+systemctl status nova-relay nova-voice nova-dashboard nova-miniapp
 ```
 
 ## Rollback
@@ -92,7 +87,7 @@ git log --oneline -10
 git checkout <commit-hash>
 rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' \
   ./ root@nova.07labs.com:/opt/nova/
-ssh root@nova.07labs.com "cd /opt/nova && docker compose build && docker compose --profile all up -d"
+ssh root@nova.07labs.com "cd /opt/nova && bun install && systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp"
 
 # Don't forget to go back to master
 git checkout master
@@ -102,11 +97,16 @@ git checkout master
 
 If setting up a new server from scratch:
 
-1. Install Docker and Docker Compose
-2. Clone or rsync the project to `/opt/nova`
-3. Copy `.env.example` to `.env` and fill in all values
-4. Copy `config/profile.example.md` to `config/profile.md`
-5. Set up Claude Code auth: `mkdir -p ~/.claude` and configure tokens
-6. Start services: `docker compose --profile all up -d`
-7. Point DNS records for `nova.1osm.com` and `csm.07labs.com` to the server IP
-8. Caddy handles HTTPS certificates automatically
+1. Install Bun: `curl -fsSL https://bun.sh/install | bash`
+2. Install Caddy: `apt install -y caddy`
+3. Install Node.js 22 + Claude CLI (for relay)
+4. Create `nova` user: `useradd -r -m -s /bin/bash nova`
+5. Copy Claude auth: `cp -r /root/.claude /home/nova/.claude && chown -R nova:nova /home/nova/.claude`
+6. Rsync project to `/opt/nova`, run `bun install`
+7. Copy `.env.example` to `.env` and fill in all values
+8. Copy `config/profile.example.md` to `config/profile.md`
+9. Create systemd unit files (see `/etc/systemd/system/nova-*.service`)
+10. Install crontab: copy adapted entries to `/etc/cron.d/nova`
+11. Enable services: `systemctl enable --now nova-relay nova-voice nova-dashboard nova-miniapp`
+12. Point DNS for `nova.1osm.com` and `csm.07labs.com` to server IP
+13. Caddy handles HTTPS certificates automatically

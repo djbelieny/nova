@@ -38,6 +38,8 @@ interface HeartbeatContext {
   currentTime: string;
   timezone: string;
   hoursSinceLastInteraction: number;
+  lastInteractionAt: string;  // human-readable timestamp of last user message
+  recentSnippets: string;     // last few messages for grounding
   activeGoals: string;
   upcomingTasks: string;
   checkinsToday: number;
@@ -193,7 +195,7 @@ async function gatherHeartbeatContext(
   });
 
   // Parallel queries for context
-  const [goalsResult, lastMsgResult, checkinsResult, tasksResult] = await Promise.allSettled([
+  const [goalsResult, lastMsgResult, recentMsgsResult, checkinsResult, tasksResult] = await Promise.allSettled([
     // Active goals
     supabase.rpc("get_active_goals", { p_user_id: user.id }),
     // Last user message timestamp
@@ -204,6 +206,8 @@ async function gatherHeartbeatContext(
       .eq("role", "user")
       .order("created_at", { ascending: false })
       .limit(1),
+    // Recent messages (both roles) for grounding context
+    supabase.rpc("get_recent_messages", { p_user_id: user.id, limit_count: 6 }),
     // Today's heartbeat count
     (async () => {
       const todayStart = new Date();
@@ -241,11 +245,39 @@ async function gatherHeartbeatContext(
       .join("; ");
   }
 
-  // Parse hours since last interaction
+  // Parse hours since last interaction + readable timestamp
   let hoursSince = 0;
+  let lastInteractionAt = "unknown";
   if (lastMsgResult.status === "fulfilled" && lastMsgResult.value.data?.length) {
     const lastAt = new Date(lastMsgResult.value.data[0].created_at);
     hoursSince = Math.round((now.getTime() - lastAt.getTime()) / (1000 * 60 * 60) * 10) / 10;
+    lastInteractionAt = lastAt.toLocaleString("en-US", {
+      timeZone: user.timezone,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  }
+
+  // Parse recent message snippets for grounding
+  let recentSnippets = "No recent messages";
+  if (recentMsgsResult.status === "fulfilled" && recentMsgsResult.value.data?.length) {
+    const msgs = [...recentMsgsResult.value.data].reverse();
+    recentSnippets = msgs
+      .map((m: any) => {
+        const ts = new Date(m.created_at).toLocaleString("en-US", {
+          timeZone: user.timezone,
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        return `[${ts} ${m.role}]: ${(m.content || "").substring(0, 80)}`;
+      })
+      .join("\n");
   }
 
   // Parse checkins today
@@ -267,6 +299,8 @@ async function gatherHeartbeatContext(
     currentTime: timeStr,
     timezone: user.timezone,
     hoursSinceLastInteraction: hoursSince,
+    lastInteractionAt,
+    recentSnippets,
     activeGoals,
     upcomingTasks,
     checkinsToday,
@@ -285,16 +319,20 @@ ${ctx.checklist}
 
 CONTEXT:
 - Current time: ${ctx.currentTime} (${ctx.timezone})
-- Last interaction: ${ctx.hoursSinceLastInteraction}h ago
+- Last user message: ${ctx.lastInteractionAt} (${ctx.hoursSinceLastInteraction}h ago)
 - Active goals: ${ctx.activeGoals}
 - Due soon: ${ctx.upcomingTasks}
 - Check-ins today: ${ctx.checkinsToday}/${MAX_DAILY_CHECKINS}
+
+RECENT CONVERSATION (use these timestamps as ground truth):
+${ctx.recentSnippets}
 
 RULES:
 1. If nothing in the checklist needs attention right now, reply exactly: HEARTBEAT_OK
 2. If something does need attention, reply with a brief, helpful message (2-3 sentences max).
 3. Do NOT use tools. This is a quick triage — no email/calendar checks.
 4. Be genuinely useful, not annoying. Only alert for real reasons.
+5. IMPORTANT: Use the RECENT CONVERSATION timestamps above to determine when you last interacted — do NOT rely solely on the "Last user message" field.
 
 RESPOND:`;
 }

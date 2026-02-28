@@ -16,7 +16,9 @@
       "args": [
         "/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@presto-ai/google-workspace-mcp/./bin/cli.js"
       ],
-      "env": {}
+      "env": {
+        "GEMINI_CLI_WORKSPACE_FORCE_FILE_STORAGE": "true"
+      }
     },
     "playwright": {
       "type": "stdio",
