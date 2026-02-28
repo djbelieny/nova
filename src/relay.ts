@@ -588,7 +588,7 @@ async function callClaude(prompt: string, model?: ModelTier, userId?: string, hi
 }
 
 async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: string, hint?: string): Promise<string> {
-  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions"];
+  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions", "--max-turns", "25"];
 
   // Add model flag if specified (uses Max plan quota for all models)
   if (model) {
@@ -633,8 +633,39 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
       const stderrSnippet = stderr.trim() || "(empty stderr)";
       const stdoutTail = output.trim().slice(-500) || "(empty stdout)";
       console.error(`Claude error (exit ${exitCode}): stderr=${stderrSnippet} | stdout_tail=${stdoutTail}`);
+
+      // Try to salvage a result from the JSON output even on non-zero exit
+      // Claude CLI sometimes exits non-zero but still produces a valid result
+      try {
+        const json = JSON.parse(output.trim());
+        if (json.result && typeof json.result === "string" && json.result.trim()) {
+          console.warn(`[callClaude] Salvaged result from non-zero exit (code ${exitCode}, ${json.result.length} chars)`);
+          recordCall(true, modelLabel, durationMs, false);
+          if (json.usage) {
+            trackCost({
+              provider: "claude",
+              model: json.model || modelLabel,
+              input_tokens: json.usage?.input_tokens || 0,
+              output_tokens: json.usage?.output_tokens || 0,
+              cache_read_tokens: json.usage?.cache_read_input_tokens || 0,
+              cache_creation_tokens: json.usage?.cache_creation_input_tokens || 0,
+              cost_usd: json.cost_usd || json.total_cost_usd || 0,
+              duration_ms: durationMs,
+              session_id: json.session_id || undefined,
+            });
+          }
+          return json.result;
+        }
+      } catch {
+        // JSON parse failed — fall through to error
+      }
+
       recordCall(false, modelLabel, durationMs, stderr.includes("rate") || stderr.includes("overloaded"));
-      const detail = stderr.trim() || stdoutTail || `exit code ${exitCode}`;
+      // Build a readable error instead of dumping raw JSON
+      const isApiError = stderrSnippet.includes("APIError") || stderrSnippet.includes("status code");
+      const detail = isApiError
+        ? stderrSnippet.substring(0, 300)
+        : stderr.trim() || `Claude CLI exited with code ${exitCode} (0 output tokens — likely an API or auth error)`;
       throw new Error(`Claude CLI exited with code ${exitCode}: ${detail}`);
     }
 
@@ -753,7 +784,13 @@ function runTask(
       if (errMsg.includes("rate") || errMsg.includes("overloaded")) {
         msg = `⚠️ Claude API is rate-limited or overloaded. Try again in ~30 seconds.\n\n_Error: ${errMsg.substring(0, 200)}_`;
       } else if (errMsg.includes("exited with code")) {
-        msg = `⚠️ Claude CLI crashed (non-zero exit).\n\n_Error: ${errMsg.substring(0, 200)}_`;
+        // Extract just the meaningful part — skip raw JSON garbage
+        const codeMatch = errMsg.match(/exited with code (\d+)/);
+        const exitCode = codeMatch ? codeMatch[1] : "?";
+        const hasZeroOutput = errMsg.includes("0 output tokens");
+        msg = hasZeroOutput
+          ? `⚠️ Claude CLI failed (exit ${exitCode}) — the AI couldn't generate a response. This is usually a transient API error. Try again.`
+          : `⚠️ Claude CLI crashed (exit ${exitCode}). Try again in a moment.`;
       } else if (errMsg.includes("No JSON found") || errMsg.includes("parse")) {
         msg = `⚠️ AI returned an unparseable response (likely a malformed reply from the model).\n\n_Error: ${errMsg.substring(0, 200)}_`;
       } else if (errMsg.includes("timeout") || errMsg.includes("ETIMEDOUT")) {
