@@ -212,9 +212,17 @@ interface CallState {
   createdAt: number;
   lastActivity: number;
   user?: CallUser; // Resolved caller
+  isOwner: boolean;
+  callerPhone: string;
 }
 
 const activeCalls = new Map<string, CallState>();
+
+// Owner detection
+const OWNER_PHONE = process.env.USER_PHONE || "+18636047056";
+function isOwnerPhone(phone: string): boolean {
+  return phone === OWNER_PHONE;
+}
 
 // TTL cleanup — evict stale call states every 5 minutes
 const CALL_STATE_MAX_AGE = 30 * 60 * 1000; // 30 minutes max
@@ -227,7 +235,11 @@ setInterval(() => {
     if (now - state.createdAt > CALL_STATE_MAX_AGE || now - state.lastActivity > CALL_STATE_IDLE_TIMEOUT) {
       if (state.authenticated && state.turns.length > 0) {
         const snapshot = { ...state, turns: [...state.turns] };
-        processPostCallTasks(callSid, snapshot).catch(() => {});
+        if (snapshot.isOwner) {
+          processPostCallTasks(callSid, snapshot).catch(() => {});
+        } else {
+          sendGuestTranscript(callSid, snapshot).catch(() => {});
+        }
       }
       activeCalls.delete(callSid);
       evicted++;
@@ -331,6 +343,50 @@ PERSONALITY:
 - You're Nova — confident, direct, helpful
 - Brief and casual by default, more detail when needed
 - You're ${userName}'s trusted assistant — act like it`;
+}
+
+function buildGuestSystemPrompt(callerPhone: string): string {
+  const userName = FALLBACK_USER_NAME;
+  return `You are Nova, ${userName}'s AI assistant, on a phone call with a caller (${callerPhone}).
+
+VOICE CALL PROTOCOL:
+- You are on a real-time voice call — speak naturally and conversationally
+- Keep responses concise — this is a phone call, not a text chat
+- Be warm, helpful, and friendly
+
+NUMBERS & FORMATTING FOR SPEECH:
+- Phone numbers: read digit by digit with pauses
+- Never use markdown, asterisks, bullet points, or other text formatting — this is speech
+
+IMPORTANT BOUNDARIES:
+- You can answer general questions and have a nice conversation
+- Do NOT promise to execute tasks, send emails, check calendars, or take any actions
+- Do NOT mention your integrations or tools
+- If the caller asks you to do something actionable, let them know you'll pass their message along to ${userName}
+
+CURRENT TIME: ${getTimeStr()}
+
+PERSONALITY:
+- You're Nova — warm, helpful, professional
+- You're ${userName}'s assistant — represent him well
+- At the end of the conversation, let them know you'll pass their message along to ${userName}`;
+}
+
+async function sendGuestTranscript(callSid: string, state: CallState): Promise<void> {
+  if (state.turns.length === 0) return;
+
+  const callerPhone = state.callerPhone || "unknown";
+  const callerName = state.user?.name || "Unknown caller";
+  const turnCount = state.turns.length;
+
+  const transcript = state.turns
+    .map((t) => `${t.role === "user" ? "Caller" : "Nova"}: ${t.content}`)
+    .join("\n");
+
+  const message = `📞 Call from ${callerPhone} (${callerName})\nDuration: ${turnCount} turns\n\n${transcript}`;
+
+  console.log(`Sending guest transcript for ${callSid} to Telegram`);
+  await sendTelegramNotification(message);
 }
 
 async function callClaude(prompt: string): Promise<string> {
@@ -613,6 +669,8 @@ function getCallState(callSid: string): CallState {
       pinAttempts: 0,
       createdAt: Date.now(),
       lastActivity: Date.now(),
+      isOwner: false,
+      callerPhone: "",
     });
   }
   const state = activeCalls.get(callSid)!;
@@ -672,31 +730,25 @@ async function handleIncoming(body: string): Promise<Response> {
 
   console.log(`Incoming call from ${from} (${callSid})`);
   const state = getCallState(callSid);
+  state.authenticated = true;
+  state.callerPhone = from;
+  state.isOwner = isOwnerPhone(from);
 
   // Resolve caller by phone number
   const callUser = await resolveUserByPhone(from);
   if (callUser) {
     state.user = callUser;
-    console.log(`Caller identified: ${callUser.name}`);
+    console.log(`Caller identified: ${callUser.name} (owner: ${state.isOwner})`);
   } else {
-    console.log(`Unknown caller: ${from}`);
+    console.log(`Guest caller: ${from}`);
   }
 
-  // If the user has no PIN set, skip PIN verification
-  if (callUser && !callUser.pin) {
-    state.authenticated = true;
-    console.log(`Call ${callSid} auto-authenticated (no PIN set for ${callUser.name})`);
-    const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, "Hey, it's Nova. What's up?");
-    return twiml(gather);
-  }
+  const greeting = state.isOwner
+    ? "Hey, it's Nova. What's up?"
+    : "Hi, this is Nova, DJ's assistant. How can I help you?";
 
-  const greeting = await gatherWithAudio(
-    `${VOICE_SERVER_URL}/voice/pin`,
-    "Hey, it's Nova. Before we get into it, I need your PIN to verify it's you.",
-    { numDigits: 6, timeout: 15, redirectUrl: `${VOICE_SERVER_URL}/voice/pin` }
-  );
-
-  return twiml(greeting);
+  const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, greeting);
+  return twiml(gather);
 }
 
 async function handleOutgoing(body: string): Promise<Response> {
@@ -706,6 +758,9 @@ async function handleOutgoing(body: string): Promise<Response> {
 
   console.log(`Outgoing call connected to ${to} (${callSid})`);
   const state = getCallState(callSid);
+  state.authenticated = true;
+  state.callerPhone = to;
+  state.isOwner = false; // Outgoing = calling someone else, they're a guest
 
   // Resolve the callee by phone number
   const callUser = await resolveUserByPhone(to);
@@ -727,24 +782,24 @@ async function handleOutgoing(body: string): Promise<Response> {
     // No context file — that's fine
   }
 
-  // If the user has no PIN set, skip PIN verification
-  if (callUser && !callUser.pin) {
-    state.authenticated = true;
-    console.log(`Call ${callSid} auto-authenticated (no PIN set for ${callUser.name})`);
-    const welcomeText = state.context
-      ? "Hey, it's Nova. I was actually calling about something — let me tell you what's up."
-      : "Hey, it's Nova. What's up?";
-    const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, welcomeText);
-    return twiml(gather);
+  const welcomeText = state.context
+    ? "Hey, it's Nova. I was actually calling about something — let me tell you what's up."
+    : "Hey, it's Nova. What's up?";
+
+  // If there's outgoing call context, generate an opening based on it
+  if (state.context) {
+    const prompt = buildVoiceSystemPrompt(state.context, state.user) +
+      `\n\nYou just called someone and they picked up. Open the conversation naturally — explain why you're calling based on the context above. Be brief and direct.`;
+    const response = await callClaude(prompt);
+    state.turns.push({ role: "assistant", content: response });
+    await saveCallMessage("assistant", response, callSid, state.user?.id);
+
+    const contextGather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, response);
+    return twiml(contextGather);
   }
 
-  const greeting = await gatherWithAudio(
-    `${VOICE_SERVER_URL}/voice/pin`,
-    "Hey, it's Nova. I need your PIN real quick before we talk.",
-    { numDigits: 6, timeout: 15 }
-  );
-
-  return twiml(greeting);
+  const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, welcomeText);
+  return twiml(gather);
 }
 
 async function handlePin(body: string): Promise<Response> {
@@ -852,16 +907,24 @@ async function handleGather(body: string): Promise<Response> {
     lowerSpeech.includes("talk to you later") ||
     lowerSpeech.includes("bye nova")
   ) {
-    const goodbyeText = "Alright, I'll get started on anything we discussed. Talk to you later. Bye!";
+    const goodbyeText = state.isOwner
+      ? "Alright, I'll get started on anything we discussed. Talk to you later. Bye!"
+      : "It was great talking with you. I'll let DJ know and he'll get back to you. Bye!";
     await saveCallMessage("assistant", goodbyeText, callSid, userId);
     const audioId = await generateAudio(goodbyeText);
 
     // Trigger post-call processing (non-blocking)
     const callState = { ...state, turns: [...state.turns] };
     activeCalls.delete(callSid);
-    processPostCallTasks(callSid, callState).catch((err) =>
-      console.error(`Post-call processing error for ${callSid}:`, err)
-    );
+    if (callState.isOwner) {
+      processPostCallTasks(callSid, callState).catch((err) =>
+        console.error(`Post-call processing error for ${callSid}:`, err)
+      );
+    } else {
+      sendGuestTranscript(callSid, callState).catch((err) =>
+        console.error(`Guest transcript error for ${callSid}:`, err)
+      );
+    }
 
     if (audioId) {
       return twiml(`<Play>${audioUrl(audioId)}</Play><Hangup/>`);
@@ -870,12 +933,14 @@ async function handleGather(body: string): Promise<Response> {
   }
 
   // Build conversation prompt with full turn history
-  const userName = state.user?.name || FALLBACK_USER_NAME;
+  const userName = state.isOwner ? (state.user?.name || FALLBACK_USER_NAME) : "Caller";
   const turnHistory = state.turns
     .map((t) => `${t.role === "user" ? userName : "Nova"}: ${t.content}`)
     .join("\n");
 
-  const prompt = buildVoiceSystemPrompt(state.context, state.user) +
+  const prompt = (state.isOwner
+    ? buildVoiceSystemPrompt(state.context, state.user)
+    : buildGuestSystemPrompt(state.callerPhone)) +
     `\n\nCONVERSATION SO FAR:\n${turnHistory}\n\nRespond to ${userName}'s latest message. Be concise — this is a phone call.`;
 
   const response = await callClaude(prompt);
@@ -906,9 +971,15 @@ async function handleStatus(body: string): Promise<Response> {
     if (state.turns.length > 0 && state.authenticated) {
       const callState = { ...state, turns: [...state.turns] };
       activeCalls.delete(callSid);
-      processPostCallTasks(callSid, callState).catch((err) =>
-        console.error(`Post-call processing error for ${callSid}:`, err)
-      );
+      if (callState.isOwner) {
+        processPostCallTasks(callSid, callState).catch((err) =>
+          console.error(`Post-call processing error for ${callSid}:`, err)
+        );
+      } else {
+        sendGuestTranscript(callSid, callState).catch((err) =>
+          console.error(`Guest transcript error for ${callSid}:`, err)
+        );
+      }
     } else {
       activeCalls.delete(callSid);
     }
