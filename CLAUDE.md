@@ -3,6 +3,10 @@
 > Claude Code reads this file automatically. Walk the user through setup one phase at a time.
 > Ask for what you need, configure everything yourself, and confirm each step works before moving on.
 
+## Deployment
+
+For production deployment instructions (server: `root@nova.07labs.com`), see **[DEPLOY.md](DEPLOY.md)**.
+
 ## How This Works
 
 Nova is a personal AI assistant on Telegram powered by Claude.
