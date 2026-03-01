@@ -1127,7 +1127,7 @@ function detectPromptNeeds(text: string): PromptNeeds {
   const needsMemoryTags = /(?:remember|memorize|save|store|forget|goal|done|share with team)/i.test(lower);
   const needsTaskTags = /(?:task|todo|assign|delegate|block|cancel task|pending)/i.test(lower);
   const needsScheduleTags = /(?:remind|schedule|alarm|timer|recur|every day|every week|follow up|check in)/i.test(lower);
-  const needsSelfMod = /(?:fix yourself|change how you|modify your|edit your code|update your|improve your|add.*agent|create.*agent|new skill|edit.*relay|change.*prompt)/i.test(lower);
+  const needsSelfMod = /(?:self-edit|fix yourself|change how you|modify your|edit your (?:code|source)|update your|improve your|add.*agent|create.*agent|new skill|edit.*relay|change.*prompt|change.*code|edit.*changelog|modify.*source)/i.test(lower);
 
   // Tier 3: needs integrations/tools — trigger on action verbs + tool mentions
   const needsCapabilities = /(?:email|gmail|send|draft|calendar|event|meeting|zoom|call|phone|sms|text|notion|page|database|square|invoice|order|payment|revenue|ghl|high.?level|contact|crm|pipeline|opportunity|lead|cloudflare|deploy|worker|dns|browse|website|screenshot|navigate|search.*(?:web|online|google)|create.*(?:file|doc|pdf|slide|sheet|presentation|image|video|poster|design)|download|upload|organize|file)/i.test(lower);
