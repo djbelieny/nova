@@ -588,7 +588,7 @@ async function callClaude(prompt: string, model?: ModelTier, userId?: string, hi
 }
 
 async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: string, hint?: string): Promise<string> {
-  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions", "--max-turns", "25"];
+  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions", "--max-turns", process.env.MAX_CLAUDE_TURNS || "50"];
 
   // Add model flag if specified (uses Max plan quota for all models)
   if (model) {
@@ -672,11 +672,18 @@ async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: strin
     // Parse JSON response to extract cost data
     try {
       const json = JSON.parse(output.trim());
-      let result = typeof json.result === "string" ? json.result : output.trim();
+
+      // Handle error subtypes from Claude CLI (e.g. error_max_turns, prompt too long)
+      if (json.subtype === "error_max_turns") {
+        console.warn(`[callClaude] Hit max turns (${json.num_turns} turns, ${durationMs}ms)`);
+      }
+
+      let result = typeof json.result === "string" ? json.result : "";
 
       // Warn if result is empty — Claude used tools but produced no final text
       if (!result.trim()) {
         console.warn(`[callClaude] Empty result from Claude CLI (${json.num_turns || "?"} turns, ${durationMs}ms). This usually means Claude used tools without a final text reply.`);
+        result = "Sorry, I wasn't able to complete that request — I ran out of processing steps. Try simplifying your request or breaking it into smaller parts.";
       }
 
       const resolvedModel = json.model
@@ -796,6 +803,8 @@ function runTask(
         msg = `⚠️ AI returned an unparseable response (likely a malformed reply from the model).\n\n_Error: ${errMsg.substring(0, 200)}_`;
       } else if (errMsg.includes("timeout") || errMsg.includes("ETIMEDOUT")) {
         msg = `⚠️ Request timed out — the task may have been too complex or the API is slow.\n\n_Error: ${errMsg.substring(0, 200)}_`;
+      } else if (errMsg.toLowerCase().includes("prompt is too long") || errMsg.includes("too many tokens")) {
+        msg = `⚠️ That message was too long for me to process. Try shortening it or breaking it into smaller parts.`;
       } else {
         msg = `⚠️ Something went wrong.\n\n_Error: ${errMsg.substring(0, 300)}_`;
       }
