@@ -1422,10 +1422,10 @@ async function routeComplex(
       const processed = await processMemoryIntents(supabase, aggregated, user.id, user.timezone);
       await _saveMessage("assistant", processed, user.id);
 
-      // Delete checklist and send final response
+      // Final checklist update (keep visible so user sees outcomes)
       try {
         if (autoChecklistMsg) {
-          await ctx.api.deleteMessage(ctx.chat!.id, autoChecklistMsg.message_id);
+          await autoUpdateChecklist();
         }
       } catch {}
 
@@ -1499,12 +1499,10 @@ async function routeComplex(
     const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress, workspaceDir);
     const artifacts = collectArtifacts(prepareResults);
 
-    // Delete checklist after prepare phase
+    // Final checklist update (keep visible so user sees outcomes)
     try {
       if (checklistMsg) {
-        await updateChecklist(); // final update
-        await new Promise((r) => setTimeout(r, 1500));
-        await ctx.api.deleteMessage(ctx.chat!.id, checklistMsg.message_id);
+        await updateChecklist();
       }
     } catch {}
 
