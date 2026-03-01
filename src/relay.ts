@@ -1367,12 +1367,15 @@ function buildPrompt(
         `\n  - CHANGELOG.md — Your modification log (YOU maintain this)` +
         "\n" +
         "\nWhen " + user.name + " asks you to fix, improve, or change how you work:" +
-        "\n1. ALWAYS commit the current state first: `git -C " + PROJECT_ROOT + " add -A && git -C " + PROJECT_ROOT + " commit -m \"auto-save before self-edit\"`" +
+        "\n1. Create a feature branch from production: `git -C " + PROJECT_ROOT + " checkout -b self-edit/<short-slug> production`" +
         "\n2. Read the relevant file(s) to understand the current code" +
         "\n3. Make the change using your file editing tools" +
         "\n4. Log the change in CHANGELOG.md (see format below)" +
-        "\n5. Commit the change: `git -C " + PROJECT_ROOT + " add -A && git -C " + PROJECT_ROOT + " commit -m \"self-edit: <description>\"`" +
-        "\n6. Tell " + user.name + " what you changed and suggest they send /reload to apply it" +
+        "\n5. Commit: `git -C " + PROJECT_ROOT + " add -A && git -C " + PROJECT_ROOT + " commit -m \"self-edit: <description>\"`" +
+        "\n6. Merge to main and push: `git -C " + PROJECT_ROOT + " checkout main && git -C " + PROJECT_ROOT + " merge self-edit/<short-slug> && git -C " + PROJECT_ROOT + " push origin main`" +
+        "\n7. Merge to production and push: `git -C " + PROJECT_ROOT + " checkout production && git -C " + PROJECT_ROOT + " merge main && git -C " + PROJECT_ROOT + " push origin production`" +
+        "\n8. Clean up: `git -C " + PROJECT_ROOT + " branch -d self-edit/<short-slug>`" +
+        "\n9. Tell " + user.name + " what you changed and suggest they send /reload to apply it" +
         "\n" +
         `\nCHANGELOG.md — You MUST maintain ${PROJECT_ROOT}/CHANGELOG.md. Append an entry for EVERY modification:` +
         "\n  Format:" +

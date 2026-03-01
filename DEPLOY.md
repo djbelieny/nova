@@ -5,28 +5,30 @@
 > Domains: `nova.1osm.com` (voice/SMS), `csm.07labs.com` (web/dashboard)
 > Runs natively via systemd (no Docker)
 
+## Branch Strategy
+
+| Branch       | Purpose                                      |
+|--------------|----------------------------------------------|
+| `main`       | Development — push changes here first        |
+| `production` | Production — only updated via merged PRs     |
+| `self-edit/*`| Nova's self-modifications (auto-created)     |
+
 ## Quick Deploy (most common)
 
 From your local machine, after making changes:
 
 ```bash
-# 1. Sync files to server
-rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' --exclude='.mcp.json' \
-  ./ root@nova.07labs.com:/opt/nova/
+# 1. Push changes to main
+git push origin main
 
-# 2. SSH in and restart the changed service(s)
-ssh root@nova.07labs.com
+# 2. Merge main → production and push
+git checkout production
+git merge main
+git push origin production
+git checkout main
 
-cd /opt/nova && bun install
-
-# Restart a specific service:
-systemctl restart nova-relay
-systemctl restart nova-voice
-systemctl restart nova-dashboard
-systemctl restart nova-miniapp
-
-# Or restart everything:
-systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
+# 3. Pull and restart on server
+ssh root@nova.07labs.com "bash /opt/nova/scripts/deploy.sh"
 ```
 
 ## Services
@@ -43,10 +45,12 @@ systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 ## Server Structure
 
 ```
-/opt/nova/           — Project files (synced from local via rsync)
-/opt/nova/.env       — Environment variables (server-only, never synced)
+/opt/nova/           — Project files (cloned from GitHub, production branch)
+/opt/nova/.env       — Environment variables (server-only, in .gitignore)
+/opt/nova/.mcp.json  — MCP config (server-only, in .gitignore)
 /opt/nova/config/    — profile.md and other config (preserved across deploys)
 /home/nova/.claude/  — Claude Code auth tokens and runtime data
+/home/nova/.ssh/     — Deploy key for GitHub access
 ```
 
 ## Logs
@@ -80,18 +84,33 @@ systemctl status nova-relay nova-voice nova-dashboard nova-miniapp
 If a deploy breaks something:
 
 ```bash
-# Check the git log locally for the last known good commit
-git log --oneline -10
-
-# Checkout that commit locally, then re-sync
-git checkout <commit-hash>
-rsync -avz --exclude='.git' --exclude='node_modules' --exclude='.env' --exclude='.mcp.json' \
-  ./ root@nova.07labs.com:/opt/nova/
-ssh root@nova.07labs.com "cd /opt/nova && bun install && systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp"
-
-# Don't forget to go back to master
-git checkout master
+# On server — revert to previous commit
+ssh root@nova.07labs.com
+cd /opt/nova
+sudo -u nova git log --oneline -5        # find last good commit
+sudo -u nova git revert HEAD             # revert the bad commit
+bun install
+systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 ```
+
+Or for an emergency rollback to a specific commit:
+
+```bash
+sudo -u nova git reset --hard <commit-hash>
+bun install
+systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
+```
+
+## Nova Self-Editing
+
+Nova can edit its own source code in production via the self-edit workflow:
+
+1. Nova creates a `self-edit/<slug>` branch from `production`
+2. Makes changes, commits
+3. Merges branch into `main`, pushes
+4. Merges `main` into `production`, pushes
+5. Cleans up the feature branch
+6. Tells DJ to send `/reload` to apply changes
 
 ## First-Time Server Setup
 
@@ -101,12 +120,31 @@ If setting up a new server from scratch:
 2. Install Caddy: `apt install -y caddy`
 3. Install Node.js 22 + Claude CLI (for relay)
 4. Create `nova` user: `useradd -r -m -s /bin/bash nova`
-5. Copy Claude auth: `cp -r /root/.claude /home/nova/.claude && chown -R nova:nova /home/nova/.claude`
-6. Rsync project to `/opt/nova`, run `bun install`
-7. Copy `.env.example` to `.env` and fill in all values
-8. Copy `config/profile.example.md` to `config/profile.md`
-9. Create systemd unit files (see `/etc/systemd/system/nova-*.service`)
-10. Install crontab: copy adapted entries to `/etc/cron.d/nova`
-11. Enable services: `systemctl enable --now nova-relay nova-voice nova-dashboard nova-miniapp`
-12. Point DNS for `nova.1osm.com` and `csm.07labs.com` to server IP
-13. Caddy handles HTTPS certificates automatically
+5. Generate SSH deploy key for nova user (see below)
+6. Clone repo: `sudo -u nova git clone git@github.com:djbelieny/nova.git /opt/nova`
+7. Checkout production: `cd /opt/nova && sudo -u nova git checkout production`
+8. Copy `.env.example` to `.env` and fill in all values
+9. Copy `config/profile.example.md` to `config/profile.md`
+10. Run `bun install`
+11. Create systemd unit files (see `/etc/systemd/system/nova-*.service`)
+12. Install crontab: copy adapted entries to `/etc/cron.d/nova`
+13. Enable services: `systemctl enable --now nova-relay nova-voice nova-dashboard nova-miniapp`
+14. Point DNS for `nova.1osm.com` and `csm.07labs.com` to server IP
+15. Caddy handles HTTPS certificates automatically
+
+### SSH Deploy Key Setup
+
+```bash
+# As nova user
+sudo -u nova ssh-keygen -t ed25519 -C "nova-deploy@nova.07labs.com" -f /home/nova/.ssh/id_ed25519 -N ""
+sudo -u nova cat /home/nova/.ssh/id_ed25519.pub
+# Add the public key as a deploy key on GitHub (Settings > Deploy keys, enable write access)
+
+# Add GitHub to known hosts
+sudo -u nova ssh-keyscan github.com >> /home/nova/.ssh/known_hosts
+
+# Configure git user
+sudo -u nova git config --global user.name "Nova Bot"
+sudo -u nova git config --global user.email "nova@07labs.com"
+```
+
