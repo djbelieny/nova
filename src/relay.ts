@@ -782,6 +782,26 @@ function runTask(
         await saveMessage("assistant", response, userId, undefined, channelType);
       }
       await sendResponseWithVoice(ctx, response, userId);
+
+      // Auto-reload after self-edit: if the response mentions a self-edit commit
+      // and production branch was pushed, schedule a process restart so the new code loads
+      if (response.includes("self-edit:") || response.includes("self-edit/")) {
+        try {
+          const headProc = spawn(["git", "-C", PROJECT_ROOT, "log", "-1", "--format=%s"], { stdout: "pipe", stderr: "pipe" });
+          const headMsg = (await new Response(headProc.stdout).text()).trim();
+          await headProc.exited;
+          if (headMsg.startsWith("self-edit:")) {
+            console.log("[self-edit] Detected self-edit commit, scheduling auto-reload...");
+            await ctx.reply("Reloading with new code... I'll be back in a few seconds.");
+            setTimeout(() => {
+              console.log("[self-edit] Auto-reload — exiting for systemd restart");
+              process.exit(0);
+            }, 1500);
+          }
+        } catch (e) {
+          console.warn("[self-edit] Auto-reload check failed:", e);
+        }
+      }
     } catch (error) {
       const err = error as Error;
       console.error(`Task ${taskId} error:`, err);
@@ -1375,7 +1395,7 @@ function buildPrompt(
         "\n6. Merge to main and push: `git -C " + PROJECT_ROOT + " checkout main && git -C " + PROJECT_ROOT + " merge self-edit/<short-slug> && git -C " + PROJECT_ROOT + " push origin main`" +
         "\n7. Merge to production and push: `git -C " + PROJECT_ROOT + " checkout production && git -C " + PROJECT_ROOT + " merge main && git -C " + PROJECT_ROOT + " push origin production`" +
         "\n8. Clean up: `git -C " + PROJECT_ROOT + " branch -d self-edit/<short-slug>`" +
-        "\n9. Tell " + user.name + " what you changed and suggest they send /reload to apply it" +
+        "\n9. Tell " + user.name + " what you changed. The relay will detect the self-edit commit and auto-reload with the new code." +
         "\n" +
         `\nCHANGELOG.md — You MUST maintain ${PROJECT_ROOT}/CHANGELOG.md. Append an entry for EVERY modification:` +
         "\n  Format:" +
@@ -1409,7 +1429,7 @@ function buildPrompt(
         "Notion, Playwright (browser), Go High Level (CRM), Square (payments), Cloudflare (deploy), Zoom (meetings), Supabase (database)" +
         "\n   And skills: /image-gen, /canvas-design, /docx, /xlsx, /pptx, /pdf, /content-research-writer, " +
         "/competitive-ads-extractor, /lead-research-assistant, /ghostwriter, /platform-maker, /notebooklm, /telegram-file-sender, /skill-creator" +
-        "\n5. Log in CHANGELOG.md, commit, and tell " + user.name + " to /reload" +
+        "\n5. Log in CHANGELOG.md and commit (follow the self-edit git workflow above)" +
         "\n" +
         "\nAUTO-CORRECTION — When you encounter errors, try to fix them yourself:" +
         "\n• If a subtask fails with a code error (syntax, import, type), read the file, identify the bug, and fix it." +
