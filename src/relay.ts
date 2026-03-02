@@ -642,11 +642,15 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
   console.log(`[ai] Calling ${provider.name} [${resolvedModel}] (${runningClaude}/${MAX_CONCURRENT_CLAUDE} slots, ${claudeQueue.length} queued, route: ${reason}): ${prompt.substring(0, 50)}...`);
 
   try {
+    // Only disable MCP for explicitly tool-free contexts (heartbeat, etc.)
+    const noToolHints = ["heartbeat", "memory-review", "log-monitor"];
+    const noMcp = hint ? noToolHints.includes(hint) : false;
+
     const result: AIProviderResult = await provider.call({
       prompt,
       model: resolvedModel,
       mcpConfigPath,
-      noMcp: !mcpConfigPath,
+      noMcp,
       outputFormat: "json",
     });
 
