@@ -19,6 +19,7 @@ import {
   downloadMediaMessage,
   type WASocket,
 } from "@whiskeysockets/baileys";
+import { SocksProxyAgent } from "socks-proxy-agent";
 import QRCode from "qrcode";
 import { mkdir } from "fs/promises";
 import { join } from "path";
@@ -95,8 +96,13 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private async connect(): Promise<void> {
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
 
+    const proxyUrl = process.env.WHATSAPP_PROXY;
+    const agent = proxyUrl ? new SocksProxyAgent(proxyUrl) : undefined;
+
     this.sock = makeWASocket({
       auth: state,
+      agent,
+      fetchAgent: agent,
     });
 
     this.sock.ev.on("creds.update", saveCreds);
