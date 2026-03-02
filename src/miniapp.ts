@@ -151,17 +151,13 @@ async function resolveNovaUser(telegramUserId: number): Promise<any | null> {
  */
 async function authenticateRequest(req: Request): Promise<{ user: any; telegramUser: any } | Response> {
   const initDataRaw = req.headers.get("initdata") || req.headers.get("initData") || "";
-  console.log("[miniapp-auth] initData present:", !!initDataRaw, "length:", initDataRaw.length);
   const { valid, user: telegramUser } = await validateInitData(initDataRaw);
-  console.log("[miniapp-auth] validation result:", { valid, hasTelegramUser: !!telegramUser, telegramUserId: telegramUser?.id });
 
   if (!valid || !telegramUser) {
-    console.log("[miniapp-auth] REJECTED: valid=", valid, "telegramUser=", telegramUser);
     return jsonResponse({ error: "Unauthorized: invalid initData" }, 401);
   }
 
   const novaUser = await resolveNovaUser(telegramUser.id);
-  console.log("[miniapp-auth] resolveNovaUser result:", novaUser ? { id: novaUser.id, name: novaUser.name } : null);
   if (!novaUser) {
     return jsonResponse({ error: "User not found" }, 404);
   }
