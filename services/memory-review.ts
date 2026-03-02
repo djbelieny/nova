@@ -12,7 +12,11 @@
 
 import "dotenv/config";
 import { getDb, type Database } from "../src/db.ts";
-import { spawnLeanClaude } from "../src/claude-spawn.ts";
+import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { ClaudeProvider } from "../src/providers/claude.ts";
+
+// Register AI provider (memory-review runs standalone)
+registerProvider(new ClaudeProvider());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -135,22 +139,17 @@ NONE
 Do not explain your reasoning. Just list the IDs.`;
 
   try {
-    const { output, exitCode, stderr } = await spawnLeanClaude({
+    const result = await getDefaultProvider().call({
       prompt,
-      mcpServers: [],
       model: "haiku",
       maxTurns: 1,
+      outputFormat: "text",
     });
 
-    if (exitCode !== 0) {
-      console.error("Claude error:", stderr);
-      return [];
-    }
-
-    if (output.toUpperCase() === "NONE") return [];
+    if (result.text.toUpperCase() === "NONE") return [];
 
     const ids: string[] = [];
-    for (const line of output.split("\n")) {
+    for (const line of result.text.split("\n")) {
       const match = line.match(/DELETE:\s*([0-9a-f-]{36})/i);
       if (match) ids.push(match[1]);
     }

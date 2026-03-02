@@ -10,7 +10,11 @@
  */
 
 import { getDb, type Database } from "../src/db.ts";
-import { spawnLeanClaude } from "../src/claude-spawn.ts";
+import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { ClaudeProvider } from "../src/providers/claude.ts";
+
+// Register AI provider (task-dispatcher runs standalone)
+registerProvider(new ClaudeProvider());
 import { computeNextTrigger } from "../src/memory.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -110,24 +114,19 @@ async function executeTask(
   const uniqueMcps = [...new Set(mcpServers)];
 
   try {
-    const { output, exitCode, stderr } = await spawnLeanClaude({
+    const result = await getDefaultProvider().call({
       prompt,
-      mcpServers: uniqueMcps,
       model: "haiku",
       maxTurns: 5,
+      outputFormat: "text",
     });
 
-    if (exitCode !== 0) {
-      console.error(`Claude error for task "${task.title}":`, stderr);
-      return { success: false, result: stderr || "Claude CLI error" };
-    }
-
-    if (output === "CONDITION_NOT_MET") {
+    if (result.text === "CONDITION_NOT_MET") {
       console.log(`Task "${task.title}": condition not met, skipping`);
       return { success: true, result: "Condition not met — skipped" };
     }
 
-    return { success: true, result: output };
+    return { success: true, result: result.text };
   } catch (error) {
     console.error(`Execution error for task "${task.title}":`, error);
     return { success: false, result: String(error) };

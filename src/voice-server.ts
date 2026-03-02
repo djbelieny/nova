@@ -9,13 +9,19 @@
  */
 
 import "dotenv/config";
-import { spawn } from "bun";
 import { readFile, unlink, mkdir } from "fs/promises";
 import { join, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { createHmac, timingSafeEqual } from "crypto";
 import { getDb, type Database } from "./db.ts";
 import { textToSpeech } from "./tts.ts";
+import { registerProvider, getDefaultProvider } from "./ai-provider.ts";
+import { ClaudeProvider } from "./providers/claude.ts";
+import { GeminiProvider } from "./providers/gemini.ts";
+
+// Register AI providers (voice-server runs standalone, not via relay.ts)
+registerProvider(new ClaudeProvider());
+registerProvider(new GeminiProvider());
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -28,7 +34,6 @@ const PORT = parseInt(process.env.VOICE_SERVER_PORT || "80");
 const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL || "https://nova.1osm.com";
 const FALLBACK_PIN = process.env.USER_PIN || "852185";
 const FALLBACK_PHONE = process.env.USER_PHONE || "+18636047056";
-const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
 const FALLBACK_USER_NAME = process.env.USER_NAME || "DJ";
 const FALLBACK_USER_TIMEZONE = process.env.USER_TIMEZONE || "America/New_York";
@@ -380,35 +385,16 @@ async function sendGuestTranscript(callSid: string, state: CallState): Promise<v
   await sendTelegramNotification(message);
 }
 
-async function callClaude(prompt: string): Promise<string> {
-  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "text", "--permission-mode", "bypassPermissions"];
-
+async function callAI(prompt: string): Promise<string> {
   try {
-    const proc = spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
-      // Run from the relay project dir so Claude picks up .mcp.json (Google Workspace, Notion, etc.)
+    const result = await getDefaultProvider().call({
+      prompt,
+      outputFormat: "text",
       cwd: PROJECT_ROOT,
-      env: {
-        ...process.env,
-        CLAUDECODE: undefined,
-        // Pass PROJECT_DIR so Claude can still access user's files
-        PROJECT_DIR: PROJECT_DIR || undefined,
-      },
     });
-
-    const output = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-      console.error("Claude error:", stderr);
-      return "I'm having trouble thinking right now. Can you say that again?";
-    }
-
-    return output.trim();
+    return result.text;
   } catch (error) {
-    console.error("Claude spawn error:", error);
+    console.error("AI provider error:", error);
     return "I'm having trouble processing that. Let me try again.";
   }
 }
@@ -568,7 +554,7 @@ If there are no actionable tasks, return: []
 TRANSCRIPT:
 ${transcript}`;
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
 
   try {
     // Extract JSON from response (Claude might wrap it in markdown)
@@ -589,7 +575,7 @@ ${task.urgent ? "PRIORITY: URGENT — handle this immediately and thoroughly." :
 
 Execute the task and return a brief summary of what you did and the result. Be concise — this will be sent as a notification to ${userName}.`;
 
-  return await callClaude(prompt);
+  return await callAI(prompt);
 }
 
 async function processPostCallTasks(callSid: string, state: CallState): Promise<void> {
@@ -782,7 +768,7 @@ async function handleOutgoing(body: string): Promise<Response> {
   if (state.context) {
     const prompt = buildVoiceSystemPrompt(state.context, state.user) +
       `\n\nYou just called someone and they picked up. Open the conversation naturally — explain why you're calling based on the context above. Be brief and direct.`;
-    const response = await callClaude(prompt);
+    const response = await callAI(prompt);
     state.turns.push({ role: "assistant", content: response });
     await saveCallMessage("assistant", response, callSid, state.user?.id);
 
@@ -833,7 +819,7 @@ async function handlePin(body: string): Promise<Response> {
       // Generate an opening based on context
       const prompt = buildVoiceSystemPrompt(state.context, state.user) +
         `\n\nYou just called ${callerName} and they've been authenticated. Open the conversation naturally — explain why you're calling based on the context above. Be brief and direct.`;
-      const response = await callClaude(prompt);
+      const response = await callAI(prompt);
       state.turns.push({ role: "assistant", content: response });
       await saveCallMessage("assistant", response, callSid, state.user?.id);
 
@@ -935,7 +921,7 @@ async function handleGather(body: string): Promise<Response> {
     : buildGuestSystemPrompt(state.callerPhone)) +
     `\n\nCONVERSATION SO FAR:\n${turnHistory}\n\nRespond to ${userName}'s latest message. Be concise — this is a phone call.`;
 
-  const response = await callClaude(prompt);
+  const response = await callAI(prompt);
   state.turns.push({ role: "assistant", content: response });
   await saveCallMessage("assistant", `[Phone call]: ${response}`, callSid, userId);
 

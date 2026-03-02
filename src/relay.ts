@@ -1,8 +1,9 @@
 /**
  * Nova — Personal AI Assistant
  *
- * Multi-channel relay that connects Telegram, WhatsApp, and Slack to Claude Code CLI.
+ * Multi-channel relay that connects Telegram, WhatsApp, and Slack to AI backends.
  * Channel adapters handle platform-specific I/O; this file is the coordinator.
+ * AI providers (Claude, Gemini, etc.) are abstracted behind the AIProvider interface.
  *
  * Run: bun run src/relay.ts
  */
@@ -36,6 +37,18 @@ import {
 import { WhatsAppManager } from "./whatsapp-manager.ts";
 import { startHeartbeat, appendToHeartbeat } from "./heartbeat.ts";
 import {
+  type ModelTier,
+  type AIProviderResult,
+  registerProvider,
+  getProvider,
+  getDefaultProvider,
+  getAllProviders,
+  getAvailableProviderNames,
+} from "./ai-provider.ts";
+import { ClaudeProvider } from "./providers/claude.ts";
+import { GeminiProvider } from "./providers/gemini.ts";
+import { selectProvider, parseProviderPrefix, recordRateLimit } from "./ai-router.ts";
+import {
   markdownToTelegramHTML,
   parseButtons,
   cleanResponseForUser,
@@ -48,7 +61,6 @@ const PROJECT_ROOT = dirname(dirname(import.meta.path));
 // ============================================================
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
 const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 
@@ -549,12 +561,23 @@ function releaseClaudeSlot(): void {
 }
 
 // ============================================================
-// CALL CLAUDE — with model selection, retry, and monitoring
+// CALL AI — provider-agnostic with model selection, retry, and monitoring
 // ============================================================
 
-type ModelTier = "haiku" | "sonnet" | "opus";
+// Re-export ModelTier from ai-provider for backward compat
+type LegacyModelTier = "haiku" | "sonnet" | "opus";
 
-async function callClaude(prompt: string, model?: ModelTier, userId?: string, hint?: string, queueCallbacks?: { onQueued?: () => void; onDequeue?: () => void }): Promise<string> {
+/** Map legacy Claude-specific model tier names to generic tiers */
+function legacyToGenericTier(model?: LegacyModelTier | ModelTier): ModelTier {
+  switch (model) {
+    case "haiku": case "fast": return "fast";
+    case "sonnet": case "standard": return "standard";
+    case "opus": case "premium": return "premium";
+    default: return "standard";
+  }
+}
+
+async function callAI(prompt: string, model?: LegacyModelTier | ModelTier, userId?: string, hint?: string, queueCallbacks?: { onQueued?: () => void; onDequeue?: () => void }, forceProvider?: string, userDefaultProvider?: string): Promise<string> {
   await acquireClaudeSlot(prompt.substring(0, 60), queueCallbacks);
 
   const maxRetries = 2;
@@ -564,167 +587,97 @@ async function callClaude(prompt: string, model?: ModelTier, userId?: string, hi
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         if (attempt > 0) {
-          // Exponential backoff: 3s, 9s
           const delay = 3000 * Math.pow(3, attempt - 1);
           console.log(`[retry] Attempt ${attempt + 1}/${maxRetries + 1} after ${delay / 1000}s delay`);
           await new Promise((r) => setTimeout(r, delay));
         }
-        return await _callClaudeOnce(prompt, model, userId, hint);
+        return await _callAIOnce(prompt, model, userId, hint, forceProvider, userDefaultProvider);
       } catch (error) {
         lastError = error as Error;
-        const isRateLimit = lastError.message.includes("rate") || lastError.message.includes("overloaded");
+        const isRateLimit = (lastError as any).isRateLimit || lastError.message.includes("rate") || lastError.message.includes("overloaded");
         if (isRateLimit) {
-          recordCall(false, model || "sonnet", 0, true);
+          // Record rate limit for routing fallback
+          const providerName = (lastError as any).providerName;
+          if (providerName) recordRateLimit(providerName);
+          recordCall(false, model || "standard", 0, true);
           console.warn(`[rate-limit] Hit rate limit on attempt ${attempt + 1}`);
-          continue; // retry
+          // On retry, clear forceProvider to allow fallback
+          forceProvider = undefined;
+          continue;
         }
-        // Non-rate-limit errors: retry once, then give up
         if (attempt >= 1) break;
       }
     }
 
-    throw lastError || new Error("Claude call failed after retries");
+    throw lastError || new Error("AI call failed after retries");
   } finally {
     releaseClaudeSlot();
   }
 }
 
-async function _callClaudeOnce(prompt: string, model?: ModelTier, userId?: string, hint?: string): Promise<string> {
-  const args = [CLAUDE_PATH, "-p", prompt, "--output-format", "json", "--permission-mode", "bypassPermissions", "--max-turns", process.env.MAX_CLAUDE_TURNS || "50"];
+async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, userId?: string, hint?: string, forceProvider?: string, userDefaultProvider?: string): Promise<string> {
+  const tier = legacyToGenericTier(model);
 
-  // Add model flag if specified (uses Max plan quota for all models)
-  if (model) {
-    args.push("--model", model);
-  }
-
-  // Per-user MCP config: if user has connected integrations, use their config
-  // Smart routing: filter to only relevant servers based on hint
+  // Resolve MCP config for user
+  let mcpConfigPath: string | undefined;
   if (userId && hasUserMcpConfig(userId)) {
-    const mcpConfigPath = hint
+    mcpConfigPath = hint
       ? await getFilteredMcpConfigPath(userId, hint)
       : getUserMcpConfigPath(userId);
-    args.push("--mcp-config", mcpConfigPath);
   }
 
-  const modelLabel = model || "default";
-  console.log(`Calling Claude [${modelLabel}] (${runningClaude}/${MAX_CONCURRENT_CLAUDE} slots, ${claudeQueue.length} queued): ${prompt.substring(0, 50)}...`);
+  // Smart route to best provider (userDefaultProvider passed from caller to avoid DB lookup per call)
+  const resolvedDefault = userDefaultProvider || (userId ? supabase.getUserById(userId)?.ai_provider : undefined);
+  const route = selectProvider({
+    tier,
+    hint,
+    userId,
+    forceProvider,
+    hasMcpConfig: !!mcpConfigPath,
+    userDefaultProvider: resolvedDefault || undefined,
+  });
 
-  const startTime = Date.now();
+  const { provider, model: resolvedModel, reason } = route;
+  console.log(`[ai] Calling ${provider.name} [${resolvedModel}] (${runningClaude}/${MAX_CONCURRENT_CLAUDE} slots, ${claudeQueue.length} queued, route: ${reason}): ${prompt.substring(0, 50)}...`);
 
   try {
-    const proc = spawn(args, {
-      stdout: "pipe",
-      stderr: "pipe",
-      cwd: PROJECT_ROOT,
-      env: {
-        ...process.env,
-        CLAUDECODE: undefined, // Allow nested Claude sessions
-      },
+    const result: AIProviderResult = await provider.call({
+      prompt,
+      model: resolvedModel,
+      mcpConfigPath,
+      outputFormat: "json",
     });
 
-    const [output, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
+    // Record stats
+    recordCall(true, result.model, result.duration_ms, false);
 
-    const exitCode = await proc.exited;
-    const durationMs = Date.now() - startTime;
-
-    if (exitCode !== 0) {
-      // Log both stderr and stdout tail for diagnosis (stdout may contain error JSON)
-      const stderrSnippet = stderr.trim() || "(empty stderr)";
-      const stdoutTail = output.trim().slice(-500) || "(empty stdout)";
-      console.error(`Claude error (exit ${exitCode}): stderr=${stderrSnippet} | stdout_tail=${stdoutTail}`);
-
-      // Try to salvage a result from the JSON output even on non-zero exit
-      // Claude CLI sometimes exits non-zero but still produces a valid result
-      try {
-        const json = JSON.parse(output.trim());
-        if (json.result && typeof json.result === "string" && json.result.trim()) {
-          console.warn(`[callClaude] Salvaged result from non-zero exit (code ${exitCode}, ${json.result.length} chars)`);
-          recordCall(true, modelLabel, durationMs, false);
-          if (json.usage) {
-            trackCost({
-              provider: "claude",
-              model: json.model || modelLabel,
-              input_tokens: json.usage?.input_tokens || 0,
-              output_tokens: json.usage?.output_tokens || 0,
-              cache_read_tokens: json.usage?.cache_read_input_tokens || 0,
-              cache_creation_tokens: json.usage?.cache_creation_input_tokens || 0,
-              cost_usd: json.cost_usd || json.total_cost_usd || 0,
-              duration_ms: durationMs,
-              session_id: json.session_id || undefined,
-            });
-          }
-          return json.result;
-        }
-      } catch {
-        // JSON parse failed — fall through to error
-      }
-
-      recordCall(false, modelLabel, durationMs, stderr.includes("rate") || stderr.includes("overloaded"));
-      // Build a readable error instead of dumping raw JSON
-      const isApiError = stderrSnippet.includes("APIError") || stderrSnippet.includes("status code");
-      const detail = isApiError
-        ? stderrSnippet.substring(0, 300)
-        : stderr.trim() || `Claude CLI exited with code ${exitCode} (0 output tokens — likely an API or auth error)`;
-      throw new Error(`Claude CLI exited with code ${exitCode}: ${detail}`);
+    // Track cost
+    if (result.usage) {
+      trackCost({
+        provider: result.provider,
+        model: result.model,
+        input_tokens: result.usage.input_tokens,
+        output_tokens: result.usage.output_tokens,
+        cache_read_tokens: result.usage.cache_read_tokens || 0,
+        cache_creation_tokens: result.usage.cache_creation_tokens || 0,
+        cost_usd: result.cost_usd || 0,
+        duration_ms: result.duration_ms,
+        session_id: result.session_id || undefined,
+      });
     }
 
-    // Parse JSON response to extract cost data
-    try {
-      const json = JSON.parse(output.trim());
-
-      // Handle error subtypes from Claude CLI (e.g. error_max_turns, prompt too long)
-      if (json.subtype === "error_max_turns") {
-        console.warn(`[callClaude] Hit max turns (${json.num_turns} turns, ${durationMs}ms)`);
-      }
-
-      let result = typeof json.result === "string" ? json.result : "";
-
-      // Warn if result is empty — Claude used tools but produced no final text
-      if (!result.trim()) {
-        console.warn(`[callClaude] Empty result from Claude CLI (${json.num_turns || "?"} turns, ${durationMs}ms). This usually means Claude used tools without a final text reply.`);
-        result = "Sorry, I wasn't able to complete that request — I ran out of processing steps. Try simplifying your request or breaking it into smaller parts.";
-      }
-
-      const resolvedModel = json.model
-        || json.metadata?.model
-        || (typeof json.result === "object" && json.result?.model)
-        || process.env.ANTHROPIC_MODEL
-        || modelLabel;
-
-      recordCall(true, resolvedModel, durationMs, false);
-
-      if (json.usage) {
-        trackCost({
-          provider: "claude",
-          model: resolvedModel,
-          input_tokens: json.usage?.input_tokens || 0,
-          output_tokens: json.usage?.output_tokens || 0,
-          cache_read_tokens: json.usage?.cache_read_input_tokens || 0,
-          cache_creation_tokens: json.usage?.cache_creation_input_tokens || 0,
-          cost_usd: json.cost_usd || json.total_cost_usd || 0,
-          duration_ms: durationMs,
-          session_id: json.session_id || undefined,
-        });
-      }
-
-      return result;
-    } catch {
-      recordCall(true, modelLabel, durationMs, false);
-      return output.trim();
-    }
+    return result.text;
   } catch (error) {
-    if (error instanceof Error && (error.message.includes("Claude CLI exited") || error.message.includes("rate") || error.message.includes("overloaded"))) {
-      throw error;
+    // Tag error with provider name for retry routing
+    if (error instanceof Error) {
+      (error as any).providerName = provider.name;
     }
-    const durationMs = Date.now() - startTime;
-    recordCall(false, modelLabel, durationMs, false);
-    console.error("Spawn error:", error);
-    throw new Error("Could not run Claude CLI");
+    throw error;
   }
 }
+
+/** Backward-compatible alias */
+const callClaude = callAI;
 
 /**
  * Run a Claude task asynchronously — sends typing indicator, handles long-running
@@ -770,9 +723,11 @@ function runTask(
           ctx.replyWithChatAction("typing").catch(() => {});
         },
       };
+      const forceProvider = (ctx as any)._forceProvider || undefined;
+      const userDefaultProvider = taskUserId ? supabase.getUserById(taskUserId)?.ai_provider : undefined;
       const rawResponse = isSentinel
         ? prompt
-        : await callClaude(prompt, model, taskUserId, taskHint, queueCallbacks);
+        : await callAI(prompt, model, taskUserId, taskHint, queueCallbacks, forceProvider, userDefaultProvider);
 
       const response = opts?.postProcess
         ? await opts.postProcess(rawResponse)
@@ -964,6 +919,24 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
     if (text.startsWith("/") && user.role === "admin" && msg.channelType === "telegram") {
       const handled = await handleAdminCommand(ctx._raw || ctx, text, user);
       if (handled) return;
+    }
+
+    // Check for provider force-routing prefix: /claude <msg> or /gemini <msg>
+    const providerOverride = parseProviderPrefix(text);
+    if (providerOverride) {
+      (ctx as any)._forceProvider = providerOverride.provider;
+      // Use the message without the prefix
+      const actualText = providerOverride.message;
+
+      await ctx.replyWithChatAction("typing");
+      await saveMessage("user", actualText, user.id, whatsappMeta || undefined, msg.channelType);
+
+      if (contactContext && msg.channelType === "whatsapp") {
+        (ctx as any)._whatsappContactContext = contactContext;
+      }
+
+      orchestrate(ctx._raw || ctx, actualText, user, supabase);
+      return;
     }
 
     await ctx.replyWithChatAction("typing");
@@ -1673,6 +1646,12 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
       dataLine = `\nNova data: ${dataSize}`;
     } catch {}
 
+    // AI Providers
+    const providerNames = getAvailableProviderNames();
+    const providerLine = providerNames.length > 0
+      ? `\nProviders: ${providerNames.join(", ")}`
+      : "";
+
     const statusMsg = `<b>Nova System Status</b>
 
 <b>Uptime</b>: ${uptimeH}h ${uptimeM}m
@@ -1681,7 +1660,7 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
 
 <b>Usage</b> (this session)
 Calls: ${usage.callsTotal} (${successRate}% success)
-Avg duration: ${avgDur}s${costLine}${rlLine}${approvalsLine}${waLine}
+Avg duration: ${avgDur}s${costLine}${rlLine}${approvalsLine}${waLine}${providerLine}
 ${modelLines ? `\n<b>Models</b>\n${modelLines}` : ""}
 <b>Resources</b>
 Memory: ${rssM}MB RSS (heap: ${heapUsedM}/${heapTotalM}MB)
@@ -2023,11 +2002,29 @@ function createGenericPlatformContext(
 }
 
 // ============================================================
+// AI PROVIDER REGISTRATION
+// ============================================================
+
+const claudeProvider = new ClaudeProvider();
+registerProvider(claudeProvider);
+
+const geminiProvider = new GeminiProvider();
+registerProvider(geminiProvider);
+
+// Check which providers are actually available
+(async () => {
+  for (const p of getAllProviders()) {
+    const available = await p.isAvailable();
+    console.log(`  ${available ? "+" : "-"} AI Provider: ${p.name} ${available ? "(available)" : "(not installed)"}`);
+  }
+})();
+
+// ============================================================
 // ORCHESTRATOR INIT
 // ============================================================
 
 initOrchestrator({
-  callClaude,
+  callClaude: callAI,
   buildPrompt,
   runTask,
   saveMessage,
@@ -2056,7 +2053,7 @@ initOrchestrator({
 if (supabase) {
   startHeartbeat({
     db: supabase,
-    callClaude,
+    callClaude: callAI,
     saveMessage,
     sendAlert: async (user, message) => {
       // Route heartbeat alerts through the user's preferred channel

@@ -10,13 +10,16 @@
  * Run: bun run services/log-monitor.ts
  */
 
-import { spawn } from "bun";
 import { readFile, writeFile, stat } from "fs/promises";
 import { dirname, join, basename } from "path";
+import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { ClaudeProvider } from "../src/providers/claude.ts";
+
+// Register AI provider (log-monitor runs standalone)
+registerProvider(new ClaudeProvider());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_USER_ID || "";
-const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const USER_NAME = process.env.USER_NAME || "";
 const STATE_FILE =
   process.env.LOG_MONITOR_STATE_FILE || "/tmp/log-monitor-state.json";
@@ -217,38 +220,13 @@ NOTIFY: YES | NO
 `;
 
   try {
-    const proc = spawn(
-      [
-        CLAUDE_PATH,
-        "-p",
-        prompt,
-        "--output-format",
-        "text",
-        "--permission-mode",
-        "bypassPermissions",
-      ],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: PROJECT_ROOT,
-        env: {
-          ...process.env,
-          CLAUDECODE: undefined,
-        },
-      }
-    );
+    const result = await getDefaultProvider().call({
+      prompt,
+      outputFormat: "text",
+      cwd: PROJECT_ROOT,
+    });
 
-    const [output, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-      console.error("Claude error:", stderr);
-      return { autoFixes: [], escalations: [], notify: false };
-    }
+    const output = result.text;
 
     // Parse structured response
     const statusMatch = output.match(/STATUS:\s*(CLEAN|ISSUES_FOUND)/i);

@@ -18,7 +18,11 @@
 
 import { readFile, writeFile } from "fs/promises";
 import { getDb, type Database } from "../src/db.ts";
-import { spawnLeanClaude } from "../src/claude-spawn.ts";
+import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { ClaudeProvider } from "../src/providers/claude.ts";
+
+// Register AI provider (morning-briefing runs standalone)
+registerProvider(new ClaudeProvider());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const STATE_FILE = "/tmp/morning-briefing-state.json";
@@ -174,19 +178,14 @@ ${dbContext ? dbContext + "\n" : ""}Check Gmail, Calendar, Notion. Build a Teleg
 Skip sections with no data silently. Bullet points, be brief.`;
 
   try {
-    const { output, exitCode, stderr } = await spawnLeanClaude({
+    const result = await getDefaultProvider().call({
       prompt,
-      mcpServers: ["google-workspace", "notion"],
       model: "haiku",
       maxTurns: 5,
+      outputFormat: "text",
     });
 
-    if (exitCode !== 0) {
-      console.error(`Claude error for ${user.name}:`, stderr);
-      return "";
-    }
-
-    return output;
+    return result.text;
   } catch (error) {
     console.error(`Claude CLI error for ${user.name}:`, error);
     return "";

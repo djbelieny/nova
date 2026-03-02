@@ -11,6 +11,13 @@
 import "dotenv/config";
 import { getDb, type Database } from "./db.ts";
 import { getAllAgents, loadAgents } from "./agent-router.ts";
+import { registerProvider, getAllProviders, getAvailableProviderNames } from "./ai-provider.ts";
+import { ClaudeProvider } from "./providers/claude.ts";
+import { GeminiProvider } from "./providers/gemini.ts";
+
+// Register AI providers for availability checks
+registerProvider(new ClaudeProvider());
+registerProvider(new GeminiProvider());
 import {
   getIntegrationStatus,
   getOAuthUrl,
@@ -190,7 +197,7 @@ async function getProfile(userId: string): Promise<unknown> {
 
 async function updateProfile(userId: string, fields: Record<string, any>): Promise<unknown> {
   try {
-    const allowed = ["name", "timezone", "phone"];
+    const allowed = ["name", "timezone", "phone", "ai_provider"];
     const updates: Record<string, any> = {};
     for (const key of allowed) {
       if (fields[key] !== undefined) updates[key] = fields[key];
@@ -1363,6 +1370,38 @@ function renderMiniApp(): string {
           <input type="text" class="field-input" id="fieldLanguage" placeholder="en">
         </div>
       </div>
+
+      <div class="section-header">AI Provider</div>
+      <div class="card" id="aiProviderCard">
+        <div class="field-group">
+          <div class="field-label">Active Provider</div>
+          <div id="aiProviderOptions" style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+            <label style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border);cursor:pointer;">
+              <input type="radio" name="aiProvider" value="claude" checked>
+              <div>
+                <div style="font-weight:600;font-size:14px;">Claude</div>
+                <div style="font-size:12px;color:var(--hint);">Anthropic Claude via CLI — default provider</div>
+              </div>
+              <span class="provider-badge" id="badgeClaude" style="margin-left:auto;font-size:11px;padding:2px 6px;border-radius:4px;background:var(--border);color:var(--hint);"></span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border);cursor:pointer;">
+              <input type="radio" name="aiProvider" value="gemini">
+              <div>
+                <div style="font-weight:600;font-size:14px;">Gemini</div>
+                <div style="font-size:12px;color:var(--hint);">Google Gemini via CLI — fast and free tier</div>
+              </div>
+              <span class="provider-badge" id="badgeGemini" style="margin-left:auto;font-size:11px;padding:2px 6px;border-radius:4px;background:var(--border);color:var(--hint);"></span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border);cursor:pointer;">
+              <input type="radio" name="aiProvider" value="smart">
+              <div>
+                <div style="font-weight:600;font-size:14px;">Smart Routing</div>
+                <div style="font-size:12px;color:var(--hint);">Auto-select provider based on task type</div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ======== AGENTS PAGE ======== -->
@@ -1665,6 +1704,9 @@ function renderMiniApp(): string {
         document.getElementById('fieldLanguage').value = prefsData.language || 'en';
       }
 
+      // Load AI provider
+      loadAIProvider();
+
       // Show MainButton for save
       if (window.Telegram && Telegram.WebApp && currentTab === 'pageProfile') {
         Telegram.WebApp.MainButton.setText('Save Profile');
@@ -1678,10 +1720,15 @@ function renderMiniApp(): string {
         Telegram.WebApp.MainButton.showProgress();
       }
 
+      var selectedProvider = 'claude';
+      var radios = document.querySelectorAll('input[name="aiProvider"]');
+      radios.forEach(function(r) { if (r.checked) selectedProvider = r.value; });
+
       var profileFields = {
         name: document.getElementById('fieldName').value.trim(),
         timezone: document.getElementById('fieldTimezone').value,
-        phone: document.getElementById('fieldPhone').value.trim()
+        phone: document.getElementById('fieldPhone').value.trim(),
+        ai_provider: selectedProvider
       };
 
       var prefFields = {
@@ -1715,6 +1762,31 @@ function renderMiniApp(): string {
       el.classList.toggle('on');
       if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
         Telegram.WebApp.HapticFeedback.impactOccurred('light');
+      }
+    }
+
+    async function loadAIProvider() {
+      var data = await apiFetch('/ai-provider');
+      if (!data) return;
+      var radios = document.querySelectorAll('input[name="aiProvider"]');
+      radios.forEach(function(r) {
+        if (r.value === data.current) r.checked = true;
+      });
+      var bc = document.getElementById('badgeClaude');
+      var bg = document.getElementById('badgeGemini');
+      if (data.providers) {
+        data.providers.forEach(function(p) {
+          if (p.name === 'claude' && bc) {
+            bc.textContent = p.available ? 'Available' : 'Unavailable';
+            bc.style.background = p.available ? '#22c55e22' : '#ef444422';
+            bc.style.color = p.available ? '#22c55e' : '#ef4444';
+          }
+          if (p.name === 'gemini' && bg) {
+            bg.textContent = p.available ? 'Available' : 'Unavailable';
+            bg.style.background = p.available ? '#22c55e22' : '#ef444422';
+            bg.style.color = p.available ? '#22c55e' : '#ef4444';
+          }
+        });
       }
     }
 
@@ -2778,6 +2850,36 @@ const server = Bun.serve({
         return jsonResponse(await updatePreferences(userId, body));
       }
 
+      // AI Provider
+      if (path === "/api/ai-provider" && method === "GET") {
+        const currentUser = supabase.getUserById(userId);
+        const providers = getAllProviders();
+        const available: Record<string, boolean> = {};
+        for (const p of providers) {
+          available[p.name] = await p.isAvailable();
+        }
+        return jsonResponse({
+          current: currentUser?.ai_provider || "claude",
+          providers: providers.map(p => ({
+            name: p.name,
+            models: p.models,
+            defaultModel: p.defaultModel,
+            available: available[p.name] ?? false,
+          })),
+          smartAvailable: Object.values(available).filter(Boolean).length > 1,
+        });
+      }
+      if (path === "/api/ai-provider" && method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        const provider = body.provider;
+        const validProviders = ["claude", "gemini", "smart"];
+        if (!provider || !validProviders.includes(provider)) {
+          return jsonResponse({ error: "Invalid provider. Choose: claude, gemini, or smart" }, 400);
+        }
+        const updated = supabase.updateUser(userId, { ai_provider: provider });
+        return jsonResponse({ ai_provider: updated?.ai_provider || provider });
+      }
+
       // Agents
       if (path === "/api/agents" && method === "GET") {
         return jsonResponse(await getAgentsWithStats(userId));
@@ -2929,6 +3031,8 @@ console.log("  GET  /api/dashboard                       — System status metri
 console.log("  GET  /api/profile                         — User profile + preferences");
 console.log("  PUT  /api/profile                         — Update profile fields");
 console.log("  PUT  /api/preferences                     — Update preference fields");
+console.log("  GET  /api/ai-provider                     — Current AI provider + availability");
+console.log("  POST /api/ai-provider                     — Set AI provider (claude/gemini/smart)");
 console.log("  GET  /api/integrations                    — Integration statuses");
 console.log("  POST /api/integrations/:provider/connect  — Start OAuth flow");
 console.log("  POST /api/integrations/:provider/save-key  — Save API-key integration");

@@ -15,7 +15,11 @@
 
 import { readFile, writeFile } from "fs/promises";
 import { getDb, type Database } from "../src/db.ts";
-import { spawnLeanClaude } from "../src/claude-spawn.ts";
+import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { ClaudeProvider } from "../src/providers/claude.ts";
+
+// Register AI provider (smart-checkin runs standalone)
+registerProvider(new ClaudeProvider());
 import { dirname, join } from "path";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -218,18 +222,14 @@ MESSAGE: [message if YES, "none" if NO]
 REASON: [why]`;
 
   try {
-    const { output, exitCode, stderr } = await spawnLeanClaude({
+    const result = await getDefaultProvider().call({
       prompt,
-      mcpServers: ["google-workspace", "notion"],
       model: "haiku",
       maxTurns: 5,
+      outputFormat: "text",
     });
 
-    if (exitCode !== 0) {
-      console.error(`Claude error for ${user.name}:`, stderr);
-      return { shouldCheckin: false, message: "" };
-    }
-
+    const output = result.text;
     const decisionMatch = output.match(/DECISION:\s*(YES|NO)/i);
     const messageMatch = output.match(/MESSAGE:\s*(.+?)(?=\nREASON:|$)/is);
     const reasonMatch = output.match(/REASON:\s*(.+)/is);

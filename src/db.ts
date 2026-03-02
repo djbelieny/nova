@@ -174,9 +174,14 @@ class SharedDatabase {
         role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
         preferences TEXT DEFAULT '{"proactive_checkin":true,"morning_briefing":true,"briefing_hour":9,"voice_responses":false}',
         profile_text TEXT DEFAULT '',
-        active INTEGER DEFAULT 1
+        active INTEGER DEFAULT 1,
+        ai_provider TEXT DEFAULT 'claude',
+        ai_config TEXT DEFAULT '{}'
       )
     `);
+    // Safe migration for existing databases
+    try { this.db.run(`ALTER TABLE users ADD COLUMN ai_provider TEXT DEFAULT 'claude'`); } catch {}
+    try { this.db.run(`ALTER TABLE users ADD COLUMN ai_config TEXT DEFAULT '{}'`); } catch {}
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_whatsapp_id ON users(whatsapp_id)`);
@@ -691,7 +696,7 @@ export class Database {
   }
 
   updateUser(userId: string, updates: Record<string, any>): any | null {
-    const allowed = ["name", "timezone", "phone", "pin", "profile_text", "active", "preferences"];
+    const allowed = ["name", "timezone", "phone", "pin", "profile_text", "active", "preferences", "ai_provider", "ai_config"];
     const setClauses: string[] = [];
     const values: any[] = [];
 
