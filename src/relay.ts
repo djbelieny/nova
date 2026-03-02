@@ -1643,6 +1643,36 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
       ? `\nRate limit hits: ${usage.rateLimitHits}${usage.lastRateLimitAt ? ` (last: ${new Date(usage.lastRateLimitAt).toLocaleTimeString()})` : ""}`
       : "";
 
+    // Memory usage (process RSS)
+    const mem = process.memoryUsage();
+    const rssM = (mem.rss / 1048576).toFixed(0);
+    const heapUsedM = (mem.heapUsed / 1048576).toFixed(0);
+    const heapTotalM = (mem.heapTotal / 1048576).toFixed(0);
+
+    // Disk space
+    let diskLine = "";
+    try {
+      const dfProc = spawn(["df", "-h", RELAY_DIR], { stdout: "pipe", stderr: "pipe" });
+      const dfOut = await new Response(dfProc.stdout).text();
+      await dfProc.exited;
+      const dfLines = dfOut.trim().split("\n");
+      if (dfLines.length >= 2) {
+        const parts = dfLines[1].split(/\s+/);
+        // parts: [filesystem, size, used, avail, use%, mount]
+        diskLine = `Disk: ${parts[2]} / ${parts[1]} used (${parts[4]})`;
+      }
+    } catch {}
+
+    // Data directory size
+    let dataLine = "";
+    try {
+      const duProc = spawn(["du", "-sh", RELAY_DIR], { stdout: "pipe", stderr: "pipe" });
+      const duOut = await new Response(duProc.stdout).text();
+      await duProc.exited;
+      const dataSize = duOut.trim().split(/\s+/)[0];
+      dataLine = `\nNova data: ${dataSize}`;
+    } catch {}
+
     const statusMsg = `<b>Nova System Status</b>
 
 <b>Uptime</b>: ${uptimeH}h ${uptimeM}m
@@ -1653,6 +1683,10 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
 Calls: ${usage.callsTotal} (${successRate}% success)
 Avg duration: ${avgDur}s${costLine}${rlLine}${approvalsLine}${waLine}
 ${modelLines ? `\n<b>Models</b>\n${modelLines}` : ""}
+<b>Resources</b>
+Memory: ${rssM}MB RSS (heap: ${heapUsedM}/${heapTotalM}MB)
+${diskLine}${dataLine}
+
 <i>Full dashboard: nova.07labs.com</i>`;
 
     await ctx.reply(statusMsg, { parse_mode: "HTML" });
