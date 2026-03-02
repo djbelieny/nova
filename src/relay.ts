@@ -520,16 +520,19 @@ const claudeQueue: Array<{
   resolve: (v: void) => void;
   description: string;
   enqueuedAt: number;
+  onDequeue?: () => void;
 }> = [];
 
-async function acquireClaudeSlot(description?: string): Promise<void> {
+async function acquireClaudeSlot(description?: string, callbacks?: { onQueued?: () => void; onDequeue?: () => void }): Promise<void> {
   if (runningClaude < MAX_CONCURRENT_CLAUDE) {
     runningClaude++;
     return;
   }
-  console.log(`[queue] Slot full (${runningClaude}/${MAX_CONCURRENT_CLAUDE}), queuing: ${description?.substring(0, 50) || "unknown"} (${claudeQueue.length + 1} waiting)`);
+  const position = claudeQueue.length + 1;
+  console.log(`[queue] Slot full (${runningClaude}/${MAX_CONCURRENT_CLAUDE}), queuing: ${description?.substring(0, 50) || "unknown"} (#${position} waiting)`);
+  callbacks?.onQueued?.();
   return new Promise((resolve) => {
-    claudeQueue.push({ resolve, description: description || "unknown", enqueuedAt: Date.now() });
+    claudeQueue.push({ resolve, description: description || "unknown", enqueuedAt: Date.now(), onDequeue: callbacks?.onDequeue });
   });
 }
 
@@ -538,6 +541,7 @@ function releaseClaudeSlot(): void {
   if (next) {
     const waitMs = Date.now() - next.enqueuedAt;
     console.log(`[queue] Dequeuing: ${next.description.substring(0, 50)} (waited ${(waitMs / 1000).toFixed(1)}s)`);
+    next.onDequeue?.();
     next.resolve();
   } else {
     runningClaude--;
@@ -550,8 +554,8 @@ function releaseClaudeSlot(): void {
 
 type ModelTier = "haiku" | "sonnet" | "opus";
 
-async function callClaude(prompt: string, model?: ModelTier, userId?: string, hint?: string): Promise<string> {
-  await acquireClaudeSlot(prompt.substring(0, 60));
+async function callClaude(prompt: string, model?: ModelTier, userId?: string, hint?: string, queueCallbacks?: { onQueued?: () => void; onDequeue?: () => void }): Promise<string> {
+  await acquireClaudeSlot(prompt.substring(0, 60), queueCallbacks);
 
   const maxRetries = 2;
   let lastError: Error | null = null;
@@ -757,9 +761,18 @@ function runTask(
       // Skip calling Claude for orchestrator sentinel prompts
       const taskUserId = opts?.userId || ((ctx as any).novaUser as NovaUser)?.id;
       const isSentinel = prompt.startsWith("__") && prompt.endsWith("__");
+      const queueCallbacks = {
+        onQueued: () => {
+          ctx.reply("⏳ All slots are busy — your request is queued. I'll get to it shortly.").catch(() => {});
+        },
+        onDequeue: () => {
+          ctx.reply("▶️ Your request is now being processed.").catch(() => {});
+          ctx.replyWithChatAction("typing").catch(() => {});
+        },
+      };
       const rawResponse = isSentinel
         ? prompt
-        : await callClaude(prompt, model, taskUserId, taskHint);
+        : await callClaude(prompt, model, taskUserId, taskHint, queueCallbacks);
 
       const response = opts?.postProcess
         ? await opts.postProcess(rawResponse)
