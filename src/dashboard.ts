@@ -31,7 +31,7 @@ const startTime = Date.now();
 
 const DASHBOARD_USER = process.env.DASHBOARD_USER || "admin";
 const DASHBOARD_PASS = process.env.DASHBOARD_PASS || "";
-const DASHBOARD_BASE = process.env.DASHBOARD_BASE || "/dashboard";
+const DASHBOARD_BASE = process.env.DASHBOARD_BASE ?? "/dashboard";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // In-memory session store (survives for container lifetime)
