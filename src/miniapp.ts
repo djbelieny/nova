@@ -22,6 +22,7 @@ import {
   type Provider,
   type ApiKeyProvider,
 } from "./integrations.ts";
+import { WhatsAppManager } from "./whatsapp-manager.ts";
 
 // ============================================================
 // CONFIGURATION
@@ -459,8 +460,6 @@ async function saveApiKeyHandler(userId: string, provider: string, req: Request)
 // ============================================================
 // WHATSAPP HANDLERS
 // ============================================================
-
-import { WhatsAppManager } from "./whatsapp-manager.ts";
 
 /** Get WhatsAppManager from global (set by relay.ts) or create standalone. */
 function getWhatsAppManager(): WhatsAppManager {
