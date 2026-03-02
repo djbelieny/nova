@@ -12,6 +12,7 @@ config/profile.md
 config/schedule.json
 
 # Runtime files
+data/
 *.lock
 *.log
 logs/

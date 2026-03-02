@@ -17,11 +17,43 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
 import { execSync } from "child_process";
+import { createHmac } from "crypto";
 import type { Database } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const NOVA_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const USERS_DIR = join(NOVA_DIR, "users");
+
+// ============================================================
+// OAUTH STATE SIGNING
+// ============================================================
+
+const OAUTH_HMAC_SECRET = process.env.TELEGRAM_BOT_TOKEN || "nova-oauth-fallback";
+
+export function signOAuthState(payload: Record<string, any>): string {
+  const json = JSON.stringify(payload);
+  const b64 = Buffer.from(json).toString("base64");
+  const sig = createHmac("sha256", OAUTH_HMAC_SECRET).update(b64).digest("hex").slice(0, 16);
+  return encodeURIComponent(`${b64}.${sig}`);
+}
+
+export function verifyOAuthState(stateParam: string): Record<string, any> | null {
+  const decoded = decodeURIComponent(stateParam);
+  const dotIndex = decoded.lastIndexOf(".");
+  if (dotIndex === -1) return null;
+
+  const b64 = decoded.slice(0, dotIndex);
+  const sig = decoded.slice(dotIndex + 1);
+
+  const expected = createHmac("sha256", OAUTH_HMAC_SECRET).update(b64).digest("hex").slice(0, 16);
+  if (sig !== expected) return null;
+
+  try {
+    return JSON.parse(Buffer.from(b64, "base64").toString());
+  } catch {
+    return null;
+  }
+}
 
 // ============================================================
 // GLOBAL BINARY RESOLUTION (skip npx overhead)
@@ -279,8 +311,7 @@ export function getOAuthUrl(
       const googleRedirectUri = `${callbackBaseUrl}/api/integrations/callback`;
 
       const label = provider === "google-personal" ? "personal" : "work";
-      const state = JSON.stringify({ provider, userId, label });
-      const stateEncoded = encodeURIComponent(Buffer.from(state).toString("base64"));
+      const stateEncoded = signOAuthState({ provider, userId, label });
 
       const scopes = [
         "https://www.googleapis.com/auth/gmail.modify",
@@ -309,8 +340,7 @@ export function getOAuthUrl(
       const clientId = process.env.NOTION_CLIENT_ID;
       if (!clientId) return { url: "", error: "NOTION_CLIENT_ID not configured in .env" };
 
-      const state = JSON.stringify({ provider, userId });
-      const stateEncoded = encodeURIComponent(Buffer.from(state).toString("base64"));
+      const stateEncoded = signOAuthState({ provider, userId });
 
       const url = `https://api.notion.com/v1/oauth/authorize?` +
         `client_id=${encodeURIComponent(clientId)}` +
@@ -326,8 +356,7 @@ export function getOAuthUrl(
       const clientId = process.env.ZOOM_CLIENT_ID;
       if (!clientId) return { url: "", error: "ZOOM_CLIENT_ID not configured in .env" };
 
-      const state = JSON.stringify({ provider, userId });
-      const stateEncoded = encodeURIComponent(Buffer.from(state).toString("base64"));
+      const stateEncoded = signOAuthState({ provider, userId });
 
       const url = `https://zoom.us/oauth/authorize?` +
         `client_id=${encodeURIComponent(clientId)}` +

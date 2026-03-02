@@ -26,6 +26,7 @@ import {
   handleOAuthCallback,
   disconnectIntegration,
   saveApiKeyIntegration,
+  verifyOAuthState,
   PER_USER_PROVIDERS,
   API_KEY_PROVIDERS,
   type Provider,
@@ -289,7 +290,7 @@ async function handleApprovalAction(
   feedback?: string
 ): Promise<unknown> {
   try {
-    supabase.updateApprovalStatus(approvalId, action, feedback || null);
+    supabase.updateApprovalStatus(approvalId, action, feedback || null, userId);
     return { approval: { id: approvalId, status: action } };
   } catch (e: any) {
     return { error: e.message };
@@ -596,7 +597,7 @@ async function getSchedules(userId: string): Promise<unknown> {
 
 async function cancelSchedule(userId: string, scheduleId: string): Promise<unknown> {
   try {
-    supabase.updateScheduledTask(scheduleId, { status: "cancelled" });
+    supabase.updateScheduledTask(scheduleId, { status: "cancelled" }, userId);
     return { success: true };
   } catch (e: any) {
     return { error: e.message };
@@ -2807,7 +2808,14 @@ const server = Bun.serve({
       }
 
       try {
-        const state = JSON.parse(Buffer.from(decodeURIComponent(stateParam), "base64").toString());
+        const state = verifyOAuthState(stateParam);
+
+        if (!state) {
+          return new Response(renderOAuthResult(false, "Invalid or tampered callback state"), {
+            headers: { "Content-Type": "text/html" },
+          });
+        }
+
         const { provider, userId } = state;
 
         if (!provider || !userId) {

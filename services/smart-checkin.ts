@@ -14,13 +14,17 @@
  */
 
 import { readFile, writeFile } from "fs/promises";
+import { dirname, join } from "path";
 import { getDb, type Database } from "../src/db.ts";
 import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
+import { GeminiProvider } from "../src/providers/gemini.ts";
+import { CodexProvider } from "../src/providers/codex.ts";
 
-// Register AI provider (smart-checkin runs standalone)
+// Register AI providers (smart-checkin runs standalone)
 registerProvider(new ClaudeProvider());
-import { dirname, join } from "path";
+registerProvider(new GeminiProvider());
+registerProvider(new CodexProvider());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");

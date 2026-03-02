@@ -12,9 +12,13 @@
 import { getDb, type Database } from "../src/db.ts";
 import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
+import { GeminiProvider } from "../src/providers/gemini.ts";
+import { CodexProvider } from "../src/providers/codex.ts";
 
-// Register AI provider (task-dispatcher runs standalone)
+// Register AI providers (task-dispatcher runs standalone)
 registerProvider(new ClaudeProvider());
+registerProvider(new GeminiProvider());
+registerProvider(new CodexProvider());
 import { computeNextTrigger } from "../src/memory.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";

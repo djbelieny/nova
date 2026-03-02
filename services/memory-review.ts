@@ -14,9 +14,13 @@ import "dotenv/config";
 import { getDb, type Database } from "../src/db.ts";
 import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
+import { GeminiProvider } from "../src/providers/gemini.ts";
+import { CodexProvider } from "../src/providers/codex.ts";
 
-// Register AI provider (memory-review runs standalone)
+// Register AI providers (memory-review runs standalone)
 registerProvider(new ClaudeProvider());
+registerProvider(new GeminiProvider());
+registerProvider(new CodexProvider());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 

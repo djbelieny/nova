@@ -1290,7 +1290,7 @@ export class Database {
     return this.queryAllUserDbs(db => db.query(sql).all(nowStr, nowStr) as any[]);
   }
 
-  updateScheduledTask(id: string, updates: Record<string, any>): void {
+  updateScheduledTask(id: string, updates: Record<string, any>, userId?: string): void {
     const setClauses: string[] = [];
     const values: any[] = [];
 
@@ -1302,8 +1302,15 @@ export class Database {
     setClauses.push(`updated_at = datetime('now')`);
     values.push(id);
 
-    const sql = `UPDATE scheduled_tasks SET ${setClauses.join(", ")} WHERE id = ?`;
-    this.runOnAllUserDbs(db => db.run(sql, values));
+    if (userId) {
+      values.push(userId);
+      const sql = `UPDATE scheduled_tasks SET ${setClauses.join(", ")} WHERE id = ? AND user_id = ?`;
+      const udb = this.getUserDb(userId);
+      udb.db.run(sql, values);
+    } else {
+      const sql = `UPDATE scheduled_tasks SET ${setClauses.join(", ")} WHERE id = ?`;
+      this.runOnAllUserDbs(db => db.run(sql, values));
+    }
   }
 
   findScheduledTaskByTitle(userId: string, searchText: string): any | null {
@@ -1783,10 +1790,18 @@ export class Database {
     });
   }
 
-  updateApprovalStatus(approvalId: string, status: string, feedback?: string | null): void {
-    const sql = `UPDATE pending_approvals SET status = ?, feedback = ?, updated_at = datetime('now') WHERE id = ?`;
-    const params = [status, feedback || null, approvalId];
-    this.runOnAllUserDbs(db => db.run(sql, params));
+  updateApprovalStatus(approvalId: string, status: string, feedback?: string | null, userId?: string): void {
+    if (userId) {
+      const udb = this.getUserDb(userId);
+      udb.db.run(
+        `UPDATE pending_approvals SET status = ?, feedback = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`,
+        [status, feedback || null, approvalId, userId]
+      );
+    } else {
+      // Fallback for internal callers (orchestrator) — still scoped by id
+      const sql = `UPDATE pending_approvals SET status = ?, feedback = ?, updated_at = datetime('now') WHERE id = ?`;
+      this.runOnAllUserDbs(db => db.run(sql, [status, feedback || null, approvalId]));
+    }
   }
 
   getApprovalsByIds(ids: string[], userId: string): any[] {

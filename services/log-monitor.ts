@@ -14,9 +14,13 @@ import { readFile, writeFile, stat } from "fs/promises";
 import { dirname, join, basename } from "path";
 import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
+import { GeminiProvider } from "../src/providers/gemini.ts";
+import { CodexProvider } from "../src/providers/codex.ts";
 
-// Register AI provider (log-monitor runs standalone)
+// Register AI providers (log-monitor runs standalone)
 registerProvider(new ClaudeProvider());
+registerProvider(new GeminiProvider());
+registerProvider(new CodexProvider());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_USER_ID || "";
