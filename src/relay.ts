@@ -28,7 +28,7 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
-import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials } from "./integrations.ts";
+import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
 import {
   ChannelRegistry,
   type IncomingMessage,
@@ -619,12 +619,21 @@ async function callAI(prompt: string, model?: LegacyModelTier | ModelTier, userI
 async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, userId?: string, hint?: string, forceProvider?: string, userDefaultProvider?: string): Promise<string> {
   const tier = legacyToGenericTier(model);
 
-  // Resolve MCP config for user
+  // Resolve MCP config for user (regenerate from DB if missing)
   let mcpConfigPath: string | undefined;
-  if (userId && hasUserMcpConfig(userId)) {
-    mcpConfigPath = hint
-      ? await getFilteredMcpConfigPath(userId, hint)
-      : getUserMcpConfigPath(userId);
+  if (userId) {
+    if (!hasUserMcpConfig(userId)) {
+      const connected = supabase.getConnectedIntegrations(userId);
+      if (connected && connected.length > 0) {
+        console.log(`[ai] Regenerating missing MCP config for user ${userId} (${connected.length} integrations)`);
+        await regenerateMcpConfig(supabase, userId);
+      }
+    }
+    if (hasUserMcpConfig(userId)) {
+      mcpConfigPath = hint
+        ? await getFilteredMcpConfigPath(userId, hint)
+        : getUserMcpConfigPath(userId);
+    }
   }
 
   // Smart route to best provider (userDefaultProvider passed from caller to avoid DB lookup per call)
