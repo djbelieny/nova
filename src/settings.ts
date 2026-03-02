@@ -9,8 +9,8 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import type { Database } from "./db.ts";
 
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
-const SETTINGS_FILE = join(RELAY_DIR, "settings.json");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const SETTINGS_FILE = join(NOVA_DIR, "settings.json");
 
 export interface Settings {
   voiceResponses: boolean;

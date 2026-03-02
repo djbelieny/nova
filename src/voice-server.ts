@@ -34,13 +34,13 @@ const PROJECT_ROOT = dirname(dirname(__filename));
 
 const PORT = parseInt(process.env.VOICE_SERVER_PORT || "80");
 const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL || "https://nova.1osm.com";
-const FALLBACK_PIN = process.env.USER_PIN || "852185";
-const FALLBACK_PHONE = process.env.USER_PHONE || "+18636047056";
+const FALLBACK_PIN = process.env.USER_PIN || "";
+const FALLBACK_PHONE = process.env.USER_PHONE || "";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
-const FALLBACK_USER_NAME = process.env.USER_NAME || "DJ";
+const FALLBACK_USER_NAME = process.env.USER_NAME || "the user";
 const FALLBACK_USER_TIMEZONE = process.env.USER_TIMEZONE || "America/New_York";
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
-const CALL_CONTEXTS_DIR = join(RELAY_DIR, "call-contexts");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const CALL_CONTEXTS_DIR = join(NOVA_DIR, "call-contexts");
 
 // Audio files stored in /tmp with cleanup
 const AUDIO_DIR = "/tmp/nova-voice-audio";
@@ -725,7 +725,7 @@ async function handleIncoming(body: string): Promise<Response> {
 
   const greeting = state.isOwner
     ? "Hey, it's Nova. What's up?"
-    : "Hi, this is Nova, DJ's assistant. How can I help you?";
+    : `Hi, this is Nova, ${FALLBACK_USER_NAME}'s assistant. How can I help you?`;
 
   const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, greeting);
   return twiml(gather);
@@ -889,7 +889,7 @@ async function handleGather(body: string): Promise<Response> {
   ) {
     const goodbyeText = state.isOwner
       ? "Alright, I'll get started on anything we discussed. Talk to you later. Bye!"
-      : "It was great talking with you. I'll let DJ know and he'll get back to you. Bye!";
+      : `It was great talking with you. I'll let ${FALLBACK_USER_NAME} know and they'll get back to you. Bye!`;
     await saveCallMessage("assistant", goodbyeText, callSid, userId);
     const audioId = await generateAudio(goodbyeText);
 

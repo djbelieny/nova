@@ -1,5 +1,5 @@
 /**
- * Claude Telegram Relay — Test Telegram Connection
+ * Nova — Test Telegram Connection
  *
  * Verifies bot token and user ID are valid by sending a test message.
  *

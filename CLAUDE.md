@@ -5,7 +5,7 @@
 
 ## Deployment
 
-For production deployment instructions (server: `root@nova.07labs.com`), see **[DEPLOY.md](DEPLOY.md)**.
+For production deployment instructions, see **[DEPLOY.md](DEPLOY.md)**.
 
 ## How This Works
 
@@ -91,23 +91,23 @@ The database is created automatically on first run. Embeddings are generated loc
 
 ## Phase 5: Always On (~5 min)
 
-Make the bot run in the background, start on boot, restart on crash.
+Make Nova run in the background, start on boot, restart on crash.
 
 **macOS:**
 ```
-bun run setup:launchd -- --service relay
+bun run setup:launchd -- --service core
 ```
 This auto-generates a plist with correct paths and loads it into launchd.
 
 **Linux/Windows:**
 ```
-bun run setup:services -- --service relay
+bun run setup:services -- --service core
 ```
 Uses PM2 for process management.
 
 **Verify:** `launchctl list | grep com.nova` (macOS) or `npx pm2 status` (Linux/Windows)
 
-**Done when:** Bot runs in the background and survives a terminal close.
+**Done when:** Nova runs in the background and survives a terminal close.
 
 ---
 
@@ -137,7 +137,7 @@ bun run setup:services -- --service all
 
 ## Phase 7: Voice Transcription (Optional, ~5 min)
 
-Lets the bot understand voice messages sent on Telegram.
+Lets Nova understand voice messages sent on Telegram.
 
 **Ask the user which option they prefer:**
 
@@ -212,7 +212,7 @@ Summarize what was set up and what is running. Remind the user:
 
 ## What Comes Next — The Full Version
 
-This free relay covers the essentials. The full version unlocks:
+This version covers the essentials. The full version unlocks:
 
 - **6 Specialized AI Agents** — Research, Content, Finance, Strategy, Critic + General orchestrator. Route messages through Telegram forum topics. Run board meetings where all six weigh in.
 - **VPS Deployment** — Your bot on a cloud server that never sleeps. Hybrid mode: free local processing when awake, paid API only when sleeping. $2-5/month.

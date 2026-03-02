@@ -3,7 +3,7 @@
  *
  * Sets up PM2 or Docker for process management on non-macOS systems.
  *
- * Usage: bun run setup/configure-services.ts [--service relay|checkin|briefing|all] [--runtime pm2|docker]
+ * Usage: bun run setup/configure-services.ts [--service core|checkin|briefing|all] [--runtime pm2|docker]
  */
 
 import { existsSync, mkdirSync } from "fs";
@@ -41,6 +41,11 @@ interface ServiceDef {
 }
 
 const SERVICES: Record<string, ServiceDef> = {
+  core: {
+    name: "nova",
+    script: "src/relay.ts",
+    description: "Main bot (always running)",
+  },
   relay: {
     name: "nova",
     script: "src/relay.ts",
@@ -156,7 +161,7 @@ async function main() {
   // Parse flags
   const args = process.argv.slice(2);
   const serviceIdx = args.indexOf("--service");
-  const serviceArg = serviceIdx !== -1 ? args[serviceIdx + 1] : "relay";
+  const serviceArg = serviceIdx !== -1 ? args[serviceIdx + 1] : "core";
   const runtimeIdx = args.indexOf("--runtime");
   const runtime = runtimeIdx !== -1 ? args[runtimeIdx + 1] : "pm2";
 

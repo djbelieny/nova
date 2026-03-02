@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 # UPDATE THIS: Your username
 User=YOUR_USERNAME
-# UPDATE THIS: Path to relay directory
+# UPDATE THIS: Path to Nova project directory
 WorkingDirectory=/home/YOUR_USERNAME/nova
 # UPDATE THIS: Path to bun
 ExecStart=/home/YOUR_USERNAME/.bun/bin/bun run src/relay.ts

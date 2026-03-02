@@ -13,8 +13,7 @@
  * Run: bun run services/smart-checkin.ts
  */
 
-import { readFile, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { dirname } from "path";
 import { getDb, type Database } from "../src/db.ts";
 import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
@@ -38,7 +37,7 @@ interface ProactiveUser {
 }
 
 // ============================================================
-// STATE MANAGEMENT (per-user)
+// STATE MANAGEMENT (per-user, stored in shared SQLite)
 // ============================================================
 
 interface CheckinState {
@@ -47,27 +46,28 @@ interface CheckinState {
   pendingItems: string[];
 }
 
-const STATE_DIR = "/tmp";
-
-function stateFile(userId: string): string {
-  return join(STATE_DIR, `checkin-state-${userId}.json`);
+let _db: Database | null = null;
+function getStateDb(): Database {
+  if (!_db) _db = getDb();
+  return _db;
 }
 
-async function loadState(userId: string): Promise<CheckinState> {
-  try {
-    const content = await readFile(stateFile(userId), "utf-8");
-    return JSON.parse(content);
-  } catch {
-    return {
-      lastMessageTime: new Date().toISOString(),
-      lastCheckinTime: "",
-      pendingItems: [],
-    };
+function loadState(userId: string): CheckinState {
+  const db = getStateDb();
+  const raw = db.getServiceState("smart-checkin", userId);
+  if (raw) {
+    try { return JSON.parse(raw); } catch {}
   }
+  return {
+    lastMessageTime: new Date().toISOString(),
+    lastCheckinTime: "",
+    pendingItems: [],
+  };
 }
 
-async function saveState(userId: string, state: CheckinState): Promise<void> {
-  await writeFile(stateFile(userId), JSON.stringify(state, null, 2));
+function saveState(userId: string, state: CheckinState): void {
+  const db = getStateDb();
+  db.setServiceState("smart-checkin", userId, JSON.stringify(state));
 }
 
 // ============================================================
@@ -148,8 +148,8 @@ async function getLastActivity(db: Database, userId: string): Promise<string> {
     console.error("Last activity query error:", error);
   }
 
-  // Fallback to state file only if DB query fails
-  const state = await loadState(userId);
+  // Fallback to state only if DB query fails
+  const state = loadState(userId);
   const lastMsg = new Date(state.lastMessageTime);
   const now = new Date();
   const hoursSince = (now.getTime() - lastMsg.getTime()) / (1000 * 60 * 60);
@@ -187,7 +187,7 @@ async function askClaudeToDecide(
   db: Database,
   user: ProactiveUser
 ): Promise<{ shouldCheckin: boolean; message: string }> {
-  const state = await loadState(user.id);
+  const state = loadState(user.id);
   const goals = getGoals(db, user.id);
   const recentActivity = getRecentActivity(db, user.id);
   const activity = await getLastActivity(db, user.id);
@@ -278,9 +278,9 @@ async function main() {
       const success = await sendTelegram(user.telegram_id, message);
 
       if (success) {
-        const state = await loadState(user.id);
+        const state = loadState(user.id);
         state.lastCheckinTime = new Date().toISOString();
-        await saveState(user.id, state);
+        saveState(user.id, state);
         console.log(`Check-in sent to ${user.name}!`);
       } else {
         console.error(`Failed to send check-in to ${user.name}`);
@@ -300,7 +300,7 @@ main();
 // Run every 30 minutes:
 //
 // CRON (Linux):
-//   0,30 * * * * cd /path/to/relay && bun run services/smart-checkin.ts
+//   0,30 * * * * cd /path/to/nova && bun run services/smart-checkin.ts
 //
 // LAUNCHD (macOS):
 //   See ~/Library/LaunchAgents/com.nova.smart-checkin.plist

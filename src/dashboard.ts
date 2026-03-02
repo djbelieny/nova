@@ -17,7 +17,7 @@ import { getDb, type Database } from "./db.ts";
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
 const PORT = 3033;
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const LOGS_DIR = join(PROJECT_ROOT, "logs");
 
 // Database (local SQLite)
@@ -44,8 +44,8 @@ function generateSessionId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function isAuthenticated(req: Request): boolean {
-  if (!DASHBOARD_PASS) return true; // No password set = auth disabled
+function isAuthenticated(req: Request): boolean | "no_password" {
+  if (!DASHBOARD_PASS) return "no_password"; // No password set = show warning
   const cookie = req.headers.get("cookie") || "";
   const match = cookie.match(/nova_session=([a-f0-9]+)/);
   if (!match) return false;
@@ -55,6 +55,47 @@ function isAuthenticated(req: Request): boolean {
     return false;
   }
   return true;
+}
+
+function noPasswordWarningPage(): Response {
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova — Dashboard Disabled</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a0f;
+      color: rgba(255,255,255,0.95);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .warning-box {
+      border: 1px solid rgba(255,200,0,0.3);
+      padding: 2.5rem;
+      width: 420px;
+      background: rgba(255,200,0,0.05);
+      border-radius: 14px;
+      text-align: center;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 1rem; color: #fbbf24; }
+    p { font-size: 0.95rem; line-height: 1.6; color: rgba(255,255,255,0.7); }
+    code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="warning-box">
+    <h1>Dashboard Disabled</h1>
+    <p>Set <code>DASHBOARD_PASS</code> in your <code>.env</code> file to enable the dashboard.</p>
+  </div>
+</body>
+</html>`;
+  return new Response(html, { status: 403, headers: { "Content-Type": "text/html" } });
 }
 
 function loginPage(error?: string): Response {
@@ -249,14 +290,14 @@ async function getStatus(): Promise<unknown> {
 
   const services = isMac
     ? [
-        { name: "relay", label: "Relay", unit: "com.nova.relay" },
+        { name: "relay", label: "Nova Core", unit: "com.nova.core" },
         { name: "voice-server", label: "Voice Server", unit: "com.nova.voice-server" },
         { name: "smart-checkin", label: "Smart Check-in", unit: "com.nova.smart-checkin" },
         { name: "morning-briefing", label: "Morning Briefing", unit: "com.nova.morning-briefing" },
         { name: "dashboard", label: "Dashboard", unit: "com.nova.dashboard" },
       ]
     : [
-        { name: "relay", label: "Relay", unit: "nova-relay" },
+        { name: "relay", label: "Nova Core", unit: "nova-relay" },
         { name: "voice", label: "Voice Server", unit: "nova-voice" },
         { name: "dashboard", label: "Dashboard", unit: "nova-dashboard" },
         { name: "miniapp", label: "Mini App", unit: "nova-miniapp" },
@@ -470,8 +511,8 @@ async function getTasks(): Promise<unknown> {
 }
 
 async function getResources(): Promise<unknown> {
-  const uploadsDir = join(RELAY_DIR, "uploads");
-  const tempDir = join(RELAY_DIR, "temp");
+  const uploadsDir = join(NOVA_DIR, "uploads");
+  const tempDir = join(NOVA_DIR, "temp");
 
   const [uploadsSize, tempSize, logsSize] = await Promise.all([
     dirSize(uploadsDir),
@@ -1407,7 +1448,7 @@ function renderDashboard(): string {
         <div class="filter-row">
           <select id="log-service">
             <option value="all">All Services</option>
-            <option value="relay">Relay</option>
+            <option value="relay">Nova Core</option>
             <option value="voice-server">Voice Server</option>
             <option value="smart-checkin">Smart Check-in</option>
             <option value="morning-briefing">Morning Briefing</option>
@@ -2013,7 +2054,11 @@ const server = Bun.serve({
     }
 
     // Auth gate — everything below requires login
-    if (!isAuthenticated(req)) {
+    const authResult = isAuthenticated(req);
+    if (authResult === "no_password") {
+      return noPasswordWarningPage();
+    }
+    if (!authResult) {
       return loginPage();
     }
 

@@ -1,8 +1,8 @@
 # Nova — Deployment Guide
 
-> Production server: `root@nova.07labs.com` (Ubuntu 24.04)
+> Production server: `root@your-server.com` (Ubuntu 24.04)
 > Project directory: `/opt/nova`
-> Domains: `nova.1osm.com` (voice/SMS), `csm.07labs.com` (web/dashboard)
+> Domains: `your-domain.com` (voice/SMS), `dashboard.your-domain.com` (web/dashboard)
 > Runs natively via systemd (no Docker)
 
 ## Branch Strategy
@@ -28,14 +28,14 @@ git push origin production
 git checkout main
 
 # 3. Pull and restart on server
-ssh root@nova.07labs.com "bash /opt/nova/scripts/deploy.sh"
+ssh root@your-server.com "bash /opt/nova/scripts/deploy.sh"
 ```
 
 ## Services
 
 | Service          | Unit                     | Port | Description                  |
 |------------------|--------------------------|------|------------------------------|
-| Relay            | `nova-relay.service`     | —    | Main Telegram bot            |
+| Core             | `nova-relay.service`     | —    | Main Telegram bot            |
 | Voice            | `nova-voice.service`     | 8080 | Voice/SMS server (Twilio)    |
 | Dashboard        | `nova-dashboard.service` | 3033 | Web dashboard                |
 | Mini App         | `nova-miniapp.service`   | 3034 | Telegram Mini App            |
@@ -73,7 +73,7 @@ grep nova /var/log/syslog
 
 ```bash
 # Voice server
-curl https://nova.1osm.com/health
+curl https://your-domain.com/health
 
 # Service statuses
 systemctl status nova-relay nova-voice nova-dashboard nova-miniapp
@@ -85,7 +85,7 @@ If a deploy breaks something:
 
 ```bash
 # On server — revert to previous commit
-ssh root@nova.07labs.com
+ssh root@your-server.com
 cd /opt/nova
 sudo -u nova git log --oneline -5        # find last good commit
 sudo -u nova git revert HEAD             # revert the bad commit
@@ -110,7 +110,7 @@ Nova can edit its own source code in production via the self-edit workflow:
 3. Merges branch into `main`, pushes
 4. Merges `main` into `production`, pushes
 5. Cleans up the feature branch
-6. Tells DJ to send `/reload` to apply changes
+6. Tells you to send `/reload` to apply changes
 
 ## First-Time Server Setup
 
@@ -118,10 +118,10 @@ If setting up a new server from scratch:
 
 1. Install Bun: `curl -fsSL https://bun.sh/install | bash`
 2. Install Caddy: `apt install -y caddy`
-3. Install Node.js 22 + Claude CLI (for relay)
+3. Install Node.js 22 + Claude CLI (for Nova)
 4. Create `nova` user: `useradd -r -m -s /bin/bash nova`
 5. Generate SSH deploy key for nova user (see below)
-6. Clone repo: `sudo -u nova git clone git@github.com:djbelieny/nova.git /opt/nova`
+6. Clone repo: `sudo -u nova git clone git@github.com:your-github-username/nova.git /opt/nova`
 7. Checkout production: `cd /opt/nova && sudo -u nova git checkout production`
 8. Copy `.env.example` to `.env` and fill in all values
 9. Copy `config/profile.example.md` to `config/profile.md`
@@ -129,14 +129,14 @@ If setting up a new server from scratch:
 11. Create systemd unit files (see `/etc/systemd/system/nova-*.service`)
 12. Install crontab: copy adapted entries to `/etc/cron.d/nova`
 13. Enable services: `systemctl enable --now nova-relay nova-voice nova-dashboard nova-miniapp`
-14. Point DNS for `nova.1osm.com` and `csm.07labs.com` to server IP
+14. Point DNS for your domains to server IP
 15. Caddy handles HTTPS certificates automatically
 
 ### SSH Deploy Key Setup
 
 ```bash
 # As nova user
-sudo -u nova ssh-keygen -t ed25519 -C "nova-deploy@nova.07labs.com" -f /home/nova/.ssh/id_ed25519 -N ""
+sudo -u nova ssh-keygen -t ed25519 -C "nova-deploy@your-domain.com" -f /home/nova/.ssh/id_ed25519 -N ""
 sudo -u nova cat /home/nova/.ssh/id_ed25519.pub
 # Add the public key as a deploy key on GitHub (Settings > Deploy keys, enable write access)
 
@@ -145,6 +145,5 @@ sudo -u nova ssh-keyscan github.com >> /home/nova/.ssh/known_hosts
 
 # Configure git user
 sudo -u nova git config --global user.name "Nova Bot"
-sudo -u nova git config --global user.email "nova@07labs.com"
+sudo -u nova git config --global user.email "nova@your-domain.com"
 ```
-

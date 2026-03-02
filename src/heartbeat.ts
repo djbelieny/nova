@@ -1,7 +1,7 @@
 /**
  * Heartbeat — In-Process Proactive Agent Loop
  *
- * A lightweight periodic loop that runs inside the main relay process.
+ * A lightweight periodic loop that runs inside the main Nova process.
  * Reads a HEARTBEAT.md checklist, pre-filters with cheap local checks,
  * and only escalates to a Claude haiku call when something needs attention.
  *
@@ -13,7 +13,7 @@ import { join, dirname } from "path";
 import type { Database } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 
 // Config
 const MAX_DAILY_CHECKINS = parseInt(process.env.HEARTBEAT_MAX_DAILY || "3");
@@ -56,7 +56,7 @@ type MessageSender = (user: HeartbeatUser, message: string) => Promise<void>;
 // ============================================================
 
 const CONFIG_PATH = join(PROJECT_ROOT, "config", "heartbeat.md");
-const RUNTIME_PATH = join(RELAY_DIR, "heartbeat.md");
+const RUNTIME_PATH = join(NOVA_DIR, "heartbeat.md");
 
 /**
  * Read the heartbeat checklist. Prefers the runtime copy (~/.nova/heartbeat.md)

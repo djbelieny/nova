@@ -32,8 +32,8 @@ const LOGS_DIR = join(PROJECT_ROOT, "logs");
 
 // Log files to monitor, ordered by priority
 const MONITORED_LOGS: Array<{ file: string; priority: "critical" | "high" | "medium" }> = [
-  { file: "com.nova.relay.error.log", priority: "critical" },
-  { file: "com.nova.relay.log", priority: "high" },
+  { file: "com.nova.core.error.log", priority: "critical" },
+  { file: "com.nova.core.log", priority: "high" },
   { file: "cloudflare-tunnel.error.log", priority: "high" },
   { file: "com.nova.dashboard.error.log", priority: "medium" },
   { file: "com.nova.smart-checkin.error.log", priority: "medium" },

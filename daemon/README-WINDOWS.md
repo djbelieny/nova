@@ -1,6 +1,6 @@
 # Windows Setup
 
-Windows has several options for running the relay as an always-on service.
+Windows has several options for running Nova as an always-on service.
 
 ## Option 1: Task Scheduler (Built-in)
 
@@ -65,10 +65,10 @@ npm install -g pm2-windows-startup  # For auto-start on Windows
 ### Setup:
 
 ```powershell
-# Navigate to relay directory
+# Navigate to Nova directory
 cd C:\path\to\nova
 
-# Start the relay
+# Start Nova
 pm2 start src/relay.ts --interpreter bun --name nova
 
 # Save process list
@@ -107,7 +107,7 @@ nssm install nova
 nssm install nova "C:\Users\YOUR_USERNAME\.bun\bin\bun.exe" "run src/relay.ts"
 nssm set nova AppDirectory "C:\path\to\nova"
 nssm set nova DisplayName "Nova"
-nssm set nova Description "Telegram bot relay for Claude Code"
+nssm set nova Description "Nova — Personal AI Assistant"
 nssm set nova Start SERVICE_AUTO_START
 
 # Set environment variables

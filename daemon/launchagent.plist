@@ -4,7 +4,7 @@
 <dict>
     <!-- Unique identifier for this service -->
     <key>Label</key>
-    <string>com.nova.relay</string>
+    <string>com.nova.core</string>
 
     <!-- Command to run -->
     <key>ProgramArguments</key>
@@ -17,7 +17,7 @@
 
     <!-- Working directory -->
     <key>WorkingDirectory</key>
-    <!-- UPDATE THIS: Path to your relay directory -->
+    <!-- UPDATE THIS: Path to your Nova project directory -->
     <string>/Users/YOUR_USERNAME/nova</string>
 
     <!-- Environment variables -->
@@ -60,12 +60,12 @@ SETUP INSTRUCTIONS:
 1. Replace all YOUR_USERNAME with your actual macOS username
 
 2. Copy to LaunchAgents:
-   cp daemon/launchagent.plist ~/Library/LaunchAgents/com.nova.relay.plist
+   cp daemon/launchagent.plist ~/Library/LaunchAgents/com.nova.core.plist
 
-3. Make sure your .env file exists in the relay directory
+3. Make sure your .env file exists in the project directory
 
 4. Load the agent:
-   launchctl load ~/Library/LaunchAgents/com.nova.relay.plist
+   launchctl load ~/Library/LaunchAgents/com.nova.core.plist
 
 5. Check if running:
    launchctl list | grep claude
@@ -74,9 +74,9 @@ SETUP INSTRUCTIONS:
    tail -f ~/Library/Logs/nova.log
 
 7. To stop:
-   launchctl unload ~/Library/LaunchAgents/com.nova.relay.plist
+   launchctl unload ~/Library/LaunchAgents/com.nova.core.plist
 
 8. To restart:
-   launchctl unload ~/Library/LaunchAgents/com.nova.relay.plist
-   launchctl load ~/Library/LaunchAgents/com.nova.relay.plist
+   launchctl unload ~/Library/LaunchAgents/com.nova.core.plist
+   launchctl load ~/Library/LaunchAgents/com.nova.core.plist
 -->

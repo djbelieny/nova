@@ -25,7 +25,7 @@ import { stat } from "fs/promises";
 import type { ExecutionPlan } from "./patterns.ts";
 import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents } from "./agent-router.ts";
 
-type ModelTier = "sonnet" | "sonnet" | "opus";
+type ModelTier = "haiku" | "sonnet" | "opus";
 
 let _callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string) => Promise<string>;
 let _buildPrompt: (...args: any[]) => string;

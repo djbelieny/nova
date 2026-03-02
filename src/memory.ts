@@ -7,7 +7,7 @@
  *   [GOAL: text | DEADLINE: date]
  *   [DONE: search text]
  *
- * The relay parses these tags, saves to Supabase, and strips them
+ * Nova parses these tags, saves to the database, and strips them
  * from the response before sending to the user.
  */
 

@@ -176,6 +176,36 @@ async function authenticateRequest(req: Request): Promise<{ user: any; telegramU
 }
 
 // ============================================================
+// PER-USER RATE LIMITING
+// ============================================================
+
+const API_RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const API_RATE_LIMIT_MAX = 60;           // max 60 requests per minute per user
+const apiRateLimitMap = new Map<string, number[]>();
+
+function isApiRateLimited(userId: string): boolean {
+  const now = Date.now();
+  const timestamps = apiRateLimitMap.get(userId) || [];
+  const recent = timestamps.filter((t) => now - t < API_RATE_LIMIT_WINDOW_MS);
+  recent.push(now);
+  apiRateLimitMap.set(userId, recent);
+  return recent.length > API_RATE_LIMIT_MAX;
+}
+
+// Cleanup stale rate limit entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, timestamps] of apiRateLimitMap) {
+    const recent = timestamps.filter((t) => now - t < API_RATE_LIMIT_WINDOW_MS);
+    if (recent.length === 0) {
+      apiRateLimitMap.delete(userId);
+    } else {
+      apiRateLimitMap.set(userId, recent);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// ============================================================
 // API HANDLERS
 // ============================================================
 
@@ -475,7 +505,7 @@ async function saveApiKeyHandler(userId: string, provider: string, req: Request)
 function getWhatsAppManager(): WhatsAppManager {
   const global = (globalThis as any).__novaWhatsAppManager;
   if (global) return global;
-  // Standalone mode (miniapp running without relay) — create ephemeral manager
+  // Standalone mode (miniapp running independently) — create ephemeral manager
   const manager = new WhatsAppManager(supabase);
   (globalThis as any).__novaWhatsAppManager = manager;
   return manager;
@@ -2849,6 +2879,11 @@ const server = Bun.serve({
 
       const { user } = authResult;
       const userId = user.id;
+
+      // Rate limit: 60 requests per minute per user
+      if (isApiRateLimited(userId)) {
+        return jsonResponse({ error: "Too many requests. Please try again later." }, 429);
+      }
 
       // Profile
       if (path === "/api/profile" && method === "GET") {

@@ -24,16 +24,48 @@
  *   bun run src/scheduler.ts delete "weekly-metrics"
  */
 
-import { writeFile, readFile, unlink } from "fs/promises";
-import { join } from "path";
+import { writeFile, readFile, unlink, mkdir } from "fs/promises";
+import { join, dirname } from "path";
+import { existsSync } from "fs";
 import { spawn } from "bun";
+import { homedir } from "os";
 
-const PLIST_DIR = join(process.env.HOME || "~", "Library", "LaunchAgents");
-const PROJECT_ROOT = "/Users/djbelieny/Projects/nova";
+const HOME = homedir();
+const PLATFORM = process.platform;
+const PLIST_DIR = join(HOME, "Library", "LaunchAgents");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(HOME, ".nova");
+const CRON_DIR = join(NOVA_DIR, "cron");
+const PROJECT_ROOT = dirname(import.meta.dir);
 const LOGS_DIR = join(PROJECT_ROOT, "logs");
-const BUN_PATH = "/Users/djbelieny/.bun/bin/bun";
-const NODE_PATH = "/Users/djbelieny/.nvm/versions/node/v23.11.1/bin";
 const PREFIX = "com.nova.task";
+
+// Resolve bun path dynamically
+async function findBunPath(): Promise<string> {
+  const candidates = [
+    join(HOME, ".bun", "bin", "bun"),
+    "/usr/local/bin/bun",
+    "/opt/homebrew/bin/bun",
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  const proc = spawn(["which", "bun"], { stdout: "pipe", stderr: "pipe" });
+  const out = await new Response(proc.stdout).text();
+  return out.trim() || "bun";
+}
+
+// Resolve node bin directory dynamically
+async function findNodeBinDir(): Promise<string> {
+  try {
+    const proc = spawn(["which", "node"], { stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    if (out.trim()) return dirname(out.trim());
+  } catch {}
+  return "/usr/local/bin";
+}
+
+let _bunPath: string | undefined;
+let _nodeBinDir: string | undefined;
 
 interface ScheduleConfig {
   type: "calendar" | "interval";
@@ -99,11 +131,14 @@ function parseSchedule(schedule: string): ScheduleConfig {
   }
 }
 
-function buildPlist(
+async function buildPlist(
   label: string,
   command: string,
   schedule: ScheduleConfig
-): string {
+): Promise<string> {
+  if (!_bunPath) _bunPath = await findBunPath();
+  if (!_nodeBinDir) _nodeBinDir = await findNodeBinDir();
+  const bunBinDir = dirname(_bunPath);
   // Split command into args — supports "bun run script.ts arg1 arg2"
   const cmdParts = command.split(/\s+/);
 
@@ -156,9 +191,9 @@ ${argsXml}
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>${NODE_PATH}:/Users/djbelieny/.bun/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>${_nodeBinDir}:${bunBinDir}:/usr/local/bin:/usr/bin:/bin</string>
         <key>HOME</key>
-        <string>${process.env.HOME}</string>
+        <string>${HOME}</string>
     </dict>
 
 ${scheduleXml}
@@ -181,15 +216,63 @@ function escapeXml(str: string): string {
 }
 
 // ============================================================
+// LINUX CRON SUPPORT
+// ============================================================
+
+function scheduleToCron(schedule: ScheduleConfig): string[] {
+  if (schedule.type === "interval") {
+    const secs = schedule.interval!;
+    if (secs < 60) return [`* * * * *`]; // every minute is the finest cron granularity
+    const mins = Math.round(secs / 60);
+    if (mins <= 60) return [`*/${mins} * * * *`];
+    const hours = Math.round(mins / 60);
+    return [`0 */${hours} * * *`];
+  }
+
+  return (schedule.calendarIntervals || []).map((ci) => {
+    const minute = ci.Minute ?? 0;
+    const hour = ci.Hour !== undefined ? String(ci.Hour) : "*";
+    const dow = ci.Weekday !== undefined ? String(ci.Weekday) : "*";
+    return `${minute} ${hour} * * ${dow}`;
+  });
+}
+
+async function buildCronEntry(name: string, command: string, schedule: ScheduleConfig): Promise<string> {
+  if (!_bunPath) _bunPath = await findBunPath();
+  const cronLines = scheduleToCron(schedule);
+  const logFile = join(LOGS_DIR, `${PREFIX}.${name}.log`);
+  const entries = cronLines.map(
+    (cron) => `${cron} cd ${PROJECT_ROOT} && PATH="${dirname(_bunPath!)}:$PATH" ${command} >> ${logFile} 2>&1`
+  );
+  return `# Nova task: ${name}\n${entries.join("\n")}\n`;
+}
+
+// ============================================================
 // COMMANDS
 // ============================================================
 
 async function createTask(name: string, schedule: string, command: string) {
+  const scheduleConfig = parseSchedule(schedule);
+
+  if (PLATFORM === "darwin") {
+    await createTaskLaunchd(name, command, scheduleConfig);
+  } else if (PLATFORM === "linux") {
+    await createTaskCron(name, command, scheduleConfig);
+  } else {
+    console.warn(`Platform "${PLATFORM}" is not directly supported. Generating cron entry for reference.`);
+    await createTaskCron(name, command, scheduleConfig);
+  }
+
+  console.log(`Task "${name}" created.`);
+  console.log(`  Schedule: ${schedule}`);
+  console.log(`  Command: ${command}`);
+}
+
+async function createTaskLaunchd(name: string, command: string, scheduleConfig: ScheduleConfig) {
   const label = `${PREFIX}.${name}`;
   const plistPath = join(PLIST_DIR, `${label}.plist`);
 
-  const scheduleConfig = parseSchedule(schedule);
-  const plist = buildPlist(label, command, scheduleConfig);
+  const plist = await buildPlist(label, command, scheduleConfig);
 
   // Unload if already exists
   try {
@@ -212,13 +295,27 @@ async function createTask(name: string, schedule: string, command: string) {
     process.exit(1);
   }
 
-  console.log(`Task "${name}" created and loaded.`);
-  console.log(`  Schedule: ${schedule}`);
-  console.log(`  Command: ${command}`);
   console.log(`  Plist: ${plistPath}`);
 }
 
+async function createTaskCron(name: string, command: string, scheduleConfig: ScheduleConfig) {
+  await mkdir(CRON_DIR, { recursive: true });
+  const cronFile = join(CRON_DIR, `nova-task-${name}`);
+  const entry = await buildCronEntry(name, command, scheduleConfig);
+  await writeFile(cronFile, entry);
+  console.log(`  Cron file: ${cronFile}`);
+  console.log(`  To activate, add to your crontab: crontab -l | cat ${cronFile} | crontab -`);
+}
+
 async function listTasks() {
+  if (PLATFORM === "darwin") {
+    await listTasksLaunchd();
+  } else {
+    await listTasksCron();
+  }
+}
+
+async function listTasksLaunchd() {
   const proc = spawn(["launchctl", "list"], { stdout: "pipe", stderr: "pipe" });
   const output = await new Response(proc.stdout).text();
 
@@ -265,42 +362,104 @@ async function listTasks() {
   }
 }
 
+async function listTasksCron() {
+  if (!existsSync(CRON_DIR)) {
+    console.log("No scheduled tasks found.");
+    return;
+  }
+
+  const { readdirSync } = await import("fs");
+  const files = readdirSync(CRON_DIR).filter((f: string) => f.startsWith("nova-task-"));
+
+  if (files.length === 0) {
+    console.log("No scheduled tasks found.");
+    return;
+  }
+
+  console.log("Scheduled tasks (cron files):\n");
+  for (const file of files) {
+    const name = file.replace("nova-task-", "");
+    const content = await readFile(join(CRON_DIR, file), "utf-8");
+    const cronLine = content.split("\n").find((l: string) => l && !l.startsWith("#")) || "";
+    const schedule = cronLine.split(/\s+/).slice(0, 5).join(" ");
+    console.log(`  ${name} — cron: ${schedule}`);
+  }
+}
+
 async function deleteTask(name: string) {
-  const label = name.startsWith(PREFIX) ? name : `${PREFIX}.${name}`;
-  const plistPath = join(PLIST_DIR, `${label}.plist`);
+  if (PLATFORM === "darwin") {
+    const label = name.startsWith(PREFIX) ? name : `${PREFIX}.${name}`;
+    const plistPath = join(PLIST_DIR, `${label}.plist`);
 
-  // Unload
-  try {
-    const proc = spawn(["launchctl", "unload", plistPath], { stdout: "pipe", stderr: "pipe" });
-    await proc.exited;
-  } catch {}
+    // Unload
+    try {
+      const proc = spawn(["launchctl", "unload", plistPath], { stdout: "pipe", stderr: "pipe" });
+      await proc.exited;
+    } catch {}
 
-  // Delete plist
-  try {
-    await unlink(plistPath);
-    console.log(`Task "${name}" deleted.`);
-  } catch {
-    console.error(`Task "${name}" not found at ${plistPath}`);
-    process.exit(1);
+    // Delete plist
+    try {
+      await unlink(plistPath);
+      console.log(`Task "${name}" deleted.`);
+    } catch {
+      console.error(`Task "${name}" not found at ${plistPath}`);
+      process.exit(1);
+    }
+  } else {
+    // Linux/other: remove cron file
+    const cronFile = join(CRON_DIR, `nova-task-${name}`);
+    try {
+      await unlink(cronFile);
+      console.log(`Task "${name}" deleted. Remember to update your crontab.`);
+    } catch {
+      console.error(`Task "${name}" not found at ${cronFile}`);
+      process.exit(1);
+    }
   }
 }
 
 async function runOnce(name: string) {
-  const label = name.startsWith(PREFIX) ? name : `${PREFIX}.${name}`;
+  if (PLATFORM === "darwin") {
+    const label = name.startsWith(PREFIX) ? name : `${PREFIX}.${name}`;
 
-  const proc = spawn(["launchctl", "start", label], {
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+    const proc = spawn(["launchctl", "start", label], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = await new Response(proc.stderr).text();
+    const exitCode = await proc.exited;
 
-  if (exitCode !== 0) {
-    console.error(`Failed to start task: ${stderr}`);
-    process.exit(1);
+    if (exitCode !== 0) {
+      console.error(`Failed to start task: ${stderr}`);
+      process.exit(1);
+    }
+
+    console.log(`Task "${name}" triggered.`);
+  } else {
+    // Linux/other: read the cron file and execute the command directly
+    const cronFile = join(CRON_DIR, `nova-task-${name}`);
+    try {
+      const content = await readFile(cronFile, "utf-8");
+      const cmdLine = content.split("\n").find((l) => l && !l.startsWith("#"));
+      if (!cmdLine) {
+        console.error(`No command found in ${cronFile}`);
+        process.exit(1);
+      }
+      // Extract command after the 5 cron fields
+      const cmdParts = cmdLine.split(/\s+/).slice(5).join(" ");
+      console.log(`Running: ${cmdParts}`);
+      const proc = spawn(["sh", "-c", cmdParts], {
+        stdout: "inherit",
+        stderr: "inherit",
+        cwd: PROJECT_ROOT,
+      });
+      await proc.exited;
+      console.log(`Task "${name}" completed.`);
+    } catch {
+      console.error(`Task "${name}" not found at ${cronFile}`);
+      process.exit(1);
+    }
   }
-
-  console.log(`Task "${name}" triggered.`);
 }
 
 // ============================================================

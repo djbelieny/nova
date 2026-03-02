@@ -33,7 +33,7 @@ export class ChannelRegistry {
    * WhatsApp is NOT initialized here — it's managed per-user by WhatsAppManager.
    * Does NOT start them — call start() separately after registering handlers.
    */
-  init(relayDir: string): void {
+  init(novaDir: string): void {
     // Telegram
     if (process.env.TELEGRAM_BOT_TOKEN) {
       this.telegramAdapter = new TelegramAdapter(process.env.TELEGRAM_BOT_TOKEN);

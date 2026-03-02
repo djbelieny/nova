@@ -4,7 +4,7 @@
  * Generates and loads launchd plist files with correct paths
  * for the current user and project location.
  *
- * Usage: bun run setup/configure-launchd.ts [--service relay|checkin|briefing|memory-review|all]
+ * Usage: bun run setup/configure-launchd.ts [--service core|checkin|briefing|memory-review|all]
  */
 
 import { writeFile, readFile } from "fs/promises";
@@ -131,8 +131,14 @@ interface ServiceConfig {
 }
 
 const SERVICES: Record<string, ServiceConfig> = {
+  core: {
+    label: "com.nova.core",
+    script: "src/relay.ts",
+    keepAlive: true,
+    description: "Main bot (always running, restarts on crash)",
+  },
   relay: {
-    label: "com.nova.relay",
+    label: "com.nova.core",
     script: "src/relay.ts",
     keepAlive: true,
     description: "Main bot (always running, restarts on crash)",
@@ -224,7 +230,7 @@ async function main() {
   // Parse --service flag
   const args = process.argv.slice(2);
   const serviceIdx = args.indexOf("--service");
-  const serviceArg = serviceIdx !== -1 ? args[serviceIdx + 1] : "relay";
+  const serviceArg = serviceIdx !== -1 ? args[serviceIdx + 1] : "core";
 
   const toInstall = serviceArg === "all" ? Object.keys(SERVICES) : [serviceArg];
 
@@ -245,7 +251,7 @@ async function main() {
     const config = SERVICES[name];
     if (!config) {
       console.log(`  ${FAIL} Unknown service: ${name}`);
-      console.log(`      ${dim("Available: relay, checkin, briefing, memory-review, dispatcher, miniapp, all")}`);
+      console.log(`      ${dim("Available: core, checkin, briefing, memory-review, dispatcher, miniapp, all (relay is accepted as alias for core)")}`);
       allOk = false;
       continue;
     }
@@ -258,7 +264,7 @@ async function main() {
     console.log(`  ${green("Done!")} Services are running.`);
     console.log("");
     console.log(`  ${dim("Check status:")}  launchctl list | grep com.nova`);
-    console.log(`  ${dim("View logs:")}     tail -f ${LOGS_DIR}/com.nova.relay.log`);
+    console.log(`  ${dim("View logs:")}     tail -f ${LOGS_DIR}/com.nova.core.log`);
     console.log(`  ${dim("Stop all:")}      bun run setup/configure-launchd.ts --unload`);
   }
   console.log("");

@@ -1,5 +1,5 @@
 /**
- * Claude Telegram Relay — Setup
+ * Nova — Setup
  *
  * Checks prerequisites, installs dependencies, creates directories,
  * and prepares .env file.
@@ -127,7 +127,7 @@ async function main() {
   const platform = { darwin: "macOS", win32: "Windows", linux: "Linux" }[process.platform] || process.platform;
 
   console.log("");
-  console.log(bold("  Claude Telegram Relay — Setup"));
+  console.log(bold("  Nova — Setup"));
   console.log(dim(`  ${platform} • ${process.arch}`));
 
   // 1. Prerequisites

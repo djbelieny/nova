@@ -29,11 +29,11 @@ const ULTRAVOX_API = "https://api.ultravox.ai/api";
 
 // Voice server
 const VOICE_SERVER_URL = process.env.VOICE_SERVER_URL || "https://nova.1osm.com";
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
-const CALL_CONTEXTS_DIR = join(RELAY_DIR, "call-contexts");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const CALL_CONTEXTS_DIR = join(NOVA_DIR, "call-contexts");
 
 // User config
-const USER_NAME = process.env.USER_NAME || "DJ";
+const USER_NAME = process.env.USER_NAME || "the user";
 const USER_TIMEZONE = process.env.USER_TIMEZONE || "America/New_York";
 
 // Telegram (direct API for guaranteed message delivery)
@@ -506,7 +506,7 @@ async function pollForCallCompletion(
 
 /**
  * Fetch transcript, send Telegram notification, save to Notion, and output
- * any follow-up tasks to stdout for the relay Claude to handle via MCP.
+ * any follow-up tasks to stdout for Nova to handle via MCP.
  */
 async function outputCallResult(
   callId: string,
@@ -540,7 +540,7 @@ async function outputCallResult(
       : endReason === "denied" ? "Denied"
       : "No Answer";
 
-    // Notify DJ directly via Telegram
+    // Notify user directly via Telegram
     await sendTelegram(`📞 *Call to ${calleeName}*: ${statusLabel}\nSubject: ${subject}\nReason: ${endReason}`);
 
     // Save to Notion even for failed calls
@@ -598,8 +598,8 @@ async function outputCallResult(
     outcome, status: "Completed", transcript, callStart,
   });
 
-  // === STEP 3: Output transcript + follow-up tasks to stdout for relay ===
-  // The relay Claude handles MCP-dependent follow-ups (calendar, email, SMS)
+  // === STEP 3: Output transcript + follow-up tasks to stdout for Nova ===
+  // Nova handles MCP-dependent follow-ups (calendar, email, SMS)
   const output = [
     `CALL RESULT: COMPLETED`,
     `Callee: ${calleeName}`,

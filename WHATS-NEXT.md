@@ -8,7 +8,7 @@ Now here's what becomes possible.
 
 ## What You Have Now
 
-A personal AI relay — you message it, Claude responds, it remembers. Voice messages, smart check-ins, morning briefings, persistent memory. Everything in this repo works standalone, forever. MIT license.
+A personal AI assistant — you message it, Claude responds, it remembers. Voice messages, smart check-ins, morning briefings, persistent memory. Everything in this repo works standalone, forever. MIT license.
 
 ## What Becomes Possible
 
@@ -30,7 +30,7 @@ This isn't a feature wishlist. This is what 200+ builders are running right now 
 
 ### You're learning Claude Code, not just installing a bot
 
-GoBot is powered by Claude Code. The relay gets you started — but the real unlock is **mastering Claude Code itself**: CLAUDE.md files, MCP servers, hooks, skills, agent orchestration. That's what turns a chatbot into genuine AI infrastructure.
+Nova is powered by Claude Code. Nova gets you started — but the real unlock is **mastering Claude Code itself**: CLAUDE.md files, MCP servers, hooks, skills, agent orchestration. That's what turns a chatbot into genuine AI infrastructure.
 
 The community + course teach you that. Not just "copy these files" — but understanding *why* it works so you can customize it for your specific business.
 
@@ -60,7 +60,7 @@ Anyone can try to build these features from scratch. Some will. But:
 2. **Take the free course** — 6 lessons covering everything in this repo
    [autonomee.ai/telegram-bot-course](https://autonomee.ai/telegram-bot-course)
 
-3. **Join the community** — full course, GoBot access, weekly office hours, direct support
+3. **Join the community** — full course, Nova access, weekly office hours, direct support
    [skool.com/autonomee](https://skool.com/autonomee)
 
 ---

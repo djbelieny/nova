@@ -21,19 +21,25 @@ import { createHmac } from "crypto";
 import type { Database } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
-const NOVA_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const USERS_DIR = join(NOVA_DIR, "users");
 
 // ============================================================
 // OAUTH STATE SIGNING
 // ============================================================
 
-const OAUTH_HMAC_SECRET = process.env.TELEGRAM_BOT_TOKEN || "nova-oauth-fallback";
+function getOAuthHmacSecret(): string {
+  const secret = process.env.TELEGRAM_BOT_TOKEN;
+  if (!secret) {
+    throw new Error("TELEGRAM_BOT_TOKEN is required for OAuth HMAC signing — set it in .env");
+  }
+  return secret;
+}
 
 export function signOAuthState(payload: Record<string, any>): string {
   const json = JSON.stringify(payload);
   const b64 = Buffer.from(json).toString("base64");
-  const sig = createHmac("sha256", OAUTH_HMAC_SECRET).update(b64).digest("hex").slice(0, 16);
+  const sig = createHmac("sha256", getOAuthHmacSecret()).update(b64).digest("hex").slice(0, 16);
   return encodeURIComponent(`${b64}.${sig}`);
 }
 
@@ -45,7 +51,7 @@ export function verifyOAuthState(stateParam: string): Record<string, any> | null
   const b64 = decoded.slice(0, dotIndex);
   const sig = decoded.slice(dotIndex + 1);
 
-  const expected = createHmac("sha256", OAUTH_HMAC_SECRET).update(b64).digest("hex").slice(0, 16);
+  const expected = createHmac("sha256", getOAuthHmacSecret()).update(b64).digest("hex").slice(0, 16);
   if (sig !== expected) return null;
 
   try {

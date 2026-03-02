@@ -62,7 +62,7 @@ let _saveMessage: (role: string, content: string, userId: string) => Promise<voi
 let _sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
 let _sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
 let _sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
-let _relayDir: string;
+let _novaDir: string;
 let _supabase: Database | null = null;
 
 export function initOrchestrator(deps: {
@@ -73,7 +73,7 @@ export function initOrchestrator(deps: {
   sendResponseWithVoice: (ctx: Context, response: string, userId?: string) => Promise<void>;
   sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
   sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
-  relayDir: string;
+  novaDir: string;
   supabase?: Database | null;
 }): void {
   _callClaude = deps.callClaude;
@@ -83,7 +83,7 @@ export function initOrchestrator(deps: {
   _sendResponseWithVoice = deps.sendResponseWithVoice;
   _sendTelegramFile = deps.sendTelegramFile;
   _sendMessageToChat = deps.sendMessageToChat;
-  _relayDir = deps.relayDir;
+  _novaDir = deps.novaDir;
   _supabase = deps.supabase || null;
 
   // Initialize planner with shared dependencies
@@ -1161,7 +1161,7 @@ function orchestrateMain(
 }
 
 // ============================================================
-// SIMPLE PATH — unchanged from original relay behavior
+// SIMPLE PATH — unchanged from original behavior
 // ============================================================
 
 function routeSimple(
@@ -1193,7 +1193,7 @@ function routeSimple(
 
 async function createWorkspace(userId: string, taskId?: string): Promise<string> {
   const id = taskId || crypto.randomUUID();
-  const workspaceDir = join(_relayDir, "workspace", ".tasks", id);
+  const workspaceDir = join(_novaDir, "workspace", ".tasks", id);
   await mkdir(workspaceDir, { recursive: true });
   console.log(`[orchestrator] Workspace created: ${workspaceDir} (task=${id})`);
   return workspaceDir;
@@ -1238,7 +1238,7 @@ async function deliverWorkspaceFiles(
 
       // Determine persistent destination
       const { dir, type } = classifyFileDestination(entry.name);
-      const destDir = join(_relayDir, "workspace", dir);
+      const destDir = join(_novaDir, "workspace", dir);
       await mkdir(destDir, { recursive: true });
       const destPath = join(destDir, entry.name);
 

@@ -261,6 +261,16 @@ class SharedDatabase {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_user_created ON memory(user_id, created_at DESC)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS service_state (
+        service TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (service, key)
+      )
+    `);
   }
 
   close(): void {
@@ -1574,6 +1584,25 @@ export class Database {
 
   getNovaStatus(): any | null {
     return this.shared.db.query(`SELECT * FROM nova_status WHERE id = 1`).get() as any;
+  }
+
+  // ============================================================
+  // Service State (→ shared.db)
+  // ============================================================
+
+  getServiceState(service: string, key: string): string | null {
+    const row = this.shared.db.query(
+      `SELECT value FROM service_state WHERE service = ? AND key = ?`
+    ).get(service, key) as { value: string } | null;
+    return row?.value ?? null;
+  }
+
+  setServiceState(service: string, key: string, value: string): void {
+    this.shared.db.run(
+      `INSERT INTO service_state (service, key, value, updated_at) VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(service, key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+      service, key, value
+    );
   }
 
   // ============================================================

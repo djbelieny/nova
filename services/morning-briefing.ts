@@ -16,7 +16,6 @@
  * Run manually: bun run services/morning-briefing.ts
  */
 
-import { readFile, writeFile } from "fs/promises";
 import { getDb, type Database } from "../src/db.ts";
 import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
@@ -29,7 +28,6 @@ registerProvider(new GeminiProvider());
 registerProvider(new CodexProvider());
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const STATE_FILE = "/tmp/morning-briefing-state.json";
 
 interface BriefingUser {
   id: string;
@@ -78,35 +76,18 @@ function getAllBriefingUsers(db: Database): BriefingUser[] {
 }
 
 // ============================================================
-// PER-USER STATE (already-ran-today tracking)
+// PER-USER STATE (already-ran-today tracking, stored in shared SQLite)
 // ============================================================
 
-interface BriefingState {
-  [userId: string]: string; // userId -> last run date (YYYY-MM-DD)
-}
-
-async function loadBriefingState(): Promise<BriefingState> {
-  try {
-    const content = await readFile(STATE_FILE, "utf-8");
-    return JSON.parse(content);
-  } catch {
-    return {};
-  }
-}
-
-async function saveBriefingState(state: BriefingState): Promise<void> {
-  await writeFile(STATE_FILE, JSON.stringify(state, null, 2));
-}
-
-function alreadyRanToday(state: BriefingState, userId: string, timezone: string): boolean {
-  const lastDate = state[userId] || "";
+function alreadyRanToday(db: Database, userId: string, timezone: string): boolean {
+  const lastDate = db.getServiceState("morning-briefing", userId) || "";
   const today = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
   return lastDate === today;
 }
 
-function markRanToday(state: BriefingState, userId: string, timezone: string): void {
+function markRanToday(db: Database, userId: string, timezone: string): void {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: timezone });
-  state[userId] = today;
+  db.setServiceState("morning-briefing", userId, today);
 }
 
 function isUserBriefingHour(user: BriefingUser): boolean {
@@ -213,12 +194,9 @@ async function main() {
   const users = getAllBriefingUsers(db);
   console.log(`Found ${users.length} briefing user(s)`);
 
-  const state = await loadBriefingState();
-  let stateChanged = false;
-
   for (const user of users) {
     // Skip if already ran today for this user
-    if (alreadyRanToday(state, user.id, user.timezone)) {
+    if (alreadyRanToday(db, user.id, user.timezone)) {
       console.log(`Already sent today's briefing to ${user.name} — skipping.`);
       continue;
     }
@@ -244,16 +222,11 @@ async function main() {
     const success = await sendTelegram(user.telegram_id, briefing);
 
     if (success) {
-      markRanToday(state, user.id, user.timezone);
-      stateChanged = true;
+      markRanToday(db, user.id, user.timezone);
       console.log(`Briefing sent to ${user.name}!`);
     } else {
       console.error(`Failed to send briefing to ${user.name}`);
     }
-  }
-
-  if (stateChanged) {
-    await saveBriefingState(state);
   }
 }
 

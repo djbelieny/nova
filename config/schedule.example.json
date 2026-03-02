@@ -1,0 +1,11 @@
+{
+  "tasks": [
+    {
+      "name": "example-daily-report",
+      "description": "Send a daily summary at 9am",
+      "trigger": "0 9 * * *",
+      "prompt": "Send me a brief summary of today's agenda",
+      "enabled": false
+    }
+  ]
+}

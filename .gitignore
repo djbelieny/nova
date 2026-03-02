@@ -46,6 +46,13 @@ package-lock.json
 .DS_Store
 Thumbs.db
 
+# Internal docs
+AUDIT_REPORT.md
+OPTIMIZATION_PLAN.md
+IDEAS.md
+CHANGELOG.md
+.mcp.json
+
 # IDE
 .idea/
 .vscode/

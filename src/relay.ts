@@ -1,7 +1,7 @@
 /**
  * Nova — Personal AI Assistant
  *
- * Multi-channel relay that connects Telegram, WhatsApp, and Slack to AI backends.
+ * Multi-channel message handler that connects Telegram, WhatsApp, and Slack to AI backends.
  * Channel adapters handle platform-specific I/O; this file is the coordinator.
  * AI providers (Claude, Gemini, etc.) are abstracted behind the AIProvider interface.
  *
@@ -63,14 +63,14 @@ const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 
 // Directories
-const TEMP_DIR = join(RELAY_DIR, "temp");
-const UPLOADS_DIR = join(RELAY_DIR, "uploads");
+const TEMP_DIR = join(NOVA_DIR, "temp");
+const UPLOADS_DIR = join(NOVA_DIR, "uploads");
 
 // Persistent workspace directories
-const WORKSPACE_DIR = join(RELAY_DIR, "workspace");
+const WORKSPACE_DIR = join(NOVA_DIR, "workspace");
 const WORKSPACE_PROJECTS = join(WORKSPACE_DIR, "projects");
 const WORKSPACE_DOCUMENTS = join(WORKSPACE_DIR, "documents");
 const WORKSPACE_IMAGES = join(WORKSPACE_DIR, "images");
@@ -81,7 +81,7 @@ const WORKSPACE_TASKS = join(WORKSPACE_DIR, ".tasks");
 // LOCK FILE (prevent multiple instances)
 // ============================================================
 
-const LOCK_FILE = join(RELAY_DIR, "bot.lock");
+const LOCK_FILE = join(NOVA_DIR, "bot.lock");
 
 async function acquireLock(): Promise<boolean> {
   try {
@@ -324,7 +324,7 @@ if (!(await acquireLock())) {
 // ============================================================
 
 const channels = new ChannelRegistry();
-channels.init(RELAY_DIR);
+channels.init(NOVA_DIR);
 
 // WhatsApp per-user sessions (managed via Mini App, not env flag)
 const whatsappManager = new WhatsAppManager(supabase);
@@ -1380,8 +1380,8 @@ function buildPrompt(
         `\n  SMS: bun run ${PROJECT_ROOT}/src/twilio.ts sms "<phone>" "msg"` +
         `\n  Call: bun run ${PROJECT_ROOT}/src/twilio.ts call "<phone>" "context"` +
         `\n  Third-party: bun run ${PROJECT_ROOT}/src/twilio.ts call-thirdparty "+1234567890" "Name" "subject"` +
-        "\n• Square: Orders, payments, catalog. Locations: Open Source Mind ID: LA50ZWAK48MD8 | Zaarvy AI ID: LNCSX2ST6EKCY" +
-        "\n  Reports: always BOTH locations + combined total. Writes: ask which location first." +
+        "\n• Square: Orders, payments, catalog. Configure locations in config/profile.md." +
+        "\n  Reports: all locations + combined total. Writes: ask which location first." +
         "\n• GHL (CRM): Contacts, calendars, opportunities, conversations, templates, blog, social, invoices." +
         (ghlLocationId ? ` Location: ${ghlLocationId}.` : "") +
         " Cannot create pipelines/forms/funnels/workflows. Confirm before modifying." +
@@ -1640,7 +1640,7 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     // Disk space
     let diskLine = "";
     try {
-      const dfProc = spawn(["df", "-h", RELAY_DIR], { stdout: "pipe", stderr: "pipe" });
+      const dfProc = spawn(["df", "-h", NOVA_DIR], { stdout: "pipe", stderr: "pipe" });
       const dfOut = await new Response(dfProc.stdout).text();
       await dfProc.exited;
       const dfLines = dfOut.trim().split("\n");
@@ -1654,7 +1654,7 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     // Data directory size
     let dataLine = "";
     try {
-      const duProc = spawn(["du", "-sh", RELAY_DIR], { stdout: "pipe", stderr: "pipe" });
+      const duProc = spawn(["du", "-sh", NOVA_DIR], { stdout: "pipe", stderr: "pipe" });
       const duOut = await new Response(duProc.stdout).text();
       await duProc.exited;
       const dataSize = duOut.trim().split(/\s+/)[0];
@@ -1681,7 +1681,7 @@ ${modelLines ? `\n<b>Models</b>\n${modelLines}` : ""}
 Memory: ${rssM}MB RSS (heap: ${heapUsedM}/${heapTotalM}MB)
 ${diskLine}${dataLine}
 
-<i>Full dashboard: nova.07labs.com</i>`;
+<i>Full dashboard: ${process.env.DASHBOARD_URL || "configured in DASHBOARD_URL"}</i>`;
 
     await ctx.reply(statusMsg, { parse_mode: "HTML" });
     return true;
@@ -2048,7 +2048,7 @@ initOrchestrator({
   saveMessage,
   sendResponseWithVoice,
   sendTelegramFile: sendFile,
-  relayDir: RELAY_DIR,
+  novaDir: NOVA_DIR,
   supabase,
   sendMessageToChat: async (chatId, text, keyboard) => {
     const bot = telegramAdapter?.getBot();

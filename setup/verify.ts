@@ -120,7 +120,7 @@ async function main() {
   // 4. Services (macOS only)
   if (process.platform === "darwin") {
     console.log(`\n${bold("  Services (launchd)")}`);
-    for (const label of ["com.nova.relay", "com.nova.smart-checkin", "com.nova.morning-briefing"]) {
+    for (const label of ["com.nova.core", "com.nova.smart-checkin", "com.nova.morning-briefing"]) {
       const proc = Bun.spawn(["launchctl", "list", label], { stdout: "pipe", stderr: "pipe" });
       const code = await proc.exited;
       code === 0 ? pass(`${label} loaded`) : warn(`${label} not loaded`);

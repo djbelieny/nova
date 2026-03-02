@@ -7,7 +7,7 @@
  *
  * Architecture:
  *   Mini App → connect/disconnect endpoints → WhatsAppManager
- *   Baileys sessions → classifyAndRoute → relay message handler
+ *   Baileys sessions → classifyAndRoute → Nova message handler
  */
 
 import { join } from "path";
@@ -17,7 +17,7 @@ import { WhatsAppAdapter, type WhatsAppStatus } from "./channels/whatsapp.ts";
 import type { Database } from "./db.ts";
 import type { IncomingMessage, MessageHandler, ReplyFn } from "./channels/types.ts";
 
-const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 
 /** Rate limit config per contact role */
 const RATE_LIMITS: Record<string, { maxPerHour: number }> = {
@@ -47,7 +47,7 @@ export class WhatsAppManager {
     this.db = db;
   }
 
-  /** Register the relay's message handler. Called once during startup. */
+  /** Register Nova's message handler. Called once during startup. */
   setMessageHandler(handler: MessageHandler): void {
     this.messageHandler = handler;
   }
@@ -104,7 +104,7 @@ export class WhatsAppManager {
 
   /** Restore sessions for users who had active auth credentials. */
   async restoreConnectedSessions(): Promise<void> {
-    const usersDir = join(RELAY_DIR, "users");
+    const usersDir = join(NOVA_DIR, "users");
     if (!existsSync(usersDir)) return;
 
     let restored = 0;
@@ -151,12 +151,12 @@ export class WhatsAppManager {
   // ---- INTERNAL ----
 
   private getAuthDir(userId: string): string {
-    return join(RELAY_DIR, "users", userId, "wa-auth");
+    return join(NOVA_DIR, "users", userId, "wa-auth");
   }
 
   /**
    * Classification pipeline — every incoming WhatsApp message goes through this
-   * before reaching the relay's message handler.
+   * before reaching Nova's message handler.
    */
   private async classifyAndRoute(
     ownerUserId: string,
