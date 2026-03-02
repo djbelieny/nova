@@ -1578,9 +1578,84 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     return true;
   }
 
-  // Migrated to Mini App: /status
+  // System status overview
   if (command === "/status") {
-    await ctx.reply("Status dashboard has moved to the Nova Mini App (Dashboard tab).");
+    const uptime = Date.now() - usage.uptimeSince;
+    const uptimeH = Math.floor(uptime / 3600000);
+    const uptimeM = Math.floor((uptime % 3600000) / 60000);
+
+    // Slots & queue
+    const slotsLine = `${runningClaude}/${MAX_CONCURRENT_CLAUDE} slots in use`;
+    const queueLine = claudeQueue.length > 0
+      ? `${claudeQueue.length} request(s) queued`
+      : "No queued requests";
+
+    // Active tasks
+    let tasksBlock = "";
+    if (activeTasks.size > 0) {
+      const taskLines: string[] = [];
+      for (const [, task] of activeTasks) {
+        const elapsed = ((Date.now() - task.startTime) / 1000).toFixed(0);
+        taskLines.push(`  • ${task.description.substring(0, 50)} (${elapsed}s)`);
+      }
+      tasksBlock = `\n\n<b>Active Tasks</b>\n${taskLines.join("\n")}`;
+    }
+
+    // Usage stats
+    const successRate = usage.callsTotal > 0
+      ? ((usage.callsSuccess / usage.callsTotal) * 100).toFixed(1)
+      : "0";
+    const avgDur = usage.callsTotal > 0
+      ? (usage.avgDurationMs / 1000).toFixed(1)
+      : "0";
+
+    // Model breakdown
+    let modelLines = "";
+    const models = Object.entries(usage.callsByModel).sort(([, a], [, b]) => b - a);
+    if (models.length > 0) {
+      modelLines = models.map(([m, c]) => `  ${m}: ${c}`).join("\n");
+    }
+
+    // Cost today
+    let costLine = "";
+    try {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEntries = supabase.getCostEntries({ since: todayStart.toISOString() });
+      const todayCost = (todayEntries as any[]).reduce((sum: number, e: any) => sum + (e.cost_usd || 0), 0);
+      costLine = `\nCost today: $${todayCost.toFixed(4)}`;
+    } catch {}
+
+    // Pending approvals
+    const pendingApprovals = getPendingApprovalCount();
+    const approvalsLine = pendingApprovals > 0
+      ? `\nPending approvals: ${pendingApprovals}`
+      : "";
+
+    // WhatsApp sessions
+    const waSessions = whatsappManager.getActiveSessions();
+    const waLine = waSessions.length > 0
+      ? `\nWhatsApp: ${waSessions.filter(s => s.status.state === "connected").length}/${waSessions.length} connected`
+      : "";
+
+    // Rate limits
+    const rlLine = usage.rateLimitHits > 0
+      ? `\nRate limit hits: ${usage.rateLimitHits}${usage.lastRateLimitAt ? ` (last: ${new Date(usage.lastRateLimitAt).toLocaleTimeString()})` : ""}`
+      : "";
+
+    const statusMsg = `<b>Nova System Status</b>
+
+<b>Uptime</b>: ${uptimeH}h ${uptimeM}m
+<b>Slots</b>: ${slotsLine}
+<b>Queue</b>: ${queueLine}${tasksBlock}
+
+<b>Usage</b> (this session)
+Calls: ${usage.callsTotal} (${successRate}% success)
+Avg duration: ${avgDur}s${costLine}${rlLine}${approvalsLine}${waLine}
+${modelLines ? `\n<b>Models</b>\n${modelLines}` : ""}
+<i>Full dashboard: nova.07labs.com</i>`;
+
+    await ctx.reply(statusMsg, { parse_mode: "HTML" });
     return true;
   }
 
