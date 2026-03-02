@@ -7,22 +7,29 @@
 <meta name="description" content="Nova is a personal AI assistant that lives on Telegram. Powered by Claude, it remembers your context, runs proactive check-ins, and helps you get things done.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #000000;
-    --bg-elevated: #0a0a1a;
-    --bg-card: rgba(255,255,255,0.04);
+    --bg: #0a0a0f;
+    --bg-elevated: #0e0e16;
+    --bg-card: rgba(255,255,255,0.055);
     --text: #f0f0f0;
     --text-secondary: #8a8aa0;
-    --cyan: #00d4ff;
-    --cyan-dim: rgba(0,212,255,0.15);
-    --purple: #a855f7;
-    --purple-dim: rgba(168,85,247,0.15);
-    --gradient: linear-gradient(135deg, var(--cyan), var(--purple));
+    --indigo: #6366f1;
+    --violet: #8b5cf6;
+    --teal: #06b6d4;
+    --indigo-dim: rgba(99,102,241,0.15);
+    --violet-dim: rgba(139,92,246,0.15);
+    --teal-dim: rgba(6,182,212,0.15);
+    --gradient: linear-gradient(135deg, var(--indigo), var(--violet));
     --success: #22c55e;
-    --radius: 16px;
-    --radius-sm: 10px;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --radius: 14px;
+    --radius-sm: 8px;
+    --glass-border: 1px solid rgba(255,255,255,0.10);
+    --glass-blur: blur(20px);
+    --glass-shadow: 0 8px 32px rgba(0,0,0,0.4);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -49,10 +56,10 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    background: rgba(0,0,0,0.7);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid rgba(255,255,255,0.05);
+    background: rgba(10,10,15,0.8);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
     transition: background 0.3s;
   }
 
@@ -82,8 +89,8 @@
     padding: 8px 20px;
     background: var(--gradient);
     border: none;
-    border-radius: 8px;
-    color: #000;
+    border-radius: var(--radius-sm);
+    color: #fff;
     font-weight: 600;
     font-size: 13px;
     text-decoration: none;
@@ -91,7 +98,7 @@
     cursor: pointer;
   }
 
-  .nav-cta:hover { opacity: 0.85; color: #000 !important; }
+  .nav-cta:hover { opacity: 0.85; color: #fff !important; }
 
   /* ── Hero ─────────────────────────────────────────────── */
   .hero {
@@ -110,16 +117,16 @@
     inset: 0;
     background:
       url('https://images.unsplash.com/photo-1534972195531-d756b9bfa9f2?w=1920&q=80') center/cover no-repeat;
-    opacity: 0.25;
-    filter: brightness(0.6);
+    opacity: 0.2;
+    filter: brightness(0.5);
   }
 
   .hero-gradient {
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(ellipse 60% 50% at 50% 40%, rgba(0,212,255,0.12) 0%, transparent 70%),
-      radial-gradient(ellipse 40% 40% at 70% 60%, rgba(168,85,247,0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 50% 40%, rgba(99,102,241,0.12) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 40% at 70% 60%, rgba(139,92,246,0.08) 0%, transparent 60%),
       linear-gradient(180deg, transparent 0%, var(--bg) 95%);
   }
 
@@ -135,9 +142,9 @@
     gap: 8px;
     padding: 6px 16px;
     border-radius: 999px;
-    border: 1px solid rgba(0,212,255,0.2);
-    background: rgba(0,212,255,0.06);
-    color: var(--cyan);
+    border: 1px solid rgba(99,102,241,0.25);
+    background: rgba(99,102,241,0.08);
+    color: var(--indigo);
     font-size: 13px;
     font-weight: 500;
     margin-bottom: 28px;
@@ -147,7 +154,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--cyan);
+    background: var(--indigo);
     animation: pulse-dot 2s ease-in-out infinite;
   }
 
@@ -192,7 +199,7 @@
     gap: 10px;
     padding: 14px 32px;
     background: var(--gradient);
-    color: #000;
+    color: #fff;
     border: none;
     border-radius: var(--radius-sm);
     font-size: 15px;
@@ -210,21 +217,23 @@
     align-items: center;
     gap: 10px;
     padding: 14px 32px;
-    background: transparent;
+    background: rgba(255,255,255,0.055);
     color: var(--text);
-    border: 1px solid rgba(255,255,255,0.12);
+    border: var(--glass-border);
     border-radius: var(--radius-sm);
     font-size: 15px;
     font-weight: 500;
     text-decoration: none;
     cursor: pointer;
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
     transition: border-color 0.2s, background 0.2s;
     font-family: inherit;
   }
 
   .btn-secondary:hover {
-    border-color: rgba(255,255,255,0.25);
-    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.08);
   }
 
   /* ── Section common ──────────────────────────────────── */
@@ -245,7 +254,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 2px;
-    color: var(--cyan);
+    color: var(--teal);
     margin-bottom: 16px;
   }
 
@@ -278,14 +287,17 @@
 
   .feature-card {
     background: var(--bg-card);
-    border: 1px solid rgba(255,255,255,0.06);
+    border: var(--glass-border);
     border-radius: var(--radius);
     padding: 32px 28px;
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    box-shadow: var(--glass-shadow);
     transition: border-color 0.3s, transform 0.2s;
   }
 
   .feature-card:hover {
-    border-color: rgba(0,212,255,0.15);
+    border-color: rgba(99,102,241,0.2);
     transform: translateY(-2px);
   }
 
@@ -300,8 +312,9 @@
     font-size: 20px;
   }
 
-  .feature-icon.cyan { background: var(--cyan-dim); }
-  .feature-icon.purple { background: var(--purple-dim); }
+  .feature-icon.teal { background: var(--teal-dim); }
+  .feature-icon.indigo { background: var(--indigo-dim); }
+  .feature-icon.violet { background: var(--violet-dim); }
 
   .feature-card h3 {
     font-size: 17px;
@@ -344,7 +357,7 @@
     height: 48px;
     border-radius: 50%;
     background: var(--gradient);
-    color: #000;
+    color: #fff;
     font-weight: 700;
     font-size: 18px;
     margin: 0 auto 20px;
@@ -445,7 +458,7 @@
     position: absolute;
     inset: 0;
     border-radius: var(--radius);
-    border: 1px solid rgba(255,255,255,0.06);
+    border: var(--glass-border);
   }
 
   .cap-list {
@@ -469,8 +482,9 @@
     margin-top: 8px;
   }
 
-  .cap-dot.cyan { background: var(--cyan); }
-  .cap-dot.purple { background: var(--purple); }
+  .cap-dot.teal { background: var(--teal); }
+  .cap-dot.indigo { background: var(--indigo); }
+  .cap-dot.violet { background: var(--violet); }
 
   .cap-list h4 {
     font-size: 15px;
@@ -499,7 +513,7 @@
     width: 600px;
     height: 400px;
     border-radius: 50%;
-    background: radial-gradient(ellipse, rgba(0,212,255,0.06) 0%, rgba(168,85,247,0.04) 40%, transparent 70%);
+    background: radial-gradient(ellipse, rgba(99,102,241,0.08) 0%, rgba(139,92,246,0.05) 40%, transparent 70%);
     pointer-events: none;
   }
 
@@ -538,9 +552,12 @@
 
   .form-card {
     background: var(--bg-card);
-    border: 1px solid rgba(255,255,255,0.06);
+    border: var(--glass-border);
     border-radius: var(--radius);
     padding: 32px 28px;
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    box-shadow: var(--glass-shadow);
   }
 
   .field-group { margin-bottom: 20px; }
@@ -568,9 +585,9 @@
     font-family: inherit;
   }
 
-  .field-input:focus { border-color: var(--cyan); }
+  .field-input:focus { border-color: var(--indigo); }
   .field-input::placeholder { color: rgba(255,255,255,0.2); }
-  .field-input.invalid { border-color: #ef4444; }
+  .field-input.invalid { border-color: var(--danger); }
 
   textarea.field-input { resize: vertical; min-height: 90px; }
 
@@ -583,7 +600,7 @@
   }
 
   .error-msg {
-    color: #ef4444;
+    color: var(--danger);
     font-size: 12px;
     margin-top: 6px;
     display: none;
@@ -595,7 +612,7 @@
     border: none;
     border-radius: var(--radius-sm);
     background: var(--gradient);
-    color: #000;
+    color: #fff;
     font-size: 15px;
     font-weight: 600;
     cursor: pointer;
@@ -611,7 +628,7 @@
   .submit-btn:hover { opacity: 0.85; }
   .submit-btn:active { transform: scale(0.98); }
 
-  .wa-icon { width: 18px; height: 18px; fill: #000; }
+  .wa-icon { width: 18px; height: 18px; fill: #fff; }
 
   /* ── Footer ──────────────────────────────────────────── */
   footer {
@@ -653,7 +670,7 @@
   }
 
   .footer-copy a {
-    color: var(--cyan);
+    color: var(--indigo);
     text-decoration: none;
   }
 
@@ -744,32 +761,32 @@
   </div>
   <div class="features-grid">
     <div class="feature-card">
-      <div class="feature-icon cyan">&#x1f9e0;</div>
+      <div class="feature-icon teal">&#x1f9e0;</div>
       <h3>Persistent Memory</h3>
       <p>Nova remembers your conversations, preferences, and context across every interaction using semantic search.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon purple">&#x1f50d;</div>
+      <div class="feature-icon violet">&#x1f50d;</div>
       <h3>Proactive Check-ins</h3>
       <p>Smart scheduling that reaches out when it makes sense — not on a timer, but based on your context and needs.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon cyan">&#x1f399;</div>
+      <div class="feature-icon teal">&#x1f399;</div>
       <h3>Voice Messages</h3>
       <p>Send voice notes on Telegram and Nova transcribes and understands them instantly via Whisper.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon purple">&#x1f4cb;</div>
+      <div class="feature-icon violet">&#x1f4cb;</div>
       <h3>Morning Briefings</h3>
       <p>Start your day with a personalized summary of what's ahead, what's pending, and what needs attention.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon cyan">&#x1f512;</div>
+      <div class="feature-icon teal">&#x1f512;</div>
       <h3>Private by Design</h3>
       <p>Self-hosted on your machine. Your data stays yours — no third-party servers, no data harvesting.</p>
     </div>
     <div class="feature-card">
-      <div class="feature-icon purple">&#x26a1;</div>
+      <div class="feature-icon indigo">&#x26a1;</div>
       <h3>Always On</h3>
       <p>Runs as a background service via launchd or PM2. Survives reboots, restarts on crash, and just works.</p>
     </div>
@@ -801,7 +818,7 @@
     </div>
     <div class="step">
       <h3>Set Up Memory</h3>
-      <p>Connect Supabase for persistent memory with semantic search and embeddings.</p>
+      <p>Local SQLite with built-in vector search and embeddings. No external services needed.</p>
     </div>
     <div class="step">
       <h3>Personalize</h3>
@@ -827,35 +844,35 @@
     </div>
     <ul class="cap-list">
       <li>
-        <span class="cap-dot cyan"></span>
+        <span class="cap-dot teal"></span>
         <div>
           <h4>6 Specialized AI Agents</h4>
           <p>Research, Content, Finance, Strategy, Critic, and General orchestrator working together.</p>
         </div>
       </li>
       <li>
-        <span class="cap-dot purple"></span>
+        <span class="cap-dot violet"></span>
         <div>
           <h4>Real Integrations</h4>
           <p>Gmail, Google Calendar, and Notion connected through MCP for real data, not patterns.</p>
         </div>
       </li>
       <li>
-        <span class="cap-dot cyan"></span>
+        <span class="cap-dot teal"></span>
         <div>
           <h4>Human-in-the-Loop</h4>
           <p>Nova takes actions but asks first via inline Telegram buttons. You stay in control.</p>
         </div>
       </li>
       <li>
-        <span class="cap-dot purple"></span>
+        <span class="cap-dot indigo"></span>
         <div>
           <h4>Voice & Phone Calls</h4>
           <p>Your bot speaks back via ElevenLabs. Calls you when something is urgent.</p>
         </div>
       </li>
       <li>
-        <span class="cap-dot cyan"></span>
+        <span class="cap-dot teal"></span>
         <div>
           <h4>VPS Deployment</h4>
           <p>Cloud server that never sleeps. Hybrid mode: free local when awake, API when sleeping.</p>
@@ -996,8 +1013,8 @@
   const nav = document.querySelector('nav');
   window.addEventListener('scroll', () => {
     nav.style.background = window.scrollY > 50
-      ? 'rgba(0,0,0,0.9)'
-      : 'rgba(0,0,0,0.7)';
+      ? 'rgba(10,10,15,0.95)'
+      : 'rgba(10,10,15,0.8)';
   });
 </script>
 

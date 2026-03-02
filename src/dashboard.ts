@@ -64,77 +64,99 @@ function loginPage(error?: string): Response {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Nova — Login</title>
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      background: #0a0a0a;
-      color: #00ff41;
-      font-family: 'Share Tech Mono', monospace;
+      background: #0a0a0f;
+      color: rgba(255,255,255,0.95);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;
       min-height: 100vh;
     }
     .login-box {
-      border: 1px solid #00ff41;
-      padding: 2rem;
-      width: 340px;
-      background: rgba(0, 255, 65, 0.03);
-      box-shadow: 0 0 20px rgba(0, 255, 65, 0.1);
+      border: 1px solid rgba(255,255,255,0.10);
+      padding: 2.5rem;
+      width: 380px;
+      background: rgba(255,255,255,0.055);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 14px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
     }
-    h1 {
-      font-size: 1.4rem;
-      text-align: center;
-      margin-bottom: 1.5rem;
-      text-shadow: 0 0 10px rgba(0, 255, 65, 0.5);
+    .login-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 2rem;
     }
-    label { display: block; margin-bottom: 0.3rem; font-size: 0.85rem; opacity: 0.7; }
+    .login-logo-badge {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      font-weight: 700;
+      color: #fff;
+    }
+    .login-logo-text {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: rgba(255,255,255,0.95);
+    }
+    label { display: block; margin-bottom: 0.3rem; font-size: 0.8rem; color: rgba(255,255,255,0.4); text-transform: uppercase; letter-spacing: 0.5px; }
     input {
       width: 100%;
-      padding: 0.6rem;
-      background: #111;
-      border: 1px solid #333;
-      color: #00ff41;
+      padding: 0.7rem 0.9rem;
+      background: rgba(255,255,255,0.055);
+      border: 1px solid rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.95);
       font-family: inherit;
       font-size: 0.95rem;
-      margin-bottom: 1rem;
+      margin-bottom: 1.2rem;
       outline: none;
+      border-radius: 8px;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    input:focus { border-color: #00ff41; box-shadow: 0 0 5px rgba(0, 255, 65, 0.3); }
+    input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.2); }
     button {
       width: 100%;
-      padding: 0.7rem;
-      background: transparent;
-      border: 1px solid #00ff41;
-      color: #00ff41;
+      padding: 0.75rem;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border: none;
+      color: #fff;
       font-family: inherit;
-      font-size: 1rem;
+      font-size: 0.95rem;
+      font-weight: 600;
       cursor: pointer;
       text-transform: uppercase;
-      letter-spacing: 2px;
+      letter-spacing: 1px;
+      border-radius: 8px;
+      transition: opacity 0.2s, transform 0.1s;
     }
-    button:hover { background: rgba(0, 255, 65, 0.1); }
+    button:hover { opacity: 0.9; }
+    button:active { transform: scale(0.98); }
     .error {
-      background: rgba(255, 0, 0, 0.1);
-      border: 1px solid #ff4444;
-      color: #ff4444;
-      padding: 0.5rem;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      color: #ef4444;
+      padding: 0.6rem;
       margin-bottom: 1rem;
       text-align: center;
       font-size: 0.85rem;
-    }
-    .scanline {
-      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-      pointer-events: none; z-index: 999;
-      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+      border-radius: 8px;
     }
   </style>
 </head>
 <body>
-  <div class="scanline"></div>
   <div class="login-box">
-    <h1>// NOVA COMMAND CENTER</h1>
+    <div class="login-logo"><div class="login-logo-badge">N</div><div class="login-logo-text">Nova</div></div>
     ${errorHtml}
     <form method="POST" action="${DASHBOARD_BASE}/login">
       <label>USERNAME</label>
@@ -711,28 +733,28 @@ function renderDashboard(): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NOVA COMMAND CENTER</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --green: #00ff41;
-    --green-dim: #00cc33;
-    --green-glow: #00ff4180;
-    --amber: #ffb000;
-    --amber-dim: #cc8800;
-    --red: #ff3333;
-    --cyan: #00e5ff;
-    --bg: #0a0a0a;
-    --panel: #111111;
-    --panel-header: #1a1a1a;
-    --border: #222;
-    --dim: #555;
-    --text: #ccc;
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --glass: rgba(255,255,255,0.055);
+    --glass-border: rgba(255,255,255,0.10);
+    --indigo: #6366f1;
+    --violet: #8b5cf6;
+    --teal: #06b6d4;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --text: rgba(255,255,255,0.95);
+    --text-secondary: rgba(255,255,255,0.7);
+    --text-dim: rgba(255,255,255,0.4);
   }
 
   body {
-    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     background: var(--bg);
     color: var(--text);
     font-size: 13px;
@@ -741,70 +763,74 @@ function renderDashboard(): string {
     overflow-x: hidden;
   }
 
-  /* Scanline overlay */
-  body::after {
-    content: '';
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: repeating-linear-gradient(
-      0deg,
-      transparent,
-      transparent 2px,
-      rgba(0,0,0,0.08) 2px,
-      rgba(0,0,0,0.08) 4px
-    );
-    pointer-events: none;
-    z-index: 9999;
-  }
-
-  /* CRT flicker */
-  @keyframes flicker {
-    0% { opacity: 1; }
-    3% { opacity: 0.97; }
-    6% { opacity: 1; }
-    7% { opacity: 0.95; }
-    9% { opacity: 1; }
-    100% { opacity: 1; }
-  }
-  body { animation: flicker 8s infinite; }
-
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
   .blink { animation: blink 1.5s infinite; }
-
-  @keyframes pulse-glow {
-    0%,100% { text-shadow: 0 0 4px var(--green-glow); }
-    50% { text-shadow: 0 0 12px var(--green-glow), 0 0 20px var(--green-glow); }
-  }
 
   .container { max-width: 1600px; margin: 0 auto; padding: 12px; }
 
   /* Header */
   .header {
-    text-align: center;
-    padding: 16px;
-    border: 1px solid var(--green-dim);
-    background: var(--panel);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 14px;
     margin-bottom: 12px;
-    position: relative;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
   }
-  .header pre {
-    color: var(--green);
-    font-size: 10px;
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .logo-badge {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, var(--indigo), var(--violet));
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+  }
+  .logo-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text);
     line-height: 1.2;
-    text-shadow: 0 0 10px var(--green-glow);
-    animation: pulse-glow 4s infinite;
+  }
+  .logo-subtitle {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
   }
   .header-info {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-top: 8px;
-    color: var(--dim);
-    font-size: 11px;
+    gap: 16px;
+    color: var(--text-dim);
+    font-size: 12px;
   }
-  .header-info .live {
-    color: var(--green);
-    font-weight: 700;
+  .live-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    margin-right: 6px;
+    animation: pulse-dot 2s infinite;
+  }
+  @keyframes pulse-dot {
+    0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
   }
 
   /* Grid layout */
@@ -817,26 +843,29 @@ function renderDashboard(): string {
 
   /* Panels */
   .panel {
-    background: var(--panel);
-    border: 1px solid var(--border);
+    background: var(--glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
     overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
   }
   .panel-header {
-    background: var(--panel-header);
-    padding: 8px 12px;
+    padding: 10px 16px;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--glass-border);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 1px;
-    color: var(--green);
-    font-weight: 700;
+    color: var(--text-secondary);
+    font-weight: 600;
   }
   .panel-header .indicator {
     font-size: 10px;
-    color: var(--dim);
+    color: var(--text-dim);
   }
   .panel-body {
     padding: 12px;
@@ -844,62 +873,66 @@ function renderDashboard(): string {
     overflow-y: auto;
   }
   .panel-body::-webkit-scrollbar { width: 4px; }
-  .panel-body::-webkit-scrollbar-track { background: var(--bg); }
-  .panel-body::-webkit-scrollbar-thumb { background: var(--border); }
+  .panel-body::-webkit-scrollbar-track { background: transparent; }
+  .panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
   /* Service cards */
   .service-card {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px;
-    border: 1px solid var(--border);
+    padding: 10px 12px;
+    border: 1px solid var(--glass-border);
     margin-bottom: 6px;
-    background: var(--bg);
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    transition: background 0.2s;
   }
+  .service-card:hover { background: rgba(255,255,255,0.06); }
   .status-dot {
     width: 8px; height: 8px;
     border-radius: 50%;
     flex-shrink: 0;
   }
-  .status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); }
-  .status-dot.error { background: var(--red); box-shadow: 0 0 6px var(--red); }
-  .status-dot.idle { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
-  .status-dot.not_installed, .status-dot.unknown { background: var(--dim); }
+  .status-dot.running { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .status-dot.error { background: var(--error); box-shadow: 0 0 6px var(--error); }
+  .status-dot.idle { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
+  .status-dot.not_installed, .status-dot.unknown { background: var(--text-dim); }
   .service-name { flex: 1; color: var(--text); }
-  .service-meta { font-size: 10px; color: var(--dim); }
+  .service-meta { font-size: 10px; color: var(--text-dim); }
 
   /* Messages / Activity feed */
   .msg-entry {
-    padding: 6px 0;
-    border-bottom: 1px solid #1a1a1a;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
     font-size: 12px;
   }
   .msg-entry:last-child { border-bottom: none; }
   .msg-role {
     display: inline-block;
-    padding: 1px 6px;
+    padding: 2px 8px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
     margin-right: 6px;
+    border-radius: 4px;
   }
-  .msg-role.user { color: var(--bg); background: var(--cyan); }
-  .msg-role.assistant { color: var(--bg); background: var(--green); }
-  .msg-role.system { color: var(--bg); background: var(--amber); }
+  .msg-role.user { color: #fff; background: var(--teal); }
+  .msg-role.assistant { color: #fff; background: var(--indigo); }
+  .msg-role.system { color: #fff; background: var(--warning); }
   .msg-channel {
     font-size: 10px;
-    color: var(--dim);
+    color: var(--text-dim);
     margin-left: 4px;
   }
   .msg-time {
     font-size: 10px;
-    color: var(--dim);
+    color: var(--text-dim);
     float: right;
   }
   .msg-content {
-    color: var(--text);
+    color: var(--text-secondary);
     margin-top: 2px;
     word-break: break-word;
     max-height: 60px;
@@ -908,60 +941,59 @@ function renderDashboard(): string {
 
   /* Memory entries */
   .mem-entry {
-    padding: 6px 0;
-    border-bottom: 1px solid #1a1a1a;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
     font-size: 12px;
   }
   .mem-type {
     display: inline-block;
-    padding: 1px 6px;
+    padding: 2px 8px;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
     text-transform: uppercase;
     margin-right: 6px;
+    border-radius: 4px;
   }
-  .mem-type.fact { color: var(--bg); background: var(--cyan); }
-  .mem-type.goal { color: var(--bg); background: var(--amber); }
-  .mem-type.completed_goal { color: var(--bg); background: var(--green); }
-  .mem-type.preference { color: var(--bg); background: #a855f7; }
+  .mem-type.fact { color: #fff; background: var(--teal); }
+  .mem-type.goal { color: #fff; background: var(--warning); }
+  .mem-type.completed_goal { color: #fff; background: var(--success); }
+  .mem-type.preference { color: #fff; background: var(--violet); }
 
   /* Tabs */
   .tabs {
     display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 8px;
+    gap: 4px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
   }
   .tab {
-    padding: 4px 12px;
+    padding: 5px 14px;
     cursor: pointer;
     font-size: 11px;
-    color: var(--dim);
-    border: 1px solid transparent;
-    border-bottom: none;
+    color: var(--text-dim);
+    border: none;
     background: none;
     font-family: inherit;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    border-radius: 20px;
+    transition: color 0.2s, background 0.2s;
   }
-  .tab:hover { color: var(--text); }
+  .tab:hover { color: var(--text-secondary); background: rgba(255,255,255,0.05); }
   .tab.active {
-    color: var(--green);
-    border-color: var(--border);
-    background: var(--panel);
-    border-bottom-color: var(--panel);
-    margin-bottom: -1px;
+    color: #fff;
+    background: var(--indigo);
   }
 
   /* Metrics */
   .metric-row {
     display: flex;
     justify-content: space-between;
-    padding: 4px 0;
-    border-bottom: 1px solid #1a1a1a;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
   }
-  .metric-label { color: var(--dim); }
-  .metric-value { color: var(--green); font-weight: 700; }
+  .metric-label { color: var(--text-dim); }
+  .metric-value { color: var(--indigo); font-weight: 600; }
 
   .bar-chart {
     display: flex;
@@ -973,11 +1005,12 @@ function renderDashboard(): string {
   }
   .bar {
     flex: 1;
-    background: var(--green-dim);
+    background: linear-gradient(to top, var(--indigo), var(--violet));
     min-height: 1px;
     position: relative;
     opacity: 0.7;
     transition: opacity 0.2s;
+    border-radius: 2px 2px 0 0;
   }
   .bar:hover { opacity: 1; }
   .bar-label {
@@ -986,29 +1019,30 @@ function renderDashboard(): string {
     left: 50%;
     transform: translateX(-50%);
     font-size: 8px;
-    color: var(--dim);
+    color: var(--text-dim);
     white-space: nowrap;
   }
 
   /* Log viewer */
   .log-content {
+    font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
-    line-height: 1.4;
+    line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-all;
-    color: var(--dim);
+    color: var(--text-dim);
     max-height: 300px;
     overflow-y: auto;
   }
   .log-content::-webkit-scrollbar { width: 4px; }
-  .log-content::-webkit-scrollbar-track { background: var(--bg); }
-  .log-content::-webkit-scrollbar-thumb { background: var(--border); }
+  .log-content::-webkit-scrollbar-track { background: transparent; }
+  .log-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
   .log-file-name {
-    color: var(--amber);
+    color: var(--warning);
     font-size: 11px;
     margin: 8px 0 4px;
     padding: 4px 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--glass-border);
   }
   .log-file-name:first-child { margin-top: 0; }
 
@@ -1019,20 +1053,22 @@ function renderDashboard(): string {
     gap: 10px;
     margin-bottom: 8px;
   }
-  .resource-label { width: 80px; font-size: 11px; color: var(--dim); }
+  .resource-label { width: 80px; font-size: 11px; color: var(--text-dim); }
   .resource-bar {
     flex: 1;
     height: 12px;
-    background: var(--bg);
-    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--glass-border);
     overflow: hidden;
+    border-radius: 6px;
   }
   .resource-bar-fill {
     height: 100%;
-    background: var(--green-dim);
+    background: linear-gradient(90deg, var(--indigo), var(--violet));
     transition: width 0.5s;
+    border-radius: 6px;
   }
-  .resource-value { width: 80px; font-size: 11px; color: var(--green); text-align: right; }
+  .resource-value { width: 80px; font-size: 11px; color: var(--indigo); text-align: right; }
 
   /* Task / skill tables */
   .data-table {
@@ -1042,16 +1078,19 @@ function renderDashboard(): string {
   }
   .data-table th {
     text-align: left;
-    color: var(--dim);
+    color: var(--text-dim);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--glass-border);
   }
   .data-table td {
-    padding: 6px 8px;
-    border-bottom: 1px solid #1a1a1a;
+    padding: 8px 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .data-table tr:hover td {
+    background: rgba(255,255,255,0.02);
   }
 
   /* Select / filter controls */
@@ -1061,14 +1100,16 @@ function renderDashboard(): string {
     margin-bottom: 8px;
   }
   select, input[type="text"] {
-    background: var(--bg);
+    background: rgba(255,255,255,0.055);
     color: var(--text);
-    border: 1px solid var(--border);
-    padding: 4px 8px;
+    border: 1px solid var(--glass-border);
+    padding: 6px 10px;
     font-family: inherit;
     font-size: 11px;
+    border-radius: 8px;
+    transition: border-color 0.2s, box-shadow 0.2s;
   }
-  select:focus, input[type="text"]:focus { outline: none; border-color: var(--green-dim); }
+  select:focus, input[type="text"]:focus { outline: none; border-color: var(--indigo); box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
 
   /* Cost charts */
   .cost-summary {
@@ -1080,14 +1121,17 @@ function renderDashboard(): string {
   .cost-card {
     flex: 1;
     min-width: 180px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    padding: 12px;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    padding: 14px;
     text-align: center;
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
   .cost-card-label {
     font-size: 10px;
-    color: var(--dim);
+    color: var(--text-dim);
     text-transform: uppercase;
     letter-spacing: 1px;
     margin-bottom: 4px;
@@ -1095,22 +1139,22 @@ function renderDashboard(): string {
   .cost-card-value {
     font-size: 22px;
     font-weight: 700;
-    color: var(--green);
+    color: var(--indigo);
   }
-  .cost-card-value.amber { color: var(--amber); }
-  .cost-card-value.cyan { color: var(--cyan); }
+  .cost-card-value.amber { color: var(--warning); }
+  .cost-card-value.cyan { color: var(--teal); }
 
   .cost-section {
     margin-bottom: 20px;
   }
   .cost-section-title {
     font-size: 11px;
-    color: var(--amber);
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 1px;
     margin-bottom: 8px;
     padding-bottom: 4px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--glass-border);
   }
   .cost-chart-container {
     display: flex;
@@ -1152,7 +1196,7 @@ function renderDashboard(): string {
     left: 50%;
     transform: translateX(-50%);
     font-size: 8px;
-    color: var(--dim);
+    color: var(--text-dim);
     white-space: nowrap;
   }
 
@@ -1183,19 +1227,19 @@ function renderDashboard(): string {
   }
   .cost-model-table th {
     text-align: left;
-    color: var(--dim);
+    color: var(--text-dim);
     font-size: 10px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--glass-border);
   }
   .cost-model-table td {
     padding: 5px 8px;
-    border-bottom: 1px solid #1a1a1a;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
   }
   .cost-model-table td.cost-val {
-    color: var(--green);
+    color: var(--indigo);
     font-weight: 700;
     text-align: right;
   }
@@ -1203,7 +1247,8 @@ function renderDashboard(): string {
   /* Responsive */
   @media (max-width: 900px) {
     .grid { grid-template-columns: 1fr; }
-    .header pre { font-size: 7px; }
+    .header { flex-direction: column; gap: 8px; text-align: center; }
+    .header-info { justify-content: center; flex-wrap: wrap; }
   }
 </style>
 </head>
@@ -1212,24 +1257,17 @@ function renderDashboard(): string {
 
   <!-- HEADER -->
   <div class="header">
-    <pre>
- ███╗   ██╗ ██████╗ ██╗   ██╗ █████╗      ██████╗ ██████╗ ███╗   ███╗███╗   ███╗ █████╗ ███╗   ██╗██████╗
- ████╗  ██║██╔═══██╗██║   ██║██╔══██╗    ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██╔══██╗████╗  ██║██╔══██╗
- ██╔██╗ ██║██║   ██║██║   ██║███████║    ██║     ██║   ██║██╔████╔██║██╔████╔██║███████║██╔██╗ ██║██║  ██║
- ██║╚██╗██║██║   ██║╚██╗ ██╔╝██╔══██║    ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██╔══██║██║╚██╗██║██║  ██║
- ██║ ╚████║╚██████╔╝ ╚████╔╝ ██║  ██║    ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║  ██║██║ ╚████║██████╔╝
- ╚═╝  ╚═══╝ ╚═════╝   ╚═══╝  ╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝
-    </pre>
+    <div class="logo"><div class="logo-badge">N</div><div><div class="logo-title">Nova</div><div class="logo-subtitle">Command Center</div></div></div>
     <div class="header-info">
-      <span><span class="live blink">● LIVE</span> &nbsp;COMMAND CENTER v1.0</span>
+      <span><span class="live-dot"></span>Live</span>
       <span id="header-time"></span>
-      <span>UPTIME: <span id="header-uptime">--</span></span>
+      <span>Uptime: <span id="header-uptime">--</span></span>
     </div>
   </div>
 
   <!-- USER SELECTOR -->
   <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
-    <label style="color:var(--green);font-size:11px;text-transform:uppercase;letter-spacing:1px;">User Filter:</label>
+    <label style="color:var(--text-secondary);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">User Filter:</label>
     <select id="user-selector" style="min-width:200px;">
       <option value="">All Users (Admin View)</option>
     </select>
@@ -1241,10 +1279,10 @@ function renderDashboard(): string {
     <div class="panel">
       <div class="panel-header">
         <span>System Status</span>
-        <span class="indicator"><span class="blink" style="color:var(--green)">●</span> 10s</span>
+        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 10s</span>
       </div>
       <div class="panel-body" id="status-panel">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1255,7 +1293,7 @@ function renderDashboard(): string {
         <span class="indicator">30s</span>
       </div>
       <div class="panel-body" id="metrics-panel">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1266,7 +1304,7 @@ function renderDashboard(): string {
         <span class="indicator">30s</span>
       </div>
       <div class="panel-body" id="costs-panel" style="max-height:500px">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1277,7 +1315,7 @@ function renderDashboard(): string {
         <span class="indicator">30s</span>
       </div>
       <div class="panel-body" id="usage-by-user-panel" style="max-height:400px">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1285,10 +1323,10 @@ function renderDashboard(): string {
     <div class="panel">
       <div class="panel-header">
         <span>Activity Feed</span>
-        <span class="indicator"><span class="blink" style="color:var(--green)">●</span> 15s</span>
+        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 15s</span>
       </div>
       <div class="panel-body" id="messages-panel" style="max-height:400px">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1299,7 +1337,7 @@ function renderDashboard(): string {
         <span class="indicator">30s</span>
       </div>
       <div class="panel-body" id="memory-panel">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1310,7 +1348,7 @@ function renderDashboard(): string {
         <span class="indicator">30s</span>
       </div>
       <div class="panel-body" id="tasks-panel">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1321,7 +1359,7 @@ function renderDashboard(): string {
         <span class="indicator">60s</span>
       </div>
       <div class="panel-body" id="skills-panel">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1332,7 +1370,7 @@ function renderDashboard(): string {
         <span class="indicator">30s</span>
       </div>
       <div class="panel-body" id="voice-panel">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1340,10 +1378,10 @@ function renderDashboard(): string {
     <div class="panel full-width">
       <div class="panel-header">
         <span>Agent Tasks</span>
-        <span class="indicator"><span class="blink" style="color:var(--green)">●</span> 15s</span>
+        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 15s</span>
       </div>
       <div class="panel-body" id="agent-tasks-panel" style="max-height:400px">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1354,7 +1392,7 @@ function renderDashboard(): string {
         <span class="indicator">20s</span>
       </div>
       <div class="panel-body" id="resources-panel">
-        <div style="color:var(--dim)">Loading...</div>
+        <div style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1362,7 +1400,7 @@ function renderDashboard(): string {
     <div class="panel full-width">
       <div class="panel-header">
         <span>Log Viewer</span>
-        <span class="indicator"><span class="blink" style="color:var(--green)">●</span> 10s</span>
+        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 10s</span>
       </div>
       <div class="panel-body" id="logs-panel" style="max-height:400px">
         <div class="filter-row">
@@ -1374,7 +1412,7 @@ function renderDashboard(): string {
             <option value="morning-briefing">Morning Briefing</option>
           </select>
         </div>
-        <div id="logs-content" style="color:var(--dim)">Loading...</div>
+        <div id="logs-content" style="color:var(--text-dim)">Loading...</div>
       </div>
     </div>
 
@@ -1431,8 +1469,8 @@ async function loadStatus() {
         + (s.pid ? 'PID ' + s.pid : s.status.replace('_', ' '))
         + '</span></div>';
     }
-    $('status-panel').innerHTML = html || '<div style="color:var(--dim)">No services found</div>';
-  } catch(e) { $('status-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+    $('status-panel').innerHTML = html || '<div style="color:var(--text-dim)">No services found</div>';
+  } catch(e) { $('status-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- METRICS ----
@@ -1440,7 +1478,7 @@ async function loadMetrics() {
   try {
     const r = await fetch(BASE + '/api/metrics' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
-    if (d.error) { $('metrics-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
+    if (d.error) { $('metrics-panel').innerHTML = '<div style="color:var(--text-dim)">' + esc(d.error) + '</div>'; return; }
 
     let html = '<div class="metric-row"><span class="metric-label">Messages (24h)</span><span class="metric-value">' + d.today + '</span></div>';
     html += '<div class="metric-row"><span class="metric-label">Messages (7d)</span><span class="metric-value">' + d.thisWeek + '</span></div>';
@@ -1469,7 +1507,7 @@ async function loadMetrics() {
     html += '</div>';
 
     $('metrics-panel').innerHTML = html;
-  } catch(e) { $('metrics-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('metrics-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- MESSAGES ----
@@ -1477,7 +1515,7 @@ async function loadMessages() {
   try {
     const r = await fetch(BASE + '/api/messages?limit=50' + userParam());
     const d = await r.json();
-    if (!d.messages.length) { $('messages-panel').innerHTML = '<div style="color:var(--dim)">No messages yet</div>'; return; }
+    if (!d.messages.length) { $('messages-panel').innerHTML = '<div style="color:var(--text-dim)">No messages yet</div>'; return; }
 
     let html = '';
     for (const m of d.messages) {
@@ -1489,7 +1527,7 @@ async function loadMessages() {
         + '</div>';
     }
     $('messages-panel').innerHTML = html;
-  } catch(e) { $('messages-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('messages-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- MEMORY ----
@@ -1506,19 +1544,19 @@ async function loadMemory() {
     html += '</div>';
 
     if (!d.memory.length) {
-      html += '<div style="color:var(--dim)">No entries</div>';
+      html += '<div style="color:var(--text-dim)">No entries</div>';
     } else {
       for (const m of d.memory) {
         html += '<div class="mem-entry">'
           + '<span class="mem-type ' + m.type + '">' + esc(m.type) + '</span>'
-          + '<span style="color:var(--dim);font-size:10px">' + timeAgo(m.created_at) + '</span>'
-          + (m.deadline ? '<span style="color:var(--amber);font-size:10px;margin-left:8px">deadline: ' + new Date(m.deadline).toLocaleDateString() + '</span>' : '')
+          + '<span style="color:var(--text-dim);font-size:10px">' + timeAgo(m.created_at) + '</span>'
+          + (m.deadline ? '<span style="color:var(--warning);font-size:10px;margin-left:8px">deadline: ' + new Date(m.deadline).toLocaleDateString() + '</span>' : '')
           + '<div style="margin-top:2px">' + esc((m.content || '').substring(0, 200)) + '</div>'
           + '</div>';
       }
     }
     $('memory-panel').innerHTML = html;
-  } catch(e) { $('memory-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('memory-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- TASKS ----
@@ -1526,16 +1564,16 @@ async function loadTasks() {
   try {
     const r = await fetch(BASE + '/api/tasks');
     const d = await r.json();
-    if (!d.tasks.length) { $('tasks-panel').innerHTML = '<div style="color:var(--dim)">No scheduled tasks</div>'; return; }
+    if (!d.tasks.length) { $('tasks-panel').innerHTML = '<div style="color:var(--text-dim)">No scheduled tasks</div>'; return; }
 
     let html = '<table class="data-table"><tr><th>Service</th><th>Schedule</th><th>Status</th></tr>';
     for (const t of d.tasks) {
-      const statusColor = t.installed ? 'var(--green)' : 'var(--dim)';
+      const statusColor = t.installed ? 'var(--success)' : 'var(--text-dim)';
       html += '<tr><td>' + esc(t.label) + '</td><td>' + esc(t.schedule) + '</td><td style="color:' + statusColor + '">' + (t.installed ? 'INSTALLED' : 'NOT FOUND') + '</td></tr>';
     }
     html += '</table>';
     $('tasks-panel').innerHTML = html;
-  } catch(e) { $('tasks-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('tasks-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- VOICE ----
@@ -1543,7 +1581,7 @@ async function loadVoice() {
   try {
     const r = await fetch(BASE + '/api/voice' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
-    if (!d.calls || !d.calls.length) { $('voice-panel').innerHTML = '<div style="color:var(--dim)">No recent voice activity</div>'; return; }
+    if (!d.calls || !d.calls.length) { $('voice-panel').innerHTML = '<div style="color:var(--text-dim)">No recent voice activity</div>'; return; }
 
     let html = '';
     for (const c of d.calls) {
@@ -1554,7 +1592,7 @@ async function loadVoice() {
         + '</div>';
     }
     $('voice-panel').innerHTML = html;
-  } catch(e) { $('voice-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('voice-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- SKILLS ----
@@ -1565,26 +1603,26 @@ async function loadSkills() {
 
     let html = '';
     if (d.mcp && d.mcp.length) {
-      html += '<div style="color:var(--amber);font-size:11px;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">MCP Integrations</div>';
+      html += '<div style="color:var(--warning);font-size:11px;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">MCP Integrations</div>';
       html += '<table class="data-table"><tr><th>Name</th><th>Type</th></tr>';
       for (const m of d.mcp) {
-        html += '<tr><td style="color:var(--cyan)">' + esc(m.name) + '</td><td>' + esc(m.type) + '</td></tr>';
+        html += '<tr><td style="color:var(--teal)">' + esc(m.name) + '</td><td>' + esc(m.type) + '</td></tr>';
       }
       html += '</table>';
     }
 
     if (d.skills && d.skills.length) {
-      html += '<div style="color:var(--amber);font-size:11px;margin:12px 0 6px;text-transform:uppercase;letter-spacing:1px">Skills</div>';
+      html += '<div style="color:var(--warning);font-size:11px;margin:12px 0 6px;text-transform:uppercase;letter-spacing:1px">Skills</div>';
       html += '<table class="data-table"><tr><th>Name</th><th>Description</th></tr>';
       for (const s of d.skills) {
-        html += '<tr><td style="color:var(--green)">' + esc(s.name) + '</td><td>' + esc(s.description) + '</td></tr>';
+        html += '<tr><td style="color:var(--indigo)">' + esc(s.name) + '</td><td>' + esc(s.description) + '</td></tr>';
       }
       html += '</table>';
     }
 
-    if (!html) html = '<div style="color:var(--dim)">No skills or integrations found</div>';
+    if (!html) html = '<div style="color:var(--text-dim)">No skills or integrations found</div>';
     $('skills-panel').innerHTML = html;
-  } catch(e) { $('skills-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('skills-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- AGENT TASKS ----
@@ -1606,25 +1644,25 @@ async function loadAgentTasks() {
     });
 
     if (!tasks.length) {
-      html += '<div style="color:var(--dim)">No ' + (agentTaskFilter === 'all' ? '' : agentTaskFilter + ' ') + 'tasks</div>';
+      html += '<div style="color:var(--text-dim)">No ' + (agentTaskFilter === 'all' ? '' : agentTaskFilter + ' ') + 'tasks</div>';
     } else {
       html += '<table class="data-table"><tr><th>Agent</th><th>Task</th><th>Status</th><th>Result</th><th>Updated</th></tr>';
       for (const t of tasks) {
-        const statusColors = { in_progress: 'var(--green)', blocked: 'var(--amber)', done: 'var(--cyan)', pending: 'var(--dim)', cancelled: 'var(--dim)' };
-        const color = statusColors[t.status] || 'var(--dim)';
+        const statusColors = { in_progress: 'var(--success)', blocked: 'var(--warning)', done: 'var(--teal)', pending: 'var(--text-dim)', cancelled: 'var(--text-dim)' };
+        const color = statusColors[t.status] || 'var(--text-dim)';
         html += '<tr>'
-          + '<td style="color:var(--cyan)">' + esc(t.agent) + '</td>'
+          + '<td style="color:var(--teal)">' + esc(t.agent) + '</td>'
           + '<td>' + esc((t.description || '').substring(0, 80)) + '</td>'
           + '<td style="color:' + color + ';font-weight:700;text-transform:uppercase;font-size:10px">' + esc(t.status) + '</td>'
-          + '<td style="color:var(--dim);font-size:11px">' + esc((t.result || '—').substring(0, 60)) + '</td>'
-          + '<td style="color:var(--dim);font-size:10px;white-space:nowrap">' + timeAgo(t.updated_at) + '</td>'
+          + '<td style="color:var(--text-dim);font-size:11px">' + esc((t.result || '—').substring(0, 60)) + '</td>'
+          + '<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">' + timeAgo(t.updated_at) + '</td>'
           + '</tr>';
       }
       html += '</table>';
     }
 
     $('agent-tasks-panel').innerHTML = html;
-  } catch(e) { $('agent-tasks-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('agent-tasks-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- RESOURCES ----
@@ -1646,7 +1684,7 @@ async function loadResources() {
     }
 
     if (d.processes && d.processes.length) {
-      html += '<div style="color:var(--amber);font-size:11px;margin:12px 0 6px;text-transform:uppercase;letter-spacing:1px">Processes</div>';
+      html += '<div style="color:var(--warning);font-size:11px;margin:12px 0 6px;text-transform:uppercase;letter-spacing:1px">Processes</div>';
       html += '<table class="data-table"><tr><th>Service</th><th>PID</th><th>CPU</th><th>MEM</th></tr>';
       for (const p of d.processes) {
         html += '<tr><td>' + esc(p.name) + '</td><td>' + p.pid + '</td><td>' + esc(p.cpu) + '</td><td>' + esc(p.mem) + '</td></tr>';
@@ -1655,7 +1693,7 @@ async function loadResources() {
     }
 
     $('resources-panel').innerHTML = html;
-  } catch(e) { $('resources-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('resources-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- LOGS ----
@@ -1665,7 +1703,7 @@ async function loadLogs() {
     const r = await fetch(BASE + '/api/logs?service=' + service + '&lines=80');
     const d = await r.json();
 
-    if (!d.logs.length) { $('logs-content').innerHTML = '<div style="color:var(--dim)">No log files found</div>'; return; }
+    if (!d.logs.length) { $('logs-content').innerHTML = '<div style="color:var(--text-dim)">No log files found</div>'; return; }
 
     let html = '';
     for (const f of d.logs) {
@@ -1673,17 +1711,17 @@ async function loadLogs() {
       html += '<div class="log-content">' + esc(f.content || '(empty)') + '</div>';
     }
     $('logs-content').innerHTML = html;
-  } catch(e) { $('logs-content').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('logs-content').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 $('log-service').addEventListener('change', loadLogs);
 
 // ---- COSTS ----
 const PROVIDER_COLORS = {
-  claude: '#00ff41', openai: '#00e5ff', groq: '#ffb000', elevenlabs: '#a855f7',
-  ultravox: '#ff3333', fal: '#ff6b9d', heygen: '#00ccff'
+  claude: '#6366f1', openai: '#06b6d4', groq: '#f59e0b', elevenlabs: '#8b5cf6',
+  ultravox: '#ef4444', fal: '#ec4899', heygen: '#06b6d4'
 };
-const FALLBACK_COLORS = ['#66ff66','#ff9933','#33cccc','#cc66ff','#ff6666','#66ccff','#ffcc00'];
+const FALLBACK_COLORS = ['#22c55e','#f59e0b','#06b6d4','#8b5cf6','#ef4444','#ec4899','#eab308'];
 function getProviderColor(name) { return PROVIDER_COLORS[name] || FALLBACK_COLORS[Object.keys(PROVIDER_COLORS).length % FALLBACK_COLORS.length]; }
 function getSeriesColor(idx) {
   const all = Object.values(PROVIDER_COLORS).concat(FALLBACK_COLORS);
@@ -1692,7 +1730,7 @@ function getSeriesColor(idx) {
 
 function renderProviderTable(byProvider) {
   const providers = Object.entries(byProvider || {}).sort(function(a,b) { return b[1].cost - a[1].cost; });
-  if (!providers.length) return '<div style="color:var(--dim);font-size:11px">No data</div>';
+  if (!providers.length) return '<div style="color:var(--text-dim);font-size:11px">No data</div>';
   let html = '<table class="cost-model-table"><tr><th>Provider</th><th>Calls</th><th style="text-align:right">Input Tok</th><th style="text-align:right">Output Tok</th><th style="text-align:right">Cost</th></tr>';
   for (const [provider, d] of providers) {
     const color = getProviderColor(provider);
@@ -1710,12 +1748,12 @@ function renderProviderTable(byProvider) {
 
 function renderModelTable(byModel) {
   const models = Object.entries(byModel || {}).sort(function(a,b) { return b[1].cost - a[1].cost; });
-  if (!models.length) return '<div style="color:var(--dim);font-size:11px">No data</div>';
+  if (!models.length) return '<div style="color:var(--text-dim);font-size:11px">No data</div>';
   let html = '<table class="cost-model-table"><tr><th>Model</th><th>Calls</th><th style="text-align:right">Input Tok</th><th style="text-align:right">Output Tok</th><th style="text-align:right">Cost</th></tr>';
   for (const [model, d] of models) {
     const shortName = model.replace(/^claude-/, '').replace(/-\\d{8}$/, '');
     html += '<tr>'
-      + '<td style="color:var(--cyan)">' + esc(shortName) + '</td>'
+      + '<td style="color:var(--teal)">' + esc(shortName) + '</td>'
       + '<td>' + d.count + '</td>'
       + '<td style="text-align:right">' + (d.input_tokens || 0).toLocaleString() + '</td>'
       + '<td style="text-align:right">' + (d.output_tokens || 0).toLocaleString() + '</td>'
@@ -1728,7 +1766,7 @@ function renderModelTable(byModel) {
 
 function renderStackedChart(chartData, labelFn, maxBuckets) {
   const series = Object.keys(chartData || {});
-  if (!series.length) return '<div style="color:var(--dim);font-size:11px">No chart data</div>';
+  if (!series.length) return '<div style="color:var(--text-dim);font-size:11px">No chart data</div>';
   const allKeys = new Set();
   for (const s of series) for (const k of Object.keys(chartData[s])) allKeys.add(k);
   let buckets = Array.from(allKeys).sort();
@@ -1774,7 +1812,7 @@ async function loadCosts() {
   try {
     const r = await fetch(BASE + '/api/costs' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
     const d = await r.json();
-    if (d.error) { $('costs-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
+    if (d.error) { $('costs-panel').innerHTML = '<div style="color:var(--text-dim)">' + esc(d.error) + '</div>'; return; }
 
     // Summary cards — total + per provider
     let html = '<div class="cost-summary">';
@@ -1789,7 +1827,7 @@ async function loadCosts() {
       const provEntries = Object.entries(d.monthly.byProvider).sort(function(a,b) { return b[1].cost - a[1].cost; });
       for (const [prov, pdata] of provEntries) {
         const color = getProviderColor(prov);
-        html += '<div class="cost-card" style="border-color:' + color + '40"><div class="cost-card-label" style="color:' + color + '">' + esc(prov.toUpperCase()) + '</div><div class="cost-card-value" style="color:' + color + ';font-size:16px">$' + pdata.cost.toFixed(2) + '</div><div style="font-size:10px;color:var(--dim)">' + pdata.count + ' calls</div></div>';
+        html += '<div class="cost-card" style="border-color:' + color + '40"><div class="cost-card-label" style="color:' + color + '">' + esc(prov.toUpperCase()) + '</div><div class="cost-card-value" style="color:' + color + ';font-size:16px">$' + pdata.cost.toFixed(2) + '</div><div style="font-size:10px;color:var(--text-dim)">' + pdata.count + ' calls</div></div>';
       }
       html += '</div>';
     }
@@ -1803,7 +1841,7 @@ async function loadCosts() {
     html += '</div>';
     html += '<div class="cost-chart-block">';
     html += renderProviderTable(d.daily.byProvider);
-    html += '<div style="margin-top:12px;font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
+    html += '<div style="margin-top:12px;font-size:10px;color:var(--warning);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
     html += renderModelTable(d.daily.byModel);
     html += '</div>';
     html += '</div></div>';
@@ -1817,7 +1855,7 @@ async function loadCosts() {
     html += '</div>';
     html += '<div class="cost-chart-block">';
     html += renderProviderTable(d.monthly.byProvider);
-    html += '<div style="margin-top:12px;font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
+    html += '<div style="margin-top:12px;font-size:10px;color:var(--warning);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
     html += renderModelTable(d.monthly.byModel);
     html += '</div>';
     html += '</div></div>';
@@ -1831,13 +1869,13 @@ async function loadCosts() {
     html += '</div>';
     html += '<div class="cost-chart-block">';
     html += renderProviderTable(d.lifetime.byProvider);
-    html += '<div style="margin-top:12px;font-size:10px;color:var(--amber);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
+    html += '<div style="margin-top:12px;font-size:10px;color:var(--warning);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
     html += renderModelTable(d.lifetime.byModel);
     html += '</div>';
     html += '</div></div>';
 
     $('costs-panel').innerHTML = html;
-  } catch(e) { $('costs-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('costs-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- USER SELECTOR ----
@@ -1873,8 +1911,8 @@ async function loadUsageByUser() {
   try {
     const r = await fetch(BASE + '/api/usage-by-user');
     const d = await r.json();
-    if (d.error) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--dim)">' + esc(d.error) + '</div>'; return; }
-    if (!d.users || !d.users.length) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--dim)">No users found</div>'; return; }
+    if (d.error) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--text-dim)">' + esc(d.error) + '</div>'; return; }
+    if (!d.users || !d.users.length) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--text-dim)">No users found</div>'; return; }
 
     const providers = d.providers || [];
 
@@ -1888,10 +1926,10 @@ async function loadUsageByUser() {
     html += '<th style="text-align:right">TOTAL</th></tr>';
 
     for (const u of d.users) {
-      const statusColor = u.active ? 'var(--green)' : 'var(--dim)';
+      const statusColor = u.active ? 'var(--success)' : 'var(--text-dim)';
       const statusText = u.active ? 'ACTIVE' : 'INACTIVE';
       html += '<tr>'
-        + '<td style="color:var(--cyan);font-weight:700">' + esc(u.name) + '</td>'
+        + '<td style="color:var(--teal);font-weight:700">' + esc(u.name) + '</td>'
         + '<td style="color:' + statusColor + ';font-size:10px;font-weight:700">' + statusText + '</td>'
         + '<td style="text-align:right">' + u.msgs24h + '</td>'
         + '<td style="text-align:right">' + u.msgs7d + '</td>';
@@ -1907,24 +1945,24 @@ async function loadUsageByUser() {
     // Totals row
     if (d.totals) {
       const t = d.totals;
-      html += '<tr style="border-top:2px solid var(--border)">'
-        + '<td style="color:var(--amber);font-weight:700">TOTAL</td>'
+      html += '<tr style="border-top:2px solid var(--glass-border)">'
+        + '<td style="color:var(--warning);font-weight:700">TOTAL</td>'
         + '<td></td>'
-        + '<td style="text-align:right;color:var(--amber);font-weight:700">' + t.msgs24h + '</td>'
-        + '<td style="text-align:right;color:var(--amber);font-weight:700">' + t.msgs7d + '</td>';
+        + '<td style="text-align:right;color:var(--warning);font-weight:700">' + t.msgs24h + '</td>'
+        + '<td style="text-align:right;color:var(--warning);font-weight:700">' + t.msgs7d + '</td>';
       for (const p of providers) {
         const cost = (t.byProvider && t.byProvider[p]) || 0;
         const color = getProviderColor(p);
         html += '<td style="text-align:right;color:' + color + ';font-weight:700">$' + cost.toFixed(2) + '</td>';
       }
-      html += '<td class="cost-val" style="color:var(--amber)">$' + (t.costMonth || 0).toFixed(2) + '</td>';
+      html += '<td class="cost-val" style="color:var(--warning)">$' + (t.costMonth || 0).toFixed(2) + '</td>';
       html += '</tr>';
     }
 
     html += '</table>';
-    html += '<div style="font-size:10px;color:var(--dim);margin-top:8px">Costs shown for current month</div>';
+    html += '<div style="font-size:10px;color:var(--text-dim);margin-top:8px">Costs shown for current month</div>';
     $('usage-by-user-panel').innerHTML = html;
-  } catch(e) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--red)">Error: ' + esc(e.message) + '</div>'; }
+  } catch(e) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
 // ---- INIT & INTERVALS ----

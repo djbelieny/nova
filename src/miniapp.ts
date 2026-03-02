@@ -639,12 +639,13 @@ async function deactivateUser(userId: string): Promise<unknown> {
 
 function renderOAuthResult(success: boolean, message: string): string {
   const emoji = success ? "\u2705" : "\u274C";
-  const color = success ? "#2ecc71" : "#ff4444";
+  const color = success ? "#22c55e" : "#ef4444";
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <title>Nova — Integration</title>
-<style>body{background:#1a1a2e;color:#fff;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}
-.card{background:#1e1e3a;border-radius:16px;padding:40px;max-width:400px;}.icon{font-size:48px;margin-bottom:16px;}.msg{font-size:18px;margin-bottom:24px;color:${color};}
+<style>body{background:#0a0a0f;color:#fff;font-family:'Inter',-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}
+.card{background:rgba(255,255,255,0.055);border-radius:14px;padding:40px;max-width:400px;border:1px solid rgba(255,255,255,0.10);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 4px 24px rgba(0,0,0,0.25);}.icon{font-size:48px;margin-bottom:16px;}.msg{font-size:18px;margin-bottom:24px;color:${color};}
 .hint{font-size:14px;color:#999;}</style></head>
 <body><div class="card"><div class="icon">${emoji}</div><div class="msg">${message.replace(/</g, "&lt;")}</div>
 <div class="hint">You can close this window and return to the Nova app.</div></div></body></html>`;
@@ -660,21 +661,24 @@ function renderMiniApp(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <title>Nova</title>
   <style>
     :root {
-      --bg: var(--tg-theme-bg-color, #1a1a2e);
+      --bg: var(--tg-theme-bg-color, #0a0a0f);
       --text: var(--tg-theme-text-color, #ffffff);
       --hint: var(--tg-theme-hint-color, #999999);
-      --link: var(--tg-theme-link-color, #6ab2f2);
-      --btn: var(--tg-theme-button-color, #5288c1);
+      --link: var(--tg-theme-link-color, #6366f1);
+      --btn: var(--tg-theme-button-color, #6366f1);
       --btn-text: var(--tg-theme-button-text-color, #ffffff);
-      --secondary-bg: var(--tg-theme-secondary-bg-color, #0f0f23);
-      --section-bg: var(--tg-theme-section-bg-color, #1e1e3a);
-      --accent: var(--tg-theme-accent-text-color, #6ab2f2);
+      --secondary-bg: var(--tg-theme-secondary-bg-color, #0d0d14);
+      --section-bg: var(--tg-theme-section-bg-color, rgba(255,255,255,0.055));
+      --accent: var(--tg-theme-accent-text-color, #6366f1);
       --subtitle: var(--tg-theme-subtitle-text-color, #999999);
-      --destructive: var(--tg-theme-destructive-text-color, #ff4444);
+      --destructive: var(--tg-theme-destructive-text-color, #ef4444);
       --card-radius: 14px;
       --tab-height: 56px;
     }
@@ -689,7 +693,7 @@ function renderMiniApp(): string {
     html, body {
       height: 100%;
       overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       font-size: 15px;
@@ -721,11 +725,13 @@ function renderMiniApp(): string {
       left: 0;
       right: 0;
       height: var(--tab-height);
-      background: var(--secondary-bg);
+      background: rgba(255,255,255,0.055);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       display: flex;
       align-items: center;
       overflow-x: auto;
-      border-top: 1px solid rgba(255,255,255,0.06);
+      border-top: 1px solid rgba(255,255,255,0.10);
       z-index: 100;
       padding-bottom: env(safe-area-inset-bottom, 0);
       scrollbar-width: none;
@@ -777,6 +783,10 @@ function renderMiniApp(): string {
       border-radius: var(--card-radius);
       padding: 16px;
       margin-bottom: 12px;
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.25);
     }
 
     /* ---- Avatar ---- */
@@ -826,7 +836,7 @@ function renderMiniApp(): string {
       outline: none;
       transition: border-color 0.2s;
     }
-    .field-input:focus { border-color: var(--accent); }
+    .field-input:focus { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
     select.field-input {
       appearance: none;
       background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
@@ -855,7 +865,7 @@ function renderMiniApp(): string {
       transition: background 0.25s;
       flex-shrink: 0;
     }
-    .toggle.on { background: var(--btn); }
+    .toggle.on { background: #6366f1; }
     .toggle::after {
       content: '';
       position: absolute;
@@ -876,13 +886,17 @@ function renderMiniApp(): string {
       gap: 12px;
     }
     .agent-card {
-      background: var(--section-bg);
+      background: rgba(255,255,255,0.055);
       border-radius: var(--card-radius);
       padding: 16px;
       cursor: pointer;
       transition: transform 0.15s, box-shadow 0.15s;
       position: relative;
       overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.25);
     }
     .agent-card:active { transform: scale(0.97); }
     .agent-name { font-weight: 600; font-size: 14px; margin-top: 10px; }
@@ -891,8 +905,8 @@ function renderMiniApp(): string {
       position: absolute;
       top: 10px;
       right: 10px;
-      background: var(--btn);
-      color: var(--btn-text);
+      background: #6366f1;
+      color: #ffffff;
       font-size: 11px;
       font-weight: 600;
       padding: 2px 8px;
@@ -903,10 +917,14 @@ function renderMiniApp(): string {
 
     /* ---- Approval cards ---- */
     .approval-card {
-      background: var(--section-bg);
+      background: rgba(255,255,255,0.055);
       border-radius: var(--card-radius);
       padding: 16px;
       margin-bottom: 12px;
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.25);
     }
     .approval-request {
       font-size: 14px;
@@ -937,9 +955,9 @@ function renderMiniApp(): string {
       transition: opacity 0.15s;
     }
     .approval-btn:active { opacity: 0.7; }
-    .approval-btn.approve { background: #2ecc71; }
-    .approval-btn.revise { background: #f39c12; }
-    .approval-btn.cancel { background: var(--destructive); }
+    .approval-btn.approve { background: #6366f1; }
+    .approval-btn.revise { background: #f59e0b; }
+    .approval-btn.cancel { background: #ef4444; }
     .approval-expand { display: none; margin-top: 12px; }
     .approval-expand.open { display: block; }
 
@@ -959,12 +977,15 @@ function renderMiniApp(): string {
 
     /* ---- Task history ---- */
     .task-item {
-      background: var(--section-bg);
+      background: rgba(255,255,255,0.055);
       border-radius: var(--card-radius);
       padding: 14px 16px;
       margin-bottom: 10px;
       cursor: pointer;
       transition: transform 0.15s;
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
     }
     .task-item:active { transform: scale(0.98); }
     .task-header {
@@ -978,9 +999,9 @@ function renderMiniApp(): string {
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .status-dot.done { background: #2ecc71; }
-    .status-dot.blocked { background: var(--destructive); }
-    .status-dot.in_progress { background: #f39c12; }
+    .status-dot.done { background: #22c55e; }
+    .status-dot.blocked { background: #ef4444; }
+    .status-dot.in_progress { background: #f59e0b; }
     .status-dot.pending { background: var(--hint); }
     .task-desc {
       font-size: 14px;
@@ -1018,18 +1039,18 @@ function renderMiniApp(): string {
       border-radius: 20px;
       font-size: 13px;
       font-weight: 500;
-      background: var(--section-bg);
+      background: rgba(255,255,255,0.055);
       color: var(--hint);
       cursor: pointer;
       white-space: nowrap;
-      border: 1px solid transparent;
+      border: 1px solid rgba(255,255,255,0.10);
       transition: all 0.2s;
       user-select: none;
     }
     .filter-chip.active {
-      background: var(--btn);
-      color: var(--btn-text);
-      border-color: var(--btn);
+      background: #6366f1;
+      color: #ffffff;
+      border-color: #6366f1;
     }
 
     /* ---- Empty state ---- */
@@ -1055,7 +1076,10 @@ function renderMiniApp(): string {
       pointer-events: none;
     }
     .toast {
-      background: var(--section-bg);
+      background: rgba(255,255,255,0.055);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.10);
       color: var(--text);
       padding: 12px 16px;
       border-radius: 12px;
@@ -1064,8 +1088,8 @@ function renderMiniApp(): string {
       animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s forwards;
       pointer-events: auto;
     }
-    .toast.error { border-left: 3px solid var(--destructive); }
-    .toast.success { border-left: 3px solid #2ecc71; }
+    .toast.error { border-left: 3px solid #ef4444; }
+    .toast.success { border-left: 3px solid #22c55e; }
     @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
 
@@ -1159,7 +1183,7 @@ function renderMiniApp(): string {
       display: inline-block;
       height: 4px;
       border-radius: 2px;
-      background: #2ecc71;
+      background: #22c55e;
       min-width: 2px;
     }
     .subtask-progress .progress-track {
@@ -1210,8 +1234,8 @@ function renderMiniApp(): string {
       border-radius: 8px;
       font-weight: 500;
     }
-    .artifact-badge.verified { background: rgba(46,204,113,0.15); color: #2ecc71; }
-    .artifact-badge.delivered { background: rgba(52,152,219,0.15); color: #3498db; }
+    .artifact-badge.verified { background: rgba(34,197,94,0.15); color: #22c55e; }
+    .artifact-badge.delivered { background: rgba(6,182,212,0.15); color: #06b6d4; }
     .artifact-badge.pending-badge { background: rgba(255,255,255,0.06); color: var(--hint); }
 
     /* ---- Loading spinner ---- */
@@ -1224,7 +1248,7 @@ function renderMiniApp(): string {
       width: 24px;
       height: 24px;
       border: 2px solid rgba(255,255,255,0.1);
-      border-top-color: var(--accent);
+      border-top-color: #6366f1;
       border-radius: 50%;
       animation: spin 0.6s linear infinite;
       margin: 0 auto 8px;
@@ -1248,7 +1272,7 @@ function renderMiniApp(): string {
     <div class="content page" id="pageProfile">
       <div class="ptr-indicator" id="ptrProfile">Pull to refresh</div>
       <div class="profile-header" id="profileHeader">
-        <div class="avatar" id="profileAvatar" style="background:#5288c1;">?</div>
+        <div class="avatar" id="profileAvatar" style="background:#6366f1;">?</div>
         <div class="profile-info">
           <h2 id="profileName">Loading...</h2>
           <p id="profileRole">Nova User</p>
@@ -2160,7 +2184,7 @@ function renderMiniApp(): string {
         var connected = intg.status === 'connected';
         var pending = intg.status === 'pending';
         var statusText = connected ? 'Connected' : pending ? 'Pending...' : intg.status === 'error' ? 'Error' : 'Not connected';
-        var statusColor = connected ? '#2ecc71' : pending ? '#f39c12' : intg.status === 'error' ? '#ff4444' : 'var(--hint)';
+        var statusColor = connected ? '#22c55e' : pending ? '#f59e0b' : intg.status === 'error' ? '#ef4444' : 'var(--hint)';
         var accountInfo = intg.metadata && intg.metadata.email ? intg.metadata.email : (intg.metadata && intg.metadata.workspace_name ? intg.metadata.workspace_name : (intg.metadata && intg.metadata.location_id ? 'Location: ' + intg.metadata.location_id : ''));
 
         html += '<div class="card" style="display:flex;flex-direction:column;gap:10px;">';
@@ -2288,15 +2312,15 @@ function renderMiniApp(): string {
       html += '<div style="font-weight:600;font-size:15px;">WhatsApp</div>';
 
       if (state === 'connected') {
-        html += '<div style="font-size:12px;color:#2ecc71;">Connected</div>';
+        html += '<div style="font-size:12px;color:#22c55e;">Connected</div>';
         if (status.phoneNumber) html += '<div style="font-size:11px;color:var(--hint);">+' + escapeStr(status.phoneNumber) + '</div>';
         html += '</div>';
         html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waDisconnect()">Disconnect</button>';
       } else if (state === 'qr_pending') {
-        html += '<div style="font-size:12px;color:#f39c12;">Scan QR Code</div>';
+        html += '<div style="font-size:12px;color:#f59e0b;">Scan QR Code</div>';
         html += '</div></div>';
         if (status.qrDataUrl) {
-          html += '<div style="text-align:center;padding:12px;background:#fff;border-radius:12px;">';
+          html += '<div style="text-align:center;padding:12px;background:rgba(255,255,255,0.95);border-radius:12px;">';
           html += '<img src="' + status.qrDataUrl + '" style="width:240px;height:240px;" alt="QR Code" />';
           html += '</div>';
           html += '<div style="font-size:12px;color:var(--hint);text-align:center;">Open WhatsApp > Settings > Linked Devices > Link a Device</div>';
@@ -2384,7 +2408,7 @@ function renderMiniApp(): string {
       } else {
         for (var i = 0; i < contacts.length; i++) {
           var c = contacts[i];
-          var roleColor = c.role === 'vip' ? '#f39c12' : c.role === 'blocked' ? '#ff4444' : '#2ecc71';
+          var roleColor = c.role === 'vip' ? '#f59e0b' : c.role === 'blocked' ? '#ef4444' : '#22c55e';
           html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--secondary-bg);">';
           html += '<div style="flex:1;"><div style="font-size:14px;">' + escapeStr(c.name || c.phone) + '</div>';
           html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(c.phone) + '</div></div>';
@@ -2446,7 +2470,7 @@ function renderMiniApp(): string {
           html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--secondary-bg);">';
           html += '<div style="flex:1;"><div style="font-size:14px;">' + escapeStr(g.name || g.group_jid) + '</div>';
           html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(g.group_jid) + '</div></div>';
-          html += '<span style="font-size:11px;color:' + (g.active ? '#2ecc71' : '#ff4444') + ';">' + (g.active ? 'Active' : 'Inactive') + '</span>';
+          html += '<span style="font-size:11px;color:' + (g.active ? '#22c55e' : '#ef4444') + ';">' + (g.active ? 'Active' : 'Inactive') + '</span>';
           html += '<button style="background:none;border:none;color:var(--destructive);font-size:16px;cursor:pointer;padding:4px;" onclick="waDeleteGroup(\\'' + escapeStr(g.group_jid) + '\\')">&times;</button>';
           html += '</div>';
         }
@@ -2549,7 +2573,7 @@ function renderMiniApp(): string {
       var html = '';
       for (var i = 0; i < users.length; i++) {
         var u = users[i];
-        var statusDot = u.active ? '#2ecc71' : 'var(--hint)';
+        var statusDot = u.active ? '#22c55e' : 'var(--hint)';
         html += '<div class="card" style="display:flex;align-items:center;gap:12px;">';
         html += '<div style="width:10px;height:10px;border-radius:50%;background:' + statusDot + ';flex-shrink:0;"></div>';
         html += '<div style="flex:1;">';
@@ -2663,7 +2687,7 @@ const server = Bun.serve({
       return new Response(renderMiniApp(), {
         headers: {
           "Content-Type": "text/html",
-          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://telegram.org; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
         },
       });
     }
