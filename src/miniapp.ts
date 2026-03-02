@@ -471,12 +471,12 @@ function getWhatsAppManager(): WhatsAppManager {
   return manager;
 }
 
-async function whatsappConnect(userId: string): Promise<unknown> {
+async function whatsappConnect(userId: string, phone?: string): Promise<unknown> {
   try {
     const manager = getWhatsAppManager();
-    await manager.connect(userId);
-    // Give it a moment for QR generation
-    await new Promise((r) => setTimeout(r, 2000));
+    await manager.connect(userId, phone);
+    // Give it a moment for QR/pairing code generation
+    await new Promise((r) => setTimeout(r, 4000));
     return manager.getStatus(userId);
   } catch (e: any) {
     return { error: e.message };
@@ -2316,6 +2316,20 @@ function renderMiniApp(): string {
         if (status.phoneNumber) html += '<div style="font-size:11px;color:var(--hint);">+' + escapeStr(status.phoneNumber) + '</div>';
         html += '</div>';
         html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waDisconnect()">Disconnect</button>';
+      } else if (state === 'pairing_code') {
+        html += '<div style="font-size:12px;color:#f59e0b;">Enter code in WhatsApp</div>';
+        html += '</div></div>';
+        if (status.pairingCode) {
+          html += '<div style="text-align:center;padding:20px;background:rgba(255,255,255,0.055);border:1px solid rgba(255,255,255,0.10);border-radius:14px;">';
+          html += '<div style="font-size:36px;font-weight:700;letter-spacing:8px;color:#fff;font-family:monospace;">' + escapeStr(status.pairingCode) + '</div>';
+          html += '</div>';
+          html += '<div style="font-size:12px;color:var(--hint);text-align:center;margin-top:8px;">Open WhatsApp > Settings > Linked Devices > Link a Device > Link with phone number instead</div>';
+        } else {
+          html += '<div style="text-align:center;padding:16px;color:var(--hint);font-size:13px;">Requesting pairing code...</div>';
+        }
+        if (!waPollingInterval) {
+          waPollingInterval = setInterval(loadWhatsApp, 3000);
+        }
       } else if (state === 'qr_pending') {
         html += '<div style="font-size:12px;color:#f59e0b;">Scan QR Code</div>';
         html += '</div></div>';
@@ -2325,17 +2339,19 @@ function renderMiniApp(): string {
           html += '</div>';
           html += '<div style="font-size:12px;color:var(--hint);text-align:center;">Open WhatsApp > Settings > Linked Devices > Link a Device</div>';
         }
-        // Start polling
         if (!waPollingInterval) {
           waPollingInterval = setInterval(loadWhatsApp, 5000);
         }
       } else {
         html += '<div style="font-size:12px;color:var(--hint);">Not connected</div>';
         html += '</div>';
-        html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waConnect()">Connect</button>';
+        html += '<div style="display:flex;gap:8px;align-items:center;margin-top:4px;">';
+        html += '<input type="tel" id="waPhoneInput" placeholder="+1 555 123 4567" style="flex:1;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.055);color:var(--text);font-size:14px;outline:none;" />';
+        html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:10px 16px;font-size:13px;" onclick="waConnect()">Connect</button>';
+        html += '</div>';
       }
 
-      if (state !== 'qr_pending') html += '</div>';
+      if (state !== 'qr_pending' && state !== 'pairing_code') html += '</div>';
 
       // Management sections for connected state
       if (state === 'connected') {
@@ -2355,15 +2371,18 @@ function renderMiniApp(): string {
       container.innerHTML = html;
 
       // Stop polling if connected or disconnected
-      if (state !== 'qr_pending' && waPollingInterval) {
+      if (state !== 'qr_pending' && state !== 'pairing_code' && waPollingInterval) {
         clearInterval(waPollingInterval);
         waPollingInterval = null;
       }
     }
 
     async function waConnect() {
-      showToast('Starting WhatsApp...', 'success');
-      var data = await apiFetch('/whatsapp/connect', { method: 'POST' });
+      var phoneInput = document.getElementById('waPhoneInput');
+      var phone = phoneInput ? phoneInput.value.replace(/[^0-9+]/g, '') : '';
+      if (!phone) { showToast('Enter your WhatsApp phone number', 'error'); return; }
+      showToast('Connecting WhatsApp...', 'success');
+      var data = await apiFetch('/whatsapp/connect', { method: 'POST', body: { phone: phone } });
       if (data && data.error) { showToast(data.error, 'error'); return; }
       renderWhatsApp(data);
     }
@@ -2834,7 +2853,8 @@ const server = Bun.serve({
 
       // WhatsApp
       if (path === "/api/whatsapp/connect" && method === "POST") {
-        return jsonResponse(await whatsappConnect(userId));
+        const body = await req.json().catch(() => ({}));
+        return jsonResponse(await whatsappConnect(userId, body.phone));
       }
       if (path === "/api/whatsapp/status" && method === "GET") {
         return jsonResponse(await whatsappStatus(userId));

@@ -34,11 +34,12 @@ import type {
   PlatformContext,
 } from "./types.ts";
 
-export type ConnectionState = "disconnected" | "qr_pending" | "connected";
+export type ConnectionState = "disconnected" | "qr_pending" | "pairing_code" | "connected";
 
 export interface WhatsAppStatus {
   state: ConnectionState;
   qrDataUrl: string | null;
+  pairingCode: string | null;
   phoneNumber: string | null;
 }
 
@@ -55,6 +56,12 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   /** Current QR code as base64 data URL for Mini App display */
   qrDataUrl: string | null = null;
+
+  /** Pairing code for phone number linking */
+  pairingCode: string | null = null;
+
+  /** Phone number to pair with (for pairing code flow) */
+  pairPhoneNumber: string | null = null;
 
   /** Current connection state */
   connectionState: ConnectionState = "disconnected";
@@ -79,6 +86,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return {
       state: this.connectionState,
       qrDataUrl: this.qrDataUrl,
+      pairingCode: this.pairingCode,
       phoneNumber: this.phoneNumber,
     };
   }
@@ -88,8 +96,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
     return existsSync(join(this.authDir, "creds.json"));
   }
 
-  async start(): Promise<void> {
+  async start(pairPhone?: string): Promise<void> {
     await mkdir(this.authDir, { recursive: true });
+    if (pairPhone) {
+      this.pairPhoneNumber = pairPhone.replace(/[^0-9]/g, "");
+    }
     await this.connect();
   }
 
@@ -108,10 +119,25 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     this.sock.ev.on("creds.update", saveCreds);
 
+    // Request pairing code if phone number provided (instead of QR)
+    if (this.pairPhoneNumber && !this.hasAuthCredentials()) {
+      // Wait for connection to be ready before requesting code
+      setTimeout(async () => {
+        try {
+          const code = await this.sock!.requestPairingCode(this.pairPhoneNumber!);
+          this.pairingCode = code;
+          this.connectionState = "pairing_code";
+          console.log(`[whatsapp:${this.userId}] Pairing code: ${code}`);
+        } catch (err: any) {
+          console.error(`[whatsapp:${this.userId}] Pairing code request failed:`, err.message);
+        }
+      }, 3000);
+    }
+
     this.sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
-      if (qr) {
+      if (qr && !this.pairPhoneNumber) {
         console.log(`[whatsapp:${this.userId}] QR code received`);
         try {
           this.qrDataUrl = await QRCode.toDataURL(qr, { width: 512, margin: 2 });
@@ -124,6 +150,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
       if (connection === "close") {
         this.connectionState = "disconnected";
         this.qrDataUrl = null;
+        this.pairingCode = null;
 
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
@@ -146,6 +173,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
         this.reconnectAttempts = 0;
         this.connectionState = "connected";
         this.qrDataUrl = null;
+        this.pairingCode = null;
+        this.pairPhoneNumber = null;
 
         // Extract phone number from connection info
         const me = this.sock?.user;

@@ -53,7 +53,7 @@ export class WhatsAppManager {
   }
 
   /** Start a new WhatsApp session for a user. */
-  async connect(userId: string): Promise<void> {
+  async connect(userId: string, pairPhone?: string): Promise<void> {
     if (this.sessions.has(userId)) {
       const existing = this.sessions.get(userId)!;
       if (existing.connectionState !== "disconnected") {
@@ -72,7 +72,7 @@ export class WhatsAppManager {
     });
 
     this.sessions.set(userId, adapter);
-    await adapter.start();
+    await adapter.start(pairPhone);
     console.log(`[wa-manager] Session started for user ${userId}`);
   }
 
