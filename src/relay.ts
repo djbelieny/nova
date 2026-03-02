@@ -646,6 +646,7 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
       prompt,
       model: resolvedModel,
       mcpConfigPath,
+      noMcp: !mcpConfigPath,
       outputFormat: "json",
     });
 

@@ -56,8 +56,10 @@ export class ClaudeProvider implements AIProvider {
       args.push("--model", opts.model);
     }
 
-    if (opts.mcpConfigPath) {
-      args.push("--mcp-config", opts.mcpConfigPath);
+    if (opts.noMcp) {
+      args.push("--mcp-config", "{}", "--strict-mcp-config");
+    } else if (opts.mcpConfigPath) {
+      args.push("--mcp-config", opts.mcpConfigPath, "--strict-mcp-config");
     }
 
     const cwd = opts.cwd || PROJECT_ROOT;
