@@ -7,6 +7,7 @@
  * - Notion (notion)
  * - Zoom (zoom)
  * - Go High Level (gohighlevel) — API-key based, no OAuth
+ * - ClickUp (clickup) — API-key based, no OAuth
  *
  * Global MCP servers (cloudflare, square, playwright) are inherited from
  * the project-level .mcp.json and included in every user's config.
@@ -91,14 +92,15 @@ const MCP_ROUTING_MAP: Record<string, string[]> = {
   "cloudflare": ["cloudflare", "worker", "deploy", "dns", "domain", "r2", "d1", "kv"],
   "square": ["square", "payment", "invoice", "pos", "transaction", "order"],
   "gohighlevel": ["ghl", "highlevel", "crm", "pipeline", "opportunity", "funnel", "contact", "social media", "post", "publish", "instagram", "facebook", "schedule post", "blog", "invoice", "sms", "workflow"],
+  "clickup": ["clickup", "task", "project", "space", "list", "ticket", "todo", "sprint", "time track"],
   "playwright": ["browse", "screenshot", "webpage", "scrape", "website", "click", "navigate"],
 };
 
 /** Agent slug → servers they commonly need */
 const AGENT_SERVER_MAP: Record<string, string[]> = {
   orion: ["google-personal", "google-work", "gohighlevel"],
-  zen: ["google-personal", "google-work", "notion"],
-  digit: ["square", "gohighlevel", "notion"],
+  zen: ["google-personal", "google-work", "notion", "clickup"],
+  digit: ["square", "gohighlevel", "notion", "clickup"],
   flux: ["square", "gohighlevel", "playwright"],
   helios: ["gohighlevel", "playwright"],
   echo: ["gohighlevel", "google-personal"],
@@ -107,17 +109,17 @@ const AGENT_SERVER_MAP: Record<string, string[]> = {
   joule: ["cloudflare", "gohighlevel", "google-personal"],
   pixel: ["gohighlevel", "playwright", "notion"],
   kai: ["notion", "playwright", "google-personal"],
-  athena: ["playwright", "square", "gohighlevel", "notion"],
+  athena: ["playwright", "square", "gohighlevel", "notion", "clickup"],
   aura: ["playwright", "notion"],
   morpheus: ["playwright", "notion", "google-personal"],
   magnus: ["playwright", "cloudflare", "notion"],
-  oracle: ["playwright", "notion"],
+  oracle: ["playwright", "notion", "clickup"],
   nexus: ["playwright", "notion", "gohighlevel"],
   lex: ["playwright", "notion", "google-personal"],
   helia: ["google-personal", "playwright", "gohighlevel", "notion"],
   bridge: ["google-personal", "playwright", "gohighlevel", "zoom", "notion"],
   quill: ["playwright", "notion", "google-personal"],
-  tesseract: ["playwright", "notion"],
+  tesseract: ["playwright", "notion", "clickup"],
   cipher: ["playwright"],
   rift: ["playwright", "cloudflare"],
 };
@@ -192,10 +194,11 @@ export const PER_USER_PROVIDERS = [
   "notion",
   "zoom",
   "gohighlevel",
+  "clickup",
 ] as const;
 
 // Providers that use API-key input (no OAuth redirect)
-export const API_KEY_PROVIDERS = ["gohighlevel"] as const;
+export const API_KEY_PROVIDERS = ["gohighlevel", "clickup"] as const;
 export type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
 
 export type Provider = (typeof PER_USER_PROVIDERS)[number];
@@ -672,6 +675,20 @@ export async function regenerateMcpConfig(
                 BEARER_TOKEN_BEARERAUTH: creds.bearer_token,
                 BEARER_TOKEN_BEARER: creds.bearer_token,
               },
+            };
+          }
+          break;
+        }
+
+        case "clickup": {
+          const creds = integration.credentials || {};
+          if (creds.api_token) {
+            const cmd = mcpCommand("@chykalophia/clickup-mcp-server");
+            mcpServers["clickup"] = {
+              type: "stdio",
+              command: cmd.command,
+              args: cmd.args,
+              env: { CLICKUP_API_TOKEN: creds.api_token },
             };
           }
           break;

@@ -445,6 +445,12 @@ async function saveApiKeyHandler(userId: string, provider: string, req: Request)
       return result;
     }
 
+    case "clickup": {
+      const { api_token } = body as { api_token?: string };
+      if (!api_token) return { error: "API token is required" };
+      return await saveApiKeyIntegration(supabase, userId, "clickup", { api_token }, {});
+    }
+
     default:
       return { error: `Unknown API-key provider: ${provider}` };
   }
@@ -2012,7 +2018,8 @@ function renderMiniApp(): string {
       'google-work': { name: 'Google Work', icon: '\uD83C\uDFE2', color: '#0F9D58' },
       'notion': { name: 'Notion', icon: '\uD83D\uDCDD', color: '#000000' },
       'zoom': { name: 'Zoom', icon: '\uD83C\uDFA5', color: '#2D8CFF' },
-      'gohighlevel': { name: 'Go High Level', icon: '\uD83C\uDFE2', color: '#FF6B35', apiKey: true }
+      'gohighlevel': { name: 'Go High Level', icon: '\uD83C\uDFE2', color: '#FF6B35', apiKey: true },
+      'clickup': { name: 'ClickUp', icon: '\u2705', color: '#7B68EE', apiKey: true }
     };
 
     async function loadIntegrations() {
@@ -2060,6 +2067,9 @@ function renderMiniApp(): string {
           if (intg.provider === 'gohighlevel') {
             html += '<input type="password" id="ghl-bearer-token" placeholder="Bearer Token" style="padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:14px;" />';
             html += '<input type="text" id="ghl-location-id" placeholder="Location ID" style="padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:14px;" />';
+          }
+          if (intg.provider === 'clickup') {
+            html += '<input type="password" id="clickup-api-token" placeholder="API Token (pk_...)" style="padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:14px;" />';
           }
           html += '<button class="approval-btn approve" style="padding:10px 16px;font-size:14px;width:100%;" onclick="doSaveApiKey(\\'' + intg.provider + '\\')">Save</button>';
           html += '</div>';
@@ -2113,6 +2123,11 @@ function renderMiniApp(): string {
         if (!token || !token.value.trim()) { showToast('Bearer Token is required', 'error'); return; }
         if (!locId || !locId.value.trim()) { showToast('Location ID is required', 'error'); return; }
         body = { bearer_token: token.value.trim(), location_id: locId.value.trim() };
+      }
+      if (provider === 'clickup') {
+        var cuToken = document.getElementById('clickup-api-token');
+        if (!cuToken || !cuToken.value.trim()) { showToast('API Token is required', 'error'); return; }
+        body = { api_token: cuToken.value.trim() };
       }
       var data = await apiFetch('/integrations/' + encodeURIComponent(provider) + '/save-key', {
         method: 'POST',
