@@ -47,6 +47,7 @@ import {
 } from "./ai-provider.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
+import { CodexProvider } from "./providers/codex.ts";
 import { selectProvider, parseProviderPrefix, recordRateLimit } from "./ai-router.ts";
 import {
   markdownToTelegramHTML,
@@ -2010,6 +2011,9 @@ registerProvider(claudeProvider);
 
 const geminiProvider = new GeminiProvider();
 registerProvider(geminiProvider);
+
+const codexProvider = new CodexProvider();
+registerProvider(codexProvider);
 
 // Check which providers are actually available
 (async () => {

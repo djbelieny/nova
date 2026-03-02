@@ -165,7 +165,7 @@ function findAlternativeProvider(excludeName: string): AIProvider | null {
  * Returns { provider, message } if prefix found, null otherwise.
  */
 export function parseProviderPrefix(text: string): { provider: string; message: string } | null {
-  const match = text.match(/^\/(claude|gemini)\s+(.+)/s);
+  const match = text.match(/^\/(claude|gemini|codex)\s+(.+)/s);
   if (!match) return null;
   return { provider: match[1], message: match[2] };
 }

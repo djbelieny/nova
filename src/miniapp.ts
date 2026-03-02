@@ -14,10 +14,12 @@ import { getAllAgents, loadAgents } from "./agent-router.ts";
 import { registerProvider, getAllProviders, getAvailableProviderNames } from "./ai-provider.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
+import { CodexProvider } from "./providers/codex.ts";
 
 // Register AI providers for availability checks
 registerProvider(new ClaudeProvider());
 registerProvider(new GeminiProvider());
+registerProvider(new CodexProvider());
 import {
   getIntegrationStatus,
   getOAuthUrl,
@@ -1393,6 +1395,14 @@ function renderMiniApp(): string {
               <span class="provider-badge" id="badgeGemini" style="margin-left:auto;font-size:11px;padding:2px 6px;border-radius:4px;background:var(--border);color:var(--hint);"></span>
             </label>
             <label style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border);cursor:pointer;">
+              <input type="radio" name="aiProvider" value="codex">
+              <div>
+                <div style="font-weight:600;font-size:14px;">Codex</div>
+                <div style="font-size:12px;color:var(--hint);">OpenAI Codex CLI — o3/o4-mini models</div>
+              </div>
+              <span class="provider-badge" id="badgeCodex" style="margin-left:auto;font-size:11px;padding:2px 6px;border-radius:4px;background:var(--border);color:var(--hint);"></span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;padding:8px;border-radius:8px;border:1px solid var(--border);cursor:pointer;">
               <input type="radio" name="aiProvider" value="smart">
               <div>
                 <div style="font-weight:600;font-size:14px;">Smart Routing</div>
@@ -1772,19 +1782,14 @@ function renderMiniApp(): string {
       radios.forEach(function(r) {
         if (r.value === data.current) r.checked = true;
       });
-      var bc = document.getElementById('badgeClaude');
-      var bg = document.getElementById('badgeGemini');
+      var badges = { claude: document.getElementById('badgeClaude'), gemini: document.getElementById('badgeGemini'), codex: document.getElementById('badgeCodex') };
       if (data.providers) {
         data.providers.forEach(function(p) {
-          if (p.name === 'claude' && bc) {
-            bc.textContent = p.available ? 'Available' : 'Unavailable';
-            bc.style.background = p.available ? '#22c55e22' : '#ef444422';
-            bc.style.color = p.available ? '#22c55e' : '#ef4444';
-          }
-          if (p.name === 'gemini' && bg) {
-            bg.textContent = p.available ? 'Available' : 'Unavailable';
-            bg.style.background = p.available ? '#22c55e22' : '#ef444422';
-            bg.style.color = p.available ? '#22c55e' : '#ef4444';
+          var badge = badges[p.name];
+          if (badge) {
+            badge.textContent = p.available ? 'Available' : 'Unavailable';
+            badge.style.background = p.available ? '#22c55e22' : '#ef444422';
+            badge.style.color = p.available ? '#22c55e' : '#ef4444';
           }
         });
       }
@@ -2872,9 +2877,9 @@ const server = Bun.serve({
       if (path === "/api/ai-provider" && method === "POST") {
         const body = await req.json().catch(() => ({}));
         const provider = body.provider;
-        const validProviders = ["claude", "gemini", "smart"];
+        const validProviders = ["claude", "gemini", "codex", "smart"];
         if (!provider || !validProviders.includes(provider)) {
-          return jsonResponse({ error: "Invalid provider. Choose: claude, gemini, or smart" }, 400);
+          return jsonResponse({ error: "Invalid provider. Choose: claude, gemini, codex, or smart" }, 400);
         }
         const updated = supabase.updateUser(userId, { ai_provider: provider });
         return jsonResponse({ ai_provider: updated?.ai_provider || provider });

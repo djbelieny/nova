@@ -18,10 +18,12 @@ import { textToSpeech } from "./tts.ts";
 import { registerProvider, getDefaultProvider } from "./ai-provider.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
+import { CodexProvider } from "./providers/codex.ts";
 
 // Register AI providers (voice-server runs standalone, not via relay.ts)
 registerProvider(new ClaudeProvider());
 registerProvider(new GeminiProvider());
+registerProvider(new CodexProvider());
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
