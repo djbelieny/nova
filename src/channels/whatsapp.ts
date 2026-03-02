@@ -98,6 +98,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     const proxyUrl = process.env.WHATSAPP_PROXY;
     const agent = proxyUrl ? new SocksProxyAgent(proxyUrl) : undefined;
+    console.log(`[whatsapp:${this.userId}] Connecting${proxyUrl ? ` via proxy ${proxyUrl}` : ' directly'}`);
 
     this.sock = makeWASocket({
       auth: state,
