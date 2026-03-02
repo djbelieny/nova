@@ -12,7 +12,7 @@ import "dotenv/config";
 import { readFile, readdir, stat } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database } from "./db.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -20,11 +20,8 @@ const PORT = 3033;
 const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const LOGS_DIR = join(PROJECT_ROOT, "logs");
 
-// Supabase (optional)
-const supabase: SupabaseClient | null =
-  process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
-    : null;
+// Database (local SQLite)
+const supabase: Database = getDb();
 
 const startTime = Date.now();
 
@@ -296,13 +293,8 @@ async function getStatus(): Promise<unknown> {
 }
 
 async function getUsers(): Promise<unknown> {
-  if (!supabase) return { users: [], error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, name, telegram_id, role, timezone, active")
-      .order("created_at");
-    if (error) return { users: [], error: error.message };
+    const data = supabase.getAllActiveUsers();
     return { users: data || [] };
   } catch (e: any) {
     return { users: [], error: e.message };
@@ -310,16 +302,8 @@ async function getUsers(): Promise<unknown> {
 }
 
 async function getMessages(limit: number, userId?: string): Promise<unknown> {
-  if (!supabase) return { messages: [], error: "Supabase not configured" };
   try {
-    let query = supabase
-      .from("messages")
-      .select("id, created_at, role, content, channel, metadata")
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (userId) query = query.eq("user_id", userId);
-    const { data, error } = await query;
-    if (error) return { messages: [], error: error.message };
+    const data = supabase.getMessagesFiltered({ limit, userId });
     return { messages: data || [] };
   } catch (e: any) {
     return { messages: [], error: e.message };
@@ -327,19 +311,8 @@ async function getMessages(limit: number, userId?: string): Promise<unknown> {
 }
 
 async function getMemory(type: string, userId?: string): Promise<unknown> {
-  if (!supabase) return { memory: [], error: "Supabase not configured" };
   try {
-    let query = supabase
-      .from("memory")
-      .select("id, created_at, type, content, deadline, completed_at, priority, scope")
-      .order("created_at", { ascending: false })
-      .limit(100);
-    if (type !== "all") {
-      query = query.eq("type", type);
-    }
-    if (userId) query = query.eq("user_id", userId);
-    const { data, error } = await query;
-    if (error) return { memory: [], error: error.message };
+    const data = supabase.getMemoryFiltered({ type, userId });
     return { memory: data || [] };
   } catch (e: any) {
     return { memory: [], error: e.message };
@@ -347,22 +320,14 @@ async function getMemory(type: string, userId?: string): Promise<unknown> {
 }
 
 async function getMetrics(userId?: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
     const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    let dayQ = supabase.from("messages").select("id", { count: "exact", head: true }).gte("created_at", oneDayAgo);
-    let weekQ = supabase.from("messages").select("id", { count: "exact", head: true }).gte("created_at", oneWeekAgo);
-    let chanQ = supabase.from("messages").select("channel, role, created_at").gte("created_at", oneDayAgo);
-    if (userId) {
-      dayQ = dayQ.eq("user_id", userId);
-      weekQ = weekQ.eq("user_id", userId);
-      chanQ = chanQ.eq("user_id", userId);
-    }
-
-    const [dayResult, weekResult, channelResult] = await Promise.all([dayQ, weekQ, chanQ]);
+    const dayCount = supabase.countMessages({ userId, since: oneDayAgo });
+    const weekCount = supabase.countMessages({ userId, since: oneWeekAgo });
+    const dayMsgs = supabase.getMessagesFiltered({ userId, since: oneDayAgo, limit: 10000, order: "asc" });
 
     // Hourly breakdown for last 24h
     const hourly: Record<number, number> = {};
@@ -370,18 +335,16 @@ async function getMetrics(userId?: string): Promise<unknown> {
     const channelCounts: Record<string, number> = {};
     const roleCounts: Record<string, number> = {};
 
-    if (channelResult.data) {
-      for (const msg of channelResult.data) {
-        const h = new Date(msg.created_at).getHours();
-        hourly[h] = (hourly[h] || 0) + 1;
-        channelCounts[msg.channel || "unknown"] = (channelCounts[msg.channel || "unknown"] || 0) + 1;
-        roleCounts[msg.role || "unknown"] = (roleCounts[msg.role || "unknown"] || 0) + 1;
-      }
+    for (const msg of dayMsgs) {
+      const h = new Date(msg.created_at).getHours();
+      hourly[h] = (hourly[h] || 0) + 1;
+      channelCounts[msg.channel || "unknown"] = (channelCounts[msg.channel || "unknown"] || 0) + 1;
+      roleCounts[msg.role || "unknown"] = (roleCounts[msg.role || "unknown"] || 0) + 1;
     }
 
     return {
-      today: dayResult.count || 0,
-      thisWeek: weekResult.count || 0,
+      today: dayCount,
+      thisWeek: weekCount,
       hourly,
       byChannel: channelCounts,
       byRole: roleCounts,
@@ -527,17 +490,8 @@ async function getResources(): Promise<unknown> {
 }
 
 async function getVoice(userId?: string): Promise<unknown> {
-  if (!supabase) return { calls: [], error: "Supabase not configured" };
   try {
-    let query = supabase
-      .from("messages")
-      .select("id, created_at, role, content, metadata")
-      .eq("channel", "phone")
-      .order("created_at", { ascending: false })
-      .limit(20);
-    if (userId) query = query.eq("user_id", userId);
-    const { data, error } = await query;
-    if (error) return { calls: [], error: error.message };
+    const data = supabase.getMessagesFiltered({ channel: "phone", userId, limit: 20 });
     return { calls: data || [] };
   } catch (e: any) {
     return { calls: [], error: e.message };
@@ -576,25 +530,14 @@ async function getSkills(): Promise<unknown> {
 }
 
 async function getCosts(userId?: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-    const selectFields = "provider, model, cost_usd, input_tokens, output_tokens, created_at";
-    let dailyQ = supabase.from("cost_tracking").select(selectFields).gte("created_at", todayStart).order("created_at", { ascending: true });
-    let monthlyQ = supabase.from("cost_tracking").select(selectFields).gte("created_at", monthStart).order("created_at", { ascending: true });
-    let lifetimeQ = supabase.from("cost_tracking").select(selectFields).order("created_at", { ascending: true });
-    if (userId) {
-      dailyQ = dailyQ.eq("user_id", userId);
-      monthlyQ = monthlyQ.eq("user_id", userId);
-      lifetimeQ = lifetimeQ.eq("user_id", userId);
-    }
-
-    const { data: dailyData } = await dailyQ;
-    const { data: monthlyData } = await monthlyQ;
-    const { data: lifetimeData } = await lifetimeQ;
+    const dailyData = supabase.getCostEntries({ since: todayStart, userId, order: "asc" });
+    const monthlyData = supabase.getCostEntries({ since: monthStart, userId, order: "asc" });
+    const lifetimeData = supabase.getCostEntries({ userId, order: "asc" });
 
     // Aggregate by model
     function aggregateByModel(rows: any[]): Record<string, { cost: number; input_tokens: number; output_tokens: number; count: number }> {
@@ -678,7 +621,6 @@ async function getCosts(userId?: string): Promise<unknown> {
 }
 
 async function getUsageByUser(): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
     const now = new Date();
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
@@ -686,23 +628,13 @@ async function getUsageByUser(): Promise<unknown> {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
     // Get all users
-    const { data: users } = await supabase
-      .from("users")
-      .select("id, name, role, active")
-      .order("created_at");
-
+    const users = supabase.getAllActiveUsers();
     if (!users || !users.length) return { users: [] };
 
-    // Fetch messages and costs in parallel
-    const [
-      { data: dayMsgs },
-      { data: weekMsgs },
-      { data: monthCosts },
-    ] = await Promise.all([
-      supabase.from("messages").select("user_id").gte("created_at", oneDayAgo),
-      supabase.from("messages").select("user_id").gte("created_at", oneWeekAgo),
-      supabase.from("cost_tracking").select("user_id, provider, cost_usd").gte("created_at", monthStart),
-    ]);
+    // Fetch messages and costs (synchronous with SQLite)
+    const dayMsgs = supabase.getMessagesFiltered({ since: oneDayAgo, limit: 100000 });
+    const weekMsgs = supabase.getMessagesFiltered({ since: oneWeekAgo, limit: 100000 });
+    const monthCosts = supabase.getCostEntries({ since: monthStart });
 
     // Count per user
     function countBy(rows: any[]): Record<string, number> {
@@ -759,16 +691,8 @@ async function getUsageByUser(): Promise<unknown> {
 }
 
 async function getAgentTasks(userId?: string): Promise<unknown> {
-  if (!supabase) return { tasks: [], error: "Supabase not configured" };
   try {
-    let query = supabase
-      .from("agent_tasks")
-      .select("id, created_at, updated_at, agent, description, status, result, metadata")
-      .order("updated_at", { ascending: false })
-      .limit(30);
-    if (userId) query = query.eq("user_id", userId);
-    const { data, error } = await query;
-    if (error) return { tasks: [], error: error.message };
+    const data = supabase.getAgentTasksRecent({ userId });
     return { tasks: data || [] };
   } catch (e: any) {
     return { tasks: [], error: e.message };

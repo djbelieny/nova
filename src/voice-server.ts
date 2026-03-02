@@ -14,7 +14,7 @@ import { readFile, unlink, mkdir } from "fs/promises";
 import { join, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { createHmac, timingSafeEqual } from "crypto";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database } from "./db.ts";
 import { textToSpeech } from "./tts.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,11 +38,8 @@ const CALL_CONTEXTS_DIR = join(RELAY_DIR, "call-contexts");
 // Audio files stored in /tmp with cleanup
 const AUDIO_DIR = "/tmp/nova-voice-audio";
 
-// Supabase (optional)
-const supabase: SupabaseClient | null =
-  process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
-    : null;
+// Database (local SQLite)
+const supabase: Database = getDb();
 
 // ============================================================
 // MULTI-USER: Resolve caller by phone number
@@ -64,32 +61,26 @@ async function resolveUserByPhone(phone: string): Promise<CallUser | null> {
   const cached = phoneUserCache.get(phone);
   if (cached !== undefined) return cached;
 
-  if (!supabase) {
-    // Fallback to env vars for single-user mode
-    if (phone === FALLBACK_PHONE) {
-      const fallback: CallUser = {
-        id: "",
-        name: FALLBACK_USER_NAME,
-        phone: FALLBACK_PHONE,
-        pin: FALLBACK_PIN,
-        timezone: FALLBACK_USER_TIMEZONE,
-        telegram_id: process.env.TELEGRAM_USER_ID || "",
-        profile_text: "",
-      };
-      phoneUserCache.set(phone, fallback);
-      return fallback;
-    }
-    phoneUserCache.set(phone, null);
-    return null;
-  }
-
   try {
-    const { data, error } = await supabase.rpc("get_user_by_phone", { p_phone: phone });
-    if (error || !data?.length) {
+    const row = supabase.getUserByPhone(phone);
+    if (!row) {
+      // Fallback to env vars for single-user mode
+      if (phone === FALLBACK_PHONE) {
+        const fallback: CallUser = {
+          id: "",
+          name: FALLBACK_USER_NAME,
+          phone: FALLBACK_PHONE,
+          pin: FALLBACK_PIN,
+          timezone: FALLBACK_USER_TIMEZONE,
+          telegram_id: process.env.TELEGRAM_USER_ID || "",
+          profile_text: "",
+        };
+        phoneUserCache.set(phone, fallback);
+        return fallback;
+      }
       phoneUserCache.set(phone, null);
       return null;
     }
-    const row = data[0];
     const user: CallUser = {
       id: row.id,
       name: row.name,
@@ -437,21 +428,19 @@ async function generateAudio(text: string): Promise<string | null> {
 }
 
 async function saveCallMessage(role: string, content: string, callSid?: string, userId?: string): Promise<void> {
-  if (!supabase) return;
   try {
     const { generateEmbedding } = await import("./embeddings.ts");
     const embedding = await generateEmbedding(content);
-    const row: Record<string, any> = {
+    supabase.saveMessage({
       role,
       content,
       channel: "phone",
       metadata: { callSid },
-    };
-    if (userId) row.user_id = userId;
-    if (embedding) row.embedding = embedding;
-    await supabase.from("messages").insert(row);
+      user_id: userId || "",
+      embedding: embedding || null,
+    });
   } catch (error) {
-    console.error("Supabase save error:", error);
+    console.error("DB save error:", error);
   }
 }
 

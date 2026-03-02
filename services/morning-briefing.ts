@@ -18,7 +18,7 @@
 
 import { spawn } from "bun";
 import { readFile, writeFile } from "fs/promises";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database } from "../src/db.ts";
 import { dirname, join } from "path";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -64,15 +64,10 @@ async function sendTelegram(chatId: string, message: string): Promise<boolean> {
 // FETCH BRIEFING USERS
 // ============================================================
 
-async function getAllBriefingUsers(supabase: SupabaseClient): Promise<BriefingUser[]> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("id, telegram_id, name, timezone, preferences")
-    .eq("active", true);
+function getAllBriefingUsers(db: Database): BriefingUser[] {
+  const users = db.getAllActiveUsers();
 
-  if (error || !data) return [];
-
-  return data.filter(
+  return users.filter(
     (u: any) => u.preferences?.morning_briefing !== false
   );
 }
@@ -119,20 +114,18 @@ function isUserBriefingHour(user: BriefingUser): boolean {
 }
 
 // ============================================================
-// SUPABASE DATA (goals & facts — per-user)
+// DATABASE CONTEXT (goals & facts — per-user)
 // ============================================================
 
-async function getSupabaseContext(supabase: SupabaseClient, userId: string): Promise<string> {
+function getDbContext(db: Database, userId: string): string {
   try {
-    const [goalsResult, factsResult] = await Promise.all([
-      supabase.rpc("get_active_goals", { p_user_id: userId }),
-      supabase.rpc("get_facts", { p_user_id: userId }),
-    ]);
+    const goalsData = db.getActiveGoals(userId);
+    const factsData = db.getFacts(userId);
 
     const parts: string[] = [];
 
-    if (goalsResult.data?.length) {
-      const goals = goalsResult.data
+    if (goalsData?.length) {
+      const goals = goalsData
         .map((g: any) => {
           const deadline = g.deadline
             ? ` (by ${new Date(g.deadline).toLocaleDateString()})`
@@ -143,8 +136,8 @@ async function getSupabaseContext(supabase: SupabaseClient, userId: string): Pro
       parts.push(`ACTIVE GOALS:\n${goals}`);
     }
 
-    if (factsResult.data?.length) {
-      const facts = factsResult.data
+    if (factsData?.length) {
+      const facts = factsData
         .slice(0, 20)
         .map((f: any) => `- ${f.content}`)
         .join("\n");
@@ -153,7 +146,7 @@ async function getSupabaseContext(supabase: SupabaseClient, userId: string): Pro
 
     return parts.join("\n\n");
   } catch (error) {
-    console.error("Supabase error:", error);
+    console.error("Database error:", error);
     return "";
   }
 }
@@ -162,7 +155,7 @@ async function getSupabaseContext(supabase: SupabaseClient, userId: string): Pro
 // CLAUDE CLI WITH MCPs (per-user context)
 // ============================================================
 
-async function getMCPBriefing(user: BriefingUser, supabaseContext: string): Promise<string> {
+async function getMCPBriefing(user: BriefingUser, dbContext: string): Promise<string> {
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-US", {
     timeZone: user.timezone,
@@ -174,7 +167,7 @@ async function getMCPBriefing(user: BriefingUser, supabaseContext: string): Prom
 
   const prompt = `You are ${user.name}'s AI assistant preparing a morning briefing for ${dateStr}.
 
-${supabaseContext ? supabaseContext + "\n\n" : ""}Your task: Create a concise morning briefing by checking available tools:
+${dbContext ? dbContext + "\n\n" : ""}Your task: Create a concise morning briefing by checking available tools:
 
 1. **Email**: Check Gmail for unread or important emails from today/yesterday. Summarize the top items.
 2. **Calendar**: Check Google Calendar for today's events and tomorrow's early events. List times and titles.
@@ -246,17 +239,9 @@ async function main() {
     process.exit(1);
   }
 
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
-    process.exit(1);
-  }
+  const db = getDb();
 
-  const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_ANON_KEY
-  );
-
-  const users = await getAllBriefingUsers(supabase);
+  const users = getAllBriefingUsers(db);
   console.log(`Found ${users.length} briefing user(s)`);
 
   const state = await loadBriefingState();
@@ -278,8 +263,8 @@ async function main() {
 
     console.log(`\nBuilding briefing for ${user.name}...`);
 
-    const supabaseContext = await getSupabaseContext(supabase, user.id);
-    const briefing = await getMCPBriefing(user, supabaseContext);
+    const dbContext = getDbContext(db, user.id);
+    const briefing = await getMCPBriefing(user, dbContext);
 
     if (!briefing) {
       console.error(`Failed to generate briefing for ${user.name}`);

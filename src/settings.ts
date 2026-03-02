@@ -1,13 +1,13 @@
 /**
  * User Settings Module
  *
- * Per-user preferences backed by the Supabase `users` table.
- * Falls back to file-based settings if Supabase is not configured.
+ * Per-user preferences backed by the SQLite `users` table.
+ * Falls back to file-based settings if database is not available.
  */
 
 import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 
 const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const SETTINGS_FILE = join(RELAY_DIR, "settings.json");
@@ -27,28 +27,24 @@ const cached = new Map<string, Settings>();
 let legacyCached: Settings | null = null;
 
 /**
- * Load settings for a specific user from Supabase.
- * Falls back to file-based settings if no supabase/userId provided.
+ * Load settings for a specific user from the database.
+ * Falls back to file-based settings if no db/userId provided.
  */
 export async function loadSettings(
-  supabase?: SupabaseClient | null,
+  db?: Database | null,
   userId?: string
 ): Promise<Settings> {
   // DB-backed path
-  if (supabase && userId) {
+  if (db && userId) {
     const cachedSettings = cached.get(userId);
     if (cachedSettings) return cachedSettings;
 
     try {
-      const { data } = await supabase
-        .from("users")
-        .select("preferences")
-        .eq("id", userId)
-        .single();
+      const user = db.getUserById(userId);
 
-      if (data?.preferences) {
+      if (user?.preferences) {
         const settings: Settings = {
-          voiceResponses: data.preferences.voice_responses ?? defaults.voiceResponses,
+          voiceResponses: user.preferences.voice_responses ?? defaults.voiceResponses,
         };
         cached.set(userId, settings);
         return settings;
@@ -77,19 +73,15 @@ export async function loadSettings(
  * Returns the new state (true = on, false = off).
  */
 export async function toggleVoiceResponses(
-  supabase?: SupabaseClient | null,
+  db?: Database | null,
   userId?: string
 ): Promise<boolean> {
-  if (supabase && userId) {
-    const settings = await loadSettings(supabase, userId);
+  if (db && userId) {
+    const settings = await loadSettings(db, userId);
     const newValue = !settings.voiceResponses;
 
     try {
-      await supabase.rpc("update_user_preference", {
-        p_user_id: userId,
-        p_key: "voice_responses",
-        p_value: JSON.stringify(newValue),
-      });
+      db.updateUserPreference(userId, "voice_responses", newValue);
     } catch (error) {
       console.warn("Settings save error:", error);
     }

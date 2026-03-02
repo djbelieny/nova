@@ -10,7 +10,7 @@
  */
 
 import { spawn } from "bun";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database } from "../src/db.ts";
 import { dirname, join } from "path";
 import { computeNextTrigger } from "../src/memory.ts";
 
@@ -21,18 +21,8 @@ const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 const MAX_CONCURRENT = 3;
 
 // ============================================================
-// SUPABASE
+// DATABASE
 // ============================================================
-
-function initSupabase(): SupabaseClient {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) {
-    console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
-    process.exit(1);
-  }
-  return createClient(url, key);
-}
 
 // ============================================================
 // TELEGRAM
@@ -84,14 +74,13 @@ interface UserInfo {
   profile_text: string;
 }
 
-async function getUserInfo(supabase: SupabaseClient, userId: string): Promise<UserInfo | null> {
-  const { data, error } = await supabase.rpc("get_user_for_dispatch", { p_user_id: userId });
-  if (error || !data?.length) return null;
-  return data[0];
+function getUserInfo(db: Database, userId: string): UserInfo | null {
+  const user = db.getUserById(userId);
+  if (!user) return null;
+  return user;
 }
 
 async function executeTask(
-  supabase: SupabaseClient,
   task: DueTask,
   userInfo: UserInfo
 ): Promise<{ success: boolean; result: string }> {
@@ -186,27 +175,24 @@ Do NOT include any [SCHEDULE:] or [REMEMBER:] tags in your response.`;
 // TASK ADVANCEMENT (recurring vs one-time)
 // ============================================================
 
-async function advanceTask(
-  supabase: SupabaseClient,
+function advanceTask(
+  db: Database,
   task: DueTask,
   result: string,
   success: boolean
-): Promise<void> {
+): void {
   const newRunCount = task.run_count + 1;
   const isMaxed = task.max_runs !== null && newRunCount >= task.max_runs;
 
   if (!success) {
     // Failed — increment run count but keep active (unless maxed)
-    await supabase
-      .from("scheduled_tasks")
-      .update({
-        last_run_at: new Date().toISOString(),
-        last_result: result.substring(0, 2000),
-        run_count: newRunCount,
-        status: isMaxed ? "failed" : "active",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", task.id);
+    db.updateScheduledTask(task.id, {
+      last_run_at: new Date().toISOString(),
+      last_result: result.substring(0, 2000),
+      run_count: newRunCount,
+      status: isMaxed ? "failed" : "active",
+      updated_at: new Date().toISOString(),
+    });
     return;
   }
 
@@ -219,41 +205,32 @@ async function advanceTask(
     );
 
     if (nextTrigger) {
-      await supabase
-        .from("scheduled_tasks")
-        .update({
-          trigger_at: nextTrigger.toISOString(),
-          last_run_at: new Date().toISOString(),
-          last_result: result.substring(0, 2000),
-          run_count: newRunCount,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", task.id);
+      db.updateScheduledTask(task.id, {
+        trigger_at: nextTrigger.toISOString(),
+        last_run_at: new Date().toISOString(),
+        last_result: result.substring(0, 2000),
+        run_count: newRunCount,
+        updated_at: new Date().toISOString(),
+      });
     } else {
       // Can't compute next trigger — mark completed
-      await supabase
-        .from("scheduled_tasks")
-        .update({
-          status: "completed",
-          last_run_at: new Date().toISOString(),
-          last_result: result.substring(0, 2000),
-          run_count: newRunCount,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", task.id);
-    }
-  } else {
-    // One-time or max runs reached — mark completed
-    await supabase
-      .from("scheduled_tasks")
-      .update({
+      db.updateScheduledTask(task.id, {
         status: "completed",
         last_run_at: new Date().toISOString(),
         last_result: result.substring(0, 2000),
         run_count: newRunCount,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", task.id);
+      });
+    }
+  } else {
+    // One-time or max runs reached — mark completed
+    db.updateScheduledTask(task.id, {
+      status: "completed",
+      last_run_at: new Date().toISOString(),
+      last_result: result.substring(0, 2000),
+      run_count: newRunCount,
+      updated_at: new Date().toISOString(),
+    });
   }
 }
 
@@ -269,15 +246,10 @@ async function main() {
     process.exit(1);
   }
 
-  const supabase = initSupabase();
+  const db = getDb();
 
   // Fetch due tasks
-  const { data: dueTasks, error } = await supabase.rpc("get_due_tasks");
-
-  if (error) {
-    console.error("Error fetching due tasks:", error.message);
-    process.exit(1);
-  }
+  const dueTasks = db.getDueTasks();
 
   if (!dueTasks?.length) {
     console.log("No due tasks");
@@ -298,14 +270,14 @@ async function main() {
         console.log(`\nExecuting: "${task.title}" (${task.id})`);
 
         // Get user info
-        const userInfo = await getUserInfo(supabase, task.user_id);
+        const userInfo = getUserInfo(db, task.user_id);
         if (!userInfo) {
           console.error(`No user found for ${task.user_id}, skipping`);
           return;
         }
 
         // Execute the task
-        const { success, result } = await executeTask(supabase, task, userInfo);
+        const { success, result } = await executeTask(task, userInfo);
 
         // Send result to user (skip if condition not met or task failed silently)
         if (success && result !== "Condition not met — skipped") {
@@ -314,7 +286,7 @@ async function main() {
             console.log(`Sent result to ${userInfo.name}`);
 
             // Save as assistant message for conversation continuity
-            await supabase.from("messages").insert({
+            db.saveMessage({
               role: "assistant",
               content: result,
               channel: "telegram",
@@ -331,7 +303,7 @@ async function main() {
         }
 
         // Advance the task (recurring → next trigger, one-time → completed)
-        await advanceTask(supabase, task, result, success);
+        advanceTask(db, task, result, success);
         console.log(`Task "${task.title}" processed`);
       })
     );

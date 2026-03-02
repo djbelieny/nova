@@ -1,0 +1,1546 @@
+/**
+ * Local SQLite Database Module
+ *
+ * Replaces Supabase with bun:sqlite + sqlite-vec for zero-latency local storage.
+ * WAL mode enables concurrent access from multiple processes (relay, dashboard, miniapp, etc.).
+ *
+ * Usage: import { getDb } from "./db.ts";
+ *        const db = getDb();
+ *        db.saveMessage({ ... });
+ */
+
+import { Database as BunDatabase } from "bun:sqlite";
+import { join, dirname } from "path";
+import { mkdirSync, existsSync } from "fs";
+import * as sqliteVec from "sqlite-vec";
+
+const PROJECT_ROOT = dirname(dirname(import.meta.path));
+const DATA_DIR = join(PROJECT_ROOT, "data");
+const DB_PATH = join(DATA_DIR, "nova.db");
+
+// ============================================================
+// Types
+// ============================================================
+
+export interface DbUser {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  telegram_id: string;
+  name: string;
+  timezone: string;
+  phone: string | null;
+  pin: string | null;
+  whatsapp_id: string | null;
+  slack_id: string | null;
+  role: string;
+  preferences: Record<string, any>;
+  profile_text: string;
+  active: number; // SQLite boolean
+}
+
+export interface DbMessage {
+  id: string;
+  created_at: string;
+  role: string;
+  content: string;
+  channel: string;
+  metadata: string; // JSON string
+  user_id: string;
+  embedding: Buffer | null;
+}
+
+export interface DbMemory {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  type: string;
+  content: string;
+  deadline: string | null;
+  completed_at: string | null;
+  priority: number;
+  metadata: string;
+  user_id: string;
+  scope: string;
+  embedding: Buffer | null;
+}
+
+export interface VectorMatch {
+  id: string;
+  content: string;
+  role?: string;
+  type?: string;
+  created_at: string;
+  similarity: number;
+}
+
+// ============================================================
+// Helpers
+// ============================================================
+
+function uuid(): string {
+  return crypto.randomUUID();
+}
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+/** Convert a number[] embedding to a Float32Array buffer for sqlite-vec. */
+export function embeddingToBlob(embedding: number[]): Buffer {
+  const f32 = new Float32Array(embedding);
+  return Buffer.from(f32.buffer);
+}
+
+/** Convert a sqlite-vec blob back to number[]. */
+export function blobToEmbedding(blob: Buffer): number[] {
+  const f32 = new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
+  return Array.from(f32);
+}
+
+/** Parse a JSON column, returning fallback on error. */
+function parseJson<T>(val: string | null | undefined, fallback: T): T {
+  if (!val) return fallback;
+  try {
+    return JSON.parse(val);
+  } catch {
+    return fallback;
+  }
+}
+
+/** Parse a TEXT[] stored as JSON array. */
+function parseTextArray(val: string | null | undefined): string[] {
+  return parseJson(val, []);
+}
+
+// ============================================================
+// Database class
+// ============================================================
+
+// macOS: use Homebrew's SQLite which supports dynamic extensions
+if (process.platform === "darwin") {
+  const brewSqlite = "/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib";
+  if (existsSync(brewSqlite)) {
+    BunDatabase.setCustomSQLite(brewSqlite);
+  }
+}
+
+export class Database {
+  private db: BunDatabase;
+
+  constructor(dbPath: string = DB_PATH) {
+    // Ensure data directory exists
+    const dir = dirname(dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    this.db = new BunDatabase(dbPath);
+
+    // Load sqlite-vec extension
+    sqliteVec.load(this.db);
+
+    // WAL mode + performance pragmas
+    this.db.run("PRAGMA journal_mode = WAL");
+    this.db.run("PRAGMA synchronous = NORMAL");
+    this.db.run("PRAGMA busy_timeout = 5000");
+    this.db.run("PRAGMA foreign_keys = ON");
+
+    // Create tables
+    this.createSchema();
+  }
+
+  /** Get the raw bun:sqlite Database for advanced queries. */
+  get raw(): BunDatabase {
+    return this.db;
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  // ============================================================
+  // Schema
+  // ============================================================
+
+  private createSchema(): void {
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        telegram_id TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        timezone TEXT DEFAULT 'UTC',
+        phone TEXT,
+        pin TEXT,
+        whatsapp_id TEXT,
+        slack_id TEXT,
+        role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+        preferences TEXT DEFAULT '{"proactive_checkin":true,"morning_briefing":true,"briefing_hour":9,"voice_responses":false}',
+        profile_text TEXT DEFAULT '',
+        active INTEGER DEFAULT 1
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_whatsapp_id ON users(whatsapp_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_slack_id ON users(slack_id)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+        content TEXT NOT NULL,
+        channel TEXT DEFAULT 'telegram',
+        metadata TEXT DEFAULT '{}',
+        user_id TEXT NOT NULL REFERENCES users(id),
+        embedding BLOB
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_messages_user_created ON messages(user_id, created_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS memory (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        type TEXT NOT NULL CHECK (type IN ('fact', 'goal', 'completed_goal', 'preference')),
+        content TEXT NOT NULL,
+        deadline TEXT,
+        completed_at TEXT,
+        priority INTEGER DEFAULT 0,
+        metadata TEXT DEFAULT '{}',
+        user_id TEXT NOT NULL REFERENCES users(id),
+        scope TEXT DEFAULT 'private' CHECK (scope IN ('private', 'shared')),
+        embedding BLOB
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_user_created ON memory(user_id, created_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS logs (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        level TEXT DEFAULT 'info' CHECK (level IN ('debug', 'info', 'warn', 'error')),
+        event TEXT NOT NULL,
+        message TEXT,
+        metadata TEXT DEFAULT '{}',
+        session_id TEXT,
+        duration_ms INTEGER,
+        user_id TEXT REFERENCES users(id)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at DESC)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS agent_tasks (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        agent TEXT NOT NULL,
+        description TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending','in_progress','done','completed','blocked','cancelled')),
+        result TEXT,
+        metadata TEXT DEFAULT '{}',
+        user_id TEXT NOT NULL REFERENCES users(id),
+        parent_task_id TEXT REFERENCES agent_tasks(id),
+        request_id TEXT
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_status ON agent_tasks(status)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_user_created ON agent_tasks(user_id, created_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_parent ON agent_tasks(parent_task_id)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS cost_tracking (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        provider TEXT DEFAULT 'claude',
+        model TEXT NOT NULL,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        session_id TEXT,
+        metadata TEXT DEFAULT '{}',
+        user_id TEXT REFERENCES users(id)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_cost_tracking_created_at ON cost_tracking(created_at DESC)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS scheduled_tasks (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        created_by TEXT NOT NULL DEFAULT 'user' CHECK (created_by IN ('user', 'nova')),
+        title TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        trigger_at TEXT,
+        next_run_at TEXT,
+        recurrence TEXT,
+        timezone TEXT NOT NULL DEFAULT 'UTC',
+        condition TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'completed', 'cancelled', 'failed')),
+        last_run_at TEXT,
+        last_result TEXT,
+        run_count INTEGER DEFAULT 0,
+        max_runs INTEGER,
+        expires_at TEXT,
+        notify_user INTEGER DEFAULT 1,
+        metadata TEXT DEFAULT '{}'
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(trigger_at) WHERE status = 'active'`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_user ON scheduled_tasks(user_id, status)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS execution_patterns (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        task_signature TEXT NOT NULL,
+        plan TEXT NOT NULL,
+        success_count INTEGER DEFAULT 0,
+        fail_count INTEGER DEFAULT 0,
+        avg_duration_ms REAL DEFAULT 0,
+        user_id TEXT REFERENCES users(id)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_execution_patterns_user ON execution_patterns(user_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_execution_patterns_success ON execution_patterns(success_count DESC)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS user_integrations (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        provider TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'disconnected'
+          CHECK (status IN ('disconnected', 'pending', 'connected', 'error')),
+        credentials TEXT DEFAULT '{}',
+        metadata TEXT DEFAULT '{}',
+        UNIQUE(user_id, provider)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_user_integrations_user ON user_integrations(user_id)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS nova_status (
+        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        updated_at TEXT DEFAULT (datetime('now')),
+        uptime_since TEXT DEFAULT (datetime('now')),
+        calls_total INTEGER DEFAULT 0,
+        calls_success INTEGER DEFAULT 0,
+        calls_failed INTEGER DEFAULT 0,
+        calls_by_model TEXT DEFAULT '{}',
+        rate_limit_hits INTEGER DEFAULT 0,
+        last_rate_limit_at TEXT,
+        avg_duration_ms REAL DEFAULT 0,
+        active_slots INTEGER DEFAULT 0,
+        max_slots INTEGER DEFAULT 2,
+        queue_depth INTEGER DEFAULT 0,
+        active_tasks INTEGER DEFAULT 0,
+        pending_approvals INTEGER DEFAULT 0
+      )
+    `);
+    // Ensure single row exists
+    this.db.run(`INSERT OR IGNORE INTO nova_status (id) VALUES (1)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS pending_approvals (
+        id TEXT PRIMARY KEY,
+        user_id TEXT REFERENCES users(id),
+        chat_id INTEGER NOT NULL,
+        original_text TEXT NOT NULL,
+        plan TEXT NOT NULL DEFAULT '{}',
+        prepare_summary TEXT DEFAULT '',
+        prepare_results TEXT DEFAULT '[]',
+        artifacts TEXT NOT NULL DEFAULT '[]',
+        execute_descriptions TEXT DEFAULT '[]',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'revised', 'cancelled', 'expired')),
+        feedback TEXT,
+        parent_task_id TEXT REFERENCES agent_tasks(id),
+        workspace_dir TEXT,
+        workflow_type TEXT DEFAULT 'generic',
+        request_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_pending_approvals_user ON pending_approvals(user_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_pending_approvals_status ON pending_approvals(status)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS revision_sessions (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        original_text TEXT NOT NULL,
+        plan TEXT NOT NULL DEFAULT '{}',
+        prepare_results TEXT NOT NULL DEFAULT '[]',
+        artifacts TEXT NOT NULL DEFAULT '[]',
+        parent_task_id TEXT REFERENCES agent_tasks(id),
+        workspace_dir TEXT,
+        workflow_type TEXT DEFAULT 'generic',
+        request_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'consumed', 'cancelled')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_revision_sessions_user_status ON revision_sessions(user_id, status)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS workflow_preferences (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        workflow_type TEXT NOT NULL,
+        task_signature TEXT NOT NULL,
+        plan TEXT NOT NULL,
+        success_count INTEGER DEFAULT 1,
+        last_used_at TEXT DEFAULT (datetime('now')),
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+    this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_prefs_unique ON workflow_preferences(user_id, task_signature)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS task_artifacts (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        task_id TEXT REFERENCES agent_tasks(id),
+        user_id TEXT NOT NULL REFERENCES users(id),
+        artifact_type TEXT NOT NULL,
+        file_path TEXT,
+        file_name TEXT,
+        file_size INTEGER,
+        description TEXT,
+        verified INTEGER DEFAULT 0,
+        delivered INTEGER DEFAULT 0,
+        metadata TEXT DEFAULT '{}'
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_task_artifacts_task ON task_artifacts(task_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_task_artifacts_user ON task_artifacts(user_id)`);
+  }
+
+  // ============================================================
+  // Users
+  // ============================================================
+
+  getUserByTelegramId(telegramId: string): any | null {
+    const row = this.db.query(
+      `SELECT * FROM users WHERE telegram_id = ? AND active = 1 LIMIT 1`
+    ).get(telegramId) as any;
+    if (!row) return null;
+    row.preferences = parseJson(row.preferences, {});
+    return row;
+  }
+
+  getUserByPhone(phone: string): any | null {
+    const row = this.db.query(
+      `SELECT * FROM users WHERE phone = ? AND active = 1 LIMIT 1`
+    ).get(phone) as any;
+    if (!row) return null;
+    row.preferences = parseJson(row.preferences, {});
+    return row;
+  }
+
+  getUserByWhatsappId(whatsappId: string): any | null {
+    const row = this.db.query(
+      `SELECT * FROM users WHERE whatsapp_id = ? LIMIT 1`
+    ).get(whatsappId) as any;
+    if (!row) return null;
+    row.preferences = parseJson(row.preferences, {});
+    return row;
+  }
+
+  getUserBySlackId(slackId: string): any | null {
+    const row = this.db.query(
+      `SELECT * FROM users WHERE slack_id = ? LIMIT 1`
+    ).get(slackId) as any;
+    if (!row) return null;
+    row.preferences = parseJson(row.preferences, {});
+    return row;
+  }
+
+  getUserById(userId: string): any | null {
+    const row = this.db.query(
+      `SELECT * FROM users WHERE id = ? LIMIT 1`
+    ).get(userId) as any;
+    if (!row) return null;
+    row.preferences = parseJson(row.preferences, {});
+    return row;
+  }
+
+  upsertUser(data: {
+    telegram_id: string;
+    name: string;
+    timezone?: string;
+    phone?: string;
+    pin?: string;
+    role?: string;
+    preferences?: Record<string, any>;
+    profile_text?: string;
+  }): any {
+    const id = uuid();
+    this.db.run(`
+      INSERT INTO users (id, telegram_id, name, timezone, phone, pin, role, preferences, profile_text)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (telegram_id) DO UPDATE SET
+        name = COALESCE(excluded.name, users.name),
+        timezone = COALESCE(excluded.timezone, users.timezone),
+        phone = COALESCE(excluded.phone, users.phone),
+        pin = COALESCE(excluded.pin, users.pin),
+        updated_at = datetime('now')
+    `, [
+      id,
+      data.telegram_id,
+      data.name,
+      data.timezone || "UTC",
+      data.phone || null,
+      data.pin || null,
+      data.role || "member",
+      JSON.stringify(data.preferences || {}),
+      data.profile_text || "",
+    ]);
+    return this.getUserByTelegramId(data.telegram_id);
+  }
+
+  updateUserPreference(userId: string, key: string, value: any): void {
+    const row = this.db.query(`SELECT preferences FROM users WHERE id = ?`).get(userId) as any;
+    if (!row) return;
+    const prefs = parseJson(row.preferences, {});
+    prefs[key] = value;
+    this.db.run(
+      `UPDATE users SET preferences = ?, updated_at = datetime('now') WHERE id = ?`,
+      [JSON.stringify(prefs), userId]
+    );
+  }
+
+  updateUser(userId: string, updates: Record<string, any>): any | null {
+    const allowed = ["name", "timezone", "phone", "pin", "profile_text", "active", "preferences"];
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    for (const [key, val] of Object.entries(updates)) {
+      if (!allowed.includes(key)) continue;
+      setClauses.push(`${key} = ?`);
+      values.push(key === "preferences" ? JSON.stringify(val) : val);
+    }
+
+    if (setClauses.length === 0) return this.getUserById(userId);
+
+    setClauses.push(`updated_at = datetime('now')`);
+    values.push(userId);
+
+    this.db.run(
+      `UPDATE users SET ${setClauses.join(", ")} WHERE id = ?`,
+      values
+    );
+    return this.getUserById(userId);
+  }
+
+  getAllActiveUsers(): any[] {
+    const rows = this.db.query(
+      `SELECT * FROM users WHERE active = 1`
+    ).all() as any[];
+    return rows.map((r) => {
+      r.preferences = parseJson(r.preferences, {});
+      return r;
+    });
+  }
+
+  getUsersByRole(role: string): any[] {
+    const rows = this.db.query(
+      `SELECT * FROM users WHERE role = ? AND active = 1`
+    ).all(role) as any[];
+    return rows.map((r) => {
+      r.preferences = parseJson(r.preferences, {});
+      return r;
+    });
+  }
+
+  // ============================================================
+  // Messages
+  // ============================================================
+
+  saveMessage(data: {
+    role: string;
+    content: string;
+    channel?: string;
+    metadata?: Record<string, unknown>;
+    user_id: string;
+    embedding?: number[] | null;
+  }): string {
+    const id = uuid();
+    this.db.run(`
+      INSERT INTO messages (id, role, content, channel, metadata, user_id, embedding)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      data.role,
+      data.content,
+      data.channel || "telegram",
+      JSON.stringify(data.metadata || {}),
+      data.user_id,
+      data.embedding ? embeddingToBlob(data.embedding) : null,
+    ]);
+    return id;
+  }
+
+  getRecentMessages(userId: string, limit: number = 20): any[] {
+    return this.db.query(`
+      SELECT id, created_at, role, content
+      FROM messages
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).all(userId, limit) as any[];
+  }
+
+  countTodayMessages(userId: string, opts?: {
+    role?: string;
+    metadataFilter?: Record<string, any>;
+  }): number {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    let sql = `SELECT COUNT(*) as count FROM messages WHERE user_id = ? AND created_at >= ?`;
+    const params: any[] = [userId, todayStart.toISOString()];
+
+    if (opts?.role) {
+      sql += ` AND role = ?`;
+      params.push(opts.role);
+    }
+
+    if (opts?.metadataFilter) {
+      for (const [key, value] of Object.entries(opts.metadataFilter)) {
+        sql += ` AND json_extract(metadata, ?) = ?`;
+        params.push(`$.${key}`, typeof value === "string" ? value : JSON.stringify(value));
+      }
+    }
+
+    const row = this.db.query(sql).get(...params) as any;
+    return row?.count || 0;
+  }
+
+  getLastUserMessage(userId: string): any | null {
+    return this.db.query(`
+      SELECT created_at FROM messages
+      WHERE user_id = ? AND role = 'user'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(userId) as any;
+  }
+
+  hasRecentActivity(userId: string, withinMinutes: number): boolean {
+    const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000).toISOString();
+    const row = this.db.query(`
+      SELECT id FROM messages
+      WHERE user_id = ? AND role = 'user' AND created_at >= ?
+      LIMIT 1
+    `).get(userId, cutoff) as any;
+    return !!row;
+  }
+
+  getMessagesForDashboard(opts?: { userId?: string; limit?: number }): any[] {
+    const limit = opts?.limit || 50;
+    if (opts?.userId) {
+      return this.db.query(`
+        SELECT id, created_at, role, content, channel, metadata
+        FROM messages WHERE user_id = ?
+        ORDER BY created_at DESC LIMIT ?
+      `).all(opts.userId, limit) as any[];
+    }
+    return this.db.query(`
+      SELECT id, created_at, role, content, channel, metadata
+      FROM messages ORDER BY created_at DESC LIMIT ?
+    `).all(limit) as any[];
+  }
+
+  getMessageCountSince(since: string, userId?: string): number {
+    if (userId) {
+      const row = this.db.query(
+        `SELECT COUNT(*) as count FROM messages WHERE created_at >= ? AND user_id = ?`
+      ).get(since, userId) as any;
+      return row?.count || 0;
+    }
+    const row = this.db.query(
+      `SELECT COUNT(*) as count FROM messages WHERE created_at >= ?`
+    ).get(since) as any;
+    return row?.count || 0;
+  }
+
+  getMessagesSince(since: string, userId?: string): any[] {
+    if (userId) {
+      return this.db.query(`
+        SELECT channel, role, created_at FROM messages
+        WHERE created_at >= ? AND user_id = ?
+      `).all(since, userId) as any[];
+    }
+    return this.db.query(`
+      SELECT channel, role, created_at FROM messages
+      WHERE created_at >= ?
+    `).all(since) as any[];
+  }
+
+  // ============================================================
+  // Vector Search (sqlite-vec)
+  // ============================================================
+
+  matchMessages(queryEmbedding: number[], userId: string, opts?: {
+    matchThreshold?: number;
+    matchCount?: number;
+  }): VectorMatch[] {
+    const threshold = opts?.matchThreshold ?? 0.7;
+    const limit = opts?.matchCount ?? 10;
+    const blob = embeddingToBlob(queryEmbedding);
+
+    const rows = this.db.query(`
+      SELECT id, content, role, created_at,
+        (1.0 - vec_distance_cosine(embedding, ?)) AS similarity
+      FROM messages
+      WHERE user_id = ? AND embedding IS NOT NULL
+      ORDER BY vec_distance_cosine(embedding, ?) ASC
+      LIMIT ?
+    `).all(blob, userId, blob, limit) as any[];
+
+    return rows.filter((r: any) => r.similarity > threshold);
+  }
+
+  matchMemory(queryEmbedding: number[], userId: string, opts?: {
+    matchThreshold?: number;
+    matchCount?: number;
+  }): VectorMatch[] {
+    const threshold = opts?.matchThreshold ?? 0.7;
+    const limit = opts?.matchCount ?? 10;
+    const blob = embeddingToBlob(queryEmbedding);
+
+    const rows = this.db.query(`
+      SELECT id, content, type, created_at,
+        (1.0 - vec_distance_cosine(embedding, ?)) AS similarity
+      FROM memory
+      WHERE (user_id = ? OR scope = 'shared') AND embedding IS NOT NULL
+      ORDER BY vec_distance_cosine(embedding, ?) ASC
+      LIMIT ?
+    `).all(blob, userId, blob, limit) as any[];
+
+    return rows.filter((r: any) => r.similarity > threshold);
+  }
+
+  // ============================================================
+  // Memory (Facts, Goals)
+  // ============================================================
+
+  insertMemory(data: {
+    type: string;
+    content: string;
+    user_id: string;
+    scope?: string;
+    deadline?: string | null;
+    embedding?: number[] | null;
+    priority?: number;
+  }): string {
+    const id = uuid();
+    this.db.run(`
+      INSERT INTO memory (id, type, content, user_id, scope, deadline, embedding, priority)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      data.type,
+      data.content,
+      data.user_id,
+      data.scope || "private",
+      data.deadline || null,
+      data.embedding ? embeddingToBlob(data.embedding) : null,
+      data.priority || 0,
+    ]);
+    return id;
+  }
+
+  getFacts(userId: string): any[] {
+    return this.db.query(`
+      SELECT id, content FROM memory
+      WHERE type = 'fact' AND (user_id = ? OR scope = 'shared')
+      ORDER BY created_at DESC
+    `).all(userId) as any[];
+  }
+
+  getActiveGoals(userId: string): any[] {
+    return this.db.query(`
+      SELECT id, content, deadline, priority FROM memory
+      WHERE type = 'goal' AND user_id = ?
+      ORDER BY priority DESC, created_at DESC
+    `).all(userId) as any[];
+  }
+
+  findMemoryByContent(userId: string, type: string, searchText: string): any | null {
+    // Use LIKE for case-insensitive substring matching (ILIKE equivalent)
+    return this.db.query(`
+      SELECT id FROM memory
+      WHERE type = ? AND user_id = ? AND content LIKE ? COLLATE NOCASE
+      LIMIT 1
+    `).get(type, userId, `%${searchText}%`) as any;
+  }
+
+  updateMemory(id: string, updates: Record<string, any>): void {
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    for (const [key, val] of Object.entries(updates)) {
+      setClauses.push(`${key} = ?`);
+      values.push(val);
+    }
+
+    setClauses.push(`updated_at = datetime('now')`);
+    values.push(id);
+
+    this.db.run(
+      `UPDATE memory SET ${setClauses.join(", ")} WHERE id = ?`,
+      values
+    );
+  }
+
+  getMemoryForDashboard(opts?: { type?: string; userId?: string; limit?: number }): any[] {
+    const limit = opts?.limit || 100;
+    let sql = `SELECT id, created_at, type, content, deadline, completed_at, priority, scope FROM memory`;
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (opts?.type) { conditions.push(`type = ?`); params.push(opts.type); }
+    if (opts?.userId) { conditions.push(`user_id = ?`); params.push(opts.userId); }
+
+    if (conditions.length) sql += ` WHERE ${conditions.join(" AND ")}`;
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit);
+
+    return this.db.query(sql).all(...params) as any[];
+  }
+
+  deleteMemoryEntries(ids: string[]): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => "?").join(",");
+    this.db.run(`DELETE FROM memory WHERE id IN (${placeholders})`, ids);
+  }
+
+  getAllFacts(): any[] {
+    return this.db.query(`
+      SELECT id, type, content, created_at, user_id, scope
+      FROM memory WHERE type = 'fact'
+      ORDER BY created_at DESC
+    `).all() as any[];
+  }
+
+  getCompletedGoalsBefore(cutoffDate: string): any[] {
+    return this.db.query(`
+      SELECT id, type, content, created_at, user_id, scope
+      FROM memory
+      WHERE type = 'completed_goal' AND completed_at < ?
+    `).all(cutoffDate) as any[];
+  }
+
+  // ============================================================
+  // Tasks
+  // ============================================================
+
+  insertTask(data: {
+    agent: string;
+    description: string;
+    status?: string;
+    user_id: string;
+    parent_task_id?: string | null;
+    request_id?: string | null;
+  }): string {
+    const id = uuid();
+    this.db.run(`
+      INSERT INTO agent_tasks (id, agent, description, status, user_id, parent_task_id, request_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      data.agent,
+      data.description,
+      data.status || "pending",
+      data.user_id,
+      data.parent_task_id || null,
+      data.request_id || null,
+    ]);
+    return id;
+  }
+
+  getActiveTasks(userId: string): any[] {
+    return this.db.query(`
+      SELECT * FROM agent_tasks
+      WHERE status IN ('pending', 'in_progress', 'blocked') AND user_id = ?
+      ORDER BY created_at DESC
+    `).all(userId) as any[];
+  }
+
+  updateTask(id: string, updates: Record<string, any>): void {
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    for (const [key, val] of Object.entries(updates)) {
+      setClauses.push(`${key} = ?`);
+      values.push(val);
+    }
+
+    setClauses.push(`updated_at = datetime('now')`);
+    values.push(id);
+
+    this.db.run(
+      `UPDATE agent_tasks SET ${setClauses.join(", ")} WHERE id = ?`,
+      values
+    );
+  }
+
+  findTaskByDescription(userId: string, statuses: string[], searchText: string): any | null {
+    const placeholders = statuses.map(() => "?").join(",");
+    return this.db.query(`
+      SELECT id FROM agent_tasks
+      WHERE status IN (${placeholders}) AND user_id = ? AND description LIKE ? COLLATE NOCASE
+      LIMIT 1
+    `).get(...statuses, userId, `%${searchText}%`) as any;
+  }
+
+  getAgentTaskStats(userId: string): any[] {
+    return this.db.query(`
+      SELECT agent, status FROM agent_tasks WHERE user_id = ?
+    `).all(userId) as any[];
+  }
+
+  getTasksByAgent(userId: string, agent: string, limit: number = 20): any[] {
+    return this.db.query(`
+      SELECT * FROM agent_tasks WHERE user_id = ? AND agent = ?
+      ORDER BY created_at DESC LIMIT ?
+    `).all(userId, agent, limit) as any[];
+  }
+
+  getParentTasks(userId: string, limit: number = 50): any[] {
+    return this.db.query(`
+      SELECT * FROM agent_tasks WHERE user_id = ? AND parent_task_id IS NULL
+      ORDER BY created_at DESC LIMIT ?
+    `).all(userId, limit) as any[];
+  }
+
+  getSubtasksByParentIds(parentIds: string[]): any[] {
+    if (parentIds.length === 0) return [];
+    const placeholders = parentIds.map(() => "?").join(",");
+    return this.db.query(`
+      SELECT * FROM agent_tasks WHERE parent_task_id IN (${placeholders})
+      ORDER BY created_at ASC
+    `).all(...parentIds) as any[];
+  }
+
+  getTaskById(taskId: string, userId?: string): any | null {
+    if (userId) {
+      return this.db.query(
+        `SELECT * FROM agent_tasks WHERE id = ? AND user_id = ?`
+      ).get(taskId, userId) as any;
+    }
+    return this.db.query(
+      `SELECT * FROM agent_tasks WHERE id = ?`
+    ).get(taskId) as any;
+  }
+
+  getArtifactsByTaskIds(taskIds: string[]): any[] {
+    if (taskIds.length === 0) return [];
+    const placeholders = taskIds.map(() => "?").join(",");
+    return this.db.query(`
+      SELECT * FROM task_artifacts WHERE task_id IN (${placeholders})
+      ORDER BY created_at ASC
+    `).all(...taskIds) as any[];
+  }
+
+  // ============================================================
+  // Scheduled Tasks
+  // ============================================================
+
+  insertScheduledTask(data: {
+    user_id: string;
+    created_by?: string;
+    title: string;
+    instructions: string;
+    trigger_at?: string | null;
+    recurrence?: string | null;
+    timezone?: string;
+    condition?: string | null;
+    max_runs?: number | null;
+  }): string {
+    const id = uuid();
+    this.db.run(`
+      INSERT INTO scheduled_tasks (id, user_id, created_by, title, instructions, trigger_at, next_run_at, recurrence, timezone, condition, max_runs)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      data.user_id,
+      data.created_by || "user",
+      data.title,
+      data.instructions,
+      data.trigger_at || null,
+      data.trigger_at || null, // next_run_at starts as trigger_at
+      data.recurrence || null,
+      data.timezone || "UTC",
+      data.condition || null,
+      data.max_runs ?? null,
+    ]);
+    return id;
+  }
+
+  getScheduledTasks(userId: string): any[] {
+    return this.db.query(`
+      SELECT id, title, trigger_at, recurrence, timezone, created_by, status, condition
+      FROM scheduled_tasks
+      WHERE user_id = ? AND status = 'active'
+      ORDER BY trigger_at ASC
+    `).all(userId) as any[];
+  }
+
+  getDueTasks(): any[] {
+    const nowStr = new Date().toISOString();
+    return this.db.query(`
+      SELECT id, user_id, created_by, title, instructions, trigger_at, recurrence,
+             timezone, condition, max_runs, run_count, metadata
+      FROM scheduled_tasks
+      WHERE status = 'active' AND trigger_at <= ?
+        AND (expires_at IS NULL OR expires_at > ?)
+      ORDER BY trigger_at ASC
+      LIMIT 10
+    `).all(nowStr, nowStr) as any[];
+  }
+
+  updateScheduledTask(id: string, updates: Record<string, any>): void {
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    for (const [key, val] of Object.entries(updates)) {
+      setClauses.push(`${key} = ?`);
+      values.push(val);
+    }
+
+    setClauses.push(`updated_at = datetime('now')`);
+    values.push(id);
+
+    this.db.run(
+      `UPDATE scheduled_tasks SET ${setClauses.join(", ")} WHERE id = ?`,
+      values
+    );
+  }
+
+  findScheduledTaskByTitle(userId: string, searchText: string): any | null {
+    return this.db.query(`
+      SELECT id FROM scheduled_tasks
+      WHERE user_id = ? AND status = 'active' AND title LIKE ? COLLATE NOCASE
+      LIMIT 1
+    `).get(userId, `%${searchText}%`) as any;
+  }
+
+  getUpcomingScheduledTasks(userId: string, fromTime: string, toTime: string, limit: number = 5): any[] {
+    return this.db.query(`
+      SELECT title, next_run_at FROM scheduled_tasks
+      WHERE user_id = ? AND status = 'active'
+        AND next_run_at >= ? AND next_run_at <= ?
+      ORDER BY next_run_at ASC LIMIT ?
+    `).all(userId, fromTime, toTime, limit) as any[];
+  }
+
+  // ============================================================
+  // Integrations
+  // ============================================================
+
+  getUserIntegrations(userId: string): any[] {
+    return this.db.query(`
+      SELECT id, provider, status, metadata, updated_at
+      FROM user_integrations
+      WHERE user_id = ?
+      ORDER BY provider
+    `).all(userId) as any[];
+  }
+
+  upsertIntegration(data: {
+    user_id: string;
+    provider: string;
+    status: string;
+    credentials?: Record<string, any>;
+    metadata?: Record<string, any>;
+  }): void {
+    this.db.run(`
+      INSERT INTO user_integrations (id, user_id, provider, status, credentials, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, provider) DO UPDATE SET
+        status = excluded.status,
+        credentials = CASE WHEN excluded.credentials = '{}' THEN user_integrations.credentials ELSE excluded.credentials END,
+        metadata = CASE WHEN excluded.metadata = '{}' THEN user_integrations.metadata ELSE excluded.metadata END,
+        updated_at = datetime('now')
+    `, [
+      uuid(),
+      data.user_id,
+      data.provider,
+      data.status,
+      JSON.stringify(data.credentials || {}),
+      JSON.stringify(data.metadata || {}),
+    ]);
+  }
+
+  getIntegrationCredentials(userId: string, provider: string): any | null {
+    const row = this.db.query(`
+      SELECT credentials, metadata FROM user_integrations
+      WHERE user_id = ? AND provider = ? AND status = 'connected'
+      LIMIT 1
+    `).get(userId, provider) as any;
+    if (!row) return null;
+    return {
+      credentials: parseJson(row.credentials, {}),
+      metadata: parseJson(row.metadata, {}),
+    };
+  }
+
+  getConnectedIntegrations(userId: string): any[] {
+    return this.db.query(`
+      SELECT provider, status, credentials FROM user_integrations
+      WHERE user_id = ? AND status = 'connected'
+    `).all(userId) as any[];
+  }
+
+  // ============================================================
+  // Patterns
+  // ============================================================
+
+  findPatterns(userId: string, minSuccess: number = 2, limit: number = 10): any[] {
+    const rows = this.db.query(`
+      SELECT * FROM execution_patterns
+      WHERE user_id = ? AND success_count >= ?
+      ORDER BY success_count DESC
+      LIMIT ?
+    `).all(userId, minSuccess, limit) as any[];
+    return rows.map((r) => {
+      r.plan = parseJson(r.plan, { subtasks: [] });
+      return r;
+    });
+  }
+
+  findPatternBySignature(userId: string, signature: string): any | null {
+    const row = this.db.query(`
+      SELECT id, success_count, fail_count, avg_duration_ms
+      FROM execution_patterns
+      WHERE task_signature = ? AND user_id = ?
+      LIMIT 1
+    `).get(signature, userId) as any;
+    return row || null;
+  }
+
+  insertPattern(data: {
+    task_signature: string;
+    plan: any;
+    success_count: number;
+    fail_count: number;
+    avg_duration_ms: number;
+    user_id: string;
+  }): void {
+    this.db.run(`
+      INSERT INTO execution_patterns (id, task_signature, plan, success_count, fail_count, avg_duration_ms, user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      uuid(),
+      data.task_signature,
+      JSON.stringify(data.plan),
+      data.success_count,
+      data.fail_count,
+      data.avg_duration_ms,
+      data.user_id,
+    ]);
+  }
+
+  updatePattern(id: string, updates: Record<string, any>): void {
+    const setClauses: string[] = [];
+    const values: any[] = [];
+
+    for (const [key, val] of Object.entries(updates)) {
+      setClauses.push(`${key} = ?`);
+      values.push(key === "plan" ? JSON.stringify(val) : val);
+    }
+
+    setClauses.push(`updated_at = datetime('now')`);
+    values.push(id);
+
+    this.db.run(
+      `UPDATE execution_patterns SET ${setClauses.join(", ")} WHERE id = ?`,
+      values
+    );
+  }
+
+  // ============================================================
+  // Nova Status
+  // ============================================================
+
+  upsertNovaStatus(data: Record<string, any>): void {
+    const sets: string[] = [];
+    const vals: any[] = [];
+
+    for (const [key, val] of Object.entries(data)) {
+      if (key === "id") continue;
+      sets.push(`${key} = ?`);
+      vals.push(typeof val === "object" ? JSON.stringify(val) : val);
+    }
+
+    sets.push(`updated_at = datetime('now')`);
+
+    this.db.run(`UPDATE nova_status SET ${sets.join(", ")} WHERE id = 1`, vals);
+  }
+
+  getNovaStatus(): any | null {
+    return this.db.query(`SELECT * FROM nova_status WHERE id = 1`).get() as any;
+  }
+
+  // ============================================================
+  // Cost Tracking
+  // ============================================================
+
+  insertCostEntry(data: {
+    provider?: string;
+    model: string;
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+    cost_usd?: number;
+    duration_ms?: number;
+    session_id?: string;
+    user_id?: string;
+    metadata?: Record<string, unknown>;
+  }): void {
+    this.db.run(`
+      INSERT INTO cost_tracking (id, provider, model, input_tokens, output_tokens,
+        cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms,
+        session_id, metadata, user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      uuid(),
+      data.provider || "claude",
+      data.model,
+      data.input_tokens || 0,
+      data.output_tokens || 0,
+      data.cache_read_tokens || 0,
+      data.cache_creation_tokens || 0,
+      data.cost_usd || 0,
+      data.duration_ms || 0,
+      data.session_id || null,
+      JSON.stringify(data.metadata || {}),
+      data.user_id || null,
+    ]);
+  }
+
+  // ============================================================
+  // Dashboard / Query Helpers
+  // ============================================================
+
+  getMessagesFiltered(opts: { limit?: number; userId?: string; channel?: string; since?: string; order?: "asc" | "desc" }): any[] {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
+    if (opts.channel) { conditions.push("channel = ?"); params.push(opts.channel); }
+    if (opts.since) { conditions.push("created_at >= ?"); params.push(opts.since); }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const order = opts.order === "asc" ? "ASC" : "DESC";
+    return this.db.query(
+      `SELECT id, created_at, role, content, channel, metadata, user_id FROM messages ${where} ORDER BY created_at ${order} LIMIT ?`
+    ).all(...params, opts.limit || 50) as any[];
+  }
+
+  countMessages(opts: { userId?: string; since?: string }): number {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
+    if (opts.since) { conditions.push("created_at >= ?"); params.push(opts.since); }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const row = this.db.query(`SELECT COUNT(*) as cnt FROM messages ${where}`).get(...params) as any;
+    return row?.cnt || 0;
+  }
+
+  getMemoryFiltered(opts: { type?: string; userId?: string; limit?: number }): any[] {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (opts.type && opts.type !== "all") { conditions.push("type = ?"); params.push(opts.type); }
+    if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    return this.db.query(
+      `SELECT id, created_at, type, content, deadline, completed_at, priority, scope FROM memory ${where} ORDER BY created_at DESC LIMIT ?`
+    ).all(...params, opts.limit || 100) as any[];
+  }
+
+  getCostEntries(opts: { since?: string; userId?: string; order?: "asc" | "desc" }): any[] {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (opts.since) { conditions.push("created_at >= ?"); params.push(opts.since); }
+    if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const order = opts.order === "asc" ? "ASC" : "DESC";
+    return this.db.query(
+      `SELECT provider, model, cost_usd, input_tokens, output_tokens, created_at, user_id FROM cost_tracking ${where} ORDER BY created_at ${order}`
+    ).all(...params) as any[];
+  }
+
+  getAgentTasksRecent(opts: { userId?: string; limit?: number }): any[] {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    return this.db.query(
+      `SELECT id, created_at, updated_at, agent, description, status, result, metadata FROM agent_tasks ${where} ORDER BY updated_at DESC LIMIT ?`
+    ).all(...params, opts.limit || 30) as any[];
+  }
+
+  // ============================================================
+  // Approvals
+  // ============================================================
+
+  insertApproval(data: {
+    id: string;
+    user_id: string;
+    chat_id: number | string;
+    original_text: string;
+    plan: any;
+    prepare_summary?: string;
+    prepare_results?: any[];
+    artifacts?: any[];
+    execute_descriptions?: string[];
+    parent_task_id?: string | null;
+    workspace_dir?: string | null;
+    workflow_type?: string;
+    request_id?: string | null;
+  }): void {
+    this.db.run(`
+      INSERT INTO pending_approvals (id, user_id, chat_id, original_text, plan,
+        prepare_summary, prepare_results, artifacts, execute_descriptions,
+        parent_task_id, workspace_dir, workflow_type, request_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `, [
+      data.id,
+      data.user_id,
+      data.chat_id,
+      data.original_text,
+      JSON.stringify(data.plan),
+      data.prepare_summary || "",
+      JSON.stringify(data.prepare_results || []),
+      JSON.stringify((data.artifacts || []).map((a: any) => ({ type: a.type, value: a.value, source: a.source }))),
+      JSON.stringify(data.execute_descriptions || []),
+      data.parent_task_id || null,
+      data.workspace_dir || null,
+      data.workflow_type || "generic",
+      data.request_id || null,
+    ]);
+  }
+
+  getApproval(approvalId: string): any | null {
+    const row = this.db.query(`
+      SELECT * FROM pending_approvals WHERE id = ? AND status = 'pending'
+    `).get(approvalId) as any;
+    if (!row) return null;
+    row.plan = parseJson(row.plan, {});
+    row.prepare_results = parseJson(row.prepare_results, []);
+    row.artifacts = parseJson(row.artifacts, []);
+    row.execute_descriptions = parseJson(row.execute_descriptions, []);
+    return row;
+  }
+
+  getPendingApprovals(userId: string): any[] {
+    const rows = this.db.query(`
+      SELECT id, chat_id, original_text, plan, prepare_results, artifacts,
+             parent_task_id, prepare_summary, execute_descriptions,
+             workspace_dir, workflow_type, request_id, created_at
+      FROM pending_approvals
+      WHERE user_id = ? AND status = 'pending'
+      ORDER BY created_at DESC
+    `).all(userId) as any[];
+    return rows.map((r) => {
+      r.plan = parseJson(r.plan, {});
+      r.prepare_results = parseJson(r.prepare_results, []);
+      r.artifacts = parseJson(r.artifacts, []);
+      r.execute_descriptions = parseJson(r.execute_descriptions, []);
+      return r;
+    });
+  }
+
+  updateApprovalStatus(approvalId: string, status: string, feedback?: string | null): void {
+    this.db.run(`
+      UPDATE pending_approvals
+      SET status = ?, feedback = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `, [status, feedback || null, approvalId]);
+  }
+
+  getApprovalsByIds(ids: string[], userId: string): any[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(",");
+    return this.db.query(`
+      SELECT id, status, feedback FROM pending_approvals
+      WHERE id IN (${placeholders}) AND user_id = ?
+    `).all(...ids, userId) as any[];
+  }
+
+  // ============================================================
+  // Revision Sessions
+  // ============================================================
+
+  insertRevisionSession(data: {
+    id: string;
+    user_id: string;
+    original_text: string;
+    plan: any;
+    prepare_results: any[];
+    artifacts: any[];
+    parent_task_id?: string | null;
+    workspace_dir?: string | null;
+    workflow_type?: string;
+    request_id?: string | null;
+  }): void {
+    this.db.run(`
+      INSERT INTO revision_sessions (id, user_id, original_text, plan, prepare_results,
+        artifacts, parent_task_id, workspace_dir, workflow_type, request_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `, [
+      data.id,
+      data.user_id,
+      data.original_text.substring(0, 2000),
+      JSON.stringify(data.plan),
+      JSON.stringify(data.prepare_results),
+      JSON.stringify((data.artifacts || []).map((a: any) => ({ type: a.type, value: a.value, source: a.source }))),
+      data.parent_task_id || null,
+      data.workspace_dir || null,
+      data.workflow_type || "generic",
+      data.request_id || null,
+    ]);
+  }
+
+  getLatestPendingRevisionSession(userId: string): any | null {
+    const row = this.db.query(`
+      SELECT * FROM revision_sessions
+      WHERE user_id = ? AND status = 'pending'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(userId) as any;
+    if (!row) return null;
+    row.plan = parseJson(row.plan, { subtasks: [] });
+    row.prepare_results = parseJson(row.prepare_results, []);
+    row.artifacts = parseJson(row.artifacts, []);
+    return row;
+  }
+
+  updateRevisionSessionStatus(id: string, status: string): void {
+    this.db.run(`
+      UPDATE revision_sessions SET status = ?, updated_at = datetime('now') WHERE id = ?
+    `, [status, id]);
+  }
+
+  // ============================================================
+  // Workflow Preferences
+  // ============================================================
+
+  upsertWorkflowPreference(data: {
+    user_id: string;
+    workflow_type: string;
+    task_signature: string;
+    plan: any;
+  }): void {
+    this.db.run(`
+      INSERT INTO workflow_preferences (id, user_id, workflow_type, task_signature, plan, success_count, last_used_at)
+      VALUES (?, ?, ?, ?, ?, 1, datetime('now'))
+      ON CONFLICT (user_id, task_signature) DO UPDATE SET
+        plan = excluded.plan,
+        success_count = workflow_preferences.success_count + 1,
+        last_used_at = datetime('now')
+    `, [uuid(), data.user_id, data.workflow_type, data.task_signature, JSON.stringify(data.plan)]);
+  }
+
+  // ============================================================
+  // Artifacts
+  // ============================================================
+
+  insertArtifact(data: {
+    task_id?: string | null;
+    user_id: string;
+    artifact_type: string;
+    file_path?: string | null;
+    file_name?: string | null;
+    file_size?: number | null;
+    description?: string | null;
+    verified?: boolean;
+    delivered?: boolean;
+    metadata?: Record<string, any>;
+  }): void {
+    this.db.run(`
+      INSERT INTO task_artifacts (id, task_id, user_id, artifact_type, file_path,
+        file_name, file_size, description, verified, delivered, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      uuid(),
+      data.task_id || null,
+      data.user_id,
+      data.artifact_type,
+      data.file_path || null,
+      data.file_name || null,
+      data.file_size || null,
+      data.description || null,
+      data.verified ? 1 : 0,
+      data.delivered ? 1 : 0,
+      JSON.stringify(data.metadata || {}),
+    ]);
+  }
+
+  getTaskArtifacts(taskId: string): any[] {
+    return this.db.query(`
+      SELECT * FROM task_artifacts WHERE task_id = ?
+    `).all(taskId) as any[];
+  }
+
+  // ============================================================
+  // Logs
+  // ============================================================
+
+  insertLog(data: {
+    level?: string;
+    event: string;
+    message?: string;
+    metadata?: Record<string, unknown>;
+    session_id?: string;
+    duration_ms?: number;
+    user_id?: string;
+  }): void {
+    this.db.run(`
+      INSERT INTO logs (id, level, event, message, metadata, session_id, duration_ms, user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      uuid(),
+      data.level || "info",
+      data.event,
+      data.message || null,
+      JSON.stringify(data.metadata || {}),
+      data.session_id || null,
+      data.duration_ms || null,
+      data.user_id || null,
+    ]);
+  }
+}
+
+// ============================================================
+// Singleton
+// ============================================================
+
+let _db: Database | null = null;
+
+export function getDb(): Database {
+  if (!_db) {
+    _db = new Database();
+  }
+  return _db;
+}
+
+export type { Database as DatabaseType };

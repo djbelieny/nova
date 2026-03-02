@@ -19,7 +19,7 @@
  */
 
 import { type Context, InlineKeyboard } from "grammy";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 import { mkdir, readdir, rename, stat } from "fs/promises";
 import { join, extname } from "path";
 import type { ExecutionPlan } from "./patterns.ts";
@@ -63,7 +63,7 @@ let _sendResponseWithVoice: (ctx: Context, response: string, userId?: string) =>
 let _sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
 let _sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
 let _relayDir: string;
-let _supabase: SupabaseClient | null = null;
+let _supabase: Database | null = null;
 
 export function initOrchestrator(deps: {
   callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string) => Promise<string>;
@@ -74,7 +74,7 @@ export function initOrchestrator(deps: {
   sendTelegramFile: (chatId: number | string, filePath: string, caption?: string) => Promise<void>;
   sendMessageToChat: (chatId: number | string, text: string, keyboard?: InlineKeyboard) => Promise<void>;
   relayDir: string;
-  supabase?: SupabaseClient | null;
+  supabase?: Database | null;
 }): void {
   _callClaude = deps.callClaude;
   _buildPrompt = deps.buildPrompt;
@@ -99,7 +99,7 @@ export interface PendingApproval {
   ctx: Context;
   chatId: number | string;  // stored for response delivery (survives ctx staleness)
   user: any;
-  supabase: SupabaseClient | null;
+  supabase: Database | null;
   originalText: string;
   plan: ExecutionPlan;
   prepareResults: SubtaskResult[];
@@ -154,13 +154,13 @@ function findLatestRevisionForUser(userId: string): RevisionSession | null {
  * Persist a revision session to Supabase so it survives restarts and long delays.
  */
 async function persistRevisionSession(
-  supabase: SupabaseClient | null,
+  supabase: Database | null,
   session: RevisionSession
 ): Promise<void> {
   if (!supabase) return;
   try {
     // Insert with unique session ID — supports multiple concurrent sessions per user
-    await supabase.from("revision_sessions").insert({
+    supabase.insertRevisionSession({
       id: session.sessionId,
       user_id: session.userId,
       original_text: session.originalText.substring(0, 2000),
@@ -172,11 +172,8 @@ async function persistRevisionSession(
       workflow_type: session.workflowType,
       request_id: session.requestId || null,
       status: "pending",
-      updated_at: new Date().toISOString(),
-    }).then(({ error }) => {
-      if (error) console.error("[orchestrator] Failed to persist revision session:", error.message);
-      else console.log(`[orchestrator] Revision session ${session.sessionId} persisted for user ${session.userId}`);
     });
+    console.log(`[orchestrator] Revision session ${session.sessionId} persisted for user ${session.userId}`);
   } catch (err) {
     console.error("[orchestrator] Error persisting revision session:", err);
   }
@@ -202,16 +199,9 @@ export async function getRevisionSessionAsync(userId: string): Promise<RevisionS
   // Try to recover from Supabase
   if (!_supabase) return null;
   try {
-    const { data, error } = await _supabase
-      .from("revision_sessions")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("status", "pending")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
+    const data = _supabase.getLatestPendingRevisionSession(userId);
 
-    if (error || !data) return null;
+    if (!data) return null;
 
     const sessionId = data.id || `rev-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
     const session: RevisionSession = {
@@ -235,10 +225,8 @@ export async function getRevisionSessionAsync(userId: string): Promise<RevisionS
     // Restore to in-memory cache (keyed by sessionId)
     revisionSessions.set(sessionId, session);
 
-    // Mark as consumed in Supabase
-    await _supabase.from("revision_sessions")
-      .update({ status: "consumed", updated_at: new Date().toISOString() })
-      .eq("id", data.id);
+    // Mark as consumed in DB
+    _supabase.updateRevisionSession(data.id, { status: "consumed" });
 
     console.log(`[orchestrator] Recovered revision session ${sessionId} from Supabase for user ${userId}`);
     return session;
@@ -281,7 +269,7 @@ function detectRevisionResumePoint(feedback: string, workflowType: string): numb
  * Save a workflow preference when a plan is approved and executed successfully.
  */
 async function saveWorkflowPreference(
-  supabase: SupabaseClient | null,
+  supabase: Database | null,
   userId: string,
   workflowType: string,
   originalText: string,
@@ -293,29 +281,15 @@ async function saveWorkflowPreference(
   if (!sig) return;
 
   try {
-    await supabase.from("workflow_preferences").upsert(
-      {
-        user_id: userId,
-        workflow_type: workflowType,
-        task_signature: sig,
-        plan,
-        success_count: 1,
-        last_used_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,task_signature" }
-    ).then(({ error }) => {
-      if (error) {
-        // Table may not exist yet — not critical
-        if (!error.message.includes("does not exist")) {
-          console.error("[orchestrator] Failed to save workflow preference:", error.message);
-        }
-      } else {
-        console.log(`[orchestrator] Saved workflow preference: ${sig}`);
-      }
+    supabase.upsertWorkflowPreference({
+      user_id: userId,
+      workflow_type: workflowType,
+      task_signature: sig,
+      plan,
     });
-
-    // If it already exists, increment success_count
-    await supabase.rpc("increment_workflow_preference", { p_user_id: userId, p_sig: sig }).catch(() => {});
+    // Increment success_count if it already existed
+    supabase.incrementWorkflowPreference(userId, sig);
+    console.log(`[orchestrator] Saved workflow preference: ${sig}`);
   } catch {}
 }
 
@@ -345,14 +319,10 @@ function normalizeWorkflowSignature(text: string): string {
  * Load a full user object from Supabase by user ID.
  * Used when recovering approvals/revision sessions where only the user_id was persisted.
  */
-async function loadFullUser(supabase: SupabaseClient, userId: string): Promise<any> {
+async function loadFullUser(db: Database, userId: string): Promise<any> {
   try {
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, telegram_id, name, timezone, phone, role, preferences, profile_text")
-      .eq("id", userId)
-      .single();
-    if (error || !data) {
+    const data = db.getUserById(userId);
+    if (!data) {
       console.warn(`[orchestrator] Could not load full user ${userId}, using minimal object`);
       return { id: userId };
     }
@@ -369,14 +339,9 @@ async function recoverSingleApproval(
   if (!_supabase) return null;
 
   try {
-    const { data, error } = await _supabase
-      .from("pending_approvals")
-      .select("id, user_id, chat_id, original_text, plan, prepare_results, artifacts, parent_task_id, workspace_dir, workflow_type, request_id, created_at")
-      .eq("id", approvalId)
-      .eq("status", "pending")
-      .single();
+    const data = _supabase.getApproval(approvalId);
 
-    if (error || !data) return null;
+    if (!data) return null;
 
     const chatId = data.chat_id || ctx.chat?.id || 0;
     const prepareResults: SubtaskResult[] = Array.isArray(data.prepare_results) ? data.prepare_results : [];
@@ -445,16 +410,10 @@ export async function handleApproval(
     await ctx.editMessageText(`${originalText}${statusLine}`, { reply_markup: undefined });
   } catch {}
 
-  // Update Supabase status
+  // Update DB status
   if (pending.supabase) {
     const statusMap = { approve: "approved", cancel: "cancelled", revise: "revised" } as const;
-    await pending.supabase.from("pending_approvals")
-      .update({
-        status: statusMap[action],
-        feedback: feedback || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", approvalId);
+    pending.supabase.updateApprovalStatus(approvalId, statusMap[action], feedback || null);
   }
 
   if (action === "cancel") {
@@ -537,14 +496,10 @@ export async function handleApproval(
 
     // Mark parent task done
     if (pending.supabase && pending.parentTaskId) {
-      await pending.supabase
-        .from("agent_tasks")
-        .update({
-          status: allSucceeded ? "completed" : "blocked",
-          result: `${allResults.length} subtasks, ${allResults.filter((r) => r.success).length} succeeded`,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", pending.parentTaskId);
+      pending.supabase.updateTask(pending.parentTaskId, {
+        status: allSucceeded ? "completed" : "blocked",
+        result: `${allResults.length} subtasks, ${allResults.filter((r) => r.success).length} succeeded`,
+      });
     }
 
     // Record pattern and save workflow preference
@@ -567,7 +522,7 @@ async function handleRevision(
   ctx: Context,
   feedback: string,
   user: any,
-  supabase: SupabaseClient | null,
+  supabase: Database | null,
   session: RevisionSession
 ): Promise<void> {
   const resumeFrom = detectRevisionResumePoint(feedback, session.workflowType);
@@ -638,29 +593,31 @@ async function handleRevision(
 
   console.log(`[orchestrator] Approval created (revision): ${approvalId} | request="${session.originalText.substring(0, 60)}" | requestId=${session.requestId} | total pending: ${pendingApprovals.size}`);
 
-  // Persist to Supabase — includes prepareResults for potential restart recovery
+  // Persist to DB — includes prepareResults for potential restart recovery
   if (supabase) {
     const execDescs = plan.subtasks
       .filter((s) => s.phase === "execute")
       .map((s) => s.description);
-    await supabase.from("pending_approvals").insert({
-      id: approvalId,
-      user_id: user.id,
-      chat_id: revisionChatId,
-      original_text: session.originalText.substring(0, 2000),
-      plan: plan,
-      prepare_summary: approvalSummary.substring(0, 5000),
-      prepare_results: allPrepareResults,
-      artifacts: allArtifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
-      execute_descriptions: execDescs,
-      parent_task_id: session.parentTaskId || null,
-      workspace_dir: session.workspaceDir || null,
-      workflow_type: session.workflowType || "generic",
-      request_id: session.requestId || null,
-      status: "pending",
-    }).then(({ error }) => {
-      if (error) console.error("[orchestrator] Failed to persist revision approval:", error.message);
-    });
+    try {
+      supabase.insertApproval({
+        id: approvalId,
+        user_id: user.id,
+        chat_id: revisionChatId,
+        original_text: session.originalText.substring(0, 2000),
+        plan: plan,
+        prepare_summary: approvalSummary.substring(0, 5000),
+        prepare_results: allPrepareResults,
+        artifacts: allArtifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
+        execute_descriptions: execDescs,
+        parent_task_id: session.parentTaskId || null,
+        workspace_dir: session.workspaceDir || null,
+        workflow_type: session.workflowType || "generic",
+        request_id: session.requestId || null,
+        status: "pending",
+      });
+    } catch (error: any) {
+      console.error("[orchestrator] Failed to persist revision approval:", error.message);
+    }
   }
 
   // Note: approvals do NOT expire — they remain pending until the user acts on them.
@@ -1002,7 +959,7 @@ export function orchestrate(
   ctx: Context,
   text: string,
   user: any,
-  supabase: SupabaseClient | null
+  supabase: Database | null
 ): void {
   // Generate a request_id for message flow tracking
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
@@ -1063,7 +1020,7 @@ function orchestrateMain(
   ctx: Context,
   text: string,
   user: any,
-  supabase: SupabaseClient | null,
+  supabase: Database | null,
   requestId: string
 ): void {
   // Step 1: Fast heuristic — no Claude call needed
@@ -1211,7 +1168,7 @@ function routeSimple(
   ctx: Context,
   text: string,
   user: any,
-  supabase: SupabaseClient | null
+  supabase: Database | null
 ): void {
   _runTask(ctx, text.substring(0, 50), async () => {
     const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
@@ -1267,7 +1224,7 @@ async function deliverWorkspaceFiles(
   workspaceDir: string,
   taskId?: string,
   userId?: string,
-  supabase?: SupabaseClient | null,
+  supabase?: Database | null,
 ): Promise<number> {
   let delivered = 0;
   try {
@@ -1301,7 +1258,7 @@ async function deliverWorkspaceFiles(
       if (supabase && userId) {
         try {
           const fileStat = await stat(destPath).catch(() => null);
-          await supabase.from("task_artifacts").insert({
+          supabase.insertArtifact({
             task_id: taskId || null,
             user_id: userId,
             artifact_type: type,
@@ -1336,7 +1293,7 @@ async function routeComplex(
   ctx: Context,
   text: string,
   user: any,
-  supabase: SupabaseClient | null,
+  supabase: Database | null,
   cachedPlan?: ExecutionPlan,
   workflowType?: "social-media" | "generic",
   requestId?: string
@@ -1350,18 +1307,12 @@ async function routeComplex(
     // Create parent task first — we use its ID for the workspace directory
     let parentTaskId: string | undefined;
     if (supabase) {
-      const { data } = await supabase
-        .from("agent_tasks")
-        .insert({
-          agent: "orchestrator",
-          description: text.substring(0, 200),
-          status: "in_progress",
-          user_id: user.id,
-          request_id: requestId || null,
-        })
-        .select("id")
-        .single();
-      parentTaskId = data?.id;
+      parentTaskId = supabase.insertTask({
+        agent: "orchestrator",
+        description: text.substring(0, 200),
+        status: "in_progress",
+        user_id: user.id,
+      });
     }
 
     // Create workspace scoped to user + task (isolates concurrent tasks)
@@ -1440,14 +1391,10 @@ async function routeComplex(
 
       // Mark parent task done
       if (supabase && parentTaskId) {
-        await supabase
-          .from("agent_tasks")
-          .update({
-            status: allSucceeded ? "completed" : "blocked",
-            result: `${results.length} subtasks, ${results.filter((r) => r.success).length} succeeded`,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", parentTaskId);
+        supabase.updateTask(parentTaskId, {
+          status: allSucceeded ? "completed" : "blocked",
+          result: `${results.length} subtasks, ${results.filter((r) => r.success).length} succeeded`,
+        });
       }
 
       const durationMs = Date.now() - startTime;
@@ -1535,29 +1482,31 @@ async function routeComplex(
 
     console.log(`[orchestrator] Approval created: ${approvalId} | request="${text.substring(0, 60)}" | requestId=${requestId} | total pending: ${pendingApprovals.size}`);
 
-    // Persist to Supabase — includes prepareResults for potential restart recovery
+    // Persist to DB — includes prepareResults for potential restart recovery
     if (supabase) {
       const execDescs = plan.subtasks
         .filter((s) => s.phase === "execute")
         .map((s) => s.description);
-      await supabase.from("pending_approvals").insert({
-        id: approvalId,
-        user_id: user.id,
-        chat_id: taskChatId,
-        original_text: text.substring(0, 2000),
-        plan: plan,
-        prepare_summary: approvalSummary.substring(0, 5000),
-        prepare_results: prepareResults,
-        artifacts: artifacts.map((a) => ({ type: a.type, value: a.value, source: a.source })),
-        execute_descriptions: execDescs,
-        parent_task_id: parentTaskId || null,
-        workspace_dir: workspaceDir || null,
-        workflow_type: workflowType || "generic",
-        request_id: requestId || null,
-        status: "pending",
-      }).then(({ error }) => {
-        if (error) console.error("[orchestrator] Failed to persist approval:", error.message);
-      });
+      try {
+        supabase.insertApproval({
+          id: approvalId,
+          user_id: user.id,
+          chat_id: taskChatId,
+          original_text: text.substring(0, 2000),
+          plan: JSON.stringify(plan),
+          prepare_summary: approvalSummary.substring(0, 5000),
+          prepare_results: JSON.stringify(prepareResults),
+          artifacts: JSON.stringify(artifacts.map((a) => ({ type: a.type, value: a.value, source: a.source }))),
+          execute_descriptions: JSON.stringify(execDescs),
+          parent_task_id: parentTaskId || null,
+          workspace_dir: workspaceDir || null,
+          workflow_type: workflowType || "generic",
+          request_id: requestId || null,
+          status: "pending",
+        });
+      } catch (e) {
+        console.error("[orchestrator] Failed to persist approval:", e);
+      }
     }
 
     // Note: approvals do NOT expire — they remain pending until the user acts on them.
@@ -1584,29 +1533,22 @@ async function routeComplex(
 
     // Update parent task to waiting
     if (supabase && parentTaskId) {
-      await supabase
-        .from("agent_tasks")
-        .update({
-          status: "blocked",
-          result: "Waiting for user approval",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", parentTaskId);
+      supabase.updateTask(parentTaskId, {
+        status: "blocked",
+        result: "Waiting for user approval",
+      });
     }
   } catch (error) {
     console.error("[orchestrator] Complex route error:", error);
 
     // Mark parent task as blocked so it doesn't stay stuck as in_progress
     if (supabase && parentTaskId) {
-      await supabase
-        .from("agent_tasks")
-        .update({
+      try {
+        supabase.updateTask(parentTaskId, {
           status: "blocked",
           result: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", parentTaskId)
-        .catch(() => {});
+        });
+      } catch {}
     }
 
     console.log("[orchestrator] Falling back to simple path");
@@ -1625,7 +1567,7 @@ let _miniAppPollInterval: ReturnType<typeof setInterval> | null = null;
  * through the Mini App (not through Telegram buttons).
  * Runs every 5 seconds, only processes approvals that exist in the in-memory map.
  */
-export function startMiniAppApprovalPolling(supabase: SupabaseClient | null): void {
+export function startMiniAppApprovalPolling(supabase: Database | null): void {
   if (!supabase || _miniAppPollInterval) return;
 
   _miniAppPollInterval = setInterval(async () => {
@@ -1633,13 +1575,14 @@ export function startMiniAppApprovalPolling(supabase: SupabaseClient | null): vo
 
     try {
       const ids = Array.from(pendingApprovals.keys());
-      const { data, error } = await supabase
-        .from("pending_approvals")
-        .select("id, status, feedback")
-        .in("id", ids)
-        .in("status", ["approved", "cancelled", "revised"]);
+      // Get approvals by IDs and filter for acted-on statuses
+      const firstPending = pendingApprovals.values().next().value;
+      const userId = firstPending?.user?.id;
+      if (!userId) return;
+      const allRows = supabase.getApprovalsByIds(ids, userId);
+      const data = allRows.filter((r: any) => ["approved", "cancelled", "revised"].includes(r.status));
 
-      if (error || !data?.length) return;
+      if (!data?.length) return;
 
       for (const row of data) {
         const pending = pendingApprovals.get(row.id);
@@ -1677,19 +1620,15 @@ export function startMiniAppApprovalPolling(supabase: SupabaseClient | null): vo
  * For older records without prepareResults, we send a fresh prompt to the chat.
  */
 export async function recoverPendingApprovals(
-  supabase: SupabaseClient | null,
+  supabase: Database | null,
   userId: string,
 ): Promise<void> {
   if (!supabase) return;
 
   try {
-    const { data, error } = await supabase
-      .from("pending_approvals")
-      .select("id, chat_id, original_text, plan, prepare_results, artifacts, parent_task_id, prepare_summary, execute_descriptions, workspace_dir, workflow_type, request_id, created_at")
-      .eq("user_id", userId)
-      .eq("status", "pending");
+    const data = supabase.getPendingApprovals(userId);
 
-    if (error || !data?.length) return;
+    if (!data?.length) return;
 
     console.log(`[orchestrator] Recovering ${data.length} pending approval(s) from Supabase`);
 

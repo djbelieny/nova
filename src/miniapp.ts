@@ -9,7 +9,7 @@
  */
 
 import "dotenv/config";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database } from "./db.ts";
 import { getAllAgents, loadAgents } from "./agent-router.ts";
 import {
   getIntegrationStatus,
@@ -30,10 +30,7 @@ import {
 const PORT = parseInt(process.env.MINIAPP_PORT || "3034", 10);
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
-const supabase: SupabaseClient | null =
-  process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
-    : null;
+const supabase: Database = getDb();
 
 const startTime = Date.now();
 
@@ -141,14 +138,8 @@ async function validateInitData(initDataRaw: string): Promise<{ valid: boolean; 
  * Resolve Telegram user ID to Nova user record.
  */
 async function resolveNovaUser(telegramUserId: number): Promise<any | null> {
-  if (!supabase) return null;
   try {
-    const { data } = await supabase
-      .from("users")
-      .select("*")
-      .eq("telegram_id", String(telegramUserId))
-      .single();
-    return data;
+    return supabase.getUserByTelegramId(String(telegramUserId));
   } catch {
     return null;
   }
@@ -178,15 +169,8 @@ async function authenticateRequest(req: Request): Promise<{ user: any; telegramU
 // ============================================================
 
 async function getProfile(userId: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
-    const { data: user, error: userErr } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", userId)
-      .single();
-
-    // Extract preferences from users.preferences JSONB column
+    const user = supabase.getUserById(userId);
     const prefs = user?.preferences || {};
     return {
       user: user || null,
@@ -196,7 +180,7 @@ async function getProfile(userId: string): Promise<unknown> {
         notification_style: prefs.notification_style ?? "normal",
         language: prefs.language ?? "en",
       },
-      error: userErr?.message || null,
+      error: null,
     };
   } catch (e: any) {
     return { error: e.message };
@@ -204,7 +188,6 @@ async function getProfile(userId: string): Promise<unknown> {
 }
 
 async function updateProfile(userId: string, fields: Record<string, any>): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
     const allowed = ["name", "timezone", "phone"];
     const updates: Record<string, any> = {};
@@ -213,22 +196,14 @@ async function updateProfile(userId: string, fields: Record<string, any>): Promi
     }
     if (Object.keys(updates).length === 0) return { error: "No valid fields to update" };
 
-    const { data, error } = await supabase
-      .from("users")
-      .update(updates)
-      .eq("id", userId)
-      .select()
-      .single();
-
-    if (error) return { error: error.message };
-    return { user: data };
+    const user = supabase.updateUser(userId, updates);
+    return { user };
   } catch (e: any) {
     return { error: e.message };
   }
 }
 
 async function updatePreferences(userId: string, fields: Record<string, any>): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
     const allowed = ["voice_responses", "notification_style", "language", "auto_approve"];
     const updates: Record<string, any> = {};
@@ -237,23 +212,11 @@ async function updatePreferences(userId: string, fields: Record<string, any>): P
     }
     if (Object.keys(updates).length === 0) return { error: "No valid fields to update" };
 
-    // Write each preference to users.preferences JSONB via RPC
     for (const [key, value] of Object.entries(updates)) {
-      const { error } = await supabase.rpc("update_user_preference", {
-        p_user_id: userId,
-        p_key: key,
-        p_value: JSON.stringify(value),
-      });
-      if (error) return { error: error.message };
+      supabase.updateUserPreference(userId, key, value);
     }
 
-    // Return the updated preferences
-    const { data: user } = await supabase
-      .from("users")
-      .select("preferences")
-      .eq("id", userId)
-      .single();
-
+    const user = supabase.getUserById(userId);
     return { preferences: user?.preferences || updates };
   } catch (e: any) {
     return { error: e.message };
@@ -262,23 +225,9 @@ async function updatePreferences(userId: string, fields: Record<string, any>): P
 
 async function getAgentsWithStats(userId: string): Promise<unknown> {
   const agentDefs = getAllAgents();
-  if (!supabase) {
-    return {
-      agents: agentDefs.map((a) => ({
-        name: a.name,
-        slug: a.slug,
-        description: a.description,
-        taskCount: 0,
-        successRate: 0,
-      })),
-    };
-  }
 
   try {
-    const { data: tasks } = await supabase
-      .from("agent_tasks")
-      .select("agent, status")
-      .eq("user_id", userId);
+    const tasks = supabase.getAgentTaskStats(userId);
 
     const statsMap: Record<string, { total: number; success: number }> = {};
     for (const t of tasks || []) {
@@ -306,17 +255,8 @@ async function getAgentsWithStats(userId: string): Promise<unknown> {
 }
 
 async function getAgentTasks(userId: string, agentSlug: string): Promise<unknown> {
-  if (!supabase) return { tasks: [], error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase
-      .from("agent_tasks")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("agent", agentSlug)
-      .order("created_at", { ascending: false })
-      .limit(20);
-
-    if (error) return { tasks: [], error: error.message };
+    const data = supabase.getTasksByAgent(userId, agentSlug);
     return { tasks: data || [] };
   } catch (e: any) {
     return { tasks: [], error: e.message };
@@ -324,16 +264,8 @@ async function getAgentTasks(userId: string, agentSlug: string): Promise<unknown
 }
 
 async function getApprovals(userId: string): Promise<unknown> {
-  if (!supabase) return { approvals: [], error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase
-      .from("pending_approvals")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("status", "pending")
-      .order("created_at", { ascending: false });
-
-    if (error) return { approvals: [], error: error.message };
+    const data = supabase.getPendingApprovals(userId);
     return { approvals: data || [] };
   } catch (e: any) {
     return { approvals: [], error: e.message };
@@ -346,50 +278,21 @@ async function handleApprovalAction(
   action: "approved" | "cancelled" | "revised",
   feedback?: string
 ): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
-    const updates: Record<string, any> = { status: action, updated_at: new Date().toISOString() };
-    if (action === "revised" && feedback) {
-      updates.feedback = feedback;
-    }
-
-    const { data, error } = await supabase
-      .from("pending_approvals")
-      .update(updates)
-      .eq("id", approvalId)
-      .eq("user_id", userId)
-      .select()
-      .single();
-
-    if (error) return { error: error.message };
-    return { approval: data };
+    supabase.updateApprovalStatus(approvalId, action, feedback || null);
+    return { approval: { id: approvalId, status: action } };
   } catch (e: any) {
     return { error: e.message };
   }
 }
 
 async function getTaskHistory(userId: string): Promise<unknown> {
-  if (!supabase) return { tasks: [], error: "Supabase not configured" };
   try {
-    // Fetch only parent tasks (no parent_task_id)
-    const { data, error } = await supabase
-      .from("agent_tasks")
-      .select("*")
-      .eq("user_id", userId)
-      .is("parent_task_id", null)
-      .order("created_at", { ascending: false })
-      .limit(50);
-
-    if (error) return { tasks: [], error: error.message };
-    const parents = data || [];
+    const parents = supabase.getParentTasks(userId);
     if (parents.length === 0) return { tasks: [] };
 
-    // Fetch subtask counts per parent in one query
     const parentIds = parents.map((t: any) => t.id);
-    const { data: subtasks } = await supabase
-      .from("agent_tasks")
-      .select("parent_task_id, status")
-      .in("parent_task_id", parentIds);
+    const subtasks = supabase.getSubtasksByParentIds(parentIds);
 
     // Build count maps
     const totalMap: Record<string, number> = {};
@@ -425,26 +328,15 @@ async function getTaskHistory(userId: string): Promise<unknown> {
 }
 
 async function getTaskDetail(userId: string, taskId: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
-    const [{ data: task, error: taskErr }, { data: subtasks }] = await Promise.all([
-      supabase.from("agent_tasks").select("*").eq("id", taskId).eq("user_id", userId).single(),
-      supabase
-        .from("agent_tasks")
-        .select("*")
-        .eq("parent_task_id", taskId)
-        .order("created_at", { ascending: true }),
-    ]);
+    const task = supabase.getTaskById(taskId, userId);
+    if (!task) return { error: "Task not found" };
 
-    if (taskErr) return { error: taskErr.message };
+    const subtasks = supabase.getSubtasksByParentIds([taskId]);
 
     // Fetch artifacts for this task and all its subtasks
     const allTaskIds = [taskId, ...(subtasks || []).map((s: any) => s.id)];
-    const { data: artifacts } = await supabase
-      .from("task_artifacts")
-      .select("*")
-      .in("task_id", allTaskIds)
-      .order("created_at", { ascending: true });
+    const artifacts = supabase.getArtifactsByTaskIds(allTaskIds);
 
     return { task, subtasks: subtasks || [], artifacts: artifacts || [] };
   } catch (e: any) {
@@ -457,33 +349,31 @@ async function getTaskDetail(userId: string, taskId: string): Promise<unknown> {
 // ============================================================
 
 async function getDashboard(): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase
-      .from("nova_status")
-      .select("*")
-      .eq("id", 1)
-      .single();
+    const data = supabase.getNovaStatus();
+    if (!data) return { error: "No status data" };
 
-    if (error) return { error: error.message };
+    // Parse JSON fields if stored as strings
+    const callsByModel = typeof data.calls_by_model === "string"
+      ? JSON.parse(data.calls_by_model) : (data.calls_by_model || {});
 
     return {
-      uptime_since: data?.uptime_since,
-      uptime_hours: data?.uptime_since
+      uptime_since: data.uptime_since,
+      uptime_hours: data.uptime_since
         ? ((Date.now() - new Date(data.uptime_since).getTime()) / 3600000).toFixed(1)
         : "0",
-      calls_total: data?.calls_total || 0,
-      calls_success: data?.calls_success || 0,
-      calls_failed: data?.calls_failed || 0,
-      calls_by_model: data?.calls_by_model || {},
-      rate_limit_hits: data?.rate_limit_hits || 0,
-      avg_duration_ms: data?.avg_duration_ms || 0,
-      active_slots: data?.active_slots || 0,
-      max_slots: data?.max_slots || 2,
-      queue_depth: data?.queue_depth || 0,
-      active_tasks: data?.active_tasks || 0,
-      pending_approvals: data?.pending_approvals || 0,
-      updated_at: data?.updated_at,
+      calls_total: data.calls_total || 0,
+      calls_success: data.calls_success || 0,
+      calls_failed: data.calls_failed || 0,
+      calls_by_model: callsByModel,
+      rate_limit_hits: data.rate_limit_hits || 0,
+      avg_duration_ms: data.avg_duration_ms || 0,
+      active_slots: data.active_slots || 0,
+      max_slots: data.max_slots || 2,
+      queue_depth: data.queue_depth || 0,
+      active_tasks: data.active_tasks || 0,
+      pending_approvals: data.pending_approvals || 0,
+      updated_at: data.updated_at,
     };
   } catch (e: any) {
     return { error: e.message };
@@ -495,7 +385,6 @@ async function getDashboard(): Promise<unknown> {
 // ============================================================
 
 async function getIntegrations(userId: string): Promise<unknown> {
-  if (!supabase) return { integrations: [], error: "Supabase not configured" };
   try {
     const statuses = await getIntegrationStatus(supabase, userId);
     return { integrations: statuses };
@@ -505,7 +394,6 @@ async function getIntegrations(userId: string): Promise<unknown> {
 }
 
 async function connectIntegration(userId: string, provider: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   if (!PER_USER_PROVIDERS.includes(provider as Provider)) {
     return { error: `Invalid provider: ${provider}` };
   }
@@ -516,17 +404,16 @@ async function connectIntegration(userId: string, provider: string): Promise<unk
   if (result.error) return { error: result.error };
 
   // Mark as pending in DB
-  await supabase.rpc("upsert_user_integration", {
-    p_user_id: userId,
-    p_provider: provider,
-    p_status: "pending",
+  supabase.upsertIntegration({
+    user_id: userId,
+    provider,
+    status: "pending",
   });
 
   return { url: result.url };
 }
 
 async function disconnectIntegrationHandler(userId: string, provider: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   if (!PER_USER_PROVIDERS.includes(provider as Provider)) {
     return { error: `Invalid provider: ${provider}` };
   }
@@ -536,7 +423,6 @@ async function disconnectIntegrationHandler(userId: string, provider: string): P
 }
 
 async function saveApiKeyHandler(userId: string, provider: string, req: Request): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   if (!API_KEY_PROVIDERS.includes(provider as ApiKeyProvider)) {
     return { error: `Invalid API-key provider: ${provider}` };
   }
@@ -569,10 +455,8 @@ async function saveApiKeyHandler(userId: string, provider: string, req: Request)
 // ============================================================
 
 async function getSchedules(userId: string): Promise<unknown> {
-  if (!supabase) return { schedules: [], error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase.rpc("get_scheduled_tasks", { p_user_id: userId });
-    if (error) return { schedules: [], error: error.message };
+    const data = supabase.getScheduledTasks(userId);
     return { schedules: data || [] };
   } catch (e: any) {
     return { schedules: [], error: e.message };
@@ -580,14 +464,8 @@ async function getSchedules(userId: string): Promise<unknown> {
 }
 
 async function cancelSchedule(userId: string, scheduleId: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
-    const { error } = await supabase
-      .from("scheduled_tasks")
-      .update({ status: "cancelled", updated_at: new Date().toISOString() })
-      .eq("id", scheduleId)
-      .eq("user_id", userId);
-    if (error) return { error: error.message };
+    supabase.updateScheduledTask(scheduleId, { status: "cancelled" });
     return { success: true };
   } catch (e: any) {
     return { error: e.message };
@@ -599,13 +477,8 @@ async function cancelSchedule(userId: string, scheduleId: string): Promise<unkno
 // ============================================================
 
 async function listUsers(): Promise<unknown> {
-  if (!supabase) return { users: [], error: "Supabase not configured" };
   try {
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, telegram_id, name, role, timezone, active, created_at")
-      .order("created_at");
-    if (error) return { users: [], error: error.message };
+    const data = supabase.getAllActiveUsers();
     return { users: data || [] };
   } catch (e: any) {
     return { users: [], error: e.message };
@@ -613,33 +486,25 @@ async function listUsers(): Promise<unknown> {
 }
 
 async function addUser(fields: Record<string, any>): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   const { telegram_id, name, timezone, pin } = fields;
   if (!telegram_id || !name) return { error: "telegram_id and name are required" };
   try {
-    const row: Record<string, any> = {
+    const user = supabase.upsertUser({
       telegram_id,
       name,
       timezone: timezone || "UTC",
       role: "member",
-    };
-    if (pin) row.pin = pin;
-    const { data, error } = await supabase.from("users").insert(row).select().single();
-    if (error) return { error: error.message };
-    return { user: data };
+      pin: pin || undefined,
+    });
+    return { user };
   } catch (e: any) {
     return { error: e.message };
   }
 }
 
 async function deactivateUser(userId: string): Promise<unknown> {
-  if (!supabase) return { error: "Supabase not configured" };
   try {
-    const { error } = await supabase
-      .from("users")
-      .update({ active: false, updated_at: new Date().toISOString() })
-      .eq("id", userId);
-    if (error) return { error: error.message };
+    supabase.updateUser(userId, { active: 0 });
     return { success: true };
   } catch (e: any) {
     return { error: e.message };
@@ -2483,7 +2348,7 @@ const server = Bun.serve({
         const state = JSON.parse(Buffer.from(decodeURIComponent(stateParam), "base64").toString());
         const { provider, userId } = state;
 
-        if (!supabase || !provider || !userId) {
+        if (!provider || !userId) {
           return new Response(renderOAuthResult(false, "Invalid callback state"), {
             headers: { "Content-Type": "text/html" },
           });

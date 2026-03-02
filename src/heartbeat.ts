@@ -10,7 +10,7 @@
 
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const RELAY_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
@@ -128,22 +128,12 @@ function isWithinActiveHours(user: HeartbeatUser): boolean {
  * Check if we've already sent the max number of heartbeat check-ins today.
  */
 async function exceededDailyCheckins(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string
 ): Promise<boolean> {
   try {
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    const { count } = await supabase
-      .from("messages")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("role", "assistant")
-      .gte("created_at", todayStart.toISOString())
-      .contains("metadata", { source: "heartbeat" });
-
-    return (count || 0) >= MAX_DAILY_CHECKINS;
+    const count = db.countTodayMessages(userId, { role: "assistant", metadataFilter: { source: "heartbeat" } });
+    return count >= MAX_DAILY_CHECKINS;
   } catch {
     return false;
   }
@@ -153,22 +143,12 @@ async function exceededDailyCheckins(
  * Check if the user has been active recently (sent a message within N minutes).
  */
 async function recentActivity(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string,
   withinMinutes: number
 ): Promise<boolean> {
   try {
-    const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000);
-
-    const { data } = await supabase
-      .from("messages")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("role", "user")
-      .gte("created_at", cutoff.toISOString())
-      .limit(1);
-
-    return (data?.length || 0) > 0;
+    return db.hasRecentActivity(userId, withinMinutes);
   } catch {
     return false;
   }
@@ -179,7 +159,7 @@ async function recentActivity(
 // ============================================================
 
 async function gatherHeartbeatContext(
-  supabase: SupabaseClient,
+  db: Database,
   user: HeartbeatUser,
   checklist: string
 ): Promise<HeartbeatContext> {
@@ -194,48 +174,17 @@ async function gatherHeartbeatContext(
     minute: "2-digit",
   });
 
-  // Parallel queries for context
-  const [goalsResult, lastMsgResult, recentMsgsResult, checkinsResult, tasksResult] = await Promise.allSettled([
-    // Active goals
-    supabase.rpc("get_active_goals", { p_user_id: user.id }),
-    // Last user message timestamp
-    supabase
-      .from("messages")
-      .select("created_at")
-      .eq("user_id", user.id)
-      .eq("role", "user")
-      .order("created_at", { ascending: false })
-      .limit(1),
-    // Recent messages (both roles) for grounding context
-    supabase.rpc("get_recent_messages", { p_user_id: user.id, limit_count: 6 }),
-    // Today's heartbeat count
-    (async () => {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      return supabase
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", user.id)
-        .eq("role", "assistant")
-        .gte("created_at", todayStart.toISOString())
-        .contains("metadata", { source: "heartbeat" });
-    })(),
-    // Upcoming scheduled tasks
-    supabase
-      .from("scheduled_tasks")
-      .select("title, next_run_at")
-      .eq("user_id", user.id)
-      .eq("status", "active")
-      .gte("next_run_at", now.toISOString())
-      .lte("next_run_at", new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString())
-      .order("next_run_at", { ascending: true })
-      .limit(5),
-  ]);
+  // All queries are synchronous with SQLite — no need for Promise.allSettled
+  const goals = db.getActiveGoals(user.id);
+  const lastMsgData = db.getRecentMessages(user.id, 1);
+  const recentMsgsData = db.getRecentMessages(user.id, 6);
+  const checkinsCount = db.countTodayMessages(user.id, { role: "assistant", metadataFilter: { source: "heartbeat" } });
+  const upcomingTasksData = db.getUpcomingScheduledTasks(user.id, now.toISOString(), new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(), 5);
 
   // Parse goals
   let activeGoals = "None";
-  if (goalsResult.status === "fulfilled" && goalsResult.value.data?.length) {
-    activeGoals = goalsResult.value.data
+  if (goals?.length) {
+    activeGoals = goals
       .map((g: any) => {
         const deadline = g.deadline
           ? ` (by ${new Date(g.deadline).toLocaleDateString()})`
@@ -248,8 +197,8 @@ async function gatherHeartbeatContext(
   // Parse hours since last interaction + readable timestamp
   let hoursSince = 0;
   let lastInteractionAt = "unknown";
-  if (lastMsgResult.status === "fulfilled" && lastMsgResult.value.data?.length) {
-    const lastAt = new Date(lastMsgResult.value.data[0].created_at);
+  if (lastMsgData?.length) {
+    const lastAt = new Date(lastMsgData[0].created_at);
     hoursSince = Math.round((now.getTime() - lastAt.getTime()) / (1000 * 60 * 60) * 10) / 10;
     lastInteractionAt = lastAt.toLocaleString("en-US", {
       timeZone: user.timezone,
@@ -263,8 +212,8 @@ async function gatherHeartbeatContext(
 
   // Parse recent message snippets for grounding
   let recentSnippets = "No recent messages";
-  if (recentMsgsResult.status === "fulfilled" && recentMsgsResult.value.data?.length) {
-    const msgs = [...recentMsgsResult.value.data].reverse();
+  if (recentMsgsData?.length) {
+    const msgs = [...recentMsgsData].reverse();
     recentSnippets = msgs
       .map((m: any) => {
         const ts = new Date(m.created_at).toLocaleString("en-US", {
@@ -281,15 +230,12 @@ async function gatherHeartbeatContext(
   }
 
   // Parse checkins today
-  let checkinsToday = 0;
-  if (checkinsResult.status === "fulfilled") {
-    checkinsToday = (checkinsResult.value as any).count || 0;
-  }
+  const checkinsToday = checkinsCount || 0;
 
   // Parse upcoming tasks
   let upcomingTasks = "None";
-  if (tasksResult.status === "fulfilled" && (tasksResult.value as any).data?.length) {
-    upcomingTasks = (tasksResult.value as any).data
+  if (upcomingTasksData?.length) {
+    upcomingTasks = upcomingTasksData
       .map((t: any) => `${t.title} (at ${new Date(t.next_run_at).toLocaleTimeString("en-US", { timeZone: user.timezone, hour: "numeric", minute: "2-digit" })})`)
       .join("; ");
   }
@@ -354,7 +300,7 @@ function isHeartbeatOk(response: string): boolean {
  * Called from relay.ts with injected dependencies.
  */
 export function startHeartbeat(deps: {
-  supabase: SupabaseClient;
+  db: Database;
   callClaude: ClaudeCaller;
   sendAlert: MessageSender;
   saveMessage: (role: string, content: string, userId: string, metadata?: Record<string, unknown>, channel?: string) => Promise<void>;
@@ -377,12 +323,12 @@ export function startHeartbeat(deps: {
 }
 
 async function runHeartbeat(deps: {
-  supabase: SupabaseClient;
+  db: Database;
   callClaude: ClaudeCaller;
   sendAlert: MessageSender;
   saveMessage: (role: string, content: string, userId: string, metadata?: Record<string, unknown>, channel?: string) => Promise<void>;
 }): Promise<void> {
-  const { supabase, callClaude, sendAlert, saveMessage } = deps;
+  const { db, callClaude, sendAlert, saveMessage } = deps;
 
   // 1. Read HEARTBEAT.md
   const heartbeatContent = await readHeartbeatFile();
@@ -399,7 +345,7 @@ async function runHeartbeat(deps: {
   }
 
   // 2. Get all proactive users
-  const users = await getProactiveUsers(supabase);
+  const users = getProactiveUsers(db);
 
   if (!users.length) return;
 
@@ -411,18 +357,18 @@ async function runHeartbeat(deps: {
         continue;
       }
 
-      if (await exceededDailyCheckins(supabase, user.id)) {
+      if (await exceededDailyCheckins(db, user.id)) {
         console.log(`[heartbeat] ${user.name}: max daily check-ins reached — skipped`);
         continue;
       }
 
-      if (await recentActivity(supabase, user.id, 60)) {
+      if (await recentActivity(db, user.id, 60)) {
         console.log(`[heartbeat] ${user.name}: active recently — skipped`);
         continue;
       }
 
       // 4. Gather lightweight context
-      const context = await gatherHeartbeatContext(supabase, user, stripped);
+      const context = await gatherHeartbeatContext(db, user, stripped);
 
       // 5. Call Claude (haiku) with small prompt
       const prompt = buildHeartbeatPrompt(user, context);
@@ -450,18 +396,18 @@ async function runHeartbeat(deps: {
 // USER FETCHING
 // ============================================================
 
-async function getProactiveUsers(supabase: SupabaseClient): Promise<HeartbeatUser[]> {
+function getProactiveUsers(db: Database): HeartbeatUser[] {
   try {
-    const { data, error } = await supabase
-      .from("users")
-      .select("id, telegram_id, name, timezone, preferences, profile_text")
-      .eq("active", true);
+    const data = db.getAllActiveUsers();
 
-    if (error || !data) return [];
+    if (!data) return [];
 
     // Only include users who haven't explicitly disabled proactive check-ins
     return data.filter(
-      (u: any) => u.preferences?.proactive_checkin !== false
+      (u: any) => {
+        const prefs = typeof u.preferences === "string" ? JSON.parse(u.preferences) : (u.preferences || {});
+        return prefs.proactive_checkin !== false;
+      }
     ) as HeartbeatUser[];
   } catch {
     return [];

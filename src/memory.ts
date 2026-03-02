@@ -11,8 +11,9 @@
  * from the response before sending to the user.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 import { generateEmbedding } from "./embeddings.ts";
+import { embeddingToBlob } from "./db.ts";
 
 /** Escape SQL LIKE/ILIKE wildcards to prevent wildcard injection. */
 function escapeIlike(text: string): string {
@@ -24,32 +25,30 @@ function escapeIlike(text: string): string {
  * Saves facts/goals to Supabase and returns the cleaned response.
  */
 export async function processMemoryIntents(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   response: string,
   userId: string,
   userTimezone?: string
 ): Promise<string> {
-  if (!supabase) return response;
+  if (!db) return response;
 
   let clean = response;
 
   // [REMEMBER: fact to store] — with duplicate detection
   for (const match of response.matchAll(/\[REMEMBER:\s*(.+?)\]/gi)) {
     const fact = match[1];
-    // Check for existing similar fact (case-insensitive substring match)
-    const { data: existing } = await supabase
-      .from("memory")
-      .select("id")
-      .eq("type", "fact")
-      .eq("user_id", userId)
-      .ilike("content", `%${escapeIlike(fact.substring(0, 100))}%`)
-      .limit(1);
+    // Check for existing similar fact
+    const existing = db.findMemoryByContent(userId, "fact", fact.substring(0, 100));
 
-    if (!existing?.length) {
+    if (!existing) {
       const emb = await generateEmbedding(fact);
-      const row: Record<string, any> = { type: "fact", content: fact, user_id: userId, scope: "private" };
-      if (emb) row.embedding = emb;
-      await supabase.from("memory").insert(row);
+      db.insertMemory({
+        type: "fact",
+        content: fact,
+        user_id: userId,
+        scope: "private",
+        embedding: emb || undefined,
+      });
     }
     clean = clean.replace(match[0], "");
   }
@@ -57,9 +56,13 @@ export async function processMemoryIntents(
   // [SHARE: fact to share with team]
   for (const match of response.matchAll(/\[SHARE:\s*(.+?)\]/gi)) {
     const emb = await generateEmbedding(match[1]);
-    const row: Record<string, any> = { type: "fact", content: match[1], user_id: userId, scope: "shared" };
-    if (emb) row.embedding = emb;
-    await supabase.from("memory").insert(row);
+    db.insertMemory({
+      type: "fact",
+      content: match[1],
+      user_id: userId,
+      scope: "shared",
+      embedding: emb || undefined,
+    });
     clean = clean.replace(match[0], "");
   }
 
@@ -68,37 +71,32 @@ export async function processMemoryIntents(
     /\[GOAL:\s*(.+?)(?:\s*\|\s*DEADLINE:\s*(.+?))?\]/gi
   )) {
     const emb = await generateEmbedding(match[1]);
-    const row: Record<string, any> = { type: "goal", content: match[1], deadline: match[2] || null, user_id: userId };
-    if (emb) row.embedding = emb;
-    await supabase.from("memory").insert(row);
+    db.insertMemory({
+      type: "goal",
+      content: match[1],
+      deadline: match[2] || undefined,
+      user_id: userId,
+      embedding: emb || undefined,
+    });
     clean = clean.replace(match[0], "");
   }
 
   // [DONE: search text for completed goal]
   for (const match of response.matchAll(/\[DONE:\s*(.+?)\]/gi)) {
-    const { data } = await supabase
-      .from("memory")
-      .select("id")
-      .eq("type", "goal")
-      .eq("user_id", userId)
-      .ilike("content", `%${escapeIlike(match[1])}%`)
-      .limit(1);
+    const goal = db.findMemoryByContent(userId, "goal", match[1]);
 
-    if (data?.[0]) {
-      await supabase
-        .from("memory")
-        .update({
-          type: "completed_goal",
-          completed_at: new Date().toISOString(),
-        })
-        .eq("id", data[0].id);
+    if (goal) {
+      db.updateMemory(goal.id, {
+        type: "completed_goal",
+        completed_at: new Date().toISOString(),
+      });
     }
     clean = clean.replace(match[0], "");
   }
 
   // [TASK: agent | description] — create a new task
   for (const match of response.matchAll(/\[TASK:\s*(.+?)\s*\|\s*(.+?)\]/gi)) {
-    await supabase.from("agent_tasks").insert({
+    db.insertTask({
       agent: match[1],
       description: match[2],
       status: "pending",
@@ -109,76 +107,40 @@ export async function processMemoryIntents(
 
   // [TASK_START: search text] — mark matching pending task as in_progress
   for (const match of response.matchAll(/\[TASK_START:\s*(.+?)\]/gi)) {
-    const { data } = await supabase
-      .from("agent_tasks")
-      .select("id")
-      .eq("status", "pending")
-      .eq("user_id", userId)
-      .ilike("description", `%${escapeIlike(match[1])}%`)
-      .limit(1);
+    const task = db.findTaskByDescription(userId, ["pending"], match[1]);
 
-    if (data?.[0]) {
-      await supabase
-        .from("agent_tasks")
-        .update({ status: "in_progress", updated_at: new Date().toISOString() })
-        .eq("id", data[0].id);
+    if (task) {
+      db.updateTask(task.id, { status: "in_progress" });
     }
     clean = clean.replace(match[0], "");
   }
 
   // [TASK_DONE: search text | result] — mark matching active task as done
   for (const match of response.matchAll(/\[TASK_DONE:\s*(.+?)\s*\|\s*(.+?)\]/gi)) {
-    const { data } = await supabase
-      .from("agent_tasks")
-      .select("id")
-      .in("status", ["pending", "in_progress"])
-      .eq("user_id", userId)
-      .ilike("description", `%${escapeIlike(match[1])}%`)
-      .limit(1);
+    const task = db.findTaskByDescription(userId, ["pending", "in_progress"], match[1]);
 
-    if (data?.[0]) {
-      await supabase
-        .from("agent_tasks")
-        .update({ status: "completed", result: match[2], updated_at: new Date().toISOString() })
-        .eq("id", data[0].id);
+    if (task) {
+      db.updateTask(task.id, { status: "completed", result: match[2] });
     }
     clean = clean.replace(match[0], "");
   }
 
   // [TASK_BLOCKED: search text | reason] — mark matching active task as blocked
   for (const match of response.matchAll(/\[TASK_BLOCKED:\s*(.+?)\s*\|\s*(.+?)\]/gi)) {
-    const { data } = await supabase
-      .from("agent_tasks")
-      .select("id")
-      .in("status", ["pending", "in_progress"])
-      .eq("user_id", userId)
-      .ilike("description", `%${escapeIlike(match[1])}%`)
-      .limit(1);
+    const task = db.findTaskByDescription(userId, ["pending", "in_progress"], match[1]);
 
-    if (data?.[0]) {
-      await supabase
-        .from("agent_tasks")
-        .update({ status: "blocked", result: match[2], updated_at: new Date().toISOString() })
-        .eq("id", data[0].id);
+    if (task) {
+      db.updateTask(task.id, { status: "blocked", result: match[2] });
     }
     clean = clean.replace(match[0], "");
   }
 
   // [TASK_CANCEL: search text] — cancel a matching task
   for (const match of response.matchAll(/\[TASK_CANCEL:\s*(.+?)\]/gi)) {
-    const { data } = await supabase
-      .from("agent_tasks")
-      .select("id")
-      .in("status", ["pending", "in_progress", "blocked"])
-      .eq("user_id", userId)
-      .ilike("description", `%${escapeIlike(match[1])}%`)
-      .limit(1);
+    const task = db.findTaskByDescription(userId, ["pending", "in_progress", "blocked"], match[1]);
 
-    if (data?.[0]) {
-      await supabase
-        .from("agent_tasks")
-        .update({ status: "cancelled", updated_at: new Date().toISOString() })
-        .eq("id", data[0].id);
+    if (task) {
+      db.updateTask(task.id, { status: "cancelled" });
     }
     clean = clean.replace(match[0], "");
   }
@@ -199,7 +161,7 @@ export async function processMemoryIntents(
     const triggerAt = parseScheduleTrigger(rawTrigger, tz);
     if (triggerAt) {
       const isOneTime = !recurrence;
-      await supabase.from("scheduled_tasks").insert({
+      db.insertScheduledTask({
         user_id: userId,
         created_by: "user",
         title,
@@ -216,19 +178,10 @@ export async function processMemoryIntents(
 
   // [SCHEDULE_CANCEL: search text]
   for (const match of response.matchAll(/\[SCHEDULE_CANCEL:\s*(.+?)\]/gi)) {
-    const { data } = await supabase
-      .from("scheduled_tasks")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("status", "active")
-      .ilike("title", `%${escapeIlike(match[1])}%`)
-      .limit(1);
+    const task = db.findScheduledTaskByTitle(userId, match[1]);
 
-    if (data?.[0]) {
-      await supabase
-        .from("scheduled_tasks")
-        .update({ status: "cancelled", updated_at: new Date().toISOString() })
-        .eq("id", data[0].id);
+    if (task) {
+      db.updateScheduledTask(task.id, { status: "cancelled" });
     }
     clean = clean.replace(match[0], "");
   }
@@ -240,35 +193,33 @@ export async function processMemoryIntents(
  * Get all facts and active goals for prompt context.
  */
 export async function getMemoryContext(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   userId: string
 ): Promise<string> {
-  if (!supabase) return "";
+  if (!db) return "";
 
   try {
-    const [factsResult, goalsResult] = await Promise.all([
-      supabase.rpc("get_facts", { p_user_id: userId }),
-      supabase.rpc("get_active_goals", { p_user_id: userId }),
-    ]);
+    const facts = db.getFacts(userId);
+    const goals = db.getActiveGoals(userId);
 
     const parts: string[] = [];
 
-    if (factsResult.data?.length) {
+    if (facts?.length) {
       // Cap at 50 facts to prevent unbounded growth
-      const facts = factsResult.data.slice(0, 50);
-      const suffix = factsResult.data.length > 50
-        ? `\n[...${factsResult.data.length - 50} more facts truncated...]`
+      const capped = facts.slice(0, 50);
+      const suffix = facts.length > 50
+        ? `\n[...${facts.length - 50} more facts truncated...]`
         : "";
       parts.push(
         "FACTS:\n" +
-          facts.map((f: any) => `- ${f.content}`).join("\n") + suffix
+          capped.map((f: any) => `- ${f.content}`).join("\n") + suffix
       );
     }
 
-    if (goalsResult.data?.length) {
+    if (goals?.length) {
       parts.push(
         "GOALS:\n" +
-          goalsResult.data
+          goals
             .map((g: any) => {
               const deadline = g.deadline
                 ? ` (by ${new Date(g.deadline).toLocaleDateString()})`
@@ -290,18 +241,13 @@ export async function getMemoryContext(
  * Get active agent tasks for prompt context.
  */
 export async function getTaskContext(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   userId: string
 ): Promise<string> {
-  if (!supabase) return "";
+  if (!db) return "";
 
   try {
-    const { data, error } = await supabase.rpc("get_active_tasks", { p_user_id: userId });
-
-    if (error) {
-      console.warn("Task context error:", error.message);
-      return "";
-    }
+    const data = db.getActiveTasks(userId);
 
     if (!data?.length) return "";
 
@@ -326,22 +272,14 @@ export async function getTaskContext(
  * Provides immediate conversational context — "what were we just talking about?"
  */
 export async function getRecentHistory(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   userId: string,
   count: number = 12
 ): Promise<string> {
-  if (!supabase) return "";
+  if (!db) return "";
 
   try {
-    const { data, error } = await supabase.rpc("get_recent_messages", {
-      p_user_id: userId,
-      limit_count: count,
-    });
-
-    if (error) {
-      console.warn("Recent history fetch error:", error.message);
-      return "";
-    }
+    const data = db.getRecentMessages(userId, count);
 
     if (!data?.length) return "";
 
@@ -378,15 +316,15 @@ export async function getRecentHistory(
  * Generates embedding locally and calls pgvector match functions via Supabase RPC.
  */
 export async function getRelevantContext(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   query: string,
   userId: string
 ): Promise<string> {
-  if (!supabase) return "";
+  if (!db) return "";
 
   try {
     const { semanticSearch } = await import("./embeddings.ts");
-    const data = await semanticSearch(supabase, query, {
+    const data = await semanticSearch(query, {
       table: "messages",
       matchCount: 5,
       userId,
@@ -493,19 +431,14 @@ export function computeNextTrigger(recurrence: string, timezone: string, lastTri
  * Get active scheduled tasks for prompt context injection.
  */
 export async function getScheduleContext(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   userId: string,
   userTimezone?: string
 ): Promise<string> {
-  if (!supabase) return "";
+  if (!db) return "";
 
   try {
-    const { data, error } = await supabase.rpc("get_scheduled_tasks", { p_user_id: userId });
-
-    if (error) {
-      console.warn("Schedule context error:", error.message);
-      return "";
-    }
+    const data = db.getScheduledTasks(userId);
 
     if (!data?.length) return "";
 

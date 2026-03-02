@@ -15,7 +15,7 @@
 
 import { spawn } from "bun";
 import { readFile, writeFile } from "fs/promises";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database } from "../src/db.ts";
 import { dirname, join } from "path";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -67,15 +67,10 @@ async function saveState(userId: string, state: CheckinState): Promise<void> {
 // FETCH PROACTIVE USERS
 // ============================================================
 
-async function getAllProactiveUsers(supabase: SupabaseClient): Promise<ProactiveUser[]> {
-  const { data, error } = await supabase
-    .from("users")
-    .select("id, telegram_id, name, timezone, preferences")
-    .eq("active", true);
+function getAllProactiveUsers(db: Database): ProactiveUser[] {
+  const users = db.getAllActiveUsers();
 
-  if (error || !data) return [];
-
-  return data.filter(
+  return users.filter(
     (u: any) => u.preferences?.proactive_checkin !== false
   );
 }
@@ -84,10 +79,10 @@ async function getAllProactiveUsers(supabase: SupabaseClient): Promise<Proactive
 // REAL CONTEXT FROM SUPABASE (per-user)
 // ============================================================
 
-async function getGoals(supabase: SupabaseClient, userId: string): Promise<string[]> {
+function getGoals(db: Database, userId: string): string[] {
   try {
-    const { data, error } = await supabase.rpc("get_active_goals", { p_user_id: userId });
-    if (error || !data?.length) return [];
+    const data = db.getActiveGoals(userId);
+    if (!data?.length) return [];
 
     return data.map((g: any) => {
       const deadline = g.deadline
@@ -101,14 +96,11 @@ async function getGoals(supabase: SupabaseClient, userId: string): Promise<strin
   }
 }
 
-async function getRecentActivity(supabase: SupabaseClient, userId: string): Promise<string> {
+function getRecentActivity(db: Database, userId: string): string {
   try {
-    const { data, error } = await supabase.rpc("get_recent_messages", {
-      p_user_id: userId,
-      limit_count: 6,
-    });
+    const data = db.getRecentMessages(userId, 6);
 
-    if (error || !data?.length) return "No recent messages";
+    if (!data?.length) return "No recent messages";
 
     const messages = [...data].reverse();
     return messages
@@ -127,16 +119,10 @@ async function getRecentActivity(supabase: SupabaseClient, userId: string): Prom
   }
 }
 
-async function getLastActivity(supabase: SupabaseClient, userId: string): Promise<string> {
+async function getLastActivity(db: Database, userId: string): Promise<string> {
   // Query DB directly for the actual last user message — state file is unreliable
   try {
-    const { data } = await supabase
-      .from("messages")
-      .select("created_at")
-      .eq("user_id", userId)
-      .eq("role", "user")
-      .order("created_at", { ascending: false })
-      .limit(1);
+    const data = db.getRecentMessages(userId, 1);
 
     if (data?.length) {
       const lastMsg = new Date(data[0].created_at);
@@ -191,15 +177,13 @@ async function sendTelegram(chatId: string, message: string): Promise<boolean> {
 // ============================================================
 
 async function askClaudeToDecide(
-  supabase: SupabaseClient,
+  db: Database,
   user: ProactiveUser
 ): Promise<{ shouldCheckin: boolean; message: string }> {
   const state = await loadState(user.id);
-  const [goals, recentActivity, activity] = await Promise.all([
-    getGoals(supabase, user.id),
-    getRecentActivity(supabase, user.id),
-    getLastActivity(supabase, user.id),
-  ]);
+  const goals = getGoals(db, user.id);
+  const recentActivity = getRecentActivity(db, user.id);
+  const activity = await getLastActivity(db, user.id);
 
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -309,23 +293,15 @@ async function main() {
     process.exit(1);
   }
 
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
-    process.exit(1);
-  }
+  const db = getDb();
 
-  const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_ANON_KEY
-  );
-
-  const users = await getAllProactiveUsers(supabase);
+  const users = getAllProactiveUsers(db);
   console.log(`Found ${users.length} proactive user(s)`);
 
   for (const user of users) {
     console.log(`\nChecking ${user.name}...`);
 
-    const { shouldCheckin, message } = await askClaudeToDecide(supabase, user);
+    const { shouldCheckin, message } = await askClaudeToDecide(db, user);
 
     if (shouldCheckin && message && message !== "none") {
       console.log(`Sending check-in to ${user.name}...`);

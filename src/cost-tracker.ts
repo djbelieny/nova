@@ -5,7 +5,7 @@
  * Claude, OpenAI, Groq, ElevenLabs, Ultravox, Fal.ai, HeyGen
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 
 export type Provider = "claude" | "openai" | "groq" | "elevenlabs" | "ultravox" | "fal" | "heygen";
 
@@ -23,17 +23,17 @@ export interface CostEntry {
   metadata?: Record<string, unknown>;
 }
 
-let _supabase: SupabaseClient | null = null;
+let _db: Database | null = null;
 
-/** Initialize cost tracker with a shared Supabase client. */
-export function initCostTracker(supabase: SupabaseClient | null): void {
-  _supabase = supabase;
+/** Initialize cost tracker with a shared Database instance. */
+export function initCostTracker(db: Database | null): void {
+  _db = db;
 }
 
 export async function trackCost(entry: CostEntry): Promise<void> {
-  if (!_supabase) return;
+  if (!_db) return;
   try {
-    await _supabase.from("cost_tracking").insert({
+    _db.insertCostEntry({
       provider: entry.provider,
       model: entry.model,
       input_tokens: entry.input_tokens || 0,
@@ -42,8 +42,8 @@ export async function trackCost(entry: CostEntry): Promise<void> {
       cache_creation_tokens: entry.cache_creation_tokens || 0,
       cost_usd: entry.cost_usd || 0,
       duration_ms: entry.duration_ms || 0,
-      session_id: entry.session_id || null,
-      user_id: entry.user_id || null,
+      session_id: entry.session_id || undefined,
+      user_id: entry.user_id || undefined,
       metadata: entry.metadata || {},
     });
   } catch (e) {

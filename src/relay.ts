@@ -12,7 +12,7 @@ import type { Context } from "grammy";
 import { spawn } from "bun";
 import { writeFile, mkdir, readFile, unlink, stat } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database, embeddingToBlob } from "./db.ts";
 import { transcribe } from "./transcribe.ts";
 import { trackCost, initCostTracker } from "./cost-tracker.ts";
 import {
@@ -165,9 +165,7 @@ await mkdir(WORKSPACE_TASKS, { recursive: true });
 // ============================================================
 
 const configWarnings: string[] = [];
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-  configWarnings.push("SUPABASE_URL/SUPABASE_ANON_KEY missing — memory, tasks, patterns, and cost tracking are DISABLED");
-}
+// Database is always available via local SQLite
 if (!process.env.USER_NAME) {
   configWarnings.push("USER_NAME not set — bot won't know your name");
 }
@@ -186,15 +184,12 @@ if (configWarnings.length > 0) {
 }
 
 // ============================================================
-// SUPABASE (optional — only if configured)
+// DATABASE (local SQLite — always available)
 // ============================================================
 
-const supabase: SupabaseClient | null =
-  process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY)
-    : null;
+const supabase: Database = getDb();
 
-// Share supabase client with cost tracker (avoid duplicate connections)
+// Share db with cost tracker
 initCostTracker(supabase);
 
 // ============================================================
@@ -226,21 +221,16 @@ async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" 
   const cached = userCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < USER_CACHE_TTL_MS) return cached.user;
 
-  if (!supabase) return null;
-
   try {
-    const rpcMap = {
-      telegram: { fn: "get_user_by_telegram_id", param: "p_telegram_id" },
-      whatsapp: { fn: "get_user_by_whatsapp_id", param: "p_whatsapp_id" },
-      slack: { fn: "get_user_by_slack_id", param: "p_slack_id" },
+    const lookupMap: Record<string, (id: string) => any | null> = {
+      telegram: (id) => supabase.getUserByTelegramId(id),
+      whatsapp: (id) => supabase.getUserByWhatsappId(id),
+      slack: (id) => supabase.getUserBySlackId(id),
     };
 
-    const { fn, param } = rpcMap[channel];
-    const { data, error } = await supabase.rpc(fn, { [param]: platformId });
+    const row = lookupMap[channel]?.(platformId);
+    if (!row) return null;
 
-    if (error || !data?.length) return null;
-
-    const row = data[0];
     const user: NovaUser = {
       id: row.id,
       telegram_id: row.telegram_id,
@@ -290,21 +280,19 @@ async function saveMessage(
   metadata?: Record<string, unknown>,
   channel: string = "telegram"
 ): Promise<void> {
-  if (!supabase) return;
   try {
     const { generateEmbedding } = await import("./embeddings.ts");
     const embedding = await generateEmbedding(content);
-    const row: Record<string, any> = {
+    supabase.saveMessage({
       role,
       content,
       channel,
       metadata: metadata || {},
       user_id: userId,
-    };
-    if (embedding) row.embedding = embedding;
-    await supabase.from("messages").insert(row);
+      embedding: embedding || null,
+    });
   } catch (error) {
-    console.error("Supabase save error:", error);
+    console.error("DB save error:", error);
   }
 }
 
@@ -468,11 +456,11 @@ function recordCall(success: boolean, model: string, durationMs: number, rateLim
   usage.avgDurationMs = usage.totalDurationMs / usage.callsTotal;
 }
 
-// Persist usage stats to Supabase every 5 minutes
-setInterval(async () => {
-  if (!supabase || usage.callsTotal === 0) return;
+// Persist usage stats to DB every 5 minutes
+setInterval(() => {
+  if (usage.callsTotal === 0) return;
   try {
-    await supabase.from("cost_tracking").insert({
+    supabase.insertCostEntry({
       provider: "claude",
       model: "usage_stats",
       input_tokens: usage.callsTotal,
@@ -493,12 +481,9 @@ setInterval(async () => {
 }, 5 * 60 * 1000);
 
 // Broadcast live status to nova_status table for Mini App dashboard (every 60s)
-setInterval(async () => {
-  if (!supabase) return;
+setInterval(() => {
   try {
-    await supabase.from("nova_status").upsert({
-      id: 1,
-      updated_at: new Date().toISOString(),
+    supabase.upsertNovaStatus({
       uptime_since: new Date(usage.uptimeSince).toISOString(),
       calls_total: usage.callsTotal,
       calls_success: usage.callsSuccess,
@@ -1496,7 +1481,6 @@ function buildPrompt(
 // ============================================================
 
 async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): Promise<boolean> {
-  if (!supabase) return false;
 
   const parts = text.trim().split(/\s+/);
   const command = parts[0].toLowerCase();
@@ -1518,14 +1502,13 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     try {
       const { generateEmbedding } = await import("./embeddings.ts");
       const embedding = await generateEmbedding(fact);
-      const row: Record<string, any> = {
+      supabase.insertMemory({
         type: "fact",
         content: fact,
         user_id: user.id,
         scope: "shared",
-      };
-      if (embedding) row.embedding = embedding;
-      await supabase.from("memory").insert(row);
+        embedding: embedding || undefined,
+      });
       await ctx.reply(`Shared with team: "${fact}"`);
     } catch (e: any) {
       await ctx.reply(`Error: ${e.message}`);
@@ -1901,7 +1884,7 @@ initOrchestrator({
 
 if (supabase) {
   startHeartbeat({
-    supabase,
+    db: supabase,
     callClaude,
     saveMessage,
     sendAlert: async (user, message) => {
@@ -1932,7 +1915,7 @@ for (const [channel, active] of channelStatus) {
 }
 
 const configStatus = [
-  ["Supabase (memory/tasks)", !!supabase],
+  ["SQLite (memory/tasks)", !!supabase],
   ["Voice transcription", !!process.env.VOICE_PROVIDER],
   ["TTS (ElevenLabs)", !!process.env.ELEVENLABS_API_KEY],
   ["Mini App", !!process.env.MINIAPP_URL],
@@ -1940,29 +1923,22 @@ const configStatus = [
 for (const [feature, active] of configStatus) {
   console.log(`  ${active ? "+" : "-"} ${feature}: ${active ? "enabled" : "DISABLED (missing config)"}`);
 }
-if (!supabase) {
-  console.warn("WARNING: No SUPABASE_URL — memory, tasks, patterns, and cost tracking are all disabled.");
-}
+// Database is always available with local SQLite
 
-// Sync config/profile.md to Supabase (so file edits are reflected in the bot)
-if (supabase) {
-  try {
-    const profilePath = join(PROJECT_ROOT, "config", "profile.md");
-    const profileText = await readFile(profilePath, "utf-8");
-    if (profileText.trim()) {
-      const { data: admins } = await supabase
-        .from("users")
-        .select("id, profile_text")
-        .eq("role", "admin");
-      for (const admin of admins || []) {
-        if (admin.profile_text !== profileText) {
-          await supabase.from("users").update({ profile_text: profileText }).eq("id", admin.id);
-          console.log(`[profile-sync] Updated profile for admin ${admin.id}`);
-        }
+// Sync config/profile.md to DB (so file edits are reflected in the bot)
+try {
+  const profilePath = join(PROJECT_ROOT, "config", "profile.md");
+  const profileText = await readFile(profilePath, "utf-8");
+  if (profileText.trim()) {
+    const admins = supabase.getUsersByRole("admin");
+    for (const admin of admins) {
+      if (admin.profile_text !== profileText) {
+        supabase.updateUser(admin.id, { profile_text: profileText });
+        console.log(`[profile-sync] Updated profile for admin ${admin.id}`);
       }
     }
-  } catch {}
-}
+  }
+} catch {}
 
 // Start Mini App approval polling (checks Supabase for approvals made via Mini App)
 startMiniAppApprovalPolling(supabase);
@@ -1975,16 +1951,13 @@ if (MINIAPP_URL && telegramAdapter) {
 
 // Start all channel adapters
 await channels.startAll();
-console.log("All channels started! Users are managed via the 'users' table in Supabase.");
+console.log("All channels started! Users are managed via the 'users' table in the local DB.");
 
 // Notify admin users that Nova is back online (via Telegram if available)
 // Also recover any pending approvals that survived the restart
-if (supabase && telegramAdapter) {
+if (telegramAdapter) {
   try {
-    const { data: admins } = await supabase
-      .from("users")
-      .select("id, telegram_id")
-      .eq("role", "admin");
+    const admins = supabase.getUsersByRole("admin");
     if (admins?.length) {
       const adminIds = admins.map((a: any) => a.telegram_id).filter(Boolean);
       telegramAdapter.notifyAdmins(adminIds, "Nova is back online.");

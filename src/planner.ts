@@ -20,7 +20,7 @@
  * - Artifacts (file paths, copy, audiences) flow from prepare → execute
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 import { stat } from "fs/promises";
 import type { ExecutionPlan } from "./patterns.ts";
 import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents } from "./agent-router.ts";
@@ -105,7 +105,7 @@ export async function verifyAndRegisterArtifacts(
   taskId: string | null,
   userId: string,
   artifacts: Artifact[],
-  supabase: SupabaseClient | null,
+  db: Database | null,
 ): Promise<{ verified: number; missing: string[] }> {
   const missing: string[] = [];
   let verified = 0;
@@ -132,9 +132,9 @@ export async function verifyAndRegisterArtifacts(
     }
 
     // Register in DB
-    if (supabase) {
+    if (db) {
       try {
-        await supabase.from("task_artifacts").insert({
+        db.insertArtifact({
           task_id: taskId,
           user_id: userId,
           artifact_type: artifact.type,
@@ -468,7 +468,7 @@ export async function executePhase(
   plan: ExecutionPlan,
   phase: "prepare" | "execute",
   user: any,
-  supabase: SupabaseClient | null,
+  db: Database | null,
   parentTaskId?: string,
   priorArtifacts?: Artifact[],
   priorResults?: SubtaskResult[],
@@ -493,22 +493,20 @@ export async function executePhase(
       continue;
     }
     const subtask = plan.subtasks[i];
-    if (supabase) {
-      const { data, error: insertErr } = await supabase
-        .from("agent_tasks")
-        .insert({
+    if (db) {
+      try {
+        const id = db.insertTask({
           agent: subtask.agent || "general",
           description: subtask.description,
           status: "pending",
           user_id: user.id,
           parent_task_id: parentTaskId || null,
-        })
-        .select("id")
-        .single();
-      if (insertErr) {
+        });
+        subtaskIds.push(id);
+      } catch (insertErr: any) {
         console.error(`[planner] Failed to insert subtask ${i} (${subtask.agent}):`, insertErr.message);
+        subtaskIds.push(null);
       }
-      subtaskIds.push(data?.id || null);
     } else {
       subtaskIds.push(null);
     }
@@ -547,11 +545,8 @@ export async function executePhase(
         const subtask = plan.subtasks[idx];
         const agentSlug = subtask.agent || "general";
 
-        if (supabase && subtaskIds[idx]) {
-          await supabase
-            .from("agent_tasks")
-            .update({ status: "in_progress", updated_at: new Date().toISOString() })
-            .eq("id", subtaskIds[idx]);
+        if (db && subtaskIds[idx]) {
+          db.updateTask(subtaskIds[idx]!, { status: "in_progress" });
         }
 
         // Build context from completed dependency results
@@ -612,7 +607,7 @@ export async function executePhase(
               subtaskIds[idx],
               user.id,
               artifacts,
-              supabase,
+              db,
             );
             if (verification.missing.length > 0) {
               const warning = `\nWARNING: ${verification.missing.length} file(s) not found on disk: ${verification.missing.join(", ")}`;
@@ -621,15 +616,8 @@ export async function executePhase(
             }
           }
 
-          if (supabase && subtaskIds[idx]) {
-            await supabase
-              .from("agent_tasks")
-              .update({
-                status: "completed",
-                result: result.substring(0, 500),
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", subtaskIds[idx]);
+          if (db && subtaskIds[idx]) {
+            db.updateTask(subtaskIds[idx]!, { status: "completed", result: result.substring(0, 500) });
           }
 
           onProgress?.(idx, "completed");
@@ -645,15 +633,8 @@ export async function executePhase(
         } catch (error) {
           console.error(`Subtask ${idx} (${agentSlug}) error:`, error);
 
-          if (supabase && subtaskIds[idx]) {
-            await supabase
-              .from("agent_tasks")
-              .update({
-                status: "blocked",
-                result: String(error),
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", subtaskIds[idx]);
+          if (db && subtaskIds[idx]) {
+            db.updateTask(subtaskIds[idx]!, { status: "blocked", result: String(error) });
           }
 
           onProgress?.(idx, "failed");
@@ -687,19 +668,19 @@ export async function executePhase(
 export async function executeSubtasks(
   plan: ExecutionPlan,
   user: any,
-  supabase: SupabaseClient | null,
+  db: Database | null,
   parentTaskId?: string,
   onProgress?: ProgressCallback,
   workspaceDir?: string
 ): Promise<SubtaskResult[]> {
-  const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress, workspaceDir);
+  const prepareResults = await executePhase(plan, "prepare", user, db, parentTaskId, undefined, undefined, onProgress, workspaceDir);
   const artifacts = collectArtifacts(prepareResults);
 
   const hasExecute = plan.subtasks.some((s) => s.phase === "execute");
   if (!hasExecute) return prepareResults;
 
   const executeResults = await executePhase(
-    plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults, onProgress, workspaceDir
+    plan, "execute", user, db, parentTaskId, artifacts, prepareResults, onProgress, workspaceDir
   );
 
   return [...prepareResults, ...executeResults];

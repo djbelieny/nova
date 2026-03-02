@@ -7,7 +7,7 @@
     "dev": "bun run --watch src/relay.ts",
     "setup": "bun run setup/install.ts",
     "test:telegram": "bun run setup/test-telegram.ts",
-    "test:supabase": "bun run setup/test-supabase.ts",
+    "test:sqlite": "bun run setup/test-sqlite.ts",
     "test:voice": "bun run setup/test-voice.ts",
     "setup:launchd": "bun run setup/configure-launchd.ts",
     "setup:services": "bun run setup/configure-services.ts",
@@ -20,8 +20,8 @@
     "miniapp:dev": "bun run --watch src/miniapp.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@slack/bolt": "^4.6.0",
-    "@supabase/supabase-js": "^2.45.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "docx": "^9.5.3",
     "dotenv": "^17.3.1",
@@ -33,7 +33,8 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-icons": "^5.5.0",
-    "sharp": "^0.34.5"
+    "sharp": "^0.34.5",
+    "sqlite-vec": "^0.1.7-alpha.2"
   },
   "devDependencies": {
     "@types/bun": "latest"

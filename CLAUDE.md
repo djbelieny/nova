@@ -40,68 +40,16 @@ If this is a fresh clone, run `bun run setup` first to install dependencies and 
 
 ---
 
-## Phase 2: Database & Memory — Supabase (~12 min)
+## Phase 2: Database & Memory — Local SQLite (~1 min)
 
-Your bot's memory lives in Supabase: conversation history, facts, goals, and semantic search.
-
-### Step 1: Create Supabase Project
-
-**You need from the user:**
-- Supabase Project URL
-- Supabase anon public key
-
-**What to tell them:**
-1. Go to supabase.com, create a free account
-2. Create a new project (any name, any region close to them)
-3. Wait ~2 minutes for it to provision
-4. Go to Project Settings > API
-5. Copy: Project URL and anon public key
+Nova uses a local SQLite database (`data/nova.db`) with built-in vector search. No external services needed.
 
 **What you do:**
-1. Save `SUPABASE_URL` and `SUPABASE_ANON_KEY` to `.env`
+1. Run `bun run test:sqlite` to verify tables are created and embeddings work
 
-### Step 2: Connect Supabase MCP
+The database is created automatically on first run. Embeddings are generated locally using `@huggingface/transformers` (all-MiniLM-L6-v2, 384 dimensions). The model downloads on first use (~23MB).
 
-This lets Claude Code manage the database directly — run queries, deploy functions, apply migrations.
-
-**What to tell them:**
-1. Go to supabase.com/dashboard/account/tokens
-2. Create an access token, copy it
-
-**What you do:**
-```
-claude mcp add supabase -- npx -y @supabase/mcp-server-supabase@latest --access-token ACCESS_TOKEN
-```
-
-### Step 3: Create Tables
-
-Use the Supabase MCP to run the schema:
-1. Read `db/schema.sql`
-2. Execute it via `execute_sql` (or tell the user to paste it in the SQL Editor)
-3. Run `bun run test:supabase` to verify tables exist
-
-### Step 4: Set Up Semantic Search
-
-This gives your bot real memory — it finds relevant past conversations automatically.
-
-**You need from the user:**
-- An OpenAI API key (for generating text embeddings)
-
-**What to tell them:**
-1. Go to platform.openai.com, create an account
-2. Go to API keys, create a new key, copy it
-
-**What you do:**
-1. Save `OPENAI_API_KEY` to `.env`
-2. Embeddings are generated locally by Nova before each database insert — no Edge Functions or webhooks needed.
-
-### Step 5: Verify
-
-Run `bun run test:supabase` to confirm:
-- Tables exist (messages, memory, logs)
-- Embedding generation works
-
-**Done when:** `bun run test:supabase` passes and a test insert into `messages` gets an embedding.
+**Done when:** `bun run test:sqlite` passes.
 
 ---
 

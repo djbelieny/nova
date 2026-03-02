@@ -12,7 +12,7 @@
 
 import "dotenv/config";
 import { spawn } from "bun";
-import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { getDb, type Database } from "../src/db.ts";
 import { dirname, join } from "path";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -20,16 +20,8 @@ const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 
 // ============================================================
-// SUPABASE
+// DATABASE
 // ============================================================
-
-function getSupabase(): SupabaseClient {
-  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-    console.error("Missing SUPABASE_URL or SUPABASE_ANON_KEY");
-    process.exit(1);
-  }
-  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
-}
 
 // ============================================================
 // TELEGRAM
@@ -68,55 +60,42 @@ interface UserInfo {
   telegram_id: string;
 }
 
-async function getAllFacts(supabase: SupabaseClient): Promise<MemoryEntry[]> {
-  const { data, error } = await supabase
-    .from("memory")
-    .select("id, type, content, created_at, user_id, scope")
-    .eq("type", "fact")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    console.error("Failed to fetch facts:", error.message);
+function getAllFacts(db: Database): MemoryEntry[] {
+  try {
+    return db.getMemoryFiltered({ type: "fact" }) || [];
+  } catch (error) {
+    console.error("Failed to fetch facts:", error);
     return [];
   }
-  return data || [];
 }
 
-async function getCompletedGoals(supabase: SupabaseClient): Promise<MemoryEntry[]> {
+function getCompletedGoals(db: Database): MemoryEntry[] {
   // Get completed goals older than 30 days — safe to archive
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await supabase
-    .from("memory")
-    .select("id, type, content, created_at, user_id, scope")
-    .eq("type", "completed_goal")
-    .lt("completed_at", thirtyDaysAgo);
-
-  if (error) {
-    console.error("Failed to fetch completed goals:", error.message);
+  try {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const all = db.getMemoryFiltered({ type: "completed_goal" }) || [];
+    return all.filter((g: any) => g.completed_at && g.completed_at < thirtyDaysAgo);
+  } catch (error) {
+    console.error("Failed to fetch completed goals:", error);
     return [];
   }
-  return data || [];
 }
 
-async function getActiveUsers(supabase: SupabaseClient): Promise<UserInfo[]> {
-  const { data } = await supabase
-    .from("users")
-    .select("id, name, telegram_id")
-    .eq("active", true);
-  return data || [];
+function getActiveUsers(db: Database): UserInfo[] {
+  return db.getAllActiveUsers() || [];
 }
 
-async function deleteMemoryEntries(supabase: SupabaseClient, ids: string[]): Promise<number> {
+function deleteMemoryEntries(db: Database, ids: string[]): number {
   if (!ids.length) return 0;
-  const { error } = await supabase
-    .from("memory")
-    .delete()
-    .in("id", ids);
-  if (error) {
-    console.error("Delete error:", error.message);
+  try {
+    for (const id of ids) {
+      db.raw.run("DELETE FROM memory WHERE id = ?", [id]);
+    }
+    return ids.length;
+  } catch (error) {
+    console.error("Delete error:", error);
     return 0;
   }
-  return ids.length;
 }
 
 // ============================================================
@@ -217,13 +196,11 @@ function findExactDuplicates(facts: MemoryEntry[]): string[] {
 
 async function main() {
   console.log("Running memory review...");
-  const supabase = getSupabase();
+  const db = getDb();
 
-  const [facts, completedGoals, users] = await Promise.all([
-    getAllFacts(supabase),
-    getCompletedGoals(supabase),
-    getActiveUsers(supabase),
-  ]);
+  const facts = getAllFacts(db);
+  const completedGoals = getCompletedGoals(db);
+  const users = getActiveUsers(db);
 
   console.log(`Found ${facts.length} facts, ${completedGoals.length} old completed goals`);
 
@@ -233,7 +210,7 @@ async function main() {
   // Step 1: Remove exact duplicates (fast, no Claude needed)
   const dupeIds = findExactDuplicates(facts);
   if (dupeIds.length) {
-    const deleted = await deleteMemoryEntries(supabase, dupeIds);
+    const deleted = await deleteMemoryEntries(db, dupeIds);
     totalDeleted += deleted;
     report.push(`Duplicates removed: ${deleted}`);
     console.log(`Removed ${deleted} exact duplicates`);
@@ -242,7 +219,7 @@ async function main() {
   // Step 2: Archive old completed goals (> 30 days)
   if (completedGoals.length) {
     const goalIds = completedGoals.map(g => g.id);
-    const deleted = await deleteMemoryEntries(supabase, goalIds);
+    const deleted = await deleteMemoryEntries(db, goalIds);
     totalDeleted += deleted;
     report.push(`Archived completed goals (30d+): ${deleted}`);
     console.log(`Archived ${deleted} old completed goals`);
@@ -261,7 +238,7 @@ async function main() {
         console.log(`  Deleting: "${f.content.substring(0, 80)}"`);
       }
 
-      const deleted = await deleteMemoryEntries(supabase, idsToDelete);
+      const deleted = await deleteMemoryEntries(db, idsToDelete);
       totalDeleted += deleted;
       report.push(`Stale/ephemeral removed: ${deleted}`);
       console.log(`Claude flagged ${deleted} entries for removal`);

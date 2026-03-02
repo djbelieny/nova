@@ -5,7 +5,7 @@
  * Successful patterns get reused to skip classification on future similar tasks.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 
 export interface ExecutionPlan {
   subtasks: { description: string; agent?: string; dependsOn?: number[]; phase?: "prepare" | "execute" }[];
@@ -45,29 +45,20 @@ function normalizeSignature(text: string): string {
  * Returns the best pattern with 2+ successes, or null.
  */
 export async function findPattern(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   taskText: string,
   userId: string
 ): Promise<ExecutionPattern | null> {
-  if (!supabase) return null;
+  if (!db) return null;
 
   const signature = normalizeSignature(taskText);
   if (!signature) return null;
 
   try {
-    // Extract key terms for keyword matching
-    const keywords = signature.split(" ").slice(0, 5);
-
     // Search patterns that share keywords with the task
-    const { data, error } = await supabase
-      .from("execution_patterns")
-      .select("*")
-      .eq("user_id", userId)
-      .gte("success_count", 2)
-      .order("success_count", { ascending: false })
-      .limit(10);
+    const data = db.findPatterns(userId, 2, 10);
 
-    if (error || !data?.length) return null;
+    if (!data?.length) return null;
 
     // Score each pattern by keyword overlap — use full signature, not just first 5
     const signatureWords = signature.split(" ");
@@ -105,47 +96,37 @@ export async function findPattern(
  * Creates new patterns or updates existing ones with running averages.
  */
 export async function recordExecution(
-  supabase: SupabaseClient | null,
+  db: Database | null,
   taskText: string,
   plan: ExecutionPlan,
   success: boolean,
   durationMs: number,
   userId: string
 ): Promise<void> {
-  if (!supabase) return;
+  if (!db) return;
 
   const signature = normalizeSignature(taskText);
   if (!signature) return;
 
   try {
     // Check for existing pattern
-    const { data: existing } = await supabase
-      .from("execution_patterns")
-      .select("id, success_count, fail_count, avg_duration_ms")
-      .eq("task_signature", signature)
-      .eq("user_id", userId)
-      .limit(1);
+    const existing = db.findPatternBySignature(userId, signature);
 
-    if (existing?.length) {
-      const row = existing[0];
-      const totalRuns = row.success_count + row.fail_count;
+    if (existing) {
+      const totalRuns = existing.success_count + existing.fail_count;
       const newAvg =
-        (row.avg_duration_ms * totalRuns + durationMs) / (totalRuns + 1);
+        (existing.avg_duration_ms * totalRuns + durationMs) / (totalRuns + 1);
 
-      await supabase
-        .from("execution_patterns")
-        .update({
-          success_count: success
-            ? row.success_count + 1
-            : row.success_count,
-          fail_count: success ? row.fail_count : row.fail_count + 1,
-          avg_duration_ms: newAvg,
-          plan,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", row.id);
+      db.updatePattern(existing.id, {
+        success_count: success
+          ? existing.success_count + 1
+          : existing.success_count,
+        fail_count: success ? existing.fail_count : existing.fail_count + 1,
+        avg_duration_ms: newAvg,
+        plan,
+      });
     } else {
-      await supabase.from("execution_patterns").insert({
+      db.insertPattern({
         task_signature: signature,
         plan,
         success_count: success ? 1 : 0,

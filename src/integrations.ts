@@ -16,7 +16,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
 import { execSync } from "child_process";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const NOVA_DIR = process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
@@ -231,12 +231,10 @@ function getGoogleMcpHome(userId: string, label: "personal" | "work"): string {
 // ============================================================
 
 export async function getIntegrationStatus(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string
 ): Promise<IntegrationStatus[]> {
-  const { data, error } = await supabase.rpc("get_user_integrations", {
-    p_user_id: userId,
-  });
+  const data = db.getUserIntegrations(userId);
 
   // Build a map from DB results
   const dbMap = new Map<string, any>();
@@ -347,7 +345,7 @@ export function getOAuthUrl(
 // ============================================================
 
 export async function handleOAuthCallback(
-  supabase: SupabaseClient,
+  db: Database,
   provider: Provider,
   code: string,
   userId: string
@@ -494,28 +492,17 @@ export async function handleOAuthCallback(
     }
 
     // Store in DB
-    await supabase.rpc("upsert_user_integration", {
-      p_user_id: userId,
-      p_provider: provider,
-      p_status: "connected",
-      p_credentials: credentials,
-      p_metadata: metadata,
-    });
+    db.upsertIntegration({ user_id: userId, provider, status: "connected", credentials, metadata });
 
     // Regenerate MCP config
-    await regenerateMcpConfig(supabase, userId);
+    await regenerateMcpConfig(db, userId);
 
     return { success: true };
   } catch (error: any) {
     console.error(`[integrations] OAuth callback error for ${provider}:`, error);
 
     // Mark as error in DB
-    await supabase.rpc("upsert_user_integration", {
-      p_user_id: userId,
-      p_provider: provider,
-      p_status: "error",
-      p_metadata: { error: error.message },
-    });
+    db.upsertIntegration({ user_id: userId, provider, status: "error", metadata: { error: error.message } });
 
     return { success: false, error: error.message };
   }
@@ -526,22 +513,16 @@ export async function handleOAuthCallback(
 // ============================================================
 
 export async function saveApiKeyIntegration(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string,
   provider: ApiKeyProvider,
   credentials: Record<string, any>,
   metadata: Record<string, any> = {}
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    await supabase.rpc("upsert_user_integration", {
-      p_user_id: userId,
-      p_provider: provider,
-      p_status: "connected",
-      p_credentials: credentials,
-      p_metadata: metadata,
-    });
+    db.upsertIntegration({ user_id: userId, provider, status: "connected", credentials, metadata });
 
-    await regenerateMcpConfig(supabase, userId);
+    await regenerateMcpConfig(db, userId);
     return { success: true };
   } catch (error: any) {
     console.error(`[integrations] saveApiKeyIntegration error for ${provider}:`, error);
@@ -550,21 +531,12 @@ export async function saveApiKeyIntegration(
 }
 
 export async function getIntegrationCredentials(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string,
   provider: string
 ): Promise<{ credentials: Record<string, any>; metadata: Record<string, any> } | null> {
   try {
-    const { data } = await supabase
-      .from("user_integrations")
-      .select("credentials, metadata")
-      .eq("user_id", userId)
-      .eq("provider", provider)
-      .eq("status", "connected")
-      .single();
-
-    if (!data) return null;
-    return { credentials: data.credentials || {}, metadata: data.metadata || {} };
+    return db.getIntegrationCredentials(userId, provider);
   } catch {
     return null;
   }
@@ -575,20 +547,14 @@ export async function getIntegrationCredentials(
 // ============================================================
 
 export async function disconnectIntegration(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string,
   provider: Provider
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    await supabase.rpc("upsert_user_integration", {
-      p_user_id: userId,
-      p_provider: provider,
-      p_status: "disconnected",
-      p_credentials: {},
-      p_metadata: {},
-    });
+    db.upsertIntegration({ user_id: userId, provider, status: "disconnected" });
 
-    await regenerateMcpConfig(supabase, userId);
+    await regenerateMcpConfig(db, userId);
     return { success: true };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -600,7 +566,7 @@ export async function disconnectIntegration(
 // ============================================================
 
 export async function regenerateMcpConfig(
-  supabase: SupabaseClient,
+  db: Database,
   userId: string
 ): Promise<void> {
   const userDir = getUserDir(userId);
@@ -622,11 +588,7 @@ export async function regenerateMcpConfig(
   }
 
   // Get user's connected integrations
-  const { data: integrations } = await supabase
-    .from("user_integrations")
-    .select("provider, status, credentials")
-    .eq("user_id", userId)
-    .eq("status", "connected");
+  const integrations = db.getConnectedIntegrations(userId);
 
   if (integrations) {
     for (const integration of integrations) {

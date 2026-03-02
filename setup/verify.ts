@@ -1,7 +1,7 @@
 /**
  * Nova — Verify Setup
  *
- * Runs all health checks in sequence: env, Telegram, Supabase,
+ * Runs all health checks in sequence: env, Telegram, SQLite,
  * services, and reports overall status.
  *
  * Usage: bun run setup/verify.ts
@@ -85,27 +85,21 @@ async function main() {
     pass(`User ID: ${userId}`);
   }
 
-  // 3. Supabase
-  console.log(`\n${bold("  Supabase")}`);
-  const supaUrl = env.SUPABASE_URL || "";
-  const supaKey = env.SUPABASE_ANON_KEY || "";
+  // 3. SQLite Database
+  console.log(`\n${bold("  Database (SQLite)")}`);
+  try {
+    const { getDb } = await import("../src/db.ts");
+    const db = getDb();
+    pass("SQLite database opened");
 
-  if (!supaUrl || supaUrl.includes("your_")) {
-    warn("SUPABASE_URL not set (memory won't persist)");
-  } else if (!supaKey || supaKey.includes("your_")) {
-    warn("SUPABASE_ANON_KEY not set");
-  } else {
-    for (const table of ["messages", "memory", "logs"]) {
-      try {
-        const res = await fetch(`${supaUrl}/rest/v1/${table}?select=*&limit=1`, {
-          headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}` },
-        });
-        res.status === 200 ? pass(`Table "${table}" OK`) : fail(`Table "${table}": ${res.status}`);
-      } catch (e: any) {
-        fail(`Supabase unreachable: ${e.message}`);
-        break;
-      }
+    for (const table of ["messages", "memory", "users", "agent_tasks", "logs"]) {
+      const row = db.raw.query(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+      ).get(table) as any;
+      row ? pass(`Table "${table}" OK`) : fail(`Table "${table}" missing`);
     }
+  } catch (e: any) {
+    fail(`SQLite database error: ${e.message}`);
   }
 
   // 4. Services (macOS only)
@@ -120,9 +114,9 @@ async function main() {
 
   // 5. Optional
   console.log(`\n${bold("  Optional")}`);
-  env.GEMINI_API_KEY && !env.GEMINI_API_KEY.includes("your_")
-    ? pass("Voice transcription (Gemini) configured")
-    : warn("No GEMINI_API_KEY — voice messages won't be transcribed");
+  env.GROQ_API_KEY && !env.GROQ_API_KEY.includes("your_")
+    ? pass("Voice transcription (Groq) configured")
+    : warn("No GROQ_API_KEY — voice messages won't be transcribed");
 
   env.USER_NAME && !env.USER_NAME.includes("Your ")
     ? pass(`Name: ${env.USER_NAME}`)

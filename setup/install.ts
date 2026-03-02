@@ -161,7 +161,7 @@ async function main() {
     steps.push(`Edit .env with your API keys: ${cyan("$EDITOR .env")}`);
   }
   steps.push(`Test Telegram connection: ${cyan("bun run setup/test-telegram.ts")}`);
-  steps.push(`Test Supabase connection: ${cyan("bun run setup/test-supabase.ts")}`);
+  steps.push(`Test SQLite database: ${cyan("bun run setup/test-sqlite.ts")}`);
   steps.push(`Start the bot: ${cyan("bun run start")}`);
 
   steps.forEach((step, i) => console.log(`  ${i + 1}. ${step}`));
