@@ -90,26 +90,15 @@ This gives your bot real memory — it finds relevant past conversations automat
 **What to tell them:**
 1. Go to platform.openai.com, create an account
 2. Go to API keys, create a new key, copy it
-3. The key will be stored in Supabase, not on your computer. It stays with your database.
 
 **What you do:**
-1. Deploy the embed Edge Function via Supabase MCP (`deploy_edge_function` with `supabase/functions/embed/index.ts`)
-2. Deploy the search Edge Function (`supabase/functions/search/index.ts`)
-3. Tell the user to store their OpenAI key in Supabase:
-   - Go to Supabase dashboard > Project Settings > Edge Functions
-   - Under Secrets, add: `OPENAI_API_KEY` = their key
-4. Set up database webhooks so embeddings are generated automatically:
-   - Go to Supabase dashboard > Database > Webhooks > Create webhook
-   - Name: `embed_messages`, Table: `messages`, Events: INSERT
-   - Type: Supabase Edge Function, Function: `embed`
-   - Create a second webhook: `embed_memory`, Table: `memory`, Events: INSERT
-   - Same Edge Function: `embed`
+1. Save `OPENAI_API_KEY` to `.env`
+2. Embeddings are generated locally by Nova before each database insert — no Edge Functions or webhooks needed.
 
 ### Step 5: Verify
 
 Run `bun run test:supabase` to confirm:
 - Tables exist (messages, memory, logs)
-- Edge Functions respond
 - Embedding generation works
 
 **Done when:** `bun run test:supabase` passes and a test insert into `messages` gets an embedding.

@@ -439,6 +439,8 @@ async function generateAudio(text: string): Promise<string | null> {
 async function saveCallMessage(role: string, content: string, callSid?: string, userId?: string): Promise<void> {
   if (!supabase) return;
   try {
+    const { generateEmbedding } = await import("./embeddings.ts");
+    const embedding = await generateEmbedding(content);
     const row: Record<string, any> = {
       role,
       content,
@@ -446,6 +448,7 @@ async function saveCallMessage(role: string, content: string, callSid?: string, 
       metadata: { callSid },
     };
     if (userId) row.user_id = userId;
+    if (embedding) row.embedding = embedding;
     await supabase.from("messages").insert(row);
   } catch (error) {
     console.error("Supabase save error:", error);

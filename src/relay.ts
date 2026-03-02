@@ -292,13 +292,17 @@ async function saveMessage(
 ): Promise<void> {
   if (!supabase) return;
   try {
-    await supabase.from("messages").insert({
+    const { generateEmbedding } = await import("./embeddings.ts");
+    const embedding = await generateEmbedding(content);
+    const row: Record<string, any> = {
       role,
       content,
       channel,
       metadata: metadata || {},
       user_id: userId,
-    });
+    };
+    if (embedding) row.embedding = embedding;
+    await supabase.from("messages").insert(row);
   } catch (error) {
     console.error("Supabase save error:", error);
   }
@@ -1512,12 +1516,16 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     }
 
     try {
-      await supabase.from("memory").insert({
+      const { generateEmbedding } = await import("./embeddings.ts");
+      const embedding = await generateEmbedding(fact);
+      const row: Record<string, any> = {
         type: "fact",
         content: fact,
         user_id: user.id,
         scope: "shared",
-      });
+      };
+      if (embedding) row.embedding = embedding;
+      await supabase.from("memory").insert(row);
       await ctx.reply(`Shared with team: "${fact}"`);
     } catch (e: any) {
       await ctx.reply(`Error: ${e.message}`);

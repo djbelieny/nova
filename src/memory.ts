@@ -12,6 +12,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { generateEmbedding } from "./embeddings.ts";
 
 /** Escape SQL LIKE/ILIKE wildcards to prevent wildcard injection. */
 function escapeIlike(text: string): string {
@@ -45,24 +46,20 @@ export async function processMemoryIntents(
       .limit(1);
 
     if (!existing?.length) {
-      await supabase.from("memory").insert({
-        type: "fact",
-        content: fact,
-        user_id: userId,
-        scope: "private",
-      });
+      const emb = await generateEmbedding(fact);
+      const row: Record<string, any> = { type: "fact", content: fact, user_id: userId, scope: "private" };
+      if (emb) row.embedding = emb;
+      await supabase.from("memory").insert(row);
     }
     clean = clean.replace(match[0], "");
   }
 
   // [SHARE: fact to share with team]
   for (const match of response.matchAll(/\[SHARE:\s*(.+?)\]/gi)) {
-    await supabase.from("memory").insert({
-      type: "fact",
-      content: match[1],
-      user_id: userId,
-      scope: "shared",
-    });
+    const emb = await generateEmbedding(match[1]);
+    const row: Record<string, any> = { type: "fact", content: match[1], user_id: userId, scope: "shared" };
+    if (emb) row.embedding = emb;
+    await supabase.from("memory").insert(row);
     clean = clean.replace(match[0], "");
   }
 
@@ -70,12 +67,10 @@ export async function processMemoryIntents(
   for (const match of response.matchAll(
     /\[GOAL:\s*(.+?)(?:\s*\|\s*DEADLINE:\s*(.+?))?\]/gi
   )) {
-    await supabase.from("memory").insert({
-      type: "goal",
-      content: match[1],
-      deadline: match[2] || null,
-      user_id: userId,
-    });
+    const emb = await generateEmbedding(match[1]);
+    const row: Record<string, any> = { type: "goal", content: match[1], deadline: match[2] || null, user_id: userId };
+    if (emb) row.embedding = emb;
+    await supabase.from("memory").insert(row);
     clean = clean.replace(match[0], "");
   }
 
@@ -379,8 +374,8 @@ export async function getRecentHistory(
 }
 
 /**
- * Semantic search for relevant past messages via the search Edge Function.
- * The Edge Function handles embedding generation (OpenAI key stays in Supabase).
+ * Semantic search for relevant past messages.
+ * Generates embedding locally and calls pgvector match functions via Supabase RPC.
  */
 export async function getRelevantContext(
   supabase: SupabaseClient | null,
@@ -390,17 +385,14 @@ export async function getRelevantContext(
   if (!supabase) return "";
 
   try {
-    const { data, error } = await supabase.functions.invoke("search", {
-      body: { query, match_count: 5, table: "messages", user_id: userId },
+    const { semanticSearch } = await import("./embeddings.ts");
+    const data = await semanticSearch(supabase, query, {
+      table: "messages",
+      matchCount: 5,
+      userId,
     });
 
-    if (error) {
-      console.warn("Semantic search error:", error.message || error);
-      return "";
-    }
-
     if (!data?.length) {
-      console.warn("Semantic search returned no results for:", query.substring(0, 50));
       return "";
     }
 
