@@ -468,6 +468,37 @@ class UserDatabase {
       )
     `);
     this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_prefs_unique ON workflow_preferences(user_id, task_signature)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        name TEXT,
+        role TEXT NOT NULL DEFAULT 'allowed'
+          CHECK (role IN ('allowed', 'blocked', 'vip')),
+        permissions TEXT DEFAULT '{}',
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, phone)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_wa_contacts_user ON whatsapp_contacts(user_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_wa_contacts_phone ON whatsapp_contacts(user_id, phone)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS whatsapp_groups (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id TEXT NOT NULL,
+        group_jid TEXT NOT NULL,
+        name TEXT,
+        active INTEGER DEFAULT 1,
+        permissions TEXT DEFAULT '{}',
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, group_jid)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_wa_groups_user ON whatsapp_groups(user_id)`);
   }
 
   close(): void {
@@ -1349,6 +1380,97 @@ export class Database {
       SELECT provider, status, credentials FROM user_integrations
       WHERE user_id = ? AND status = 'connected'
     `).all(userId) as any[];
+  }
+
+  // ============================================================
+  // WhatsApp Contacts (→ user DB)
+  // ============================================================
+
+  getWhatsappContact(userId: string, phone: string): any | null {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(
+      `SELECT * FROM whatsapp_contacts WHERE user_id = ? AND phone = ? LIMIT 1`
+    ).get(userId, phone) as any;
+    if (!row) return null;
+    row.permissions = parseJson(row.permissions, {});
+    return row;
+  }
+
+  getWhatsappContacts(userId: string): any[] {
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(
+      `SELECT * FROM whatsapp_contacts WHERE user_id = ? ORDER BY name, phone`
+    ).all(userId) as any[];
+    return rows.map((r) => {
+      r.permissions = parseJson(r.permissions, {});
+      return r;
+    });
+  }
+
+  upsertWhatsappContact(userId: string, phone: string, name: string | null, role: string, permissions: Record<string, any>): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(`
+      INSERT INTO whatsapp_contacts (id, user_id, phone, name, role, permissions)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, phone) DO UPDATE SET
+        name = excluded.name,
+        role = excluded.role,
+        permissions = excluded.permissions,
+        updated_at = datetime('now')
+    `, [uuid(), userId, phone, name, role, JSON.stringify(permissions)]);
+  }
+
+  deleteWhatsappContact(userId: string, phone: string): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(
+      `DELETE FROM whatsapp_contacts WHERE user_id = ? AND phone = ?`,
+      [userId, phone]
+    );
+  }
+
+  // ============================================================
+  // WhatsApp Groups (→ user DB)
+  // ============================================================
+
+  getWhatsappGroup(userId: string, groupJid: string): any | null {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(
+      `SELECT * FROM whatsapp_groups WHERE user_id = ? AND group_jid = ? LIMIT 1`
+    ).get(userId, groupJid) as any;
+    if (!row) return null;
+    row.permissions = parseJson(row.permissions, {});
+    return row;
+  }
+
+  getWhatsappGroups(userId: string): any[] {
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(
+      `SELECT * FROM whatsapp_groups WHERE user_id = ? ORDER BY name, group_jid`
+    ).all(userId) as any[];
+    return rows.map((r) => {
+      r.permissions = parseJson(r.permissions, {});
+      return r;
+    });
+  }
+
+  upsertWhatsappGroup(userId: string, groupJid: string, name: string | null, active: number, permissions: Record<string, any>): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(`
+      INSERT INTO whatsapp_groups (id, user_id, group_jid, name, active, permissions)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, group_jid) DO UPDATE SET
+        name = excluded.name,
+        active = excluded.active,
+        permissions = excluded.permissions
+    `, [uuid(), userId, groupJid, name, active, JSON.stringify(permissions)]);
+  }
+
+  deleteWhatsappGroup(userId: string, groupJid: string): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(
+      `DELETE FROM whatsapp_groups WHERE user_id = ? AND group_jid = ?`,
+      [userId, groupJid]
+    );
   }
 
   // ============================================================

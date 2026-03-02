@@ -33,6 +33,7 @@ import {
   type IncomingMessage,
   type PlatformContext,
 } from "./channels/index.ts";
+import { WhatsAppManager } from "./whatsapp-manager.ts";
 import { startHeartbeat, appendToHeartbeat } from "./heartbeat.ts";
 import {
   markdownToTelegramHTML,
@@ -127,6 +128,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
     console.log("[shutdown] All tasks drained. Exiting cleanly.");
   }
 
+  // Stop WhatsApp sessions gracefully
+  try { await whatsappManager.stopAll(); } catch {}
+
   await releaseLock();
   process.exit(0);
 }
@@ -139,13 +143,13 @@ process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 // ============================================================
 
 // At least one channel must be configured
-const hasAnyChannel = BOT_TOKEN || process.env.WHATSAPP_ENABLED === "true" || (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN);
+const hasAnyChannel = BOT_TOKEN || (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN);
 if (!hasAnyChannel) {
   console.error("No messaging channel configured!");
   console.log("\nConfigure at least one:");
   console.log("  Telegram: Set TELEGRAM_BOT_TOKEN in .env");
-  console.log("  WhatsApp: Set WHATSAPP_ENABLED=true in .env");
   console.log("  Slack: Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN in .env");
+  console.log("  WhatsApp: Connect via Mini App (Integrations tab)");
   process.exit(1);
 }
 
@@ -308,6 +312,11 @@ if (!(await acquireLock())) {
 
 const channels = new ChannelRegistry();
 channels.init(RELAY_DIR);
+
+// WhatsApp per-user sessions (managed via Mini App, not env flag)
+const whatsappManager = new WhatsAppManager(supabase);
+// Export for miniapp.ts to access
+(globalThis as any).__novaWhatsAppManager = whatsappManager;
 
 // Set up Telegram middleware for user resolution (if Telegram is enabled)
 const telegramAdapter = channels.getTelegram();
@@ -860,14 +869,37 @@ setInterval(() => {
 // MESSAGE HANDLERS (all channels via adapter pattern)
 // ============================================================
 
-channels.onMessage(async (msg: IncomingMessage, reply) => {
+/** Shared message handler for all channels (Telegram, Slack, WhatsApp). */
+const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Promise<void>) => {
   // Get platform context (attached by adapter)
   const platformCtx: PlatformContext | any = (msg as any)._platformContext;
+  const whatsappMeta = (msg as any)._whatsappMeta;
+  const contactContext = (msg as any)._contactContext;
 
-  // --- User resolution for non-Telegram channels ---
-  // Telegram resolves users in middleware; WhatsApp/Slack resolve here
+  // --- User resolution ---
   let user: NovaUser | null = null;
-  if (msg.channelType === "telegram") {
+  if (msg.channelType === "whatsapp" && msg.userId) {
+    // WhatsApp: userId already set by WhatsAppManager's classification pipeline
+    user = await resolveUser(msg.userId, "telegram") || null;
+    // Try by user ID directly if platform lookup fails
+    if (!user) {
+      const dbUser = supabase.getUserById(msg.userId);
+      if (dbUser) {
+        user = {
+          id: dbUser.id,
+          telegram_id: dbUser.telegram_id,
+          name: dbUser.name,
+          timezone: dbUser.timezone || "UTC",
+          phone: dbUser.phone || "",
+          role: dbUser.role,
+          preferences: dbUser.preferences || {},
+          profile_text: dbUser.profile_text || "",
+        };
+      }
+    }
+    if (!user) return;
+    if (platformCtx) platformCtx.novaUser = user;
+  } else if (msg.channelType === "telegram") {
     user = platformCtx?.novaUser || null;
   } else {
     user = await resolveUser(msg.platformUserId, msg.channelType);
@@ -922,7 +954,12 @@ channels.onMessage(async (msg: IncomingMessage, reply) => {
     }
 
     await ctx.replyWithChatAction("typing");
-    await saveMessage("user", text, user.id, undefined, msg.channelType);
+    await saveMessage("user", text, user.id, whatsappMeta || undefined, msg.channelType);
+
+    // For WhatsApp contact messages, inject contact context into the orchestration
+    if (contactContext && msg.channelType === "whatsapp") {
+      (ctx as any)._whatsappContactContext = contactContext;
+    }
 
     orchestrate(ctx._raw || ctx, text, user, supabase);
     return;
@@ -1073,7 +1110,13 @@ channels.onMessage(async (msg: IncomingMessage, reply) => {
     }
     return;
   }
-});
+};
+
+// Register message handler on all channel adapters
+channels.onMessage(handleIncomingMessage);
+
+// Wire the same handler into the WhatsApp per-user session manager
+whatsappManager.setMessageHandler(handleIncomingMessage);
 
 // ============================================================
 // HELPERS
@@ -1210,7 +1253,7 @@ function buildPrompt(
   recentHistory?: string,
   taskContext?: string,
   scheduleContext?: string,
-  options?: { ghlLocationId?: string }
+  options?: { ghlLocationId?: string; contactContext?: string }
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -1242,6 +1285,7 @@ function buildPrompt(
 
   // Resolve GHL location ID from cache or options
   const ghlLocationId = options?.ghlLocationId || ghlLocationCache.get(user.id);
+  const contactContext = options?.contactContext;
 
   // Detect what instruction blocks this message actually needs
   const needs = detectPromptNeeds(userMessage);
@@ -1250,7 +1294,12 @@ function buildPrompt(
     "You are a personal AI assistant responding via messaging. Keep responses concise and conversational.",
   ];
 
-  parts.push(`You are speaking with ${user.name}.`);
+  // WhatsApp contact context — override identity when responding on behalf of user
+  if (contactContext) {
+    parts.push(contactContext);
+  } else {
+    parts.push(`You are speaking with ${user.name}.`);
+  }
   parts.push(`Current time: ${timeStr}`);
 
   // ── TIER 1 (minimal): identity + history only ──
@@ -1913,6 +1962,7 @@ const channelStatus = channels.getStatus();
 for (const [channel, active] of channelStatus) {
   console.log(`  ${active ? "+" : "-"} ${channel}: ${active ? "enabled" : "not configured"}`);
 }
+console.log(`  + WhatsApp: per-user via Mini App`);
 
 const configStatus = [
   ["SQLite (memory/tasks)", !!supabase],
@@ -1951,6 +2001,10 @@ if (MINIAPP_URL && telegramAdapter) {
 
 // Start all channel adapters
 await channels.startAll();
+
+// Restore existing WhatsApp sessions (per-user, auto-reconnect)
+await whatsappManager.restoreConnectedSessions();
+
 console.log("All channels started! Users are managed via the 'users' table in the local DB.");
 
 // Notify admin users that Nova is back online (via Telegram if available)

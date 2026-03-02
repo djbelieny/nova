@@ -3,11 +3,12 @@
  *
  * Reads enabled channels from environment variables, instantiates adapters,
  * and provides a unified interface for relay.ts to manage all channels.
+ *
+ * WhatsApp is managed separately by WhatsAppManager (per-user sessions via Mini App).
  */
 
 import type { ChannelAdapter, MessageHandler, ButtonHandler } from "./types.ts";
 import { TelegramAdapter } from "./telegram.ts";
-import { WhatsAppAdapter } from "./whatsapp.ts";
 import { SlackAdapter } from "./slack.ts";
 
 export { TelegramAdapter } from "./telegram.ts";
@@ -29,6 +30,7 @@ export class ChannelRegistry {
 
   /**
    * Initialize all enabled channel adapters based on environment variables.
+   * WhatsApp is NOT initialized here — it's managed per-user by WhatsAppManager.
    * Does NOT start them — call start() separately after registering handlers.
    */
   init(relayDir: string): void {
@@ -37,25 +39,6 @@ export class ChannelRegistry {
       this.telegramAdapter = new TelegramAdapter(process.env.TELEGRAM_BOT_TOKEN);
       this.adapters.push(this.telegramAdapter);
       console.log("[channels] Telegram adapter initialized");
-    }
-
-    // WhatsApp
-    if (process.env.WHATSAPP_ENABLED === "true") {
-      const wa = new WhatsAppAdapter(relayDir, {
-        onQR: (qrImagePath) => {
-          // Send QR code to Telegram so user can scan it
-          if (this.telegramAdapter && process.env.TELEGRAM_USER_ID) {
-            const chatId = process.env.TELEGRAM_USER_ID;
-            this.telegramAdapter.sendFile(
-              chatId,
-              qrImagePath,
-              "Scan this QR code with WhatsApp to link your device:\nSettings → Linked Devices → Link a Device",
-            ).catch((err: any) => console.error("[channels] Failed to send WA QR to Telegram:", err));
-          }
-        },
-      });
-      this.adapters.push(wa);
-      console.log("[channels] WhatsApp adapter initialized");
     }
 
     // Slack
@@ -67,6 +50,8 @@ export class ChannelRegistry {
       this.adapters.push(slack);
       console.log("[channels] Slack adapter initialized");
     }
+
+    // Note: WhatsApp is managed per-user via WhatsAppManager + Mini App
   }
 
   /** Get the Telegram adapter (for backward-compatible operations). */
@@ -122,7 +107,6 @@ export class ChannelRegistry {
   getStatus(): Array<[string, boolean]> {
     return [
       ["Telegram", !!this.telegramAdapter],
-      ["WhatsApp", this.adapters.some((a) => a.type === "whatsapp")],
       ["Slack", this.adapters.some((a) => a.type === "slack")],
     ];
   }

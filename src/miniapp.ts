@@ -457,6 +457,123 @@ async function saveApiKeyHandler(userId: string, provider: string, req: Request)
 }
 
 // ============================================================
+// WHATSAPP HANDLERS
+// ============================================================
+
+import { WhatsAppManager } from "./whatsapp-manager.ts";
+
+/** Get WhatsAppManager from global (set by relay.ts) or create standalone. */
+function getWhatsAppManager(): WhatsAppManager {
+  const global = (globalThis as any).__novaWhatsAppManager;
+  if (global) return global;
+  // Standalone mode (miniapp running without relay) — create ephemeral manager
+  const manager = new WhatsAppManager(supabase);
+  (globalThis as any).__novaWhatsAppManager = manager;
+  return manager;
+}
+
+async function whatsappConnect(userId: string): Promise<unknown> {
+  try {
+    const manager = getWhatsAppManager();
+    await manager.connect(userId);
+    // Give it a moment for QR generation
+    await new Promise((r) => setTimeout(r, 2000));
+    return manager.getStatus(userId);
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function whatsappStatus(userId: string): Promise<unknown> {
+  try {
+    const manager = getWhatsAppManager();
+    return manager.getStatus(userId);
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function whatsappDisconnect(userId: string): Promise<unknown> {
+  try {
+    const manager = getWhatsAppManager();
+    await manager.disconnect(userId);
+    return { success: true };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function whatsappGetContacts(userId: string): Promise<unknown> {
+  try {
+    return { contacts: supabase.getWhatsappContacts(userId) };
+  } catch (e: any) {
+    return { contacts: [], error: e.message };
+  }
+}
+
+async function whatsappUpsertContact(userId: string, body: any): Promise<unknown> {
+  const { phone, name, role, permissions } = body;
+  if (!phone) return { error: "phone is required" };
+  const validRoles = ["allowed", "blocked", "vip"];
+  if (role && !validRoles.includes(role)) return { error: `Invalid role: ${role}` };
+  try {
+    supabase.upsertWhatsappContact(
+      userId,
+      phone.replace(/[^0-9+]/g, ""),
+      name || null,
+      role || "allowed",
+      permissions || {},
+    );
+    return { success: true };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function whatsappDeleteContact(userId: string, phone: string): Promise<unknown> {
+  try {
+    supabase.deleteWhatsappContact(userId, decodeURIComponent(phone));
+    return { success: true };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function whatsappGetGroups(userId: string): Promise<unknown> {
+  try {
+    return { groups: supabase.getWhatsappGroups(userId) };
+  } catch (e: any) {
+    return { groups: [], error: e.message };
+  }
+}
+
+async function whatsappUpsertGroup(userId: string, body: any): Promise<unknown> {
+  const { group_jid, name, active, permissions } = body;
+  if (!group_jid) return { error: "group_jid is required" };
+  try {
+    supabase.upsertWhatsappGroup(
+      userId,
+      group_jid,
+      name || null,
+      active !== undefined ? (active ? 1 : 0) : 1,
+      permissions || {},
+    );
+    return { success: true };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+async function whatsappDeleteGroup(userId: string, groupJid: string): Promise<unknown> {
+  try {
+    supabase.deleteWhatsappGroup(userId, decodeURIComponent(groupJid));
+    return { success: true };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+// ============================================================
 // SCHEDULES HANDLERS
 // ============================================================
 
@@ -1261,6 +1378,7 @@ function renderMiniApp(): string {
     <!-- ======== INTEGRATIONS PAGE ======== -->
     <div class="content page" id="pageIntegrations">
       <div class="section-header">Integrations</div>
+      <div id="whatsappCard" style="margin-bottom:12px;"></div>
       <div id="integrationsList">
         <div class="loading"><div class="spinner"></div>Loading integrations...</div>
       </div>
@@ -1378,6 +1496,7 @@ function renderMiniApp(): string {
 
       loadDashboard();
       loadProfile();
+      loadWhatsApp();
       loadIntegrations();
       loadAgents();
       loadSchedules();
@@ -2148,6 +2267,215 @@ function renderMiniApp(): string {
     }
 
     // ============================================================
+    // WHATSAPP
+    // ============================================================
+    var waPollingInterval = null;
+
+    async function loadWhatsApp() {
+      var data = await apiFetch('/whatsapp/status');
+      if (!data) return;
+      renderWhatsApp(data);
+    }
+
+    function renderWhatsApp(status) {
+      var container = document.getElementById('whatsappCard');
+      if (!container) return;
+
+      var state = status.state || 'disconnected';
+      var html = '<div class="card" style="display:flex;flex-direction:column;gap:10px;">';
+      html += '<div style="display:flex;align-items:center;gap:14px;">';
+      html += '<div class="avatar-sm" style="background:#25D366;font-size:20px;">\\uD83D\\uDCAC</div>';
+      html += '<div style="flex:1;">';
+      html += '<div style="font-weight:600;font-size:15px;">WhatsApp</div>';
+
+      if (state === 'connected') {
+        html += '<div style="font-size:12px;color:#2ecc71;">Connected</div>';
+        if (status.phoneNumber) html += '<div style="font-size:11px;color:var(--hint);">+' + escapeStr(status.phoneNumber) + '</div>';
+        html += '</div>';
+        html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waDisconnect()">Disconnect</button>';
+      } else if (state === 'qr_pending') {
+        html += '<div style="font-size:12px;color:#f39c12;">Scan QR Code</div>';
+        html += '</div></div>';
+        if (status.qrDataUrl) {
+          html += '<div style="text-align:center;padding:12px;background:#fff;border-radius:12px;">';
+          html += '<img src="' + status.qrDataUrl + '" style="width:240px;height:240px;" alt="QR Code" />';
+          html += '</div>';
+          html += '<div style="font-size:12px;color:var(--hint);text-align:center;">Open WhatsApp > Settings > Linked Devices > Link a Device</div>';
+        }
+        // Start polling
+        if (!waPollingInterval) {
+          waPollingInterval = setInterval(loadWhatsApp, 5000);
+        }
+      } else {
+        html += '<div style="font-size:12px;color:var(--hint);">Not connected</div>';
+        html += '</div>';
+        html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waConnect()">Connect</button>';
+      }
+
+      if (state !== 'qr_pending') html += '</div>';
+
+      // Management sections for connected state
+      if (state === 'connected') {
+        html += '<div style="border-top:1px solid var(--hint);padding-top:10px;margin-top:4px;">';
+        html += '<div style="display:flex;gap:8px;">';
+        html += '<button class="approval-btn" style="flex:1;padding:8px;font-size:13px;background:var(--secondary-bg);color:var(--text);border:1px solid var(--hint);" onclick="waShowContacts()">Manage Contacts</button>';
+        html += '<button class="approval-btn" style="flex:1;padding:8px;font-size:13px;background:var(--secondary-bg);color:var(--text);border:1px solid var(--hint);" onclick="waShowGroups()">Manage Groups</button>';
+        html += '</div></div>';
+      }
+
+      html += '</div>';
+
+      // Contacts/Groups management panels
+      html += '<div id="waContactsPanel" style="display:none;margin-top:8px;"></div>';
+      html += '<div id="waGroupsPanel" style="display:none;margin-top:8px;"></div>';
+
+      container.innerHTML = html;
+
+      // Stop polling if connected or disconnected
+      if (state !== 'qr_pending' && waPollingInterval) {
+        clearInterval(waPollingInterval);
+        waPollingInterval = null;
+      }
+    }
+
+    async function waConnect() {
+      showToast('Starting WhatsApp...', 'success');
+      var data = await apiFetch('/whatsapp/connect', { method: 'POST' });
+      if (data && data.error) { showToast(data.error, 'error'); return; }
+      renderWhatsApp(data);
+    }
+
+    async function waDisconnect() {
+      if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+        Telegram.WebApp.HapticFeedback.impactOccurred('medium');
+      }
+      var data = await apiFetch('/whatsapp/disconnect', { method: 'POST' });
+      if (data && data.success) {
+        showToast('WhatsApp disconnected', 'success');
+        loadWhatsApp();
+      }
+    }
+
+    async function waShowContacts() {
+      var panel = document.getElementById('waContactsPanel');
+      if (!panel) return;
+      if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+      document.getElementById('waGroupsPanel').style.display = 'none';
+      panel.style.display = 'block';
+      panel.innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
+
+      var data = await apiFetch('/whatsapp/contacts');
+      var contacts = (data && data.contacts) || [];
+
+      var html = '<div class="card" style="padding:12px;">';
+      html += '<div style="font-weight:600;margin-bottom:10px;">WhatsApp Contacts</div>';
+
+      // Add form
+      html += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">';
+      html += '<input type="text" id="wa-c-phone" placeholder="+1555..." style="flex:1;min-width:100px;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
+      html += '<input type="text" id="wa-c-name" placeholder="Name" style="flex:1;min-width:80px;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
+      html += '<select id="wa-c-role" style="padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;">';
+      html += '<option value="allowed">Allowed</option><option value="vip">VIP</option><option value="blocked">Blocked</option></select>';
+      html += '<button class="approval-btn approve" style="padding:8px 12px;font-size:13px;" onclick="waAddContact()">Add</button>';
+      html += '</div>';
+
+      // Contact list
+      if (contacts.length === 0) {
+        html += '<div style="color:var(--hint);font-size:13px;text-align:center;padding:12px;">No contacts. Add contacts to control who can message Nova via your WhatsApp.</div>';
+      } else {
+        for (var i = 0; i < contacts.length; i++) {
+          var c = contacts[i];
+          var roleColor = c.role === 'vip' ? '#f39c12' : c.role === 'blocked' ? '#ff4444' : '#2ecc71';
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--secondary-bg);">';
+          html += '<div style="flex:1;"><div style="font-size:14px;">' + escapeStr(c.name || c.phone) + '</div>';
+          html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(c.phone) + '</div></div>';
+          html += '<span style="font-size:11px;color:' + roleColor + ';text-transform:uppercase;">' + c.role + '</span>';
+          html += '<button style="background:none;border:none;color:var(--destructive);font-size:16px;cursor:pointer;padding:4px;" onclick="waDeleteContact(\\'' + escapeStr(c.phone) + '\\')">&times;</button>';
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+      panel.innerHTML = html;
+    }
+
+    async function waAddContact() {
+      var phone = document.getElementById('wa-c-phone').value.trim();
+      var name = document.getElementById('wa-c-name').value.trim();
+      var role = document.getElementById('wa-c-role').value;
+      if (!phone) { showToast('Phone number required', 'error'); return; }
+      var data = await apiFetch('/whatsapp/contacts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: phone, name: name || null, role: role, permissions: { calendar: true, tasks: true, memory_public: true, memory_private: false, schedule_events: role === 'vip', support: true } })
+      });
+      if (data && data.error) { showToast(data.error, 'error'); return; }
+      showToast('Contact added', 'success');
+      waShowContacts(); waShowContacts(); // toggle off then on to refresh
+    }
+
+    async function waDeleteContact(phone) {
+      var data = await apiFetch('/whatsapp/contacts/' + encodeURIComponent(phone), { method: 'DELETE' });
+      if (data && data.success) { showToast('Contact removed', 'success'); waShowContacts(); waShowContacts(); }
+    }
+
+    async function waShowGroups() {
+      var panel = document.getElementById('waGroupsPanel');
+      if (!panel) return;
+      if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+      document.getElementById('waContactsPanel').style.display = 'none';
+      panel.style.display = 'block';
+      panel.innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
+
+      var data = await apiFetch('/whatsapp/groups');
+      var groups = (data && data.groups) || [];
+
+      var html = '<div class="card" style="padding:12px;">';
+      html += '<div style="font-weight:600;margin-bottom:10px;">Whitelisted Groups</div>';
+
+      // Add form
+      html += '<div style="display:flex;gap:6px;margin-bottom:10px;">';
+      html += '<input type="text" id="wa-g-jid" placeholder="Group JID (e.g. 120363...@g.us)" style="flex:2;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
+      html += '<input type="text" id="wa-g-name" placeholder="Name" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
+      html += '<button class="approval-btn approve" style="padding:8px 12px;font-size:13px;" onclick="waAddGroup()">Add</button>';
+      html += '</div>';
+
+      if (groups.length === 0) {
+        html += '<div style="color:var(--hint);font-size:13px;text-align:center;padding:12px;">No groups whitelisted. Nova will only respond in whitelisted groups when @mentioned.</div>';
+      } else {
+        for (var i = 0; i < groups.length; i++) {
+          var g = groups[i];
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--secondary-bg);">';
+          html += '<div style="flex:1;"><div style="font-size:14px;">' + escapeStr(g.name || g.group_jid) + '</div>';
+          html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(g.group_jid) + '</div></div>';
+          html += '<span style="font-size:11px;color:' + (g.active ? '#2ecc71' : '#ff4444') + ';">' + (g.active ? 'Active' : 'Inactive') + '</span>';
+          html += '<button style="background:none;border:none;color:var(--destructive);font-size:16px;cursor:pointer;padding:4px;" onclick="waDeleteGroup(\\'' + escapeStr(g.group_jid) + '\\')">&times;</button>';
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+      panel.innerHTML = html;
+    }
+
+    async function waAddGroup() {
+      var jid = document.getElementById('wa-g-jid').value.trim();
+      var name = document.getElementById('wa-g-name').value.trim();
+      if (!jid) { showToast('Group JID required', 'error'); return; }
+      var data = await apiFetch('/whatsapp/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ group_jid: jid, name: name || null, active: true })
+      });
+      if (data && data.error) { showToast(data.error, 'error'); return; }
+      showToast('Group added', 'success');
+      waShowGroups(); waShowGroups();
+    }
+
+    async function waDeleteGroup(jid) {
+      var data = await apiFetch('/whatsapp/groups/' + encodeURIComponent(jid), { method: 'DELETE' });
+      if (data && data.success) { showToast('Group removed', 'success'); waShowGroups(); waShowGroups(); }
+    }
+
+    // ============================================================
     // SCHEDULES
     // ============================================================
     async function loadSchedules() {
@@ -2481,6 +2809,39 @@ const server = Bun.serve({
         return jsonResponse(await disconnectIntegrationHandler(userId, decodeURIComponent(disconnectMatch[1])));
       }
 
+      // WhatsApp
+      if (path === "/api/whatsapp/connect" && method === "POST") {
+        return jsonResponse(await whatsappConnect(userId));
+      }
+      if (path === "/api/whatsapp/status" && method === "GET") {
+        return jsonResponse(await whatsappStatus(userId));
+      }
+      if (path === "/api/whatsapp/disconnect" && method === "POST") {
+        return jsonResponse(await whatsappDisconnect(userId));
+      }
+      if (path === "/api/whatsapp/contacts" && method === "GET") {
+        return jsonResponse(await whatsappGetContacts(userId));
+      }
+      if (path === "/api/whatsapp/contacts" && method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        return jsonResponse(await whatsappUpsertContact(userId, body));
+      }
+      const waContactDelete = path.match(/^\/api\/whatsapp\/contacts\/(.+)$/);
+      if (waContactDelete && method === "DELETE") {
+        return jsonResponse(await whatsappDeleteContact(userId, waContactDelete[1]));
+      }
+      if (path === "/api/whatsapp/groups" && method === "GET") {
+        return jsonResponse(await whatsappGetGroups(userId));
+      }
+      if (path === "/api/whatsapp/groups" && method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        return jsonResponse(await whatsappUpsertGroup(userId, body));
+      }
+      const waGroupDelete = path.match(/^\/api\/whatsapp\/groups\/(.+)$/);
+      if (waGroupDelete && method === "DELETE") {
+        return jsonResponse(await whatsappDeleteGroup(userId, waGroupDelete[1]));
+      }
+
       // Schedules
       if (path === "/api/schedules" && method === "GET") {
         return jsonResponse(await getSchedules(userId));
@@ -2530,6 +2891,15 @@ console.log("  POST /api/integrations/:provider/connect  — Start OAuth flow");
 console.log("  POST /api/integrations/:provider/save-key  — Save API-key integration");
 console.log("  POST /api/integrations/:provider/disconnect — Disconnect");
 console.log("  GET  /api/integrations/callback           — OAuth callback");
+console.log("  POST /api/whatsapp/connect                — Start WhatsApp session");
+console.log("  GET  /api/whatsapp/status                 — WhatsApp connection status");
+console.log("  POST /api/whatsapp/disconnect             — Disconnect WhatsApp");
+console.log("  GET  /api/whatsapp/contacts               — List WhatsApp contacts");
+console.log("  POST /api/whatsapp/contacts               — Upsert WhatsApp contact");
+console.log("  DELETE /api/whatsapp/contacts/:phone      — Delete WhatsApp contact");
+console.log("  GET  /api/whatsapp/groups                 — List WhatsApp groups");
+console.log("  POST /api/whatsapp/groups                 — Upsert WhatsApp group");
+console.log("  DELETE /api/whatsapp/groups/:jid          — Delete WhatsApp group");
 console.log("  GET  /api/agents                          — Agent list with stats");
 console.log("  GET  /api/agents/:slug/tasks              — Agent task history");
 console.log("  GET  /api/schedules                       — Active scheduled tasks");

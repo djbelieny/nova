@@ -1128,7 +1128,7 @@ function orchestrateMain(
         getScheduleContext(supabase, user.id, user.timezone),
       ]);
       return {
-        prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext),
+        prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext, { contactContext: (ctx as any)?._whatsappContactContext }),
         hint: text,
       };
     }
@@ -1179,7 +1179,7 @@ function routeSimple(
       getScheduleContext(supabase, user.id, user.timezone),
     ]);
     return {
-      prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext),
+      prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext, { contactContext: (ctx as any)?._whatsappContactContext }),
       hint: text,
     };
   }, {

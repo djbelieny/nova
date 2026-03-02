@@ -1,8 +1,9 @@
 /**
- * WhatsApp Channel Adapter
+ * WhatsApp Channel Adapter — Per-User Sessions
  *
  * Uses @whiskeysockets/baileys (unofficial WhatsApp Web API) to connect
- * to WhatsApp. Auth is QR-code based on first run; session persists to disk.
+ * to WhatsApp. Each user gets their own session with auth stored in
+ * ~/.nova/users/{userId}/wa-auth/.
  *
  * Limitations:
  * - Baileys is unofficial — WhatsApp could break it with protocol changes
@@ -17,12 +18,11 @@ import {
   DisconnectReason,
   downloadMediaMessage,
   type WASocket,
-  type BaileysEventMap,
 } from "@whiskeysockets/baileys";
 import QRCode from "qrcode";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+import { existsSync } from "fs";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -33,7 +33,13 @@ import type {
   PlatformContext,
 } from "./types.ts";
 
-const AUTH_DIR_NAME = "whatsapp-auth";
+export type ConnectionState = "disconnected" | "qr_pending" | "connected";
+
+export interface WhatsAppStatus {
+  state: ConnectionState;
+  qrDataUrl: string | null;
+  phoneNumber: string | null;
+}
 
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly type = "whatsapp" as const;
@@ -44,11 +50,20 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
   private stopping = false;
-  private onQR: ((qrImagePath: string) => void) | null = null;
+  readonly userId: string;
 
-  constructor(relayDir: string, opts?: { onQR?: (qrImagePath: string) => void }) {
-    this.authDir = join(relayDir, AUTH_DIR_NAME);
-    this.onQR = opts?.onQR || null;
+  /** Current QR code as base64 data URL for Mini App display */
+  qrDataUrl: string | null = null;
+
+  /** Current connection state */
+  connectionState: ConnectionState = "disconnected";
+
+  /** Connected phone number (e.g., "15551234567") */
+  phoneNumber: string | null = null;
+
+  constructor(userId: string, authDir: string) {
+    this.userId = userId;
+    this.authDir = authDir;
   }
 
   onMessage(handler: MessageHandler): void {
@@ -57,6 +72,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
   onButtonPress(handler: ButtonHandler): void {
     this.buttonHandler = handler;
+  }
+
+  getStatus(): WhatsAppStatus {
+    return {
+      state: this.connectionState,
+      qrDataUrl: this.qrDataUrl,
+      phoneNumber: this.phoneNumber,
+    };
+  }
+
+  /** Check if auth credentials exist on disk (for session restore). */
+  hasAuthCredentials(): boolean {
+    return existsSync(join(this.authDir, "creds.json"));
   }
 
   async start(): Promise<void> {
@@ -71,36 +99,25 @@ export class WhatsAppAdapter implements ChannelAdapter {
       auth: state,
     });
 
-    // Save credentials on update
     this.sock.ev.on("creds.update", saveCreds);
 
-    // Connection updates (QR code, reconnection)
     this.sock.ev.on("connection.update", async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log("[whatsapp] QR code received — generating image...");
+        console.log(`[whatsapp:${this.userId}] QR code received`);
         try {
-          // Generate QR image and save to temp file
-          const qrPath = join(tmpdir(), `nova-whatsapp-qr-${Date.now()}.png`);
-          await QRCode.toFile(qrPath, qr, { width: 512, margin: 2 });
-          console.log(`[whatsapp] QR code saved to: ${qrPath}`);
-
-          // Also log text version to stdout for terminal access
-          const qrText = await QRCode.toString(qr, { type: "terminal", small: true });
-          console.log(qrText);
-          console.log("[whatsapp] Scan the QR code with your WhatsApp app (Settings → Linked Devices → Link a Device)");
-
-          // Send to Telegram if callback provided
-          if (this.onQR) {
-            this.onQR(qrPath);
-          }
+          this.qrDataUrl = await QRCode.toDataURL(qr, { width: 512, margin: 2 });
+          this.connectionState = "qr_pending";
         } catch (err) {
-          console.error("[whatsapp] Failed to generate QR code:", err);
+          console.error(`[whatsapp:${this.userId}] QR generation error:`, err);
         }
       }
 
       if (connection === "close") {
+        this.connectionState = "disconnected";
+        this.qrDataUrl = null;
+
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
@@ -108,19 +125,27 @@ export class WhatsAppAdapter implements ChannelAdapter {
           this.reconnectAttempts++;
           if (this.reconnectAttempts <= this.maxReconnectAttempts) {
             const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 60000);
-            console.log(`[whatsapp] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts})`);
+            console.log(`[whatsapp:${this.userId}] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts})`);
             setTimeout(() => this.connect(), delay);
           } else {
-            console.error("[whatsapp] Max reconnect attempts reached");
+            console.error(`[whatsapp:${this.userId}] Max reconnect attempts reached`);
           }
         } else if (statusCode === DisconnectReason.loggedOut) {
-          console.log("[whatsapp] Logged out — delete auth folder and restart to re-pair");
+          console.log(`[whatsapp:${this.userId}] Logged out`);
         }
       }
 
       if (connection === "open") {
         this.reconnectAttempts = 0;
-        console.log("[whatsapp] Connected successfully");
+        this.connectionState = "connected";
+        this.qrDataUrl = null;
+
+        // Extract phone number from connection info
+        const me = this.sock?.user;
+        if (me?.id) {
+          this.phoneNumber = me.id.split(":")[0] || me.id.split("@")[0];
+        }
+        console.log(`[whatsapp:${this.userId}] Connected (phone: ${this.phoneNumber})`);
       }
     });
 
@@ -134,13 +159,16 @@ export class WhatsAppAdapter implements ChannelAdapter {
         const jid = msg.key.remoteJid;
         if (!jid || jid === "status@broadcast") continue;
 
-        // Extract phone number from JID (e.g., "1234567890@s.whatsapp.net")
-        const platformUserId = jid.split("@")[0];
+        const isGroup = jid.endsWith("@g.us");
+        // For group messages, the sender is msg.key.participant
+        // For DMs, the sender is the JID itself
+        const senderJid = isGroup ? (msg.key.participant || "") : jid;
+        const senderPhone = senderJid.split("@")[0].split(":")[0];
 
         try {
-          await this.handleIncomingMessage(msg, jid, platformUserId);
+          await this.handleIncomingMessage(msg, jid, senderPhone, isGroup);
         } catch (error) {
-          console.error("[whatsapp] Message handling error:", error);
+          console.error(`[whatsapp:${this.userId}] Message handling error:`, error);
         }
       }
     });
@@ -149,14 +177,15 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private async handleIncomingMessage(
     msg: any,
     jid: string,
-    platformUserId: string,
+    senderPhone: string,
+    isGroup: boolean,
   ): Promise<void> {
     if (!this.messageHandler) return;
 
     const messageContent = msg.message;
     const messageId = msg.key.id || "";
 
-    // Text message
+    // Extract text
     const text = messageContent.conversation
       || messageContent.extendedTextMessage?.text;
 
@@ -166,8 +195,8 @@ export class WhatsAppAdapter implements ChannelAdapter {
       if (numberMatch && this.buttonHandler) {
         this.buttonHandler(
           jid,
-          "", // userId resolved by relay
-          platformUserId,
+          "",
+          senderPhone,
           `btn_num:${numberMatch[1]}`,
           async (outMsg) => { await this.send(jid, outMsg); },
         );
@@ -178,13 +207,17 @@ export class WhatsAppAdapter implements ChannelAdapter {
         channelType: "whatsapp",
         channelMessageId: messageId,
         channelChatId: jid,
-        userId: "", // resolved by relay.ts
-        platformUserId,
+        userId: "",
+        platformUserId: senderPhone,
         text,
       };
 
-      const platformCtx = this.createPlatformContext(jid, messageId);
-      (incoming as any)._platformContext = platformCtx;
+      // Attach extra metadata for the manager's classification pipeline
+      const extra = incoming as any;
+      extra._platformContext = this.createPlatformContext(jid, messageId);
+      extra._isGroup = isGroup;
+      extra._senderPhone = senderPhone;
+      extra._ownerUserId = this.userId;
 
       this.messageHandler(incoming, async (outMsg) => {
         await this.send(jid, outMsg);
@@ -203,18 +236,21 @@ export class WhatsAppAdapter implements ChannelAdapter {
           channelMessageId: messageId,
           channelChatId: jid,
           userId: "",
-          platformUserId,
+          platformUserId: senderPhone,
           voice: { buffer: Buffer.from(buffer as any), durationSec: duration },
         };
 
-        const platformCtx = this.createPlatformContext(jid, messageId);
-        (incoming as any)._platformContext = platformCtx;
+        const extra = incoming as any;
+        extra._platformContext = this.createPlatformContext(jid, messageId);
+        extra._isGroup = isGroup;
+        extra._senderPhone = senderPhone;
+        extra._ownerUserId = this.userId;
 
         this.messageHandler(incoming, async (outMsg) => {
           await this.send(jid, outMsg);
         });
       } catch (error) {
-        console.error("[whatsapp] Voice download error:", error);
+        console.error(`[whatsapp:${this.userId}] Voice download error:`, error);
       }
       return;
     }
@@ -230,18 +266,21 @@ export class WhatsAppAdapter implements ChannelAdapter {
           channelMessageId: messageId,
           channelChatId: jid,
           userId: "",
-          platformUserId,
+          platformUserId: senderPhone,
           image: { buffer: Buffer.from(buffer as any), caption },
         };
 
-        const platformCtx = this.createPlatformContext(jid, messageId);
-        (incoming as any)._platformContext = platformCtx;
+        const extra = incoming as any;
+        extra._platformContext = this.createPlatformContext(jid, messageId);
+        extra._isGroup = isGroup;
+        extra._senderPhone = senderPhone;
+        extra._ownerUserId = this.userId;
 
         this.messageHandler(incoming, async (outMsg) => {
           await this.send(jid, outMsg);
         });
       } catch (error) {
-        console.error("[whatsapp] Image download error:", error);
+        console.error(`[whatsapp:${this.userId}] Image download error:`, error);
       }
       return;
     }
@@ -258,18 +297,21 @@ export class WhatsAppAdapter implements ChannelAdapter {
           channelMessageId: messageId,
           channelChatId: jid,
           userId: "",
-          platformUserId,
+          platformUserId: senderPhone,
           document: { buffer: Buffer.from(buffer as any), filename, caption },
         };
 
-        const platformCtx = this.createPlatformContext(jid, messageId);
-        (incoming as any)._platformContext = platformCtx;
+        const extra = incoming as any;
+        extra._platformContext = this.createPlatformContext(jid, messageId);
+        extra._isGroup = isGroup;
+        extra._senderPhone = senderPhone;
+        extra._ownerUserId = this.userId;
 
         this.messageHandler(incoming, async (outMsg) => {
           await this.send(jid, outMsg);
         });
       } catch (error) {
-        console.error("[whatsapp] Document download error:", error);
+        console.error(`[whatsapp:${this.userId}] Document download error:`, error);
       }
     }
   }
@@ -339,9 +381,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
           caption: caption || undefined,
         });
       }
-      console.log(`[whatsapp] Sent file: ${filePath}`);
+      console.log(`[whatsapp:${this.userId}] Sent file: ${filePath}`);
     } catch (error) {
-      console.error(`[whatsapp] Failed to send file ${filePath}:`, error);
+      console.error(`[whatsapp:${this.userId}] Failed to send file ${filePath}:`, error);
     }
   }
 
@@ -351,12 +393,11 @@ export class WhatsAppAdapter implements ChannelAdapter {
       this.sock.end(undefined);
       this.sock = null;
     }
+    this.connectionState = "disconnected";
+    this.qrDataUrl = null;
+    this.phoneNumber = null;
   }
 
-  /**
-   * Create a PlatformContext for WhatsApp messages.
-   * Provides the ctx-like API that the orchestrator expects.
-   */
   createPlatformContext(chatId: string, messageId?: string): PlatformContext {
     const adapter = this;
     let lastMessageId = 0;
@@ -367,7 +408,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
       channelType: "whatsapp",
 
       async reply(text: string, opts?: any) {
-        // Strip HTML tags for WhatsApp (it doesn't support HTML)
         const cleanText = text.replace(/<[^>]+>/g, "");
         await adapter.send(chatId, {
           text: cleanText,
@@ -383,10 +423,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
       api: {
         async editMessageText(_chatId, _messageId, _text, _opts?) {
-          // WhatsApp doesn't support editing messages — no-op
+          // WhatsApp doesn't support editing messages
         },
         async deleteMessage(_chatId, _messageId) {
-          // WhatsApp message deletion is limited — no-op
+          // WhatsApp message deletion is limited
         },
         async sendMessage(targetChatId, text, _opts?) {
           await adapter.send(String(targetChatId), { text });
