@@ -32,6 +32,7 @@ const startTime = Date.now();
 const DASHBOARD_USER = process.env.DASHBOARD_USER || "admin";
 const DASHBOARD_PASS = process.env.DASHBOARD_PASS || "";
 const DASHBOARD_BASE = process.env.DASHBOARD_BASE ?? "/dashboard";
+const COOKIE_PATH = DASHBOARD_BASE || "/";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // In-memory session store (survives for container lifetime)
@@ -187,7 +188,7 @@ async function handleLogin(req: Request): Promise<Response> {
       status: 302,
       headers: {
         Location: `${DASHBOARD_BASE}/`,
-        "Set-Cookie": `nova_session=${sessionId}; Path=${DASHBOARD_BASE}; HttpOnly; SameSite=Strict; Max-Age=86400; Secure`,
+        "Set-Cookie": `nova_session=${sessionId}; Path=${COOKIE_PATH}; HttpOnly; SameSite=Strict; Max-Age=86400; Secure`,
       },
     });
   }
@@ -200,7 +201,7 @@ function handleLogout(): Response {
     status: 302,
     headers: {
       Location: `${DASHBOARD_BASE}/`,
-      "Set-Cookie": `nova_session=; Path=${DASHBOARD_BASE}; HttpOnly; Max-Age=0`,
+      "Set-Cookie": `nova_session=; Path=${COOKIE_PATH}; HttpOnly; Max-Age=0`,
     },
   });
 }
