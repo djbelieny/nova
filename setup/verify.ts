@@ -85,18 +85,33 @@ async function main() {
     pass(`User ID: ${userId}`);
   }
 
-  // 3. SQLite Database
-  console.log(`\n${bold("  Database (SQLite)")}`);
+  // 3. SQLite Database (Split Architecture)
+  console.log(`\n${bold("  Database (SQLite — Split)")}`);
   try {
     const { getDb } = await import("../src/db.ts");
     const db = getDb();
     pass("SQLite database opened");
 
-    for (const table of ["messages", "memory", "users", "agent_tasks", "logs"]) {
+    // Check shared.db tables
+    for (const table of ["users", "nova_status", "logs", "cost_tracking", "memory"]) {
       const row = db.raw.query(
         `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
       ).get(table) as any;
-      row ? pass(`Table "${table}" OK`) : fail(`Table "${table}" missing`);
+      row ? pass(`shared.db: "${table}" OK`) : fail(`shared.db: "${table}" missing`);
+    }
+
+    // Check that user DBs can be created (verify schema)
+    const testUser = db.getUserByTelegramId(userId);
+    if (testUser) {
+      const userRaw = db.getUserRaw(testUser.id);
+      for (const table of ["messages", "memory", "agent_tasks"]) {
+        const row = userRaw.query(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+        ).get(table) as any;
+        row ? pass(`user DB: "${table}" OK`) : fail(`user DB: "${table}" missing`);
+      }
+    } else {
+      warn("No user found to verify user DB structure (will be created on first message)");
     }
   } catch (e: any) {
     fail(`SQLite database error: ${e.message}`);

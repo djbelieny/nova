@@ -13,13 +13,12 @@
  * Run: bun run services/smart-checkin.ts
  */
 
-import { spawn } from "bun";
 import { readFile, writeFile } from "fs/promises";
 import { getDb, type Database } from "../src/db.ts";
+import { spawnLeanClaude } from "../src/claude-spawn.ts";
 import { dirname, join } from "path";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 
 interface ProactiveUser {
@@ -198,66 +197,33 @@ async function askClaudeToDecide(
   const timeContext =
     hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
 
-  const prompt = `You are ${user.name}'s proactive AI assistant. Decide if you should check in with ${user.name} right now.
+  const prompt = `Decide if you should check in with ${user.name} right now.
 
-CONTEXT:
-- Current time: ${timeStr} (${timeContext})
-- ${activity}
-- Last check-in: ${state.lastCheckinTime || "Never"}
-- Active goals: ${goals.length > 0 ? goals.join(", ") : "None tracked"}
-- Pending follow-ups: ${state.pendingItems.join(", ") || "None"}
+Time: ${timeStr} (${timeContext})
+${activity}
+Last check-in: ${state.lastCheckinTime || "Never"}
+Goals: ${goals.length > 0 ? goals.join("; ") : "None"}
+Pending: ${state.pendingItems.join("; ") || "None"}
 
-RECENT CONVERSATION:
+Recent messages:
 ${recentActivity}
 
-You also have access to Gmail, Google Calendar, and Notion via your tools. Check them if it would help you decide:
-- Is there an upcoming calendar event ${user.name} should prepare for?
-- Are there urgent unread emails?
-- Are there Notion tasks with approaching deadlines?
+Check Gmail, Calendar, and Notion for urgent items if helpful.
 
-RULES:
-1. You MUST check in at least once per day. If there has been no check-in today, default to YES.
-2. After the first daily check-in, additional check-ins need a concrete reason (goal deadline, important event, urgent email, long silence of 4+ hours).
-3. Max 3 check-ins per day total.
-4. Be brief and helpful, not intrusive.
-5. If nothing important AND you already checked in today, respond with NO_CHECKIN.
-6. When you DO check in, reference specific real context (not generic "how's it going").
-7. Even a simple "good morning" or status update counts — don't overthink whether to reach out.
+Rules: Must check in at least once/day. After that, only for concrete reasons (deadlines, events, urgent emails, 4h+ silence). Max 3/day. Be brief, reference real context.
 
-RESPOND IN THIS EXACT FORMAT:
+RESPOND:
 DECISION: YES or NO
-MESSAGE: [Your message if YES, or "none" if NO]
-REASON: [Why you decided this]
-`;
+MESSAGE: [message if YES, "none" if NO]
+REASON: [why]`;
 
   try {
-    const proc = spawn(
-      [
-        CLAUDE_PATH,
-        "-p",
-        prompt,
-        "--output-format",
-        "text",
-        "--permission-mode",
-        "bypassPermissions",
-      ],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: PROJECT_ROOT,
-        env: {
-          ...process.env,
-          CLAUDECODE: undefined,
-        },
-      }
-    );
-
-    const [output, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-
-    const exitCode = await proc.exited;
+    const { output, exitCode, stderr } = await spawnLeanClaude({
+      prompt,
+      mcpServers: ["google-workspace", "notion"],
+      model: "haiku",
+      maxTurns: 5,
+    });
 
     if (exitCode !== 0) {
       console.error(`Claude error for ${user.name}:`, stderr);

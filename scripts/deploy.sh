@@ -11,6 +11,12 @@ sudo -u nova git pull origin production
 echo "Installing dependencies..."
 bun install
 
+# Migrate from Supabase if credentials are set and shared.db doesn't exist yet
+if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_ANON_KEY:-}" ] && [ ! -f /opt/nova/data/shared.db ]; then
+  echo "Running Supabase → SQLite migration..."
+  bun run migrate:supabase
+fi
+
 echo "Restarting services..."
 systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 

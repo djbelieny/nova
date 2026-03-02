@@ -1,8 +1,12 @@
 /**
- * Local SQLite Database Module
+ * Local SQLite Database Module — Split Architecture
  *
- * Replaces Supabase with bun:sqlite + sqlite-vec for zero-latency local storage.
- * WAL mode enables concurrent access from multiple processes (relay, dashboard, miniapp, etc.).
+ * Split structure for per-user data isolation:
+ *   data/shared.db         — users, nova_status, logs, cost_tracking, shared memory
+ *   data/users/{id}.db     — messages, private memory, tasks, approvals, etc.
+ *
+ * The DatabaseManager facade maintains the same API as the old single-DB Database class.
+ * Auto-migrates from single nova.db on first run.
  *
  * Usage: import { getDb } from "./db.ts";
  *        const db = getDb();
@@ -11,12 +15,14 @@
 
 import { Database as BunDatabase } from "bun:sqlite";
 import { join, dirname } from "path";
-import { mkdirSync, existsSync } from "fs";
+import { mkdirSync, existsSync, readdirSync, renameSync } from "fs";
 import * as sqliteVec from "sqlite-vec";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const DATA_DIR = join(PROJECT_ROOT, "data");
-const DB_PATH = join(DATA_DIR, "nova.db");
+const SHARED_DB_PATH = join(DATA_DIR, "shared.db");
+const USERS_DIR = join(DATA_DIR, "users");
+const LEGACY_DB_PATH = join(DATA_DIR, "nova.db");
 
 // ============================================================
 // Types
@@ -113,9 +119,23 @@ function parseTextArray(val: string | null | undefined): string[] {
   return parseJson(val, []);
 }
 
-// ============================================================
-// Database class
-// ============================================================
+/** Check if a table exists in a database. */
+function tableExists(db: BunDatabase, name: string): boolean {
+  const row = db.query(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(name) as any;
+  return !!row;
+}
+
+/** Open a BunDatabase with sqlite-vec and standard pragmas. */
+function openDb(dbPath: string): BunDatabase {
+  const dir = dirname(dbPath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const db = new BunDatabase(dbPath);
+  sqliteVec.load(db);
+  db.run("PRAGMA journal_mode = WAL");
+  db.run("PRAGMA synchronous = NORMAL");
+  db.run("PRAGMA busy_timeout = 5000");
+  return db;
+}
 
 // macOS: use Homebrew's SQLite which supports dynamic extensions
 if (process.platform === "darwin") {
@@ -125,43 +145,18 @@ if (process.platform === "darwin") {
   }
 }
 
-export class Database {
-  private db: BunDatabase;
+// ============================================================
+// SharedDatabase — users, nova_status, logs, cost_tracking, shared memory
+// ============================================================
 
-  constructor(dbPath: string = DB_PATH) {
-    // Ensure data directory exists
-    const dir = dirname(dbPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
+class SharedDatabase {
+  readonly db: BunDatabase;
 
-    this.db = new BunDatabase(dbPath);
-
-    // Load sqlite-vec extension
-    sqliteVec.load(this.db);
-
-    // WAL mode + performance pragmas
-    this.db.run("PRAGMA journal_mode = WAL");
-    this.db.run("PRAGMA synchronous = NORMAL");
-    this.db.run("PRAGMA busy_timeout = 5000");
+  constructor(dbPath: string = SHARED_DB_PATH) {
+    this.db = openDb(dbPath);
     this.db.run("PRAGMA foreign_keys = ON");
-
-    // Create tables
     this.createSchema();
   }
-
-  /** Get the raw bun:sqlite Database for advanced queries. */
-  get raw(): BunDatabase {
-    return this.db;
-  }
-
-  close(): void {
-    this.db.close();
-  }
-
-  // ============================================================
-  // Schema
-  // ============================================================
 
   private createSchema(): void {
     this.db.run(`
@@ -188,6 +183,103 @@ export class Database {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_slack_id ON users(slack_id)`);
 
     this.db.run(`
+      CREATE TABLE IF NOT EXISTS nova_status (
+        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        updated_at TEXT DEFAULT (datetime('now')),
+        uptime_since TEXT DEFAULT (datetime('now')),
+        calls_total INTEGER DEFAULT 0,
+        calls_success INTEGER DEFAULT 0,
+        calls_failed INTEGER DEFAULT 0,
+        calls_by_model TEXT DEFAULT '{}',
+        rate_limit_hits INTEGER DEFAULT 0,
+        last_rate_limit_at TEXT,
+        avg_duration_ms REAL DEFAULT 0,
+        active_slots INTEGER DEFAULT 0,
+        max_slots INTEGER DEFAULT 2,
+        queue_depth INTEGER DEFAULT 0,
+        active_tasks INTEGER DEFAULT 0,
+        pending_approvals INTEGER DEFAULT 0
+      )
+    `);
+    this.db.run(`INSERT OR IGNORE INTO nova_status (id) VALUES (1)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS logs (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        level TEXT DEFAULT 'info' CHECK (level IN ('debug', 'info', 'warn', 'error')),
+        event TEXT NOT NULL,
+        message TEXT,
+        metadata TEXT DEFAULT '{}',
+        session_id TEXT,
+        duration_ms INTEGER,
+        user_id TEXT
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at DESC)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS cost_tracking (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        provider TEXT DEFAULT 'claude',
+        model TEXT NOT NULL,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0,
+        duration_ms INTEGER DEFAULT 0,
+        session_id TEXT,
+        metadata TEXT DEFAULT '{}',
+        user_id TEXT
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_cost_tracking_created_at ON cost_tracking(created_at DESC)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS memory (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        type TEXT NOT NULL CHECK (type IN ('fact', 'goal', 'completed_goal', 'preference')),
+        content TEXT NOT NULL,
+        deadline TEXT,
+        completed_at TEXT,
+        priority INTEGER DEFAULT 0,
+        metadata TEXT DEFAULT '{}',
+        user_id TEXT NOT NULL,
+        scope TEXT DEFAULT 'shared' CHECK (scope IN ('private', 'shared')),
+        embedding BLOB
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_user_created ON memory(user_id, created_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope)`);
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
+// ============================================================
+// UserDatabase — per-user: messages, private memory, tasks, etc.
+// ============================================================
+
+class UserDatabase {
+  readonly db: BunDatabase;
+  readonly userId: string;
+
+  constructor(userId: string) {
+    this.userId = userId;
+    const dbPath = join(USERS_DIR, `${userId}.db`);
+    this.db = openDb(dbPath);
+    this.createSchema();
+  }
+
+  private createSchema(): void {
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
         created_at TEXT DEFAULT (datetime('now')),
@@ -195,7 +287,7 @@ export class Database {
         content TEXT NOT NULL,
         channel TEXT DEFAULT 'telegram',
         metadata TEXT DEFAULT '{}',
-        user_id TEXT NOT NULL REFERENCES users(id),
+        user_id TEXT NOT NULL,
         embedding BLOB
       )
     `);
@@ -213,7 +305,7 @@ export class Database {
         completed_at TEXT,
         priority INTEGER DEFAULT 0,
         metadata TEXT DEFAULT '{}',
-        user_id TEXT NOT NULL REFERENCES users(id),
+        user_id TEXT NOT NULL,
         scope TEXT DEFAULT 'private' CHECK (scope IN ('private', 'shared')),
         embedding BLOB
       )
@@ -221,21 +313,6 @@ export class Database {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_user_created ON memory(user_id, created_at DESC)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope)`);
-
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS logs (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        created_at TEXT DEFAULT (datetime('now')),
-        level TEXT DEFAULT 'info' CHECK (level IN ('debug', 'info', 'warn', 'error')),
-        event TEXT NOT NULL,
-        message TEXT,
-        metadata TEXT DEFAULT '{}',
-        session_id TEXT,
-        duration_ms INTEGER,
-        user_id TEXT REFERENCES users(id)
-      )
-    `);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at DESC)`);
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS agent_tasks (
@@ -248,7 +325,7 @@ export class Database {
           CHECK (status IN ('pending','in_progress','done','completed','blocked','cancelled')),
         result TEXT,
         metadata TEXT DEFAULT '{}',
-        user_id TEXT NOT NULL REFERENCES users(id),
+        user_id TEXT NOT NULL,
         parent_task_id TEXT REFERENCES agent_tasks(id),
         request_id TEXT
       )
@@ -258,30 +335,30 @@ export class Database {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_parent ON agent_tasks(parent_task_id)`);
 
     this.db.run(`
-      CREATE TABLE IF NOT EXISTS cost_tracking (
+      CREATE TABLE IF NOT EXISTS task_artifacts (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
         created_at TEXT DEFAULT (datetime('now')),
-        provider TEXT DEFAULT 'claude',
-        model TEXT NOT NULL,
-        input_tokens INTEGER DEFAULT 0,
-        output_tokens INTEGER DEFAULT 0,
-        cache_read_tokens INTEGER DEFAULT 0,
-        cache_creation_tokens INTEGER DEFAULT 0,
-        cost_usd REAL DEFAULT 0,
-        duration_ms INTEGER DEFAULT 0,
-        session_id TEXT,
-        metadata TEXT DEFAULT '{}',
-        user_id TEXT REFERENCES users(id)
+        task_id TEXT REFERENCES agent_tasks(id),
+        user_id TEXT NOT NULL,
+        artifact_type TEXT NOT NULL,
+        file_path TEXT,
+        file_name TEXT,
+        file_size INTEGER,
+        description TEXT,
+        verified INTEGER DEFAULT 0,
+        delivered INTEGER DEFAULT 0,
+        metadata TEXT DEFAULT '{}'
       )
     `);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_cost_tracking_created_at ON cost_tracking(created_at DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_task_artifacts_task ON task_artifacts(task_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_task_artifacts_user ON task_artifacts(user_id)`);
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS scheduled_tasks (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now')),
-        user_id TEXT NOT NULL REFERENCES users(id),
+        user_id TEXT NOT NULL,
         created_by TEXT NOT NULL DEFAULT 'user' CHECK (created_by IN ('user', 'nova')),
         title TEXT NOT NULL,
         instructions TEXT NOT NULL,
@@ -313,7 +390,7 @@ export class Database {
         success_count INTEGER DEFAULT 0,
         fail_count INTEGER DEFAULT 0,
         avg_duration_ms REAL DEFAULT 0,
-        user_id TEXT REFERENCES users(id)
+        user_id TEXT
       )
     `);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_execution_patterns_user ON execution_patterns(user_id)`);
@@ -324,7 +401,7 @@ export class Database {
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now')),
-        user_id TEXT NOT NULL REFERENCES users(id),
+        user_id TEXT NOT NULL,
         provider TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'disconnected'
           CHECK (status IN ('disconnected', 'pending', 'connected', 'error')),
@@ -336,31 +413,9 @@ export class Database {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_user_integrations_user ON user_integrations(user_id)`);
 
     this.db.run(`
-      CREATE TABLE IF NOT EXISTS nova_status (
-        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-        updated_at TEXT DEFAULT (datetime('now')),
-        uptime_since TEXT DEFAULT (datetime('now')),
-        calls_total INTEGER DEFAULT 0,
-        calls_success INTEGER DEFAULT 0,
-        calls_failed INTEGER DEFAULT 0,
-        calls_by_model TEXT DEFAULT '{}',
-        rate_limit_hits INTEGER DEFAULT 0,
-        last_rate_limit_at TEXT,
-        avg_duration_ms REAL DEFAULT 0,
-        active_slots INTEGER DEFAULT 0,
-        max_slots INTEGER DEFAULT 2,
-        queue_depth INTEGER DEFAULT 0,
-        active_tasks INTEGER DEFAULT 0,
-        pending_approvals INTEGER DEFAULT 0
-      )
-    `);
-    // Ensure single row exists
-    this.db.run(`INSERT OR IGNORE INTO nova_status (id) VALUES (1)`);
-
-    this.db.run(`
       CREATE TABLE IF NOT EXISTS pending_approvals (
         id TEXT PRIMARY KEY,
-        user_id TEXT REFERENCES users(id),
+        user_id TEXT,
         chat_id INTEGER NOT NULL,
         original_text TEXT NOT NULL,
         plan TEXT NOT NULL DEFAULT '{}',
@@ -384,7 +439,7 @@ export class Database {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS revision_sessions (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        user_id TEXT NOT NULL REFERENCES users(id),
+        user_id TEXT NOT NULL,
         original_text TEXT NOT NULL,
         plan TEXT NOT NULL DEFAULT '{}',
         prepare_results TEXT NOT NULL DEFAULT '[]',
@@ -403,7 +458,7 @@ export class Database {
     this.db.run(`
       CREATE TABLE IF NOT EXISTS workflow_preferences (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        user_id TEXT NOT NULL REFERENCES users(id),
+        user_id TEXT NOT NULL,
         workflow_type TEXT NOT NULL,
         task_signature TEXT NOT NULL,
         plan TEXT NOT NULL,
@@ -413,33 +468,109 @@ export class Database {
       )
     `);
     this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_prefs_unique ON workflow_preferences(user_id, task_signature)`);
+  }
 
-    this.db.run(`
-      CREATE TABLE IF NOT EXISTS task_artifacts (
-        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
-        created_at TEXT DEFAULT (datetime('now')),
-        task_id TEXT REFERENCES agent_tasks(id),
-        user_id TEXT NOT NULL REFERENCES users(id),
-        artifact_type TEXT NOT NULL,
-        file_path TEXT,
-        file_name TEXT,
-        file_size INTEGER,
-        description TEXT,
-        verified INTEGER DEFAULT 0,
-        delivered INTEGER DEFAULT 0,
-        metadata TEXT DEFAULT '{}'
-      )
-    `);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_task_artifacts_task ON task_artifacts(task_id)`);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_task_artifacts_user ON task_artifacts(user_id)`);
+  close(): void {
+    this.db.close();
+  }
+}
+
+// ============================================================
+// DatabaseManager — public facade, same API as old Database class
+// ============================================================
+
+export class Database {
+  private shared: SharedDatabase;
+  private userDbs = new Map<string, UserDatabase>();
+  private maxCachedDbs = 10;
+
+  constructor() {
+    // Auto-migrate from legacy single nova.db if needed
+    if (existsSync(LEGACY_DB_PATH) && !existsSync(SHARED_DB_PATH)) {
+      this.migrateFromLegacyDb();
+    }
+    this.shared = new SharedDatabase();
+  }
+
+  /** Get the raw shared BunDatabase for advanced queries. */
+  get raw(): BunDatabase {
+    return this.shared.db;
+  }
+
+  close(): void {
+    for (const [, db] of this.userDbs) db.close();
+    this.userDbs.clear();
+    this.shared.close();
+  }
+
+  // ---- Internal helpers ----
+
+  private getUserDb(userId: string): UserDatabase {
+    let db = this.userDbs.get(userId);
+    if (db) {
+      // Move to end of map (most recently used)
+      this.userDbs.delete(userId);
+      this.userDbs.set(userId, db);
+      return db;
+    }
+
+    // Evict oldest if at capacity
+    if (this.userDbs.size >= this.maxCachedDbs) {
+      const oldest = this.userDbs.entries().next().value;
+      if (oldest) {
+        oldest[1].close();
+        this.userDbs.delete(oldest[0]);
+      }
+    }
+
+    db = new UserDatabase(userId);
+    this.userDbs.set(userId, db);
+    return db;
+  }
+
+  /** Get the raw BunDatabase for a specific user (for tests/admin). */
+  getUserRaw(userId: string): BunDatabase {
+    return this.getUserDb(userId).db;
+  }
+
+  private getAllUserIds(): string[] {
+    if (!existsSync(USERS_DIR)) return [];
+    return readdirSync(USERS_DIR)
+      .filter(f => f.endsWith(".db"))
+      .map(f => f.replace(".db", ""));
+  }
+
+  /** Collect results from all user databases. */
+  private queryAllUserDbs<T>(fn: (db: BunDatabase) => T[]): T[] {
+    const results: T[] = [];
+    for (const userId of this.getAllUserIds()) {
+      results.push(...fn(this.getUserDb(userId).db));
+    }
+    return results;
+  }
+
+  /** Find first non-null result across all user databases. */
+  private findInUserDbs<T>(fn: (db: BunDatabase) => T | null): T | null {
+    for (const userId of this.getAllUserIds()) {
+      const result = fn(this.getUserDb(userId).db);
+      if (result) return result;
+    }
+    return null;
+  }
+
+  /** Run a mutation on all user databases. */
+  private runOnAllUserDbs(fn: (db: BunDatabase) => void): void {
+    for (const userId of this.getAllUserIds()) {
+      fn(this.getUserDb(userId).db);
+    }
   }
 
   // ============================================================
-  // Users
+  // Users (→ shared.db)
   // ============================================================
 
   getUserByTelegramId(telegramId: string): any | null {
-    const row = this.db.query(
+    const row = this.shared.db.query(
       `SELECT * FROM users WHERE telegram_id = ? AND active = 1 LIMIT 1`
     ).get(telegramId) as any;
     if (!row) return null;
@@ -448,7 +579,7 @@ export class Database {
   }
 
   getUserByPhone(phone: string): any | null {
-    const row = this.db.query(
+    const row = this.shared.db.query(
       `SELECT * FROM users WHERE phone = ? AND active = 1 LIMIT 1`
     ).get(phone) as any;
     if (!row) return null;
@@ -457,7 +588,7 @@ export class Database {
   }
 
   getUserByWhatsappId(whatsappId: string): any | null {
-    const row = this.db.query(
+    const row = this.shared.db.query(
       `SELECT * FROM users WHERE whatsapp_id = ? LIMIT 1`
     ).get(whatsappId) as any;
     if (!row) return null;
@@ -466,7 +597,7 @@ export class Database {
   }
 
   getUserBySlackId(slackId: string): any | null {
-    const row = this.db.query(
+    const row = this.shared.db.query(
       `SELECT * FROM users WHERE slack_id = ? LIMIT 1`
     ).get(slackId) as any;
     if (!row) return null;
@@ -475,7 +606,7 @@ export class Database {
   }
 
   getUserById(userId: string): any | null {
-    const row = this.db.query(
+    const row = this.shared.db.query(
       `SELECT * FROM users WHERE id = ? LIMIT 1`
     ).get(userId) as any;
     if (!row) return null;
@@ -494,7 +625,7 @@ export class Database {
     profile_text?: string;
   }): any {
     const id = uuid();
-    this.db.run(`
+    this.shared.db.run(`
       INSERT INTO users (id, telegram_id, name, timezone, phone, pin, role, preferences, profile_text)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (telegram_id) DO UPDATE SET
@@ -518,11 +649,11 @@ export class Database {
   }
 
   updateUserPreference(userId: string, key: string, value: any): void {
-    const row = this.db.query(`SELECT preferences FROM users WHERE id = ?`).get(userId) as any;
+    const row = this.shared.db.query(`SELECT preferences FROM users WHERE id = ?`).get(userId) as any;
     if (!row) return;
     const prefs = parseJson(row.preferences, {});
     prefs[key] = value;
-    this.db.run(
+    this.shared.db.run(
       `UPDATE users SET preferences = ?, updated_at = datetime('now') WHERE id = ?`,
       [JSON.stringify(prefs), userId]
     );
@@ -544,7 +675,7 @@ export class Database {
     setClauses.push(`updated_at = datetime('now')`);
     values.push(userId);
 
-    this.db.run(
+    this.shared.db.run(
       `UPDATE users SET ${setClauses.join(", ")} WHERE id = ?`,
       values
     );
@@ -552,7 +683,7 @@ export class Database {
   }
 
   getAllActiveUsers(): any[] {
-    const rows = this.db.query(
+    const rows = this.shared.db.query(
       `SELECT * FROM users WHERE active = 1`
     ).all() as any[];
     return rows.map((r) => {
@@ -562,7 +693,7 @@ export class Database {
   }
 
   getUsersByRole(role: string): any[] {
-    const rows = this.db.query(
+    const rows = this.shared.db.query(
       `SELECT * FROM users WHERE role = ? AND active = 1`
     ).all(role) as any[];
     return rows.map((r) => {
@@ -572,7 +703,7 @@ export class Database {
   }
 
   // ============================================================
-  // Messages
+  // Messages (→ user DB)
   // ============================================================
 
   saveMessage(data: {
@@ -584,7 +715,8 @@ export class Database {
     embedding?: number[] | null;
   }): string {
     const id = uuid();
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO messages (id, role, content, channel, metadata, user_id, embedding)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -600,7 +732,8 @@ export class Database {
   }
 
   getRecentMessages(userId: string, limit: number = 20): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT id, created_at, role, content
       FROM messages
       WHERE user_id = ?
@@ -631,12 +764,14 @@ export class Database {
       }
     }
 
-    const row = this.db.query(sql).get(...params) as any;
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(sql).get(...params) as any;
     return row?.count || 0;
   }
 
   getLastUserMessage(userId: string): any | null {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT created_at FROM messages
       WHERE user_id = ? AND role = 'user'
       ORDER BY created_at DESC LIMIT 1
@@ -645,7 +780,8 @@ export class Database {
 
   hasRecentActivity(userId: string, withinMinutes: number): boolean {
     const cutoff = new Date(Date.now() - withinMinutes * 60 * 1000).toISOString();
-    const row = this.db.query(`
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`
       SELECT id FROM messages
       WHERE user_id = ? AND role = 'user' AND created_at >= ?
       LIMIT 1
@@ -656,42 +792,53 @@ export class Database {
   getMessagesForDashboard(opts?: { userId?: string; limit?: number }): any[] {
     const limit = opts?.limit || 50;
     if (opts?.userId) {
-      return this.db.query(`
+      const udb = this.getUserDb(opts.userId);
+      return udb.db.query(`
         SELECT id, created_at, role, content, channel, metadata
         FROM messages WHERE user_id = ?
         ORDER BY created_at DESC LIMIT ?
       `).all(opts.userId, limit) as any[];
     }
-    return this.db.query(`
-      SELECT id, created_at, role, content, channel, metadata
-      FROM messages ORDER BY created_at DESC LIMIT ?
-    `).all(limit) as any[];
+    // Aggregate from all user DBs
+    const all = this.queryAllUserDbs(db =>
+      db.query(`
+        SELECT id, created_at, role, content, channel, metadata
+        FROM messages ORDER BY created_at DESC LIMIT ?
+      `).all(limit) as any[]
+    );
+    return all.sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, limit);
   }
 
   getMessageCountSince(since: string, userId?: string): number {
     if (userId) {
-      const row = this.db.query(
+      const udb = this.getUserDb(userId);
+      const row = udb.db.query(
         `SELECT COUNT(*) as count FROM messages WHERE created_at >= ? AND user_id = ?`
       ).get(since, userId) as any;
       return row?.count || 0;
     }
-    const row = this.db.query(
-      `SELECT COUNT(*) as count FROM messages WHERE created_at >= ?`
-    ).get(since) as any;
-    return row?.count || 0;
+    let total = 0;
+    for (const uid of this.getAllUserIds()) {
+      const udb = this.getUserDb(uid);
+      const row = udb.db.query(
+        `SELECT COUNT(*) as count FROM messages WHERE created_at >= ?`
+      ).get(since) as any;
+      total += row?.count || 0;
+    }
+    return total;
   }
 
   getMessagesSince(since: string, userId?: string): any[] {
     if (userId) {
-      return this.db.query(`
+      const udb = this.getUserDb(userId);
+      return udb.db.query(`
         SELECT channel, role, created_at FROM messages
         WHERE created_at >= ? AND user_id = ?
       `).all(since, userId) as any[];
     }
-    return this.db.query(`
-      SELECT channel, role, created_at FROM messages
-      WHERE created_at >= ?
-    `).all(since) as any[];
+    return this.queryAllUserDbs(db =>
+      db.query(`SELECT channel, role, created_at FROM messages WHERE created_at >= ?`).all(since) as any[]
+    );
   }
 
   // ============================================================
@@ -706,7 +853,8 @@ export class Database {
     const limit = opts?.matchCount ?? 10;
     const blob = embeddingToBlob(queryEmbedding);
 
-    const rows = this.db.query(`
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(`
       SELECT id, content, role, created_at,
         (1.0 - vec_distance_cosine(embedding, ?)) AS similarity
       FROM messages
@@ -726,20 +874,38 @@ export class Database {
     const limit = opts?.matchCount ?? 10;
     const blob = embeddingToBlob(queryEmbedding);
 
-    const rows = this.db.query(`
+    // Query user DB (private memory)
+    const udb = this.getUserDb(userId);
+    const userRows = udb.db.query(`
       SELECT id, content, type, created_at,
         (1.0 - vec_distance_cosine(embedding, ?)) AS similarity
       FROM memory
-      WHERE (user_id = ? OR scope = 'shared') AND embedding IS NOT NULL
+      WHERE user_id = ? AND embedding IS NOT NULL
       ORDER BY vec_distance_cosine(embedding, ?) ASC
       LIMIT ?
     `).all(blob, userId, blob, limit) as any[];
 
-    return rows.filter((r: any) => r.similarity > threshold);
+    // Query shared DB (shared memory)
+    const sharedRows = this.shared.db.query(`
+      SELECT id, content, type, created_at,
+        (1.0 - vec_distance_cosine(embedding, ?)) AS similarity
+      FROM memory
+      WHERE embedding IS NOT NULL
+      ORDER BY vec_distance_cosine(embedding, ?) ASC
+      LIMIT ?
+    `).all(blob, blob, limit) as any[];
+
+    // Merge by similarity, filter threshold, take top N
+    const all = [...userRows, ...sharedRows]
+      .filter((r: any) => r.similarity > threshold)
+      .sort((a: any, b: any) => b.similarity - a.similarity)
+      .slice(0, limit);
+
+    return all;
   }
 
   // ============================================================
-  // Memory (Facts, Goals)
+  // Memory (Facts, Goals) — routed by scope
   // ============================================================
 
   insertMemory(data: {
@@ -752,7 +918,10 @@ export class Database {
     priority?: number;
   }): string {
     const id = uuid();
-    this.db.run(`
+    const scope = data.scope || "private";
+    const targetDb = scope === "shared" ? this.shared.db : this.getUserDb(data.user_id).db;
+
+    targetDb.run(`
       INSERT INTO memory (id, type, content, user_id, scope, deadline, embedding, priority)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -760,7 +929,7 @@ export class Database {
       data.type,
       data.content,
       data.user_id,
-      data.scope || "private",
+      scope,
       data.deadline || null,
       data.embedding ? embeddingToBlob(data.embedding) : null,
       data.priority || 0,
@@ -769,15 +938,27 @@ export class Database {
   }
 
   getFacts(userId: string): any[] {
-    return this.db.query(`
+    // Private facts from user DB
+    const udb = this.getUserDb(userId);
+    const privateFacts = udb.db.query(`
       SELECT id, content FROM memory
-      WHERE type = 'fact' AND (user_id = ? OR scope = 'shared')
+      WHERE type = 'fact' AND user_id = ?
       ORDER BY created_at DESC
     `).all(userId) as any[];
+
+    // Shared facts from shared DB
+    const sharedFacts = this.shared.db.query(`
+      SELECT id, content FROM memory
+      WHERE type = 'fact' AND scope = 'shared'
+      ORDER BY created_at DESC
+    `).all() as any[];
+
+    return [...privateFacts, ...sharedFacts];
   }
 
   getActiveGoals(userId: string): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT id, content, deadline, priority FROM memory
       WHERE type = 'goal' AND user_id = ?
       ORDER BY priority DESC, created_at DESC
@@ -785,8 +966,17 @@ export class Database {
   }
 
   findMemoryByContent(userId: string, type: string, searchText: string): any | null {
-    // Use LIKE for case-insensitive substring matching (ILIKE equivalent)
-    return this.db.query(`
+    // Check user DB first
+    const udb = this.getUserDb(userId);
+    const userResult = udb.db.query(`
+      SELECT id FROM memory
+      WHERE type = ? AND user_id = ? AND content LIKE ? COLLATE NOCASE
+      LIMIT 1
+    `).get(type, userId, `%${searchText}%`) as any;
+    if (userResult) return userResult;
+
+    // Check shared DB
+    return this.shared.db.query(`
       SELECT id FROM memory
       WHERE type = ? AND user_id = ? AND content LIKE ? COLLATE NOCASE
       LIMIT 1
@@ -805,10 +995,12 @@ export class Database {
     setClauses.push(`updated_at = datetime('now')`);
     values.push(id);
 
-    this.db.run(
-      `UPDATE memory SET ${setClauses.join(", ")} WHERE id = ?`,
-      values
-    );
+    const sql = `UPDATE memory SET ${setClauses.join(", ")} WHERE id = ?`;
+
+    // Try shared DB
+    this.shared.db.run(sql, values);
+    // Try all user DBs
+    this.runOnAllUserDbs(db => db.run(sql, values));
   }
 
   getMemoryForDashboard(opts?: { type?: string; userId?: string; limit?: number }): any[] {
@@ -824,33 +1016,73 @@ export class Database {
     sql += ` ORDER BY created_at DESC LIMIT ?`;
     params.push(limit);
 
-    return this.db.query(sql).all(...params) as any[];
+    // Query both shared and user DBs
+    const sharedRows = this.shared.db.query(sql).all(...params) as any[];
+
+    let userRows: any[];
+    if (opts?.userId) {
+      userRows = this.getUserDb(opts.userId).db.query(sql).all(...params) as any[];
+    } else {
+      userRows = this.queryAllUserDbs(db => db.query(sql).all(...params) as any[]);
+    }
+
+    return [...sharedRows, ...userRows]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
   }
 
   deleteMemoryEntries(ids: string[]): void {
     if (ids.length === 0) return;
     const placeholders = ids.map(() => "?").join(",");
-    this.db.run(`DELETE FROM memory WHERE id IN (${placeholders})`, ids);
+    const sql = `DELETE FROM memory WHERE id IN (${placeholders})`;
+    // Delete from shared
+    this.shared.db.run(sql, ids);
+    // Delete from all user DBs
+    this.runOnAllUserDbs(db => db.run(sql, ids));
   }
 
   getAllFacts(): any[] {
-    return this.db.query(`
+    // Shared facts
+    const sharedFacts = this.shared.db.query(`
       SELECT id, type, content, created_at, user_id, scope
       FROM memory WHERE type = 'fact'
       ORDER BY created_at DESC
     `).all() as any[];
+
+    // Private facts from all user DBs
+    const userFacts = this.queryAllUserDbs(db =>
+      db.query(`
+        SELECT id, type, content, created_at, user_id, scope
+        FROM memory WHERE type = 'fact'
+        ORDER BY created_at DESC
+      `).all() as any[]
+    );
+
+    return [...sharedFacts, ...userFacts];
   }
 
   getCompletedGoalsBefore(cutoffDate: string): any[] {
-    return this.db.query(`
+    // Check shared
+    const sharedGoals = this.shared.db.query(`
       SELECT id, type, content, created_at, user_id, scope
       FROM memory
       WHERE type = 'completed_goal' AND completed_at < ?
     `).all(cutoffDate) as any[];
+
+    // Check all user DBs
+    const userGoals = this.queryAllUserDbs(db =>
+      db.query(`
+        SELECT id, type, content, created_at, user_id, scope
+        FROM memory
+        WHERE type = 'completed_goal' AND completed_at < ?
+      `).all(cutoffDate) as any[]
+    );
+
+    return [...sharedGoals, ...userGoals];
   }
 
   // ============================================================
-  // Tasks
+  // Tasks (→ user DB)
   // ============================================================
 
   insertTask(data: {
@@ -862,7 +1094,8 @@ export class Database {
     request_id?: string | null;
   }): string {
     const id = uuid();
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO agent_tasks (id, agent, description, status, user_id, parent_task_id, request_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -878,7 +1111,8 @@ export class Database {
   }
 
   getActiveTasks(userId: string): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT * FROM agent_tasks
       WHERE status IN ('pending', 'in_progress', 'blocked') AND user_id = ?
       ORDER BY created_at DESC
@@ -897,15 +1131,14 @@ export class Database {
     setClauses.push(`updated_at = datetime('now')`);
     values.push(id);
 
-    this.db.run(
-      `UPDATE agent_tasks SET ${setClauses.join(", ")} WHERE id = ?`,
-      values
-    );
+    const sql = `UPDATE agent_tasks SET ${setClauses.join(", ")} WHERE id = ?`;
+    this.runOnAllUserDbs(db => db.run(sql, values));
   }
 
   findTaskByDescription(userId: string, statuses: string[], searchText: string): any | null {
+    const udb = this.getUserDb(userId);
     const placeholders = statuses.map(() => "?").join(",");
-    return this.db.query(`
+    return udb.db.query(`
       SELECT id FROM agent_tasks
       WHERE status IN (${placeholders}) AND user_id = ? AND description LIKE ? COLLATE NOCASE
       LIMIT 1
@@ -913,20 +1146,23 @@ export class Database {
   }
 
   getAgentTaskStats(userId: string): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT agent, status FROM agent_tasks WHERE user_id = ?
     `).all(userId) as any[];
   }
 
   getTasksByAgent(userId: string, agent: string, limit: number = 20): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT * FROM agent_tasks WHERE user_id = ? AND agent = ?
       ORDER BY created_at DESC LIMIT ?
     `).all(userId, agent, limit) as any[];
   }
 
   getParentTasks(userId: string, limit: number = 50): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT * FROM agent_tasks WHERE user_id = ? AND parent_task_id IS NULL
       ORDER BY created_at DESC LIMIT ?
     `).all(userId, limit) as any[];
@@ -935,34 +1171,31 @@ export class Database {
   getSubtasksByParentIds(parentIds: string[]): any[] {
     if (parentIds.length === 0) return [];
     const placeholders = parentIds.map(() => "?").join(",");
-    return this.db.query(`
-      SELECT * FROM agent_tasks WHERE parent_task_id IN (${placeholders})
-      ORDER BY created_at ASC
-    `).all(...parentIds) as any[];
+    const sql = `SELECT * FROM agent_tasks WHERE parent_task_id IN (${placeholders}) ORDER BY created_at ASC`;
+    return this.queryAllUserDbs(db => db.query(sql).all(...parentIds) as any[]);
   }
 
   getTaskById(taskId: string, userId?: string): any | null {
     if (userId) {
-      return this.db.query(
+      const udb = this.getUserDb(userId);
+      return udb.db.query(
         `SELECT * FROM agent_tasks WHERE id = ? AND user_id = ?`
       ).get(taskId, userId) as any;
     }
-    return this.db.query(
-      `SELECT * FROM agent_tasks WHERE id = ?`
-    ).get(taskId) as any;
+    return this.findInUserDbs(db =>
+      db.query(`SELECT * FROM agent_tasks WHERE id = ?`).get(taskId) as any
+    );
   }
 
   getArtifactsByTaskIds(taskIds: string[]): any[] {
     if (taskIds.length === 0) return [];
     const placeholders = taskIds.map(() => "?").join(",");
-    return this.db.query(`
-      SELECT * FROM task_artifacts WHERE task_id IN (${placeholders})
-      ORDER BY created_at ASC
-    `).all(...taskIds) as any[];
+    const sql = `SELECT * FROM task_artifacts WHERE task_id IN (${placeholders}) ORDER BY created_at ASC`;
+    return this.queryAllUserDbs(db => db.query(sql).all(...taskIds) as any[]);
   }
 
   // ============================================================
-  // Scheduled Tasks
+  // Scheduled Tasks (→ user DB)
   // ============================================================
 
   insertScheduledTask(data: {
@@ -977,7 +1210,8 @@ export class Database {
     max_runs?: number | null;
   }): string {
     const id = uuid();
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO scheduled_tasks (id, user_id, created_by, title, instructions, trigger_at, next_run_at, recurrence, timezone, condition, max_runs)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -987,7 +1221,7 @@ export class Database {
       data.title,
       data.instructions,
       data.trigger_at || null,
-      data.trigger_at || null, // next_run_at starts as trigger_at
+      data.trigger_at || null,
       data.recurrence || null,
       data.timezone || "UTC",
       data.condition || null,
@@ -997,7 +1231,8 @@ export class Database {
   }
 
   getScheduledTasks(userId: string): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT id, title, trigger_at, recurrence, timezone, created_by, status, condition
       FROM scheduled_tasks
       WHERE user_id = ? AND status = 'active'
@@ -1007,7 +1242,7 @@ export class Database {
 
   getDueTasks(): any[] {
     const nowStr = new Date().toISOString();
-    return this.db.query(`
+    const sql = `
       SELECT id, user_id, created_by, title, instructions, trigger_at, recurrence,
              timezone, condition, max_runs, run_count, metadata
       FROM scheduled_tasks
@@ -1015,7 +1250,8 @@ export class Database {
         AND (expires_at IS NULL OR expires_at > ?)
       ORDER BY trigger_at ASC
       LIMIT 10
-    `).all(nowStr, nowStr) as any[];
+    `;
+    return this.queryAllUserDbs(db => db.query(sql).all(nowStr, nowStr) as any[]);
   }
 
   updateScheduledTask(id: string, updates: Record<string, any>): void {
@@ -1030,14 +1266,13 @@ export class Database {
     setClauses.push(`updated_at = datetime('now')`);
     values.push(id);
 
-    this.db.run(
-      `UPDATE scheduled_tasks SET ${setClauses.join(", ")} WHERE id = ?`,
-      values
-    );
+    const sql = `UPDATE scheduled_tasks SET ${setClauses.join(", ")} WHERE id = ?`;
+    this.runOnAllUserDbs(db => db.run(sql, values));
   }
 
   findScheduledTaskByTitle(userId: string, searchText: string): any | null {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT id FROM scheduled_tasks
       WHERE user_id = ? AND status = 'active' AND title LIKE ? COLLATE NOCASE
       LIMIT 1
@@ -1045,7 +1280,8 @@ export class Database {
   }
 
   getUpcomingScheduledTasks(userId: string, fromTime: string, toTime: string, limit: number = 5): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT title, next_run_at FROM scheduled_tasks
       WHERE user_id = ? AND status = 'active'
         AND next_run_at >= ? AND next_run_at <= ?
@@ -1054,11 +1290,12 @@ export class Database {
   }
 
   // ============================================================
-  // Integrations
+  // Integrations (→ user DB)
   // ============================================================
 
   getUserIntegrations(userId: string): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT id, provider, status, metadata, updated_at
       FROM user_integrations
       WHERE user_id = ?
@@ -1073,7 +1310,8 @@ export class Database {
     credentials?: Record<string, any>;
     metadata?: Record<string, any>;
   }): void {
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO user_integrations (id, user_id, provider, status, credentials, metadata)
       VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT (user_id, provider) DO UPDATE SET
@@ -1092,7 +1330,8 @@ export class Database {
   }
 
   getIntegrationCredentials(userId: string, provider: string): any | null {
-    const row = this.db.query(`
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`
       SELECT credentials, metadata FROM user_integrations
       WHERE user_id = ? AND provider = ? AND status = 'connected'
       LIMIT 1
@@ -1105,18 +1344,20 @@ export class Database {
   }
 
   getConnectedIntegrations(userId: string): any[] {
-    return this.db.query(`
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
       SELECT provider, status, credentials FROM user_integrations
       WHERE user_id = ? AND status = 'connected'
     `).all(userId) as any[];
   }
 
   // ============================================================
-  // Patterns
+  // Patterns (→ user DB)
   // ============================================================
 
   findPatterns(userId: string, minSuccess: number = 2, limit: number = 10): any[] {
-    const rows = this.db.query(`
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(`
       SELECT * FROM execution_patterns
       WHERE user_id = ? AND success_count >= ?
       ORDER BY success_count DESC
@@ -1129,7 +1370,8 @@ export class Database {
   }
 
   findPatternBySignature(userId: string, signature: string): any | null {
-    const row = this.db.query(`
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`
       SELECT id, success_count, fail_count, avg_duration_ms
       FROM execution_patterns
       WHERE task_signature = ? AND user_id = ?
@@ -1146,7 +1388,8 @@ export class Database {
     avg_duration_ms: number;
     user_id: string;
   }): void {
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO execution_patterns (id, task_signature, plan, success_count, fail_count, avg_duration_ms, user_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -1172,14 +1415,12 @@ export class Database {
     setClauses.push(`updated_at = datetime('now')`);
     values.push(id);
 
-    this.db.run(
-      `UPDATE execution_patterns SET ${setClauses.join(", ")} WHERE id = ?`,
-      values
-    );
+    const sql = `UPDATE execution_patterns SET ${setClauses.join(", ")} WHERE id = ?`;
+    this.runOnAllUserDbs(db => db.run(sql, values));
   }
 
   // ============================================================
-  // Nova Status
+  // Nova Status (→ shared.db)
   // ============================================================
 
   upsertNovaStatus(data: Record<string, any>): void {
@@ -1194,15 +1435,15 @@ export class Database {
 
     sets.push(`updated_at = datetime('now')`);
 
-    this.db.run(`UPDATE nova_status SET ${sets.join(", ")} WHERE id = 1`, vals);
+    this.shared.db.run(`UPDATE nova_status SET ${sets.join(", ")} WHERE id = 1`, vals);
   }
 
   getNovaStatus(): any | null {
-    return this.db.query(`SELECT * FROM nova_status WHERE id = 1`).get() as any;
+    return this.shared.db.query(`SELECT * FROM nova_status WHERE id = 1`).get() as any;
   }
 
   // ============================================================
-  // Cost Tracking
+  // Cost Tracking (→ shared.db)
   // ============================================================
 
   insertCostEntry(data: {
@@ -1218,7 +1459,7 @@ export class Database {
     user_id?: string;
     metadata?: Record<string, unknown>;
   }): void {
-    this.db.run(`
+    this.shared.db.run(`
       INSERT INTO cost_tracking (id, provider, model, input_tokens, output_tokens,
         cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms,
         session_id, metadata, user_id)
@@ -1251,9 +1492,18 @@ export class Database {
     if (opts.since) { conditions.push("created_at >= ?"); params.push(opts.since); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const order = opts.order === "asc" ? "ASC" : "DESC";
-    return this.db.query(
-      `SELECT id, created_at, role, content, channel, metadata, user_id FROM messages ${where} ORDER BY created_at ${order} LIMIT ?`
-    ).all(...params, opts.limit || 50) as any[];
+    const sql = `SELECT id, created_at, role, content, channel, metadata, user_id FROM messages ${where} ORDER BY created_at ${order} LIMIT ?`;
+    const limit = opts.limit || 50;
+
+    if (opts.userId) {
+      const udb = this.getUserDb(opts.userId);
+      return udb.db.query(sql).all(...params, limit) as any[];
+    }
+
+    const all = this.queryAllUserDbs(db => db.query(sql).all(...params, limit) as any[]);
+    return all
+      .sort((a, b) => order === "ASC" ? a.created_at.localeCompare(b.created_at) : b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
   }
 
   countMessages(opts: { userId?: string; since?: string }): number {
@@ -1262,8 +1512,21 @@ export class Database {
     if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
     if (opts.since) { conditions.push("created_at >= ?"); params.push(opts.since); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const row = this.db.query(`SELECT COUNT(*) as cnt FROM messages ${where}`).get(...params) as any;
-    return row?.cnt || 0;
+    const sql = `SELECT COUNT(*) as cnt FROM messages ${where}`;
+
+    if (opts.userId) {
+      const udb = this.getUserDb(opts.userId);
+      const row = udb.db.query(sql).get(...params) as any;
+      return row?.cnt || 0;
+    }
+
+    let total = 0;
+    for (const uid of this.getAllUserIds()) {
+      const udb = this.getUserDb(uid);
+      const row = udb.db.query(sql).get(...params) as any;
+      total += row?.cnt || 0;
+    }
+    return total;
   }
 
   getMemoryFiltered(opts: { type?: string; userId?: string; limit?: number }): any[] {
@@ -1272,9 +1535,23 @@ export class Database {
     if (opts.type && opts.type !== "all") { conditions.push("type = ?"); params.push(opts.type); }
     if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    return this.db.query(
-      `SELECT id, created_at, type, content, deadline, completed_at, priority, scope FROM memory ${where} ORDER BY created_at DESC LIMIT ?`
-    ).all(...params, opts.limit || 100) as any[];
+    const limit = opts.limit || 100;
+    const sql = `SELECT id, created_at, type, content, deadline, completed_at, priority, scope FROM memory ${where} ORDER BY created_at DESC LIMIT ?`;
+
+    // Query shared
+    const sharedRows = this.shared.db.query(sql).all(...params, limit) as any[];
+
+    // Query user DBs
+    let userRows: any[];
+    if (opts.userId) {
+      userRows = this.getUserDb(opts.userId).db.query(sql).all(...params, limit) as any[];
+    } else {
+      userRows = this.queryAllUserDbs(db => db.query(sql).all(...params, limit) as any[]);
+    }
+
+    return [...sharedRows, ...userRows]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit);
   }
 
   getCostEntries(opts: { since?: string; userId?: string; order?: "asc" | "desc" }): any[] {
@@ -1284,7 +1561,7 @@ export class Database {
     if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const order = opts.order === "asc" ? "ASC" : "DESC";
-    return this.db.query(
+    return this.shared.db.query(
       `SELECT provider, model, cost_usd, input_tokens, output_tokens, created_at, user_id FROM cost_tracking ${where} ORDER BY created_at ${order}`
     ).all(...params) as any[];
   }
@@ -1294,13 +1571,20 @@ export class Database {
     const params: any[] = [];
     if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    return this.db.query(
-      `SELECT id, created_at, updated_at, agent, description, status, result, metadata FROM agent_tasks ${where} ORDER BY updated_at DESC LIMIT ?`
-    ).all(...params, opts.limit || 30) as any[];
+    const limit = opts.limit || 30;
+    const sql = `SELECT id, created_at, updated_at, agent, description, status, result, metadata FROM agent_tasks ${where} ORDER BY updated_at DESC LIMIT ?`;
+
+    if (opts.userId) {
+      const udb = this.getUserDb(opts.userId);
+      return udb.db.query(sql).all(...params, limit) as any[];
+    }
+
+    const all = this.queryAllUserDbs(db => db.query(sql).all(...params, limit) as any[]);
+    return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, limit);
   }
 
   // ============================================================
-  // Approvals
+  // Approvals (→ user DB)
   // ============================================================
 
   insertApproval(data: {
@@ -1318,7 +1602,8 @@ export class Database {
     workflow_type?: string;
     request_id?: string | null;
   }): void {
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO pending_approvals (id, user_id, chat_id, original_text, plan,
         prepare_summary, prepare_results, artifacts, execute_descriptions,
         parent_task_id, workspace_dir, workflow_type, request_id, status)
@@ -1341,9 +1626,9 @@ export class Database {
   }
 
   getApproval(approvalId: string): any | null {
-    const row = this.db.query(`
-      SELECT * FROM pending_approvals WHERE id = ? AND status = 'pending'
-    `).get(approvalId) as any;
+    const row = this.findInUserDbs(db =>
+      db.query(`SELECT * FROM pending_approvals WHERE id = ? AND status = 'pending'`).get(approvalId) as any
+    );
     if (!row) return null;
     row.plan = parseJson(row.plan, {});
     row.prepare_results = parseJson(row.prepare_results, []);
@@ -1353,7 +1638,8 @@ export class Database {
   }
 
   getPendingApprovals(userId: string): any[] {
-    const rows = this.db.query(`
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(`
       SELECT id, chat_id, original_text, plan, prepare_results, artifacts,
              parent_task_id, prepare_summary, execute_descriptions,
              workspace_dir, workflow_type, request_id, created_at
@@ -1371,24 +1657,23 @@ export class Database {
   }
 
   updateApprovalStatus(approvalId: string, status: string, feedback?: string | null): void {
-    this.db.run(`
-      UPDATE pending_approvals
-      SET status = ?, feedback = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `, [status, feedback || null, approvalId]);
+    const sql = `UPDATE pending_approvals SET status = ?, feedback = ?, updated_at = datetime('now') WHERE id = ?`;
+    const params = [status, feedback || null, approvalId];
+    this.runOnAllUserDbs(db => db.run(sql, params));
   }
 
   getApprovalsByIds(ids: string[], userId: string): any[] {
     if (ids.length === 0) return [];
+    const udb = this.getUserDb(userId);
     const placeholders = ids.map(() => "?").join(",");
-    return this.db.query(`
+    return udb.db.query(`
       SELECT id, status, feedback FROM pending_approvals
       WHERE id IN (${placeholders}) AND user_id = ?
     `).all(...ids, userId) as any[];
   }
 
   // ============================================================
-  // Revision Sessions
+  // Revision Sessions (→ user DB)
   // ============================================================
 
   insertRevisionSession(data: {
@@ -1403,7 +1688,8 @@ export class Database {
     workflow_type?: string;
     request_id?: string | null;
   }): void {
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO revision_sessions (id, user_id, original_text, plan, prepare_results,
         artifacts, parent_task_id, workspace_dir, workflow_type, request_id, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
@@ -1422,7 +1708,8 @@ export class Database {
   }
 
   getLatestPendingRevisionSession(userId: string): any | null {
-    const row = this.db.query(`
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`
       SELECT * FROM revision_sessions
       WHERE user_id = ? AND status = 'pending'
       ORDER BY created_at DESC LIMIT 1
@@ -1435,13 +1722,12 @@ export class Database {
   }
 
   updateRevisionSessionStatus(id: string, status: string): void {
-    this.db.run(`
-      UPDATE revision_sessions SET status = ?, updated_at = datetime('now') WHERE id = ?
-    `, [status, id]);
+    const sql = `UPDATE revision_sessions SET status = ?, updated_at = datetime('now') WHERE id = ?`;
+    this.runOnAllUserDbs(db => db.run(sql, [status, id]));
   }
 
   // ============================================================
-  // Workflow Preferences
+  // Workflow Preferences (→ user DB)
   // ============================================================
 
   upsertWorkflowPreference(data: {
@@ -1450,7 +1736,8 @@ export class Database {
     task_signature: string;
     plan: any;
   }): void {
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO workflow_preferences (id, user_id, workflow_type, task_signature, plan, success_count, last_used_at)
       VALUES (?, ?, ?, ?, ?, 1, datetime('now'))
       ON CONFLICT (user_id, task_signature) DO UPDATE SET
@@ -1461,7 +1748,7 @@ export class Database {
   }
 
   // ============================================================
-  // Artifacts
+  // Artifacts (→ user DB)
   // ============================================================
 
   insertArtifact(data: {
@@ -1476,7 +1763,8 @@ export class Database {
     delivered?: boolean;
     metadata?: Record<string, any>;
   }): void {
-    this.db.run(`
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
       INSERT INTO task_artifacts (id, task_id, user_id, artifact_type, file_path,
         file_name, file_size, description, verified, delivered, metadata)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1496,13 +1784,13 @@ export class Database {
   }
 
   getTaskArtifacts(taskId: string): any[] {
-    return this.db.query(`
-      SELECT * FROM task_artifacts WHERE task_id = ?
-    `).all(taskId) as any[];
+    return this.queryAllUserDbs(db =>
+      db.query(`SELECT * FROM task_artifacts WHERE task_id = ?`).all(taskId) as any[]
+    );
   }
 
   // ============================================================
-  // Logs
+  // Logs (→ shared.db)
   // ============================================================
 
   insertLog(data: {
@@ -1514,7 +1802,7 @@ export class Database {
     duration_ms?: number;
     user_id?: string;
   }): void {
-    this.db.run(`
+    this.shared.db.run(`
       INSERT INTO logs (id, level, event, message, metadata, session_id, duration_ms, user_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
@@ -1527,6 +1815,144 @@ export class Database {
       data.duration_ms || null,
       data.user_id || null,
     ]);
+  }
+
+  // ============================================================
+  // Auto-migration from legacy single nova.db
+  // ============================================================
+
+  private migrateFromLegacyDb(): void {
+    console.log("[db] Auto-migrating from nova.db to split structure...");
+
+    const legacy = openDb(LEGACY_DB_PATH);
+
+    // 1. Create shared.db and copy shared tables
+    const shared = new SharedDatabase();
+
+    // Copy users
+    if (tableExists(legacy, "users")) {
+      const users = legacy.query(`SELECT * FROM users`).all() as any[];
+      for (const u of users) {
+        shared.db.run(`
+          INSERT OR IGNORE INTO users (id, created_at, updated_at, telegram_id, name, timezone,
+            phone, pin, whatsapp_id, slack_id, role, preferences, profile_text, active)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [u.id, u.created_at, u.updated_at, u.telegram_id, u.name, u.timezone,
+            u.phone, u.pin, u.whatsapp_id, u.slack_id, u.role, u.preferences, u.profile_text, u.active]);
+      }
+      console.log(`[db]   Migrated ${users.length} users`);
+    }
+
+    // Copy nova_status
+    if (tableExists(legacy, "nova_status")) {
+      const status = legacy.query(`SELECT * FROM nova_status WHERE id = 1`).get() as any;
+      if (status) {
+        const cols = Object.keys(status).filter(k => k !== "id");
+        const sets = cols.map(c => `${c} = ?`);
+        const vals = cols.map(c => status[c]);
+        shared.db.run(`UPDATE nova_status SET ${sets.join(", ")} WHERE id = 1`, vals);
+      }
+    }
+
+    // Copy logs
+    if (tableExists(legacy, "logs")) {
+      const logs = legacy.query(`SELECT * FROM logs`).all() as any[];
+      for (const l of logs) {
+        shared.db.run(`
+          INSERT OR IGNORE INTO logs (id, created_at, level, event, message, metadata, session_id, duration_ms, user_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [l.id, l.created_at, l.level, l.event, l.message, l.metadata, l.session_id, l.duration_ms, l.user_id]);
+      }
+      console.log(`[db]   Migrated ${logs.length} log entries`);
+    }
+
+    // Copy cost_tracking
+    if (tableExists(legacy, "cost_tracking")) {
+      const costs = legacy.query(`SELECT * FROM cost_tracking`).all() as any[];
+      for (const c of costs) {
+        shared.db.run(`
+          INSERT OR IGNORE INTO cost_tracking (id, created_at, provider, model, input_tokens, output_tokens,
+            cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms, session_id, metadata, user_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [c.id, c.created_at, c.provider, c.model, c.input_tokens, c.output_tokens,
+            c.cache_read_tokens, c.cache_creation_tokens, c.cost_usd, c.duration_ms, c.session_id, c.metadata, c.user_id]);
+      }
+      console.log(`[db]   Migrated ${costs.length} cost entries`);
+    }
+
+    // Copy shared memory
+    if (tableExists(legacy, "memory")) {
+      const sharedMem = legacy.query(`SELECT * FROM memory WHERE scope = 'shared'`).all() as any[];
+      for (const m of sharedMem) {
+        shared.db.run(`
+          INSERT OR IGNORE INTO memory (id, created_at, updated_at, type, content, deadline,
+            completed_at, priority, metadata, user_id, scope, embedding)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [m.id, m.created_at, m.updated_at, m.type, m.content, m.deadline,
+            m.completed_at, m.priority, m.metadata, m.user_id, m.scope, m.embedding]);
+      }
+      console.log(`[db]   Migrated ${sharedMem.length} shared memory entries`);
+    }
+
+    shared.close();
+
+    // 2. Get all user IDs and create per-user databases
+    const userIds = new Set<string>();
+    if (tableExists(legacy, "users")) {
+      const rows = legacy.query(`SELECT id FROM users`).all() as any[];
+      for (const r of rows) userIds.add(r.id);
+    }
+
+    const userTables = [
+      { name: "messages", cols: "id, created_at, role, content, channel, metadata, user_id, embedding" },
+      { name: "agent_tasks", cols: "id, created_at, updated_at, agent, description, status, result, metadata, user_id, parent_task_id, request_id" },
+      { name: "task_artifacts", cols: "id, created_at, task_id, user_id, artifact_type, file_path, file_name, file_size, description, verified, delivered, metadata" },
+      { name: "scheduled_tasks", cols: "id, created_at, updated_at, user_id, created_by, title, instructions, trigger_at, next_run_at, recurrence, timezone, condition, status, last_run_at, last_result, run_count, max_runs, expires_at, notify_user, metadata" },
+      { name: "execution_patterns", cols: "id, created_at, updated_at, task_signature, plan, success_count, fail_count, avg_duration_ms, user_id" },
+      { name: "pending_approvals", cols: "id, user_id, chat_id, original_text, plan, prepare_summary, prepare_results, artifacts, execute_descriptions, status, feedback, parent_task_id, workspace_dir, workflow_type, request_id, created_at, updated_at" },
+      { name: "revision_sessions", cols: "id, user_id, original_text, plan, prepare_results, artifacts, parent_task_id, workspace_dir, workflow_type, request_id, status, created_at, updated_at" },
+      { name: "workflow_preferences", cols: "id, user_id, workflow_type, task_signature, plan, success_count, last_used_at, created_at" },
+      { name: "user_integrations", cols: "id, created_at, updated_at, user_id, provider, status, credentials, metadata" },
+    ];
+
+    for (const userId of userIds) {
+      const udb = new UserDatabase(userId);
+      let totalRows = 0;
+
+      // Copy private memory
+      if (tableExists(legacy, "memory")) {
+        const privateMem = legacy.query(`SELECT * FROM memory WHERE user_id = ? AND (scope != 'shared' OR scope IS NULL)`).all(userId) as any[];
+        for (const m of privateMem) {
+          udb.db.run(`
+            INSERT OR IGNORE INTO memory (id, created_at, updated_at, type, content, deadline,
+              completed_at, priority, metadata, user_id, scope, embedding)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [m.id, m.created_at, m.updated_at, m.type, m.content, m.deadline,
+              m.completed_at, m.priority, m.metadata, m.user_id, m.scope || "private", m.embedding]);
+        }
+        totalRows += privateMem.length;
+      }
+
+      // Copy per-user tables
+      for (const { name, cols } of userTables) {
+        if (!tableExists(legacy, name)) continue;
+        const colList = cols.split(", ");
+        const rows = legacy.query(`SELECT ${cols} FROM ${name} WHERE user_id = ?`).all(userId) as any[];
+        const placeholders = colList.map(() => "?").join(", ");
+        for (const row of rows) {
+          const values = colList.map(c => (row as any)[c]);
+          udb.db.run(`INSERT OR IGNORE INTO ${name} (${cols}) VALUES (${placeholders})`, values);
+        }
+        totalRows += rows.length;
+      }
+
+      udb.close();
+      console.log(`[db]   User ${userId}: migrated ${totalRows} rows`);
+    }
+
+    legacy.close();
+    renameSync(LEGACY_DB_PATH, LEGACY_DB_PATH + ".migrated");
+    console.log("[db] Migration complete. Legacy nova.db renamed to nova.db.migrated");
   }
 }
 

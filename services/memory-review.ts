@@ -11,13 +11,10 @@
  */
 
 import "dotenv/config";
-import { spawn } from "bun";
 import { getDb, type Database } from "../src/db.ts";
-import { dirname, join } from "path";
+import { spawnLeanClaude } from "../src/claude-spawn.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
-const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 
 // ============================================================
 // DATABASE
@@ -88,9 +85,7 @@ function getActiveUsers(db: Database): UserInfo[] {
 function deleteMemoryEntries(db: Database, ids: string[]): number {
   if (!ids.length) return 0;
   try {
-    for (const id of ids) {
-      db.raw.run("DELETE FROM memory WHERE id = ?", [id]);
-    }
+    db.deleteMemoryEntries(ids);
     return ids.length;
   } catch (error) {
     console.error("Delete error:", error);
@@ -140,25 +135,20 @@ NONE
 Do not explain your reasoning. Just list the IDs.`;
 
   try {
-    const proc = spawn(
-      [CLAUDE_PATH, "-p", prompt, "--output-format", "text", "--permission-mode", "bypassPermissions"],
-      { stdout: "pipe", stderr: "pipe", cwd: PROJECT_ROOT, env: { ...process.env, CLAUDECODE: undefined } }
-    );
+    const { output, exitCode, stderr } = await spawnLeanClaude({
+      prompt,
+      mcpServers: [],
+      model: "haiku",
+      maxTurns: 1,
+    });
 
-    const [output, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-
-    const exitCode = await proc.exited;
     if (exitCode !== 0) {
       console.error("Claude error:", stderr);
       return [];
     }
 
-    if (output.trim().toUpperCase() === "NONE") return [];
+    if (output.toUpperCase() === "NONE") return [];
 
-    // Parse DELETE: <id> lines
     const ids: string[] = [];
     for (const line of output.split("\n")) {
       const match = line.match(/DELETE:\s*([0-9a-f-]{36})/i);

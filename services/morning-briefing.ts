@@ -16,14 +16,11 @@
  * Run manually: bun run services/morning-briefing.ts
  */
 
-import { spawn } from "bun";
 import { readFile, writeFile } from "fs/promises";
 import { getDb, type Database } from "../src/db.ts";
-import { dirname, join } from "path";
+import { spawnLeanClaude } from "../src/claude-spawn.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
-const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 const STATE_FILE = "/tmp/morning-briefing-state.json";
 
 interface BriefingUser {
@@ -165,62 +162,31 @@ async function getMCPBriefing(user: BriefingUser, dbContext: string): Promise<st
     year: "numeric",
   });
 
-  const prompt = `You are ${user.name}'s AI assistant preparing a morning briefing for ${dateStr}.
+  const prompt = `Morning briefing for ${user.name}, ${dateStr}.
 
-${dbContext ? dbContext + "\n\n" : ""}Your task: Create a concise morning briefing by checking available tools:
+${dbContext ? dbContext + "\n" : ""}Check Gmail, Calendar, Notion. Build a Telegram Markdown briefing:
+- Greeting + date
+- Schedule: today's events with times
+- Inbox: unread/important email count + highlights
+- Tasks: open tasks + active goals
+- Focus: 1-2 sentence priority suggestion
 
-1. **Email**: Check Gmail for unread or important emails from today/yesterday. Summarize the top items.
-2. **Calendar**: Check Google Calendar for today's events and tomorrow's early events. List times and titles.
-3. **Tasks**: Check Notion for any open tasks or upcoming deadlines.
-
-FORMAT your response as a Telegram message (Markdown) with these sections:
-- A greeting with the date
-- 📅 **Schedule** — today's calendar events with times
-- 📧 **Inbox** — unread/important email summary (count + highlights)
-- 📋 **Tasks** — open tasks from Notion and active goals
-- 💡 **Focus** — 1-2 sentence suggestion for the day's priority based on all context
-
-RULES:
-- If a tool is unavailable or returns nothing, skip that section silently — do NOT mention errors or missing tools.
-- Keep it scannable — bullet points, not paragraphs.
-- Be brief. This is a daily briefing, not a report.
-- End with a short encouraging note.`;
+Skip sections with no data silently. Bullet points, be brief.`;
 
   try {
-    const proc = spawn(
-      [
-        CLAUDE_PATH,
-        "-p",
-        prompt,
-        "--output-format",
-        "text",
-        "--permission-mode",
-        "bypassPermissions",
-      ],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: PROJECT_ROOT,
-        env: {
-          ...process.env,
-          CLAUDECODE: undefined,
-        },
-      }
-    );
-
-    const [output, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-
-    const exitCode = await proc.exited;
+    const { output, exitCode, stderr } = await spawnLeanClaude({
+      prompt,
+      mcpServers: ["google-workspace", "notion"],
+      model: "haiku",
+      maxTurns: 5,
+    });
 
     if (exitCode !== 0) {
       console.error(`Claude error for ${user.name}:`, stderr);
       return "";
     }
 
-    return output.trim();
+    return output;
   } catch (error) {
     console.error(`Claude CLI error for ${user.name}:`, error);
     return "";

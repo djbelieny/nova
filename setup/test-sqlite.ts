@@ -1,9 +1,9 @@
 /**
  * Nova — Test SQLite Database
  *
- * Verifies the local SQLite database works correctly:
- * tables exist, CRUD operations work, embeddings generate,
- * and vector search returns results.
+ * Verifies the split SQLite database works correctly:
+ * shared.db tables exist, user DB tables exist, CRUD operations work,
+ * embeddings generate, and vector search returns results.
  *
  * Usage: bun run setup/test-sqlite.ts
  */
@@ -42,7 +42,7 @@ function check(label: string, fn: () => boolean | void) {
 
 async function main() {
   console.log("");
-  console.log(bold("  SQLite Database Test"));
+  console.log(bold("  SQLite Database Test (Split Architecture)"));
   console.log("");
 
   // 1. Open database
@@ -50,18 +50,13 @@ async function main() {
   console.log(`  ${PASS} Database opened`);
   passed++;
 
-  // 2. Check tables exist
-  const tables = [
-    "users", "messages", "memory", "agent_tasks", "task_artifacts",
-    "scheduled_tasks", "execution_patterns", "cost_tracking",
-    "nova_status", "pending_approvals", "revision_sessions",
-    "workflow_preferences", "user_integrations", "logs",
-  ];
+  // 2. Check shared.db tables
+  const sharedTables = ["users", "nova_status", "logs", "cost_tracking", "memory"];
 
   console.log("");
-  console.log(bold("  Tables:"));
-  for (const table of tables) {
-    check(`Table "${table}" exists`, () => {
+  console.log(bold("  Shared DB Tables:"));
+  for (const table of sharedTables) {
+    check(`Table "${table}" exists in shared.db`, () => {
       const row = db.raw.query(
         `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
       ).get(table) as any;
@@ -75,7 +70,7 @@ async function main() {
 
   const testUserId = `test-${Date.now()}`;
 
-  check("Insert user", () => {
+  check("Insert user (shared.db)", () => {
     const user = db.upsertUser({
       telegram_id: testUserId,
       name: "Test User",
@@ -93,7 +88,7 @@ async function main() {
   const user = db.getUserByTelegramId(testUserId);
   const userId = user?.id || "";
 
-  check("Save message", () => {
+  check("Save message (user DB)", () => {
     const id = db.saveMessage({
       role: "user",
       content: "Hello, this is a test message",
@@ -103,12 +98,34 @@ async function main() {
     if (!id) return false;
   });
 
+  // Check user DB tables were created
+  const userTables = [
+    "messages", "memory", "agent_tasks", "task_artifacts",
+    "scheduled_tasks", "execution_patterns", "pending_approvals",
+    "revision_sessions", "workflow_preferences", "user_integrations",
+  ];
+
+  console.log("");
+  console.log(bold("  User DB Tables:"));
+  for (const table of userTables) {
+    check(`Table "${table}" exists in user DB`, () => {
+      const userRaw = db.getUserRaw(userId);
+      const row = userRaw.query(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+      ).get(table) as any;
+      if (!row) return false;
+    });
+  }
+
+  console.log("");
+  console.log(bold("  Data Operations:"));
+
   check("Get recent messages", () => {
     const msgs = db.getRecentMessages(userId, 5);
     if (!msgs || msgs.length === 0) return false;
   });
 
-  check("Insert memory (fact)", () => {
+  check("Insert memory (private fact → user DB)", () => {
     db.insertMemory({
       type: "fact",
       content: "Test fact: the sky is blue",
@@ -117,9 +134,18 @@ async function main() {
     });
   });
 
-  check("Get facts", () => {
+  check("Insert memory (shared fact → shared.db)", () => {
+    db.insertMemory({
+      type: "fact",
+      content: "Shared test fact: water is wet",
+      user_id: userId,
+      scope: "shared",
+    });
+  });
+
+  check("Get facts (merges private + shared)", () => {
     const facts = db.getFacts(userId);
-    if (!facts || facts.length === 0) return false;
+    if (!facts || facts.length < 2) return false;
   });
 
   check("Insert memory (goal)", () => {
@@ -133,6 +159,14 @@ async function main() {
   check("Get active goals", () => {
     const goals = db.getActiveGoals(userId);
     if (!goals || goals.length === 0) return false;
+  });
+
+  check("Delete memory entries (both DBs)", () => {
+    const facts = db.getFacts(userId);
+    const ids = facts.map((f: any) => f.id);
+    db.deleteMemoryEntries(ids);
+    const remaining = db.getFacts(userId);
+    if (remaining.length !== 0) return false;
   });
 
   // 4. Embeddings
@@ -199,7 +233,9 @@ async function main() {
 
   // Cleanup test data
   try {
-    db.raw.run("DELETE FROM messages WHERE user_id = ?", [userId]);
+    const userRaw = db.getUserRaw(userId);
+    userRaw.run("DELETE FROM messages WHERE user_id = ?", [userId]);
+    userRaw.run("DELETE FROM memory WHERE user_id = ?", [userId]);
     db.raw.run("DELETE FROM memory WHERE user_id = ?", [userId]);
     db.raw.run("DELETE FROM users WHERE id = ?", [userId]);
   } catch {}

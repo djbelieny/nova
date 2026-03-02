@@ -9,14 +9,11 @@
  * Schedule: every 60 seconds via launchd (StartInterval)
  */
 
-import { spawn } from "bun";
 import { getDb, type Database } from "../src/db.ts";
-import { dirname, join } from "path";
+import { spawnLeanClaude } from "../src/claude-spawn.ts";
 import { computeNextTrigger } from "../src/memory.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
-const CLAUDE_PATH = process.env.CLAUDE_PATH || "claude";
-const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 
 const MAX_CONCURRENT = 3;
 
@@ -88,83 +85,49 @@ async function executeTask(
   const timeStr = now.toLocaleString("en-US", {
     timeZone: userInfo.timezone,
     weekday: "long",
-    year: "numeric",
     month: "long",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
 
-  // Build the prompt
-  let prompt = `You are ${userInfo.name}'s personal AI assistant. A scheduled task has triggered.
-
-Current time: ${timeStr}
-Task: ${task.title}
-`;
+  let prompt = `Task for ${userInfo.name}. Time: ${timeStr}\nTask: ${task.title}\n`;
 
   if (task.condition) {
-    prompt += `
-CONDITION TO EVALUATE FIRST:
-${task.condition}
-
-Check this condition using your available tools. If the condition is NOT met, respond with exactly:
-CONDITION_NOT_MET
-and nothing else. If the condition IS met, proceed with the instructions below.
-
-`;
+    prompt += `\nCONDITION: ${task.condition}\nIf NOT met, respond exactly: CONDITION_NOT_MET\nIf met, proceed.\n`;
   }
 
-  prompt += `
-INSTRUCTIONS:
-${task.instructions}
+  prompt += `\nINSTRUCTIONS:\n${task.instructions}\n\nBe concise. This goes directly to Telegram. No [SCHEDULE:] or [REMEMBER:] tags.`;
 
-${userInfo.profile_text ? `Profile:\n${userInfo.profile_text}\n` : ""}
-Keep your response concise and conversational — this will be sent directly to ${userInfo.name} via Telegram.
-Do NOT include any [SCHEDULE:] or [REMEMBER:] tags in your response.`;
+  // Determine which MCPs this task might need
+  const instructionsLower = task.instructions.toLowerCase();
+  const mcpServers: string[] = [];
+  if (instructionsLower.match(/email|gmail|inbox|send.*mail/)) mcpServers.push("google-workspace");
+  if (instructionsLower.match(/calendar|event|schedule|meeting/)) mcpServers.push("google-workspace");
+  if (instructionsLower.match(/notion|task|page|database/)) mcpServers.push("notion");
+  if (instructionsLower.match(/search|web|find.*online|look.*up/)) mcpServers.push("tavily");
+  // Dedupe
+  const uniqueMcps = [...new Set(mcpServers)];
 
   try {
-    const proc = spawn(
-      [
-        CLAUDE_PATH,
-        "-p",
-        prompt,
-        "--output-format",
-        "text",
-        "--permission-mode",
-        "bypassPermissions",
-      ],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        cwd: PROJECT_ROOT,
-        env: {
-          ...process.env,
-          CLAUDECODE: undefined,
-        },
-      }
-    );
-
-    const [output, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-
-    const exitCode = await proc.exited;
+    const { output, exitCode, stderr } = await spawnLeanClaude({
+      prompt,
+      mcpServers: uniqueMcps,
+      model: "haiku",
+      maxTurns: 5,
+    });
 
     if (exitCode !== 0) {
       console.error(`Claude error for task "${task.title}":`, stderr);
       return { success: false, result: stderr || "Claude CLI error" };
     }
 
-    const result = output.trim();
-
-    // Check if condition was not met
-    if (result === "CONDITION_NOT_MET") {
+    if (output === "CONDITION_NOT_MET") {
       console.log(`Task "${task.title}": condition not met, skipping`);
       return { success: true, result: "Condition not met — skipped" };
     }
 
-    return { success: true, result };
+    return { success: true, result: output };
   } catch (error) {
     console.error(`Execution error for task "${task.title}":`, error);
     return { success: false, result: String(error) };
