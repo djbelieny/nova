@@ -244,7 +244,8 @@ export class TelegramAdapter implements ChannelAdapter {
 
   async start(): Promise<void> {
     this.registerHandlers();
-    await this.bot.start({
+    // Don't await — grammy's bot.start() never resolves (it runs the polling loop)
+    this.bot.start({
       onStart: () => {
         console.log("[telegram] Bot started via adapter");
       },
