@@ -184,6 +184,13 @@ const SERVICES: Record<string, ServiceConfig> = {
     keepAlive: true,
     description: "Telegram Mini App server (always running, port 3034)",
   },
+  "health-monitor": {
+    label: "com.nova.health-monitor",
+    script: "services/health-monitor.ts",
+    keepAlive: false,
+    startInterval: 1800,
+    description: "Health monitor and self-healing (runs every 30min)",
+  },
 };
 
 async function installService(name: string, config: ServiceConfig): Promise<boolean> {
@@ -251,7 +258,7 @@ async function main() {
     const config = SERVICES[name];
     if (!config) {
       console.log(`  ${FAIL} Unknown service: ${name}`);
-      console.log(`      ${dim("Available: core, checkin, briefing, memory-review, dispatcher, miniapp, all (relay is accepted as alias for core)")}`);
+      console.log(`      ${dim("Available: core, checkin, briefing, memory-review, dispatcher, miniapp, health-monitor, all (relay is accepted as alias for core)")}`);
       allOk = false;
       continue;
     }

@@ -1,8 +1,8 @@
 # Nova — Deployment Guide
 
-> Production server: `root@your-server.com` (Ubuntu 24.04)
+> Production server: `root@nova.07labs.com` (Ubuntu 24.04)
 > Project directory: `/opt/nova`
-> Domains: `your-domain.com` (voice/SMS), `dashboard.your-domain.com` (web/dashboard)
+> Domains: `nova.07labs.com` (voice/SMS), `dashboard.nova.07labs.com` (web/dashboard)
 > Runs natively via systemd (no Docker)
 
 ## Branch Strategy

@@ -322,6 +322,16 @@ When ${userName} asks you to do something actionable (send an email, check calen
 - If ${userName} says something is URGENT, acknowledge the urgency. Urgent tasks get priority execution and ${userName} will be notified via SMS and follow-up call if needed.
 - You don't need to use special tags — just have a natural conversation. The system extracts tasks from the full transcript.
 
+TASK ACKNOWLEDGMENT:
+When ${userName} asks you to do something actionable, explicitly confirm:
+"Got it, I'll take care of that once we hang up."
+This reassures them that the task was captured and will be executed. Vary the phrasing naturally but always make it clear the task is noted and will be handled after the call.
+
+SELF-MODIFICATION:
+If ${userName} asks you to fix a bug in yourself, change how you work, or modify your code,
+acknowledge it as a task you'll handle after the call — just like any other actionable request.
+You have full access to your own source code and can create branches, make changes, and redeploy.
+
 SKILLS — You also have specialized skills available (via Telegram, not during the call):
 - Design creation (posters, visual art)
 - Competitor ad analysis
@@ -387,6 +397,13 @@ async function sendGuestTranscript(callSid: string, state: CallState): Promise<v
   await sendTelegramNotification(message);
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 async function callAI(prompt: string): Promise<string> {
   try {
     const result = await getDefaultProvider().call({
@@ -398,6 +415,31 @@ async function callAI(prompt: string): Promise<string> {
   } catch (error) {
     console.error("AI provider error:", error);
     return "I'm having trouble processing that. Let me try again.";
+  }
+}
+
+/**
+ * Voice-safe AI call: no MCP tools, single turn, 12s timeout.
+ * Ensures responses return before Twilio's ~15s webhook timeout.
+ */
+async function callAIForVoice(prompt: string): Promise<string> {
+  const VOICE_TIMEOUT_MS = 12_000;
+  const fallback = "I'm having trouble thinking right now. Can you say that again?";
+  try {
+    return await withTimeout(
+      getDefaultProvider().call({
+        prompt,
+        outputFormat: "text",
+        cwd: PROJECT_ROOT,
+        noMcp: true,
+        maxTurns: 1,
+      }).then(r => r.text),
+      VOICE_TIMEOUT_MS,
+      fallback,
+    );
+  } catch (error) {
+    console.error("Voice AI provider error:", error);
+    return fallback;
   }
 }
 
@@ -570,10 +612,43 @@ ${transcript}`;
 }
 
 async function executeTask(task: ExtractedTask, userName: string): Promise<string> {
+  const isSelfEditTask = /(?:fix|bug|code|source|change|update|modify|improve|edit).*(?:your|nova|yourself|codebase)/i.test(task.task)
+    || /(?:your|nova).*(?:fix|bug|code|source|change|update|modify|improve|edit)/i.test(task.task);
+
+  let selfEditInstructions = "";
+  if (isSelfEditTask) {
+    selfEditInstructions = `
+
+SELF-EDIT WORKFLOW:
+Your source code is at ${PROJECT_ROOT}. Follow this git workflow:
+0. Ensure clean state:
+   a. Stash uncommitted changes: \`git -C ${PROJECT_ROOT} stash --include-untracked\` (only if dirty)
+   b. Pull latest: \`git -C ${PROJECT_ROOT} checkout production && git -C ${PROJECT_ROOT} pull origin production\`
+   c. Pull main: \`git -C ${PROJECT_ROOT} checkout main && git -C ${PROJECT_ROOT} pull origin main\`
+1. Branch from production: \`git -C ${PROJECT_ROOT} checkout -b self-edit/<short-slug> production\`
+2. Read the relevant file(s)
+3. Make the change
+4. Log in CHANGELOG.md
+5. PRE-COMMIT VALIDATION: run \`bun build --no-bundle <changed-files>\` to catch syntax errors before committing. Fix any errors.
+6. Commit: \`git -C ${PROJECT_ROOT} add -A && git -C ${PROJECT_ROOT} commit -m "self-edit: <description>"\`
+7. TWO-TIER CHECK: if ANY changed file is core (relay.ts, orchestrator.ts, planner.ts, voice-server.ts, agent-router.ts), send diff to ${userName} and WAIT for approval. Agent/skill files auto-merge.
+8. Merge to main: \`git -C ${PROJECT_ROOT} checkout main && git -C ${PROJECT_ROOT} merge self-edit/<short-slug> && git -C ${PROJECT_ROOT} push origin main\`
+9. Merge to production: \`git -C ${PROJECT_ROOT} checkout production && git -C ${PROJECT_ROOT} merge main && git -C ${PROJECT_ROOT} push origin production\`
+10. Install deps: \`bun install --cwd ${PROJECT_ROOT}\`
+11. Restart ALL services (platform-aware):
+    macOS: launchctl unload/load for com.nova.{core,voice-server,dashboard,miniapp}
+    Linux: sudo systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
+12. CRASH WATCHDOG: wait 30s, verify all services running. If crashed → auto-revert, restart, alert ${userName}.
+13. CANARY WINDOW: keep self-edit branch for 10 minutes before deleting.
+14. Tell ${userName} what changed, confirm services healthy.
+
+SAFETY: Never modify .env or credentials. Always validate syntax with \`bun build --no-bundle\` before committing. Log every change in CHANGELOG.md. For core files, send diff and wait for approval. After restart, verify health for 30s.`;
+  }
+
   const prompt = `You are Nova, ${userName}'s AI assistant. ${userName} asked you to do the following during a phone call. Now execute it using your available tools.
 
 TASK: ${task.task}
-${task.urgent ? "PRIORITY: URGENT — handle this immediately and thoroughly." : ""}
+${task.urgent ? "PRIORITY: URGENT — handle this immediately and thoroughly." : ""}${selfEditInstructions}
 
 Execute the task and return a brief summary of what you did and the result. Be concise — this will be sent as a notification to ${userName}.`;
 
@@ -740,7 +815,7 @@ async function handleOutgoing(body: string): Promise<Response> {
   const state = getCallState(callSid);
   state.authenticated = true;
   state.callerPhone = to;
-  state.isOwner = false; // Outgoing = calling someone else, they're a guest
+  state.isOwner = isOwnerPhone(to);
 
   // Resolve the callee by phone number
   const callUser = await resolveUserByPhone(to);
@@ -770,7 +845,7 @@ async function handleOutgoing(body: string): Promise<Response> {
   if (state.context) {
     const prompt = buildVoiceSystemPrompt(state.context, state.user) +
       `\n\nYou just called someone and they picked up. Open the conversation naturally — explain why you're calling based on the context above. Be brief and direct.`;
-    const response = await callAI(prompt);
+    const response = await callAIForVoice(prompt);
     state.turns.push({ role: "assistant", content: response });
     await saveCallMessage("assistant", response, callSid, state.user?.id);
 
@@ -821,7 +896,7 @@ async function handlePin(body: string): Promise<Response> {
       // Generate an opening based on context
       const prompt = buildVoiceSystemPrompt(state.context, state.user) +
         `\n\nYou just called ${callerName} and they've been authenticated. Open the conversation naturally — explain why you're calling based on the context above. Be brief and direct.`;
-      const response = await callAI(prompt);
+      const response = await callAIForVoice(prompt);
       state.turns.push({ role: "assistant", content: response });
       await saveCallMessage("assistant", response, callSid, state.user?.id);
 
@@ -923,7 +998,7 @@ async function handleGather(body: string): Promise<Response> {
     : buildGuestSystemPrompt(state.callerPhone)) +
     `\n\nCONVERSATION SO FAR:\n${turnHistory}\n\nRespond to ${userName}'s latest message. Be concise — this is a phone call.`;
 
-  const response = await callAI(prompt);
+  const response = await callAIForVoice(prompt);
   state.turns.push({ role: "assistant", content: response });
   await saveCallMessage("assistant", `[Phone call]: ${response}`, callSid, userId);
 
