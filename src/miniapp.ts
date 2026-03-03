@@ -1540,6 +1540,11 @@ function renderMiniApp(): string {
       <div id="waConnectContent"></div>
     </div>
 
+    <!-- ======== WHATSAPP MANAGE ======== -->
+    <div class="detail-view" id="waManageDetail">
+      <div id="waManageContent"></div>
+    </div>
+
     <!-- ======== TAB BAR ======== -->
     <div class="tab-bar">
       <div class="tab-item active" data-tab="pageDashboard" onclick="switchTab('pageDashboard')">
@@ -1706,7 +1711,7 @@ function renderMiniApp(): string {
     // ============================================================
     // DETAIL VIEWS
     // ============================================================
-    var detailViewMap = { agent: 'agentDetail', task: 'taskDetail', waConnect: 'waConnectDetail' };
+    var detailViewMap = { agent: 'agentDetail', task: 'taskDetail', waConnect: 'waConnectDetail', waManage: 'waManageDetail' };
 
     function openDetail(type) {
       openDetailType = type;
@@ -2426,44 +2431,26 @@ function renderMiniApp(): string {
       if (!container) return;
 
       var state = status.state || 'disconnected';
-      var html = '<div class="card" style="display:flex;flex-direction:column;gap:10px;">';
-      html += '<div style="display:flex;align-items:center;gap:14px;">';
+      var html = '<div class="card" style="display:flex;align-items:center;gap:14px;">';
       html += '<div class="avatar-sm" style="background:#25D366;font-size:20px;">\\uD83D\\uDCAC</div>';
       html += '<div style="flex:1;">';
       html += '<div style="font-weight:600;font-size:15px;">WhatsApp</div>';
 
       if (state === 'connected') {
         html += '<div style="font-size:12px;color:#22c55e;">Connected</div>';
-        if (status.phoneNumberId) html += '<div style="font-size:11px;color:var(--hint);">Phone ID: ' + escapeStr(status.phoneNumberId) + '</div>';
       } else if (state === 'error') {
         html += '<div style="font-size:12px;color:#ef4444;">Error</div>';
-        if (status.error) html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(status.error) + '</div>';
       } else {
         html += '<div style="font-size:12px;color:var(--hint);">Not connected</div>';
       }
       html += '</div>'; // close flex:1
 
       if (state === 'connected') {
-        html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waDisconnect()">Disconnect</button>';
+        html += '<button class="approval-btn" style="flex:0 0 auto;padding:8px 16px;font-size:13px;background:var(--secondary-bg);color:var(--text);border:1px solid var(--divider);" onclick="waOpenManage()">Manage</button>';
       } else {
         html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waOpenConnectForm()">Connect</button>';
       }
-      html += '</div>'; // close top row
-
-      // Management sections for connected state
-      if (state === 'connected') {
-        html += '<div style="border-top:1px solid var(--hint);padding-top:10px;margin-top:4px;">';
-        html += '<div style="display:flex;gap:8px;">';
-        html += '<button class="approval-btn" style="flex:1;padding:8px;font-size:13px;background:var(--secondary-bg);color:var(--text);border:1px solid var(--hint);" onclick="waShowContacts()">Manage Contacts</button>';
-        html += '<button class="approval-btn" style="flex:1;padding:8px;font-size:13px;background:var(--secondary-bg);color:var(--text);border:1px solid var(--hint);" onclick="waShowGroups()">Manage Groups</button>';
-        html += '</div></div>';
-      }
-
       html += '</div>'; // close card
-
-      // Contacts/Groups management panels
-      html += '<div id="waContactsPanel" style="display:none;margin-top:8px;"></div>';
-      html += '<div id="waGroupsPanel" style="display:none;margin-top:8px;"></div>';
 
       container.innerHTML = html;
     }
@@ -2533,50 +2520,99 @@ function renderMiniApp(): string {
       var data = await apiFetch('/whatsapp/disconnect', { method: 'POST' });
       if (data && data.success) {
         showToast('WhatsApp disconnected', 'success');
+        closeDetail();
         loadWhatsApp();
       }
     }
 
-    async function waShowContacts() {
-      var panel = document.getElementById('waContactsPanel');
-      if (!panel) return;
-      if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
-      document.getElementById('waGroupsPanel').style.display = 'none';
-      panel.style.display = 'block';
-      panel.innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
+    // ---- WhatsApp Manage detail view ----
 
-      var data = await apiFetch('/whatsapp/contacts');
-      var contacts = (data && data.contacts) || [];
+    async function waOpenManage() {
+      var content = document.getElementById('waManageContent');
+      if (!content) return;
+      content.innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
+      openDetail('waManage');
 
-      var html = '<div class="card" style="padding:12px;">';
-      html += '<div style="font-weight:600;margin-bottom:10px;">WhatsApp Contacts</div>';
+      var contactsData = await apiFetch('/whatsapp/contacts');
+      var groupsData = await apiFetch('/whatsapp/groups');
+      var contacts = (contactsData && contactsData.contacts) || [];
+      var groups = (groupsData && groupsData.groups) || [];
 
-      // Add form
-      html += '<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;">';
-      html += '<input type="text" id="wa-c-phone" placeholder="+1555..." style="flex:1;min-width:100px;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
-      html += '<input type="text" id="wa-c-name" placeholder="Name" style="flex:1;min-width:80px;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
-      html += '<select id="wa-c-role" style="padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;">';
-      html += '<option value="allowed">Allowed</option><option value="vip">VIP</option><option value="blocked">Blocked</option></select>';
-      html += '<button class="approval-btn approve" style="padding:8px 12px;font-size:13px;" onclick="waAddContact()">Add</button>';
+      var html = '<div style="padding:8px 0;">';
+
+      // Header
+      html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">';
+      html += '<div class="avatar-sm" style="background:#25D366;font-size:20px;">\\uD83D\\uDCAC</div>';
+      html += '<div style="font-weight:700;font-size:18px;">Manage WhatsApp</div>';
       html += '</div>';
+
+      // ---- Contacts section ----
+      html += '<div class="card" style="margin-bottom:12px;">';
+      html += '<div style="font-weight:600;font-size:15px;margin-bottom:12px;">Contacts</div>';
+
+      // Add contact form
+      html += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">';
+      html += '<div style="display:flex;gap:8px;">';
+      html += '<input type="text" id="wa-c-phone" placeholder="Phone (+1555...)" style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:13px;outline:none;" />';
+      html += '<input type="text" id="wa-c-name" placeholder="Name" style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:13px;outline:none;" />';
+      html += '</div>';
+      html += '<div style="display:flex;gap:8px;">';
+      html += '<select id="wa-c-role" style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:13px;">';
+      html += '<option value="allowed">Allowed</option><option value="vip">VIP</option><option value="blocked">Blocked</option></select>';
+      html += '<button class="approval-btn approve" style="padding:10px 20px;font-size:13px;" onclick="waAddContact()">Add</button>';
+      html += '</div></div>';
 
       // Contact list
       if (contacts.length === 0) {
-        html += '<div style="color:var(--hint);font-size:13px;text-align:center;padding:12px;">No contacts. Add contacts to control who can message Nova via your WhatsApp.</div>';
+        html += '<div style="color:var(--hint);font-size:13px;text-align:center;padding:12px;">No contacts yet. Add contacts to control who can message Nova via your WhatsApp.</div>';
       } else {
         for (var i = 0; i < contacts.length; i++) {
           var c = contacts[i];
           var roleColor = c.role === 'vip' ? '#f59e0b' : c.role === 'blocked' ? '#ef4444' : '#22c55e';
-          html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--secondary-bg);">';
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;' + (i > 0 ? 'border-top:1px solid var(--divider);' : '') + '">';
           html += '<div style="flex:1;"><div style="font-size:14px;">' + escapeStr(c.name || c.phone) + '</div>';
           html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(c.phone) + '</div></div>';
-          html += '<span style="font-size:11px;color:' + roleColor + ';text-transform:uppercase;">' + c.role + '</span>';
-          html += '<button style="background:none;border:none;color:var(--destructive);font-size:16px;cursor:pointer;padding:4px;" onclick="waDeleteContact(\\'' + escapeStr(c.phone) + '\\')">&times;</button>';
+          html += '<span style="font-size:11px;color:' + roleColor + ';text-transform:uppercase;font-weight:600;">' + c.role + '</span>';
+          html += '<button style="background:none;border:none;color:var(--destructive);font-size:18px;cursor:pointer;padding:4px 8px;" onclick="waDeleteContact(\\'' + escapeStr(c.phone) + '\\')">&times;</button>';
           html += '</div>';
         }
       }
       html += '</div>';
-      panel.innerHTML = html;
+
+      // ---- Groups section ----
+      html += '<div class="card" style="margin-bottom:12px;">';
+      html += '<div style="font-weight:600;font-size:15px;margin-bottom:12px;">Whitelisted Groups</div>';
+
+      // Add group form
+      html += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;">';
+      html += '<input type="text" id="wa-g-jid" placeholder="Group JID (e.g. 120363...@g.us)" style="padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:13px;outline:none;" />';
+      html += '<div style="display:flex;gap:8px;">';
+      html += '<input type="text" id="wa-g-name" placeholder="Group name" style="flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:13px;outline:none;" />';
+      html += '<button class="approval-btn approve" style="padding:10px 20px;font-size:13px;" onclick="waAddGroup()">Add</button>';
+      html += '</div></div>';
+
+      if (groups.length === 0) {
+        html += '<div style="color:var(--hint);font-size:13px;text-align:center;padding:12px;">No groups whitelisted. Nova only responds in whitelisted groups when @mentioned.</div>';
+      } else {
+        for (var j = 0; j < groups.length; j++) {
+          var g = groups[j];
+          html += '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;' + (j > 0 ? 'border-top:1px solid var(--divider);' : '') + '">';
+          html += '<div style="flex:1;"><div style="font-size:14px;">' + escapeStr(g.name || g.group_jid) + '</div>';
+          html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(g.group_jid) + '</div></div>';
+          html += '<span style="font-size:11px;color:' + (g.active ? '#22c55e' : '#ef4444') + ';font-weight:600;">' + (g.active ? 'Active' : 'Inactive') + '</span>';
+          html += '<button style="background:none;border:none;color:var(--destructive);font-size:18px;cursor:pointer;padding:4px 8px;" onclick="waDeleteGroup(\\'' + escapeStr(g.group_jid) + '\\')">&times;</button>';
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+
+      // ---- Disconnect ----
+      html += '<div style="padding-top:12px;">';
+      html += '<button class="approval-btn cancel" style="width:100%;padding:14px;font-size:14px;font-weight:600;" onclick="waDisconnect()">Disconnect WhatsApp</button>';
+      html += '</div>';
+
+      html += '</div>';
+      content.innerHTML = html;
     }
 
     async function waAddContact() {
@@ -2591,50 +2627,12 @@ function renderMiniApp(): string {
       });
       if (data && data.error) { showToast(data.error, 'error'); return; }
       showToast('Contact added', 'success');
-      waShowContacts(); waShowContacts(); // toggle off then on to refresh
+      waOpenManage();
     }
 
     async function waDeleteContact(phone) {
       var data = await apiFetch('/whatsapp/contacts/' + encodeURIComponent(phone), { method: 'DELETE' });
-      if (data && data.success) { showToast('Contact removed', 'success'); waShowContacts(); waShowContacts(); }
-    }
-
-    async function waShowGroups() {
-      var panel = document.getElementById('waGroupsPanel');
-      if (!panel) return;
-      if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
-      document.getElementById('waContactsPanel').style.display = 'none';
-      panel.style.display = 'block';
-      panel.innerHTML = '<div class="loading"><div class="spinner"></div>Loading...</div>';
-
-      var data = await apiFetch('/whatsapp/groups');
-      var groups = (data && data.groups) || [];
-
-      var html = '<div class="card" style="padding:12px;">';
-      html += '<div style="font-weight:600;margin-bottom:10px;">Whitelisted Groups</div>';
-
-      // Add form
-      html += '<div style="display:flex;gap:6px;margin-bottom:10px;">';
-      html += '<input type="text" id="wa-g-jid" placeholder="Group JID (e.g. 120363...@g.us)" style="flex:2;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
-      html += '<input type="text" id="wa-g-name" placeholder="Name" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--hint);background:var(--secondary-bg);color:var(--text);font-size:13px;" />';
-      html += '<button class="approval-btn approve" style="padding:8px 12px;font-size:13px;" onclick="waAddGroup()">Add</button>';
-      html += '</div>';
-
-      if (groups.length === 0) {
-        html += '<div style="color:var(--hint);font-size:13px;text-align:center;padding:12px;">No groups whitelisted. Nova will only respond in whitelisted groups when @mentioned.</div>';
-      } else {
-        for (var i = 0; i < groups.length; i++) {
-          var g = groups[i];
-          html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--secondary-bg);">';
-          html += '<div style="flex:1;"><div style="font-size:14px;">' + escapeStr(g.name || g.group_jid) + '</div>';
-          html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(g.group_jid) + '</div></div>';
-          html += '<span style="font-size:11px;color:' + (g.active ? '#22c55e' : '#ef4444') + ';">' + (g.active ? 'Active' : 'Inactive') + '</span>';
-          html += '<button style="background:none;border:none;color:var(--destructive);font-size:16px;cursor:pointer;padding:4px;" onclick="waDeleteGroup(\\'' + escapeStr(g.group_jid) + '\\')">&times;</button>';
-          html += '</div>';
-        }
-      }
-      html += '</div>';
-      panel.innerHTML = html;
+      if (data && data.success) { showToast('Contact removed', 'success'); waOpenManage(); }
     }
 
     async function waAddGroup() {
@@ -2648,12 +2646,12 @@ function renderMiniApp(): string {
       });
       if (data && data.error) { showToast(data.error, 'error'); return; }
       showToast('Group added', 'success');
-      waShowGroups(); waShowGroups();
+      waOpenManage();
     }
 
     async function waDeleteGroup(jid) {
       var data = await apiFetch('/whatsapp/groups/' + encodeURIComponent(jid), { method: 'DELETE' });
-      if (data && data.success) { showToast('Group removed', 'success'); waShowGroups(); waShowGroups(); }
+      if (data && data.success) { showToast('Group removed', 'success'); waOpenManage(); }
     }
 
     // ============================================================
