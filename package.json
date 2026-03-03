@@ -23,19 +23,16 @@
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@slack/bolt": "^4.6.0",
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "docx": "^9.5.3",
     "dotenv": "^17.3.1",
     "grammy": "^1.21.1",
     "groq-sdk": "^0.8.0",
     "playwright": "^1.58.2",
     "pptxgenjs": "^4.0.1",
-    "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-icons": "^5.5.0",
     "sharp": "^0.34.5",
-    "socks-proxy-agent": "^8.0.5",
     "sqlite-vec": "^0.1.7-alpha.2"
   },
   "devDependencies": {

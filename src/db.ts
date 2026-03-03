@@ -182,10 +182,13 @@ class SharedDatabase {
     // Safe migration for existing databases
     try { this.db.run(`ALTER TABLE users ADD COLUMN ai_provider TEXT DEFAULT 'claude'`); } catch {}
     try { this.db.run(`ALTER TABLE users ADD COLUMN ai_config TEXT DEFAULT '{}'`); } catch {}
+    try { this.db.run(`ALTER TABLE users ADD COLUMN kapso_api_key TEXT`); } catch {}
+    try { this.db.run(`ALTER TABLE users ADD COLUMN kapso_phone_number_id TEXT`); } catch {}
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_whatsapp_id ON users(whatsapp_id)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_slack_id ON users(slack_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_kapso_phone ON users(kapso_phone_number_id)`);
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS nova_status (
@@ -658,6 +661,48 @@ export class Database {
     if (!row) return null;
     row.preferences = parseJson(row.preferences, {});
     return row;
+  }
+
+  // ---- Kapso (WhatsApp Cloud API) credentials ----
+
+  setKapsoCredentials(userId: string, apiKey: string, phoneNumberId: string): void {
+    this.shared.db.run(
+      `UPDATE users SET kapso_api_key = ?, kapso_phone_number_id = ?, updated_at = datetime('now') WHERE id = ?`,
+      [apiKey, phoneNumberId, userId]
+    );
+  }
+
+  clearKapsoCredentials(userId: string): void {
+    this.shared.db.run(
+      `UPDATE users SET kapso_api_key = NULL, kapso_phone_number_id = NULL, updated_at = datetime('now') WHERE id = ?`,
+      [userId]
+    );
+  }
+
+  getKapsoCredentials(userId: string): { kapso_api_key: string | null; kapso_phone_number_id: string | null } | null {
+    const row = this.shared.db.query(
+      `SELECT kapso_api_key, kapso_phone_number_id FROM users WHERE id = ? LIMIT 1`
+    ).get(userId) as any;
+    return row || null;
+  }
+
+  getUserByKapsoPhoneNumberId(phoneNumberId: string): any | null {
+    const row = this.shared.db.query(
+      `SELECT * FROM users WHERE kapso_phone_number_id = ? LIMIT 1`
+    ).get(phoneNumberId) as any;
+    if (!row) return null;
+    row.preferences = parseJson(row.preferences, {});
+    return row;
+  }
+
+  getUsersWithKapso(): any[] {
+    const rows = this.shared.db.query(
+      `SELECT * FROM users WHERE kapso_api_key IS NOT NULL AND kapso_phone_number_id IS NOT NULL AND active = 1`
+    ).all() as any[];
+    return rows.map((r) => {
+      r.preferences = parseJson(r.preferences, {});
+      return r;
+    });
   }
 
   upsertUser(data: {

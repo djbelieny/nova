@@ -511,12 +511,17 @@ function getWhatsAppManager(): WhatsAppManager {
   return manager;
 }
 
-async function whatsappConnect(userId: string, phone?: string): Promise<unknown> {
+async function whatsappConnect(userId: string, body: { kapso_api_key?: string; kapso_phone_number_id?: string }): Promise<unknown> {
   try {
+    const { kapso_api_key, kapso_phone_number_id } = body;
+    if (!kapso_api_key || !kapso_phone_number_id) {
+      return { error: "Both kapso_api_key and kapso_phone_number_id are required" };
+    }
+    // Save credentials to DB
+    supabase.setKapsoCredentials(userId, kapso_api_key, kapso_phone_number_id);
+    // Connect via manager
     const manager = getWhatsAppManager();
-    await manager.connect(userId, phone);
-    // Give it a moment for QR/pairing code generation
-    await new Promise((r) => setTimeout(r, 4000));
+    await manager.connect(userId);
     return manager.getStatus(userId);
   } catch (e: any) {
     return { error: e.message };
@@ -536,6 +541,8 @@ async function whatsappDisconnect(userId: string): Promise<unknown> {
   try {
     const manager = getWhatsAppManager();
     await manager.disconnect(userId);
+    // Clear credentials from DB
+    supabase.clearKapsoCredentials(userId);
     return { success: true };
   } catch (e: any) {
     return { error: e.message };
@@ -1528,6 +1535,11 @@ function renderMiniApp(): string {
       <div id="taskDetailContent"></div>
     </div>
 
+    <!-- ======== WHATSAPP CONNECT FORM ======== -->
+    <div class="detail-view" id="waConnectDetail">
+      <div id="waConnectContent"></div>
+    </div>
+
     <!-- ======== TAB BAR ======== -->
     <div class="tab-bar">
       <div class="tab-item active" data-tab="pageDashboard" onclick="switchTab('pageDashboard')">
@@ -1694,10 +1706,12 @@ function renderMiniApp(): string {
     // ============================================================
     // DETAIL VIEWS
     // ============================================================
+    var detailViewMap = { agent: 'agentDetail', task: 'taskDetail', waConnect: 'waConnectDetail' };
+
     function openDetail(type) {
       openDetailType = type;
-      var el = document.getElementById(type === 'agent' ? 'agentDetail' : 'taskDetail');
-      el.classList.add('open');
+      var el = document.getElementById(detailViewMap[type] || type);
+      if (el) el.classList.add('open');
       if (window.Telegram && Telegram.WebApp) {
         Telegram.WebApp.BackButton.show();
         Telegram.WebApp.MainButton.hide();
@@ -1706,8 +1720,8 @@ function renderMiniApp(): string {
 
     function closeDetail() {
       if (!openDetailType) return;
-      var el = document.getElementById(openDetailType === 'agent' ? 'agentDetail' : 'taskDetail');
-      el.classList.remove('open');
+      var el = document.getElementById(detailViewMap[openDetailType] || openDetailType);
+      if (el) el.classList.remove('open');
       openDetailType = null;
       if (window.Telegram && Telegram.WebApp) {
         Telegram.WebApp.BackButton.hide();
@@ -2400,7 +2414,6 @@ function renderMiniApp(): string {
     // ============================================================
     // WHATSAPP
     // ============================================================
-    var waPollingInterval = null;
 
     async function loadWhatsApp() {
       var data = await apiFetch('/whatsapp/status');
@@ -2421,45 +2434,21 @@ function renderMiniApp(): string {
 
       if (state === 'connected') {
         html += '<div style="font-size:12px;color:#22c55e;">Connected</div>';
-        if (status.phoneNumber) html += '<div style="font-size:11px;color:var(--hint);">+' + escapeStr(status.phoneNumber) + '</div>';
-        html += '</div>';
-        html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waDisconnect()">Disconnect</button>';
-      } else if (state === 'pairing_code') {
-        html += '<div style="font-size:12px;color:#f59e0b;">Enter code in WhatsApp</div>';
-        html += '</div></div>';
-        if (status.pairingCode) {
-          html += '<div style="text-align:center;padding:20px;background:rgba(255,255,255,0.055);border:1px solid rgba(255,255,255,0.10);border-radius:14px;">';
-          html += '<div style="font-size:36px;font-weight:700;letter-spacing:8px;color:#fff;font-family:monospace;">' + escapeStr(status.pairingCode) + '</div>';
-          html += '</div>';
-          html += '<div style="font-size:12px;color:var(--hint);text-align:center;margin-top:8px;">Open WhatsApp > Settings > Linked Devices > Link a Device > Link with phone number instead</div>';
-        } else {
-          html += '<div style="text-align:center;padding:16px;color:var(--hint);font-size:13px;">Requesting pairing code...</div>';
-        }
-        if (!waPollingInterval) {
-          waPollingInterval = setInterval(loadWhatsApp, 3000);
-        }
-      } else if (state === 'qr_pending') {
-        html += '<div style="font-size:12px;color:#f59e0b;">Scan QR Code</div>';
-        html += '</div></div>';
-        if (status.qrDataUrl) {
-          html += '<div style="text-align:center;padding:12px;background:rgba(255,255,255,0.95);border-radius:12px;">';
-          html += '<img src="' + status.qrDataUrl + '" style="width:240px;height:240px;" alt="QR Code" />';
-          html += '</div>';
-          html += '<div style="font-size:12px;color:var(--hint);text-align:center;">Open WhatsApp > Settings > Linked Devices > Link a Device</div>';
-        }
-        if (!waPollingInterval) {
-          waPollingInterval = setInterval(loadWhatsApp, 5000);
-        }
+        if (status.phoneNumberId) html += '<div style="font-size:11px;color:var(--hint);">Phone ID: ' + escapeStr(status.phoneNumberId) + '</div>';
+      } else if (state === 'error') {
+        html += '<div style="font-size:12px;color:#ef4444;">Error</div>';
+        if (status.error) html += '<div style="font-size:11px;color:var(--hint);">' + escapeStr(status.error) + '</div>';
       } else {
         html += '<div style="font-size:12px;color:var(--hint);">Not connected</div>';
-        html += '</div>';
-        html += '<div style="display:flex;gap:8px;align-items:center;margin-top:4px;">';
-        html += '<input type="tel" id="waPhoneInput" placeholder="+1 555 123 4567" style="flex:1;padding:10px 12px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(255,255,255,0.055);color:var(--text);font-size:14px;outline:none;" />';
-        html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:10px 16px;font-size:13px;" onclick="waConnect()">Connect</button>';
-        html += '</div>';
       }
+      html += '</div>'; // close flex:1
 
-      if (state !== 'qr_pending' && state !== 'pairing_code') html += '</div>';
+      if (state === 'connected') {
+        html += '<button class="approval-btn cancel" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waDisconnect()">Disconnect</button>';
+      } else {
+        html += '<button class="approval-btn approve" style="flex:0 0 auto;padding:8px 16px;font-size:13px;" onclick="waOpenConnectForm()">Connect</button>';
+      }
+      html += '</div>'; // close top row
 
       // Management sections for connected state
       if (state === 'connected') {
@@ -2470,29 +2459,71 @@ function renderMiniApp(): string {
         html += '</div></div>';
       }
 
-      html += '</div>';
+      html += '</div>'; // close card
 
       // Contacts/Groups management panels
       html += '<div id="waContactsPanel" style="display:none;margin-top:8px;"></div>';
       html += '<div id="waGroupsPanel" style="display:none;margin-top:8px;"></div>';
 
       container.innerHTML = html;
+    }
 
-      // Stop polling if connected or disconnected
-      if (state !== 'qr_pending' && state !== 'pairing_code' && waPollingInterval) {
-        clearInterval(waPollingInterval);
-        waPollingInterval = null;
-      }
+    function waOpenConnectForm() {
+      var content = document.getElementById('waConnectContent');
+      if (!content) return;
+
+      var html = '<div style="padding:8px 0;">';
+      html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">';
+      html += '<div class="avatar-sm" style="background:#25D366;font-size:20px;">\\uD83D\\uDCAC</div>';
+      html += '<div style="font-weight:700;font-size:18px;">Connect WhatsApp</div>';
+      html += '</div>';
+
+      html += '<div style="font-size:13px;color:var(--hint);margin-bottom:20px;line-height:1.5;">Connect your WhatsApp Business number via <a href="https://kapso.ai" target="_blank" style="color:#25D366;">Kapso</a> (official Meta Cloud API). You\\u2019ll need your API key and Phone Number ID from the Kapso dashboard.</div>';
+
+      html += '<div style="display:flex;flex-direction:column;gap:12px;">';
+      html += '<div>';
+      html += '<label style="font-size:13px;font-weight:600;color:var(--text);display:block;margin-bottom:6px;">Kapso API Key</label>';
+      html += '<input type="password" id="waApiKeyInput" placeholder="Enter your API key" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:14px;outline:none;box-sizing:border-box;" />';
+      html += '</div>';
+      html += '<div>';
+      html += '<label style="font-size:13px;font-weight:600;color:var(--text);display:block;margin-bottom:6px;">Phone Number ID</label>';
+      html += '<input type="text" id="waPhoneIdInput" placeholder="e.g. 123456789012345" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--divider);background:var(--secondary-bg);color:var(--text);font-size:14px;outline:none;box-sizing:border-box;" />';
+      html += '</div>';
+      html += '<button class="approval-btn approve" style="width:100%;padding:14px;font-size:15px;font-weight:600;margin-top:8px;" onclick="waConnect()">Connect WhatsApp</button>';
+      html += '</div>';
+
+      html += '<div style="font-size:12px;color:var(--hint);margin-top:20px;line-height:1.6;">';
+      html += '<div style="font-weight:600;margin-bottom:4px;">How to get your credentials:</div>';
+      html += '<div>1. Sign up at <a href="https://kapso.ai" target="_blank" style="color:#25D366;">kapso.ai</a></div>';
+      html += '<div>2. Connect your WhatsApp Business number</div>';
+      html += '<div>3. Copy your API Key and Phone Number ID</div>';
+      html += '</div>';
+
+      html += '</div>';
+      content.innerHTML = html;
+      openDetail('waConnect');
     }
 
     async function waConnect() {
-      var phoneInput = document.getElementById('waPhoneInput');
-      var phone = phoneInput ? phoneInput.value.replace(/[^0-9+]/g, '') : '';
-      if (!phone) { showToast('Enter your WhatsApp phone number', 'error'); return; }
+      var apiKeyInput = document.getElementById('waApiKeyInput');
+      var phoneIdInput = document.getElementById('waPhoneIdInput');
+      var apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+      var phoneId = phoneIdInput ? phoneIdInput.value.trim() : '';
+      if (!apiKey) { showToast('Enter your Kapso API key', 'error'); return; }
+      if (!phoneId) { showToast('Enter your Phone Number ID', 'error'); return; }
       showToast('Connecting WhatsApp...', 'success');
-      var data = await apiFetch('/whatsapp/connect', { method: 'POST', body: { phone: phone } });
+      var data = await apiFetch('/whatsapp/connect', { method: 'POST', body: { kapso_api_key: apiKey, kapso_phone_number_id: phoneId } });
       if (data && data.error) { showToast(data.error, 'error'); return; }
-      renderWhatsApp(data);
+      if (data && data.state === 'connected') {
+        showToast('WhatsApp connected!', 'success');
+        if (window.Telegram && Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+          Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+        }
+        closeDetail();
+        renderWhatsApp(data);
+      } else {
+        renderWhatsApp(data);
+      }
     }
 
     async function waDisconnect() {
@@ -2872,6 +2903,21 @@ const server = Bun.serve({
       }
     }
 
+    // ---- Kapso WhatsApp webhook (no auth — from Kapso servers) ----
+    if (path === "/webhook/kapso" && method === "POST") {
+      const body = await req.json().catch(() => null);
+      if (!body) return jsonResponse({ error: "invalid" }, 400);
+      const manager = getWhatsAppManager();
+      const phoneNumberId = body.phone_number_id
+        || body.message?.kapso?.phone_number_id
+        || body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+      if (phoneNumberId) {
+        manager.routeWebhook(phoneNumberId, body).catch((e: any) =>
+          console.error("[kapso-webhook]", e));
+      }
+      return jsonResponse({ status: "ok" });
+    }
+
     // ---- API routes (require auth) ----
     if (path.startsWith("/api/")) {
       const authResult = await authenticateRequest(req);
@@ -3004,7 +3050,7 @@ const server = Bun.serve({
       // WhatsApp
       if (path === "/api/whatsapp/connect" && method === "POST") {
         const body = await req.json().catch(() => ({}));
-        return jsonResponse(await whatsappConnect(userId, body.phone));
+        return jsonResponse(await whatsappConnect(userId, body));
       }
       if (path === "/api/whatsapp/status" && method === "GET") {
         return jsonResponse(await whatsappStatus(userId));

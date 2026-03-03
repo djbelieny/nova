@@ -1,23 +1,18 @@
 /**
- * WhatsApp Manager — Per-User Session Management
+ * WhatsApp Manager — Per-User Session Management (Kapso / Meta Cloud API)
  *
  * Manages multiple WhatsApp sessions (one per Nova user), routes incoming
- * messages through a classification pipeline that enforces contact access
- * control, group whitelisting, and per-contact rate limiting.
+ * webhook payloads through a classification pipeline that enforces contact
+ * access control, group whitelisting, and per-contact rate limiting.
  *
  * Architecture:
  *   Mini App → connect/disconnect endpoints → WhatsAppManager
- *   Baileys sessions → classifyAndRoute → Nova message handler
+ *   Kapso webhooks → routeWebhook → classifyAndRoute → Nova message handler
  */
 
-import { join } from "path";
-import { readdirSync, existsSync } from "fs";
-import { rm } from "fs/promises";
 import { WhatsAppAdapter, type WhatsAppStatus } from "./channels/whatsapp.ts";
 import type { Database } from "./db.ts";
 import type { IncomingMessage, MessageHandler, ReplyFn } from "./channels/types.ts";
-
-const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 
 /** Rate limit config per contact role */
 const RATE_LIMITS: Record<string, { maxPerHour: number }> = {
@@ -40,6 +35,8 @@ setInterval(() => {
 
 export class WhatsAppManager {
   private sessions = new Map<string, WhatsAppAdapter>();
+  /** Reverse lookup: phoneNumberId → userId for webhook routing */
+  private phoneNumberToUser = new Map<string, string>();
   private messageHandler: MessageHandler | null = null;
   private db: Database;
 
@@ -52,19 +49,22 @@ export class WhatsAppManager {
     this.messageHandler = handler;
   }
 
-  /** Start a new WhatsApp session for a user. */
-  async connect(userId: string, pairPhone?: string): Promise<void> {
+  /** Start a new WhatsApp session for a user using Kapso credentials from DB. */
+  async connect(userId: string): Promise<void> {
     if (this.sessions.has(userId)) {
       const existing = this.sessions.get(userId)!;
       if (existing.connectionState !== "disconnected") {
         return; // already connecting/connected
       }
-      // Clean up stale session
       await existing.stop();
     }
 
-    const authDir = this.getAuthDir(userId);
-    const adapter = new WhatsAppAdapter(userId, authDir);
+    const creds = this.db.getKapsoCredentials(userId);
+    if (!creds || !creds.kapso_api_key || !creds.kapso_phone_number_id) {
+      throw new Error("Kapso credentials not found. Save API key and phone number ID first.");
+    }
+
+    const adapter = new WhatsAppAdapter(userId, creds.kapso_api_key, creds.kapso_phone_number_id);
 
     // Wire up the classification pipeline as the message handler
     adapter.onMessage((msg, reply) => {
@@ -72,7 +72,8 @@ export class WhatsAppManager {
     });
 
     this.sessions.set(userId, adapter);
-    await adapter.start(pairPhone);
+    this.phoneNumberToUser.set(creds.kapso_phone_number_id, userId);
+    await adapter.start();
     console.log(`[wa-manager] Session started for user ${userId}`);
   }
 
@@ -80,49 +81,36 @@ export class WhatsAppManager {
   async disconnect(userId: string): Promise<void> {
     const adapter = this.sessions.get(userId);
     if (adapter) {
+      const status = adapter.getStatus();
+      if (status.phoneNumberId) {
+        this.phoneNumberToUser.delete(status.phoneNumberId);
+      }
       await adapter.stop();
       this.sessions.delete(userId);
     }
-
-    // Remove auth credentials so they need to re-scan
-    const authDir = this.getAuthDir(userId);
-    if (existsSync(authDir)) {
-      await rm(authDir, { recursive: true, force: true });
-    }
-
     console.log(`[wa-manager] Session disconnected for user ${userId}`);
   }
 
-  /** Get connection status + QR for a user. */
+  /** Get connection status for a user. */
   getStatus(userId: string): WhatsAppStatus {
     const adapter = this.sessions.get(userId);
     if (!adapter) {
-      return { state: "disconnected", qrDataUrl: null, phoneNumber: null };
+      return { state: "disconnected", phoneNumberId: null };
     }
     return adapter.getStatus();
   }
 
-  /** Restore sessions for users who had active auth credentials. */
+  /** Restore sessions for users who have Kapso credentials. */
   async restoreConnectedSessions(): Promise<void> {
-    const usersDir = join(NOVA_DIR, "users");
-    if (!existsSync(usersDir)) return;
-
     let restored = 0;
     try {
-      const entries = readdirSync(usersDir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const userId = entry.name;
-        const authDir = this.getAuthDir(userId);
-
-        // Only restore if creds.json exists (session was previously authenticated)
-        if (existsSync(join(authDir, "creds.json"))) {
-          try {
-            await this.connect(userId);
-            restored++;
-          } catch (err) {
-            console.error(`[wa-manager] Failed to restore session for ${userId}:`, err);
-          }
+      const users = this.db.getUsersWithKapso();
+      for (const user of users) {
+        try {
+          await this.connect(user.id);
+          restored++;
+        } catch (err) {
+          console.error(`[wa-manager] Failed to restore session for ${user.id}:`, err);
         }
       }
     } catch {}
@@ -130,6 +118,23 @@ export class WhatsAppManager {
     if (restored > 0) {
       console.log(`[wa-manager] Restored ${restored} WhatsApp session(s)`);
     }
+  }
+
+  /** Route an incoming Kapso webhook payload to the correct user's adapter. */
+  async routeWebhook(phoneNumberId: string, payload: any): Promise<void> {
+    const userId = this.phoneNumberToUser.get(phoneNumberId);
+    if (!userId) {
+      console.warn(`[wa-manager] No user found for phone_number_id: ${phoneNumberId}`);
+      return;
+    }
+
+    const adapter = this.sessions.get(userId);
+    if (!adapter) {
+      console.warn(`[wa-manager] No active adapter for user ${userId}`);
+      return;
+    }
+
+    await adapter.handleWebhook(payload);
   }
 
   /** Get all active sessions (for admin/debug). */
@@ -146,13 +151,10 @@ export class WhatsAppManager {
     const stops = Array.from(this.sessions.values()).map((a) => a.stop());
     await Promise.allSettled(stops);
     this.sessions.clear();
+    this.phoneNumberToUser.clear();
   }
 
   // ---- INTERNAL ----
-
-  private getAuthDir(userId: string): string {
-    return join(NOVA_DIR, "users", userId, "wa-auth");
-  }
 
   /**
    * Classification pipeline — every incoming WhatsApp message goes through this
@@ -202,25 +204,20 @@ export class WhatsAppManager {
       const group = this.db.getWhatsappGroup(ownerUserId, groupJid);
 
       if (!group || !group.active) {
-        // Group not whitelisted — ignore silently
         return;
       }
 
-      // Check for @mention in message text
       const text = msg.text || "";
       const mentionPatterns = ["@nova", "@bot", "@assistant"];
       const isMentioned = mentionPatterns.some((p) => text.toLowerCase().includes(p));
 
       if (!isMentioned) {
-        // Not mentioned — ignore silently
         return;
       }
 
-      // Check sender's contact record for permissions
       const contact = this.db.getWhatsappContact(ownerUserId, normalizedSender);
       if (!contact || contact.role === "blocked") return;
 
-      // Rate limit check
       if (this.isContactRateLimited(ownerUserId, normalizedSender, contact.role)) return;
 
       msg.userId = ownerUserId;
@@ -243,19 +240,15 @@ export class WhatsAppManager {
     const contact = this.db.getWhatsappContact(ownerUserId, normalizedSender);
 
     if (!contact) {
-      // Unknown contact — ignore silently
       return;
     }
 
     if (contact.role === "blocked") {
-      // Blocked — ignore silently
       return;
     }
 
-    // Rate limit check
     if (this.isContactRateLimited(ownerUserId, normalizedSender, contact.role)) return;
 
-    // Route with contact permissions
     msg.userId = ownerUserId;
     extra._whatsappMeta = {
       sender_phone: senderPhone,
@@ -301,7 +294,7 @@ RULES:
   /** Check if a contact has exceeded their rate limit. Returns true if limited. */
   private isContactRateLimited(userId: string, phone: string, role: string): boolean {
     const limit = RATE_LIMITS[role];
-    if (!limit) return false; // owner has no contact-level rate limit
+    if (!limit) return false;
 
     const key = `${userId}:${phone}`;
     const now = Date.now();

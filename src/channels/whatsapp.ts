@@ -1,29 +1,17 @@
 /**
- * WhatsApp Channel Adapter — Per-User Sessions
+ * WhatsApp Channel Adapter — Kapso (Official Meta Cloud API)
  *
- * Uses @whiskeysockets/baileys (unofficial WhatsApp Web API) to connect
- * to WhatsApp. Each user gets their own session with auth stored in
- * ~/.nova/users/{userId}/wa-auth/.
+ * Uses Kapso's REST API wrapper around the official Meta WhatsApp Cloud API.
+ * Each user provides their own Kapso API key + phone number ID.
  *
- * Limitations:
- * - Baileys is unofficial — WhatsApp could break it with protocol changes
- * - No inline buttons — uses numbered list menus for approvals
- * - Stricter rate limits than Telegram
- * - Voice notes come as .ogg (same as Telegram, existing transcription works)
+ * Advantages over Baileys:
+ * - Zero ban risk (official Meta API)
+ * - Native interactive buttons (up to 3)
+ * - Stable — no reverse-engineering breakage
+ * - Voice notes come as .ogg (same as before, existing transcription works)
  */
 
-import {
-  default as makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  downloadMediaMessage,
-  type WASocket,
-} from "@whiskeysockets/baileys";
-import { SocksProxyAgent } from "socks-proxy-agent";
-import QRCode from "qrcode";
-import { mkdir } from "fs/promises";
-import { join } from "path";
-import { existsSync } from "fs";
+import { readFile } from "fs/promises";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -34,44 +22,32 @@ import type {
   PlatformContext,
 } from "./types.ts";
 
-export type ConnectionState = "disconnected" | "qr_pending" | "pairing_code" | "connected";
+const KAPSO_BASE = "https://api.kapso.ai/meta/whatsapp/v24.0";
+
+export type ConnectionState = "disconnected" | "connected" | "error";
 
 export interface WhatsAppStatus {
   state: ConnectionState;
-  qrDataUrl: string | null;
-  pairingCode: string | null;
-  phoneNumber: string | null;
+  phoneNumberId: string | null;
+  error?: string;
 }
 
 export class WhatsAppAdapter implements ChannelAdapter {
   readonly type = "whatsapp" as const;
-  private sock: WASocket | null = null;
   private messageHandler: MessageHandler | null = null;
   private buttonHandler: ButtonHandler | null = null;
-  private authDir: string;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 10;
-  private stopping = false;
+  private webhookId: string | null = null;
   readonly userId: string;
+  private apiKey: string;
+  private phoneNumberId: string;
 
-  /** Current QR code as base64 data URL for Mini App display */
-  qrDataUrl: string | null = null;
-
-  /** Pairing code for phone number linking */
-  pairingCode: string | null = null;
-
-  /** Phone number to pair with (for pairing code flow) */
-  pairPhoneNumber: string | null = null;
-
-  /** Current connection state */
   connectionState: ConnectionState = "disconnected";
+  private lastError: string | null = null;
 
-  /** Connected phone number (e.g., "15551234567") */
-  phoneNumber: string | null = null;
-
-  constructor(userId: string, authDir: string) {
+  constructor(userId: string, apiKey: string, phoneNumberId: string) {
     this.userId = userId;
-    this.authDir = authDir;
+    this.apiKey = apiKey;
+    this.phoneNumberId = phoneNumberId;
   }
 
   onMessage(handler: MessageHandler): void {
@@ -85,156 +61,98 @@ export class WhatsAppAdapter implements ChannelAdapter {
   getStatus(): WhatsAppStatus {
     return {
       state: this.connectionState,
-      qrDataUrl: this.qrDataUrl,
-      pairingCode: this.pairingCode,
-      phoneNumber: this.phoneNumber,
+      phoneNumberId: this.phoneNumberId,
+      error: this.lastError || undefined,
     };
   }
 
-  /** Check if auth credentials exist on disk (for session restore). */
-  hasAuthCredentials(): boolean {
-    return existsSync(join(this.authDir, "creds.json"));
-  }
+  async start(): Promise<void> {
+    try {
+      // Register webhook with Kapso
+      const webhookUrl = process.env.MINIAPP_PUBLIC_URL;
+      if (webhookUrl) {
+        const res = await fetch(`${KAPSO_BASE}/whatsapp/phone_numbers/${this.phoneNumberId}/webhooks`, {
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify({
+            url: `${webhookUrl}/webhook/kapso`,
+            events: ["message.received"],
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json() as any;
+          this.webhookId = data.id || null;
+        } else {
+          console.warn(`[whatsapp:${this.userId}] Webhook registration failed: ${res.status} — incoming messages may not work without a public URL`);
+        }
+      } else {
+        console.warn(`[whatsapp:${this.userId}] MINIAPP_PUBLIC_URL not set — webhook not registered, incoming messages won't work`);
+      }
 
-  async start(pairPhone?: string): Promise<void> {
-    await mkdir(this.authDir, { recursive: true });
-    if (pairPhone) {
-      this.pairPhoneNumber = pairPhone.replace(/[^0-9]/g, "");
+      this.connectionState = "connected";
+      this.lastError = null;
+      console.log(`[whatsapp:${this.userId}] Connected (phone_number_id: ${this.phoneNumberId})`);
+    } catch (err: any) {
+      this.connectionState = "error";
+      this.lastError = err.message;
+      console.error(`[whatsapp:${this.userId}] Connection error:`, err.message);
+      throw err;
     }
-    await this.connect();
   }
 
-  private async connect(): Promise<void> {
-    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
-
-    const proxyUrl = process.env.WHATSAPP_PROXY;
-    const agent = proxyUrl ? new SocksProxyAgent(proxyUrl) : undefined;
-    console.log(`[whatsapp:${this.userId}] Connecting${proxyUrl ? ` via proxy ${proxyUrl}` : ' directly'}`);
-
-    this.sock = makeWASocket({
-      auth: state,
-      agent,
-      fetchAgent: agent,
-    });
-
-    this.sock.ev.on("creds.update", saveCreds);
-
-    // Request pairing code if phone number provided (instead of QR)
-    if (this.pairPhoneNumber && !this.hasAuthCredentials()) {
-      // Wait for connection to be ready before requesting code
-      setTimeout(async () => {
-        try {
-          const code = await this.sock!.requestPairingCode(this.pairPhoneNumber!);
-          this.pairingCode = code;
-          this.connectionState = "pairing_code";
-          console.log(`[whatsapp:${this.userId}] Pairing code: ${code}`);
-        } catch (err: any) {
-          console.error(`[whatsapp:${this.userId}] Pairing code request failed:`, err.message);
-        }
-      }, 3000);
+  async stop(): Promise<void> {
+    // Deregister webhook
+    if (this.webhookId) {
+      try {
+        await fetch(`${KAPSO_BASE}/whatsapp/phone_numbers/${this.phoneNumberId}/webhooks/${this.webhookId}`, {
+          method: "DELETE",
+          headers: this.headers(),
+        });
+      } catch {}
+      this.webhookId = null;
     }
-
-    this.sock.ev.on("connection.update", async (update) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      if (qr && !this.pairPhoneNumber) {
-        console.log(`[whatsapp:${this.userId}] QR code received`);
-        try {
-          this.qrDataUrl = await QRCode.toDataURL(qr, { width: 512, margin: 2 });
-          this.connectionState = "qr_pending";
-        } catch (err) {
-          console.error(`[whatsapp:${this.userId}] QR generation error:`, err);
-        }
-      }
-
-      if (connection === "close") {
-        this.connectionState = "disconnected";
-        this.qrDataUrl = null;
-        this.pairingCode = null;
-
-        const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-        if (shouldReconnect && !this.stopping) {
-          this.reconnectAttempts++;
-          if (this.reconnectAttempts <= this.maxReconnectAttempts) {
-            const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 60000);
-            console.log(`[whatsapp:${this.userId}] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts})`);
-            setTimeout(() => this.connect(), delay);
-          } else {
-            console.error(`[whatsapp:${this.userId}] Max reconnect attempts reached`);
-          }
-        } else if (statusCode === DisconnectReason.loggedOut) {
-          console.log(`[whatsapp:${this.userId}] Logged out`);
-        }
-      }
-
-      if (connection === "open") {
-        this.reconnectAttempts = 0;
-        this.connectionState = "connected";
-        this.qrDataUrl = null;
-        this.pairingCode = null;
-        this.pairPhoneNumber = null;
-
-        // Extract phone number from connection info
-        const me = this.sock?.user;
-        if (me?.id) {
-          this.phoneNumber = me.id.split(":")[0] || me.id.split("@")[0];
-        }
-        console.log(`[whatsapp:${this.userId}] Connected (phone: ${this.phoneNumber})`);
-      }
-    });
-
-    // Message handling
-    this.sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
-
-      for (const msg of messages) {
-        if (!msg.message || msg.key.fromMe) continue;
-
-        const jid = msg.key.remoteJid;
-        if (!jid || jid === "status@broadcast") continue;
-
-        const isGroup = jid.endsWith("@g.us");
-        // For group messages, the sender is msg.key.participant
-        // For DMs, the sender is the JID itself
-        const senderJid = isGroup ? (msg.key.participant || "") : jid;
-        const senderPhone = senderJid.split("@")[0].split(":")[0];
-
-        try {
-          await this.handleIncomingMessage(msg, jid, senderPhone, isGroup);
-        } catch (error) {
-          console.error(`[whatsapp:${this.userId}] Message handling error:`, error);
-        }
-      }
-    });
+    this.connectionState = "disconnected";
+    this.lastError = null;
+    console.log(`[whatsapp:${this.userId}] Disconnected`);
   }
 
-  private async handleIncomingMessage(
-    msg: any,
-    jid: string,
-    senderPhone: string,
-    isGroup: boolean,
-  ): Promise<void> {
+  /** Called by WhatsAppManager when a Kapso webhook arrives for this adapter. */
+  async handleWebhook(payload: any): Promise<void> {
     if (!this.messageHandler) return;
 
-    const messageContent = msg.message;
-    const messageId = msg.key.id || "";
+    const message = payload.message || payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    if (!message) return;
 
-    // Extract text
-    const text = messageContent.conversation
-      || messageContent.extendedTextMessage?.text;
+    const senderPhone = message.from || "";
+    const chatId = senderPhone; // In Cloud API, chat ID is the sender's phone number
+    const messageId = message.id || "";
+    const isGroup = false; // Cloud API groups use a different structure; DMs for now
 
-    if (text) {
-      // Check if this is a numbered list response (button emulation)
-      const numberMatch = text.match(/^(\d+)$/);
+    // Button press
+    if (message.interactive?.button_reply) {
+      if (this.buttonHandler) {
+        this.buttonHandler(
+          chatId,
+          "",
+          senderPhone,
+          message.interactive.button_reply.id,
+          async (outMsg) => { await this.send(chatId, outMsg); },
+        );
+      }
+      return;
+    }
+
+    // Text message
+    if (message.text?.body) {
+      // Check if this is a numbered list response (legacy button emulation)
+      const numberMatch = message.text.body.match(/^(\d+)$/);
       if (numberMatch && this.buttonHandler) {
         this.buttonHandler(
-          jid,
+          chatId,
           "",
           senderPhone,
           `btn_num:${numberMatch[1]}`,
-          async (outMsg) => { await this.send(jid, outMsg); },
+          async (outMsg) => { await this.send(chatId, outMsg); },
         );
         return;
       }
@@ -242,49 +160,32 @@ export class WhatsAppAdapter implements ChannelAdapter {
       const incoming: IncomingMessage = {
         channelType: "whatsapp",
         channelMessageId: messageId,
-        channelChatId: jid,
+        channelChatId: chatId,
         userId: "",
         platformUserId: senderPhone,
-        text,
+        text: message.text.body,
       };
 
-      // Attach extra metadata for the manager's classification pipeline
-      const extra = incoming as any;
-      extra._platformContext = this.createPlatformContext(jid, messageId);
-      extra._isGroup = isGroup;
-      extra._senderPhone = senderPhone;
-      extra._ownerUserId = this.userId;
-
-      this.messageHandler(incoming, async (outMsg) => {
-        await this.send(jid, outMsg);
-      });
+      this.attachMeta(incoming, chatId, messageId, isGroup, senderPhone);
+      this.messageHandler(incoming, async (outMsg) => { await this.send(chatId, outMsg); });
       return;
     }
 
-    // Voice message
-    if (messageContent.audioMessage) {
+    // Audio/voice message
+    if (message.audio || message.voice) {
+      const audio = message.audio || message.voice;
       try {
-        const buffer = await downloadMediaMessage(msg, "buffer", {});
-        const duration = messageContent.audioMessage.seconds || 0;
-
+        const buffer = await this.downloadMedia(audio.id);
         const incoming: IncomingMessage = {
           channelType: "whatsapp",
           channelMessageId: messageId,
-          channelChatId: jid,
+          channelChatId: chatId,
           userId: "",
           platformUserId: senderPhone,
-          voice: { buffer: Buffer.from(buffer as any), durationSec: duration },
+          voice: { buffer, durationSec: 0 },
         };
-
-        const extra = incoming as any;
-        extra._platformContext = this.createPlatformContext(jid, messageId);
-        extra._isGroup = isGroup;
-        extra._senderPhone = senderPhone;
-        extra._ownerUserId = this.userId;
-
-        this.messageHandler(incoming, async (outMsg) => {
-          await this.send(jid, outMsg);
-        });
+        this.attachMeta(incoming, chatId, messageId, isGroup, senderPhone);
+        this.messageHandler(incoming, async (outMsg) => { await this.send(chatId, outMsg); });
       } catch (error) {
         console.error(`[whatsapp:${this.userId}] Voice download error:`, error);
       }
@@ -292,29 +193,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
     }
 
     // Image message
-    if (messageContent.imageMessage) {
+    if (message.image) {
       try {
-        const buffer = await downloadMediaMessage(msg, "buffer", {});
-        const caption = messageContent.imageMessage.caption || undefined;
-
+        const buffer = await this.downloadMedia(message.image.id);
         const incoming: IncomingMessage = {
           channelType: "whatsapp",
           channelMessageId: messageId,
-          channelChatId: jid,
+          channelChatId: chatId,
           userId: "",
           platformUserId: senderPhone,
-          image: { buffer: Buffer.from(buffer as any), caption },
+          image: { buffer, caption: message.image.caption || undefined },
         };
-
-        const extra = incoming as any;
-        extra._platformContext = this.createPlatformContext(jid, messageId);
-        extra._isGroup = isGroup;
-        extra._senderPhone = senderPhone;
-        extra._ownerUserId = this.userId;
-
-        this.messageHandler(incoming, async (outMsg) => {
-          await this.send(jid, outMsg);
-        });
+        this.attachMeta(incoming, chatId, messageId, isGroup, senderPhone);
+        this.messageHandler(incoming, async (outMsg) => { await this.send(chatId, outMsg); });
       } catch (error) {
         console.error(`[whatsapp:${this.userId}] Image download error:`, error);
       }
@@ -322,30 +213,23 @@ export class WhatsAppAdapter implements ChannelAdapter {
     }
 
     // Document message
-    if (messageContent.documentMessage) {
+    if (message.document) {
       try {
-        const buffer = await downloadMediaMessage(msg, "buffer", {});
-        const filename = messageContent.documentMessage.fileName || `file_${Date.now()}`;
-        const caption = messageContent.documentMessage.caption || undefined;
-
+        const buffer = await this.downloadMedia(message.document.id);
         const incoming: IncomingMessage = {
           channelType: "whatsapp",
           channelMessageId: messageId,
-          channelChatId: jid,
+          channelChatId: chatId,
           userId: "",
           platformUserId: senderPhone,
-          document: { buffer: Buffer.from(buffer as any), filename, caption },
+          document: {
+            buffer,
+            filename: message.document.filename || `file_${Date.now()}`,
+            caption: message.document.caption || undefined,
+          },
         };
-
-        const extra = incoming as any;
-        extra._platformContext = this.createPlatformContext(jid, messageId);
-        extra._isGroup = isGroup;
-        extra._senderPhone = senderPhone;
-        extra._ownerUserId = this.userId;
-
-        this.messageHandler(incoming, async (outMsg) => {
-          await this.send(jid, outMsg);
-        });
+        this.attachMeta(incoming, chatId, messageId, isGroup, senderPhone);
+        this.messageHandler(incoming, async (outMsg) => { await this.send(chatId, outMsg); });
       } catch (error) {
         console.error(`[whatsapp:${this.userId}] Document download error:`, error);
       }
@@ -353,8 +237,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async send(chatId: string, message: OutgoingMessage): Promise<void> {
-    if (!this.sock) return;
-
     // Send files
     if (message.files) {
       for (const file of message.files) {
@@ -364,74 +246,96 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     // Send voice
     if (message.voice) {
-      await this.sock.sendMessage(chatId, {
-        audio: message.voice,
-        mimetype: "audio/ogg; codecs=opus",
-        ptt: true,
-      });
+      const mediaId = await this.uploadMedia(message.voice, "audio/ogg; codecs=opus", "voice.ogg");
+      if (mediaId) {
+        await this.kapsoPost(`${this.phoneNumberId}/messages`, {
+          messaging_product: "whatsapp",
+          to: chatId,
+          type: "audio",
+          audio: { id: mediaId },
+        });
+      }
     }
 
-    // Build text with numbered options if buttons provided
-    let text = message.text || "";
-    if (message.buttons?.length) {
-      text += "\n\nReply with a number:";
-      message.buttons.forEach((btn, i) => {
-        text += `\n${i + 1}. ${btn.label}`;
-      });
-    }
+    // Send text with optional buttons
+    const text = message.text || "";
 
-    // Send text
-    if (text) {
-      await this.sock.sendMessage(chatId, { text });
+    if (text && message.buttons?.length && message.buttons.length <= 3) {
+      // Native WhatsApp interactive buttons (max 3)
+      await this.kapsoPost(`${this.phoneNumberId}/messages`, {
+        messaging_product: "whatsapp",
+        to: chatId,
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text },
+          action: {
+            buttons: message.buttons.map((btn, i) => ({
+              type: "reply",
+              reply: {
+                id: btn.callbackData || `btn_${i}`,
+                title: btn.label.substring(0, 20), // WhatsApp button title max 20 chars
+              },
+            })),
+          },
+        },
+      });
+    } else if (text) {
+      // Plain text (or too many buttons — fall back to numbered list)
+      let finalText = text;
+      if (message.buttons?.length && message.buttons.length > 3) {
+        finalText += "\n\nReply with a number:";
+        message.buttons.forEach((btn, i) => {
+          finalText += `\n${i + 1}. ${btn.label}`;
+        });
+      }
+      await this.kapsoPost(`${this.phoneNumberId}/messages`, {
+        messaging_product: "whatsapp",
+        to: chatId,
+        type: "text",
+        text: { body: finalText },
+      });
     }
   }
 
   async sendTyping(chatId: string): Promise<void> {
-    if (!this.sock) return;
-    try {
-      await this.sock.presenceSubscribe(chatId);
-      await this.sock.sendPresenceUpdate("composing", chatId);
-    } catch {}
+    // Cloud API doesn't have a true typing indicator, but we can mark as read
+    // which serves a similar UX purpose
   }
 
   async sendFile(chatId: string, filePath: string, caption?: string): Promise<void> {
-    if (!this.sock) return;
-
-    const { readFile } = await import("fs/promises");
     try {
       const buffer = await readFile(filePath);
       const ext = filePath.substring(filePath.lastIndexOf(".")).toLowerCase();
       const imageExts = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
       if (imageExts.has(ext)) {
-        await this.sock.sendMessage(chatId, {
-          image: buffer,
-          caption: caption || undefined,
-        });
+        const mimeType = ext === ".png" ? "image/png" : ext === ".gif" ? "image/gif" : ext === ".webp" ? "image/webp" : "image/jpeg";
+        const mediaId = await this.uploadMedia(buffer, mimeType, filePath.split("/").pop() || "image");
+        if (mediaId) {
+          await this.kapsoPost(`${this.phoneNumberId}/messages`, {
+            messaging_product: "whatsapp",
+            to: chatId,
+            type: "image",
+            image: { id: mediaId, caption: caption || undefined },
+          });
+        }
       } else {
         const filename = filePath.split("/").pop() || "file";
-        await this.sock.sendMessage(chatId, {
-          document: buffer,
-          mimetype: "application/octet-stream",
-          fileName: filename,
-          caption: caption || undefined,
-        });
+        const mediaId = await this.uploadMedia(buffer, "application/octet-stream", filename);
+        if (mediaId) {
+          await this.kapsoPost(`${this.phoneNumberId}/messages`, {
+            messaging_product: "whatsapp",
+            to: chatId,
+            type: "document",
+            document: { id: mediaId, filename, caption: caption || undefined },
+          });
+        }
       }
       console.log(`[whatsapp:${this.userId}] Sent file: ${filePath}`);
     } catch (error) {
       console.error(`[whatsapp:${this.userId}] Failed to send file ${filePath}:`, error);
     }
-  }
-
-  async stop(): Promise<void> {
-    this.stopping = true;
-    if (this.sock) {
-      this.sock.end(undefined);
-      this.sock = null;
-    }
-    this.connectionState = "disconnected";
-    this.qrDataUrl = null;
-    this.phoneNumber = null;
   }
 
   createPlatformContext(chatId: string, messageId?: string): PlatformContext {
@@ -443,12 +347,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
       chat: { id: chatId },
       channelType: "whatsapp",
 
-      async reply(text: string, opts?: any) {
+      async reply(text: string, _opts?: any) {
         const cleanText = text.replace(/<[^>]+>/g, "");
-        await adapter.send(chatId, {
-          text: cleanText,
-          buttons: opts?.reply_markup ? undefined : undefined,
-        });
+        await adapter.send(chatId, { text: cleanText });
         lastMessageId++;
         return { message_id: lastMessageId };
       },
@@ -459,7 +360,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
       api: {
         async editMessageText(_chatId, _messageId, _text, _opts?) {
-          // WhatsApp doesn't support editing messages
+          // WhatsApp Cloud API doesn't support editing messages
         },
         async deleteMessage(_chatId, _messageId) {
           // WhatsApp message deletion is limited
@@ -469,5 +370,77 @@ export class WhatsAppAdapter implements ChannelAdapter {
         },
       },
     };
+  }
+
+  // ---- INTERNAL ----
+
+  private headers(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${this.apiKey}`,
+    };
+  }
+
+  private async kapsoPost(path: string, body: any): Promise<any> {
+    const res = await fetch(`${KAPSO_BASE}/${path}`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => "");
+      console.error(`[whatsapp:${this.userId}] Kapso API error ${res.status}: ${errorText}`);
+      return null;
+    }
+    return res.json().catch(() => null);
+  }
+
+  private async kapsoGet(path: string): Promise<any> {
+    const res = await fetch(`${KAPSO_BASE}/${path}`, {
+      method: "GET",
+      headers: this.headers(),
+    });
+    if (!res.ok) return null;
+    return res.json().catch(() => null);
+  }
+
+  private async downloadMedia(mediaId: string): Promise<Buffer> {
+    // Step 1: Get media URL
+    const meta = await this.kapsoGet(mediaId);
+    if (!meta?.url) throw new Error(`Failed to get media URL for ${mediaId}`);
+
+    // Step 2: Download the actual media
+    const res = await fetch(meta.url, {
+      headers: { "Authorization": `Bearer ${this.apiKey}` },
+    });
+    if (!res.ok) throw new Error(`Failed to download media: ${res.status}`);
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  }
+
+  private async uploadMedia(buffer: Buffer | Uint8Array, mimeType: string, filename: string): Promise<string | null> {
+    const formData = new FormData();
+    formData.append("messaging_product", "whatsapp");
+    formData.append("file", new Blob([buffer], { type: mimeType }), filename);
+
+    const res = await fetch(`${KAPSO_BASE}/${this.phoneNumberId}/media`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${this.apiKey}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      console.error(`[whatsapp:${this.userId}] Media upload failed: ${res.status}`);
+      return null;
+    }
+    const data = await res.json() as any;
+    return data.id || null;
+  }
+
+  private attachMeta(incoming: IncomingMessage, chatId: string, messageId: string, isGroup: boolean, senderPhone: string): void {
+    const extra = incoming as any;
+    extra._platformContext = this.createPlatformContext(chatId, messageId);
+    extra._isGroup = isGroup;
+    extra._senderPhone = senderPhone;
+    extra._ownerUserId = this.userId;
   }
 }
