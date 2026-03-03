@@ -1373,10 +1373,13 @@ async function routeComplex(
       const processed = await processMemoryIntents(supabase, aggregated, user.id, user.timezone);
       await _saveMessage("assistant", processed, user.id);
 
-      // Final checklist update (keep visible so user sees outcomes)
+      // Final checklist update with completion timestamp
       try {
         if (autoChecklistMsg) {
           await autoUpdateChecklist();
+          const elapsed = Math.round((Date.now() - startTime) / 1000);
+          const finalText = buildChecklistText(plan, autoStatuses) + `\n\nDone (${elapsed}s)`;
+          await ctx.api.editMessageText(ctx.chat!.id, autoChecklistMsg.message_id, finalText).catch(() => {});
         }
       } catch {}
 
@@ -1446,10 +1449,13 @@ async function routeComplex(
     const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress, workspaceDir);
     const artifacts = collectArtifacts(prepareResults);
 
-    // Final checklist update (keep visible so user sees outcomes)
+    // Final checklist update with completion timestamp
     try {
       if (checklistMsg) {
         await updateChecklist();
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        const finalText = buildChecklistText(plan, subtaskStatuses) + `\n\nDone (${elapsed}s)`;
+        await ctx.api.editMessageText(ctx.chat!.id, checklistMsg.message_id, finalText).catch(() => {});
       }
     } catch {}
 

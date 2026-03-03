@@ -723,6 +723,25 @@ function runTask(
 
   // Fire and forget — run the task asynchronously
   (async () => {
+    // Send a progress message and update it with elapsed time
+    let progressMsgId: number | null = null;
+    let progressFinalized = false;
+    try {
+      const msg = await ctx.reply("Working on it...");
+      progressMsgId = msg.message_id;
+    } catch {}
+
+    const progressInterval = setInterval(async () => {
+      if (!progressMsgId) return;
+      const elapsed = Math.round((Date.now() - task.startTime) / 1000);
+      try {
+        await ctx.api.editMessageText(
+          ctx.chat!.id, progressMsgId,
+          `Working on it... (${elapsed}s)`
+        );
+      } catch {}
+    }, 8000);
+
     try {
       const { prompt, model, hint: taskHint } = await buildTask();
 
@@ -749,7 +768,27 @@ function runTask(
         : rawResponse;
 
       // Orchestrator handled the response internally — skip sending
-      if (response === "__SKIP__") return;
+      if (response === "__SKIP__") {
+        clearInterval(progressInterval);
+        progressFinalized = true;
+        if (progressMsgId) {
+          try { await ctx.api.deleteMessage(ctx.chat!.id, progressMsgId); } catch {}
+        }
+        return;
+      }
+
+      // Finalize progress message
+      clearInterval(progressInterval);
+      progressFinalized = true;
+      if (progressMsgId) {
+        const elapsed = Math.round((Date.now() - task.startTime) / 1000);
+        try {
+          await ctx.api.editMessageText(
+            ctx.chat!.id, progressMsgId,
+            `Done (${elapsed}s)`
+          );
+        } catch {}
+      }
 
       // Self-scheduling: if response contains <follow_up> tags, add to heartbeat checklist
       const followUpMatch = response.match(/<follow_up>([\s\S]*?)<\/follow_up>/i);
@@ -812,8 +851,17 @@ function runTask(
 
       await ctx.reply(msg, { parse_mode: "Markdown" }).catch(() => {});
     } finally {
+      clearInterval(progressInterval);
       clearInterval(typingInterval);
       activeTasks.delete(taskId);
+      // Mark progress message as failed if it wasn't already finalized
+      if (progressMsgId && !progressFinalized) {
+        const elapsed = Math.round((Date.now() - task.startTime) / 1000);
+        await ctx.api.editMessageText(
+          ctx.chat!.id, progressMsgId,
+          `Failed (${elapsed}s)`
+        ).catch(() => {});
+      }
     }
   })();
 }
