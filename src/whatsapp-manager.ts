@@ -105,6 +105,7 @@ export class WhatsAppManager {
     let restored = 0;
     try {
       const users = this.db.getUsersWithKapso();
+      console.log(`[wa-manager] Found ${users.length} user(s) with Kapso credentials`);
       for (const user of users) {
         try {
           await this.connect(user.id);
@@ -113,11 +114,11 @@ export class WhatsAppManager {
           console.error(`[wa-manager] Failed to restore session for ${user.id}:`, err);
         }
       }
-    } catch {}
-
-    if (restored > 0) {
-      console.log(`[wa-manager] Restored ${restored} WhatsApp session(s)`);
+    } catch (err) {
+      console.error(`[wa-manager] Error restoring sessions:`, err);
     }
+
+    console.log(`[wa-manager] Restored ${restored} WhatsApp session(s)`);
   }
 
   /** Route an incoming Kapso webhook payload to the correct user's adapter. */

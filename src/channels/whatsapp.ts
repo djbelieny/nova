@@ -67,10 +67,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async start(): Promise<void> {
-    try {
-      // Register webhook with Kapso
-      const webhookUrl = process.env.MINIAPP_PUBLIC_URL;
-      if (webhookUrl) {
+    // Try to register webhook with Kapso (non-fatal — webhook may need manual setup)
+    const webhookUrl = process.env.MINIAPP_PUBLIC_URL;
+    if (webhookUrl) {
+      try {
         const res = await fetch(`${KAPSO_BASE}/whatsapp/phone_numbers/${this.phoneNumberId}/webhooks`, {
           method: "POST",
           headers: this.headers(),
@@ -82,22 +82,20 @@ export class WhatsAppAdapter implements ChannelAdapter {
         if (res.ok) {
           const data = await res.json() as any;
           this.webhookId = data.id || null;
+          console.log(`[whatsapp:${this.userId}] Webhook auto-registered`);
         } else {
-          console.warn(`[whatsapp:${this.userId}] Webhook registration failed: ${res.status} — incoming messages may not work without a public URL`);
+          console.log(`[whatsapp:${this.userId}] Webhook auto-registration not available (${res.status}) — configure manually in Kapso dashboard`);
         }
-      } else {
-        console.warn(`[whatsapp:${this.userId}] MINIAPP_PUBLIC_URL not set — webhook not registered, incoming messages won't work`);
+      } catch {
+        console.log(`[whatsapp:${this.userId}] Webhook auto-registration skipped — configure manually in Kapso dashboard`);
       }
-
-      this.connectionState = "connected";
-      this.lastError = null;
-      console.log(`[whatsapp:${this.userId}] Connected (phone_number_id: ${this.phoneNumberId})`);
-    } catch (err: any) {
-      this.connectionState = "error";
-      this.lastError = err.message;
-      console.error(`[whatsapp:${this.userId}] Connection error:`, err.message);
-      throw err;
+    } else {
+      console.warn(`[whatsapp:${this.userId}] MINIAPP_PUBLIC_URL not set — incoming messages won't work`);
     }
+
+    this.connectionState = "connected";
+    this.lastError = null;
+    console.log(`[whatsapp:${this.userId}] Connected (phone_number_id: ${this.phoneNumberId})`);
   }
 
   async stop(): Promise<void> {
