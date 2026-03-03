@@ -123,10 +123,23 @@ export class WhatsAppManager {
 
   /** Route an incoming Kapso webhook payload to the correct user's adapter. */
   async routeWebhook(phoneNumberId: string, payload: any): Promise<void> {
-    const userId = this.phoneNumberToUser.get(phoneNumberId);
+    let userId = this.phoneNumberToUser.get(phoneNumberId);
+
+    // Auto-connect: if no in-memory session, look up user from DB and connect on demand
     if (!userId) {
-      console.warn(`[wa-manager] No user found for phone_number_id: ${phoneNumberId}`);
-      return;
+      const user = this.db.getUserByKapsoPhoneNumberId(phoneNumberId);
+      if (!user) {
+        console.warn(`[wa-manager] No user found for phone_number_id: ${phoneNumberId}`);
+        return;
+      }
+      userId = user.id;
+      try {
+        await this.connect(userId);
+        console.log(`[wa-manager] Auto-connected session for user ${userId} (triggered by webhook)`);
+      } catch (err) {
+        console.error(`[wa-manager] Failed to auto-connect for ${userId}:`, err);
+        return;
+      }
     }
 
     const adapter = this.sessions.get(userId);

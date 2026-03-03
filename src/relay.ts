@@ -378,6 +378,87 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
 
   // Approval buttons (apv:...) are handled directly by the Telegram adapter's onApproval handler
 
+  // Health monitor buttons (hm:fix:<id>, hm:ignore:<id>, hm:detail:<id>)
+  if (buttonData.startsWith("hm:")) {
+    const parts = buttonData.split(":");
+    const action = parts[1]; // fix, ignore, detail
+    const issueId = parts.slice(2).join(":");
+    console.log(`[health-monitor] Button: ${action} for issue ${issueId}`);
+
+    try {
+      const pendingPath = join(PROJECT_ROOT, "data", "health-pending.json");
+      const pendingRaw = await Bun.file(pendingPath).text();
+      const pending = JSON.parse(pendingRaw) as { issues: any[] };
+      const issue = pending.issues.find((i: any) => i.id === issueId);
+
+      if (!issue) {
+        await reply("Issue not found — it may have already been resolved.");
+        return;
+      }
+
+      const adapter = channels.get("telegram") || channels.getAll()[0];
+      if (!adapter) return;
+
+      if (action === "fix") {
+        if (editOriginal) await editOriginal(`Fixing: ${issue.title}...`);
+
+        // Execute fix based on fixAction
+        let fixResult = "";
+        try {
+          if (issue.fixAction === "restart_service") {
+            const isMac = process.platform === "darwin";
+            if (isMac) {
+              const plistPath = join(process.env.HOME || "", "Library", "LaunchAgents", `${issue.fixTarget}.plist`);
+              const unload = spawn(["launchctl", "unload", plistPath], { stdout: "pipe", stderr: "pipe" });
+              await unload.exited;
+              const load = spawn(["launchctl", "load", plistPath], { stdout: "pipe", stderr: "pipe" });
+              await load.exited;
+            } else {
+              const svc = issue.fixTarget.replace("com.nova.", "nova-");
+              const proc = spawn(["sudo", "systemctl", "restart", svc], { stdout: "pipe", stderr: "pipe" });
+              await proc.exited;
+            }
+            fixResult = `Restarted ${issue.fixTarget}`;
+          } else if (issue.fixAction === "delete_branch") {
+            const proc = spawn(["git", "-C", PROJECT_ROOT, "branch", "-d", issue.fixTarget], { stdout: "pipe", stderr: "pipe" });
+            await proc.exited;
+            fixResult = `Deleted branch ${issue.fixTarget}`;
+          } else if (issue.fixAction === "git_stash") {
+            const proc = spawn(["git", "-C", PROJECT_ROOT, "stash", "--include-untracked"], { stdout: "pipe", stderr: "pipe" });
+            await proc.exited;
+            fixResult = "Stashed dirty working tree";
+          } else if (issue.fixAction === "bun_install") {
+            const proc = spawn(["bun", "install", "--cwd", PROJECT_ROOT], { stdout: "pipe", stderr: "pipe" });
+            await proc.exited;
+            fixResult = "Ran bun install to sync dependencies";
+          } else {
+            fixResult = `Unknown fix action: ${issue.fixAction}`;
+          }
+        } catch (e: any) {
+          fixResult = `Fix failed: ${e.message}`;
+        }
+
+        issue.status = "resolved";
+        await Bun.write(pendingPath, JSON.stringify(pending, null, 2));
+        if (editOriginal) await editOriginal(`Fixed: ${issue.title}\n${fixResult}`);
+
+      } else if (action === "ignore") {
+        issue.status = "suppressed";
+        issue.suppressedUntil = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await Bun.write(pendingPath, JSON.stringify(pending, null, 2));
+        if (editOriginal) await editOriginal(`Ignored for 24h: ${issue.title}`);
+
+      } else if (action === "detail") {
+        const detail = `Issue: ${issue.title}\nCheck: ${issue.check}\nSeverity: ${issue.severity}\nTime: ${issue.timestamp}\n\n${issue.detail}`;
+        await reply(detail);
+      }
+    } catch (e: any) {
+      console.error("[health-monitor] Button handler error:", e);
+      await reply(`Error handling health monitor action: ${e.message}`);
+    }
+    return;
+  }
+
   if (buttonData.startsWith("btn:")) {
     const selection = buttonData.substring(4);
     console.log(`Button pressed by ${user.name}: ${selection}`);
@@ -813,8 +894,16 @@ function runTask(
           if (headMsg.startsWith("self-edit:")) {
             console.log("[self-edit] Detected self-edit commit, scheduling auto-reload...");
             await ctx.reply("Reloading with new code... I'll be back in a few seconds.");
+            // Install dependencies before restarting to pick up any new packages
+            try {
+              const installProc = spawn(["bun", "install", "--cwd", PROJECT_ROOT], { stdout: "pipe", stderr: "pipe" });
+              await installProc.exited;
+              console.log("[self-edit] bun install completed");
+            } catch (e) {
+              console.warn("[self-edit] bun install failed:", e);
+            }
             setTimeout(() => {
-              console.log("[self-edit] Auto-reload — exiting for systemd restart");
+              console.log("[self-edit] Auto-reload — exiting for service manager restart");
               process.exit(0);
             }, 1500);
           }
@@ -1474,15 +1563,30 @@ function buildPrompt(
         `\n  - CHANGELOG.md — Your modification log (YOU maintain this)` +
         "\n" +
         "\nWhen " + user.name + " asks you to fix, improve, or change how you work:" +
+        "\n0. Ensure clean state before branching:" +
+        "\n   a. Stash any uncommitted changes: `git -C " + PROJECT_ROOT + " stash --include-untracked` (only if working tree is dirty)" +
+        "\n   b. Pull latest production: `git -C " + PROJECT_ROOT + " checkout production && git -C " + PROJECT_ROOT + " pull origin production`" +
+        "\n   c. Pull latest main: `git -C " + PROJECT_ROOT + " checkout main && git -C " + PROJECT_ROOT + " pull origin main`" +
         "\n1. Create a feature branch from production: `git -C " + PROJECT_ROOT + " checkout -b self-edit/<short-slug> production`" +
         "\n2. Read the relevant file(s) to understand the current code" +
         "\n3. Make the change using your file editing tools" +
         "\n4. Log the change in CHANGELOG.md (see format below)" +
-        "\n5. Commit: `git -C " + PROJECT_ROOT + " add -A && git -C " + PROJECT_ROOT + " commit -m \"self-edit: <description>\"`" +
-        "\n6. Merge to main and push: `git -C " + PROJECT_ROOT + " checkout main && git -C " + PROJECT_ROOT + " merge self-edit/<short-slug> && git -C " + PROJECT_ROOT + " push origin main`" +
-        "\n7. Merge to production and push: `git -C " + PROJECT_ROOT + " checkout production && git -C " + PROJECT_ROOT + " merge main && git -C " + PROJECT_ROOT + " push origin production`" +
-        "\n8. Clean up: `git -C " + PROJECT_ROOT + " branch -d self-edit/<short-slug>`" +
-        "\n9. Tell " + user.name + " what you changed. The relay will detect the self-edit commit and auto-reload with the new code." +
+        "\n5. PRE-COMMIT VALIDATION: run `bun build --no-bundle <changed-files>` to catch syntax errors before committing. Fix any errors before proceeding." +
+        "\n6. Commit: `git -C " + PROJECT_ROOT + " add -A && git -C " + PROJECT_ROOT + " commit -m \"self-edit: <description>\"`" +
+        "\n7. TWO-TIER CHECK:" +
+        "\n   - If ANY changed file is a core file (relay.ts, orchestrator.ts, planner.ts, voice-server.ts, agent-router.ts):" +
+        "\n     Send `git diff main..self-edit/<slug>` to " + user.name + " on Telegram and WAIT for explicit approval before merging." +
+        "\n   - For agent/skill files (.claude/agents/*.md, .claude/skills/*) → auto-merge without asking." +
+        "\n8. Merge to main and push: `git -C " + PROJECT_ROOT + " checkout main && git -C " + PROJECT_ROOT + " merge self-edit/<short-slug> && git -C " + PROJECT_ROOT + " push origin main`" +
+        "\n9. Merge to production and push: `git -C " + PROJECT_ROOT + " checkout production && git -C " + PROJECT_ROOT + " merge main && git -C " + PROJECT_ROOT + " push origin production`" +
+        "\n10. Install dependencies: `bun install --cwd " + PROJECT_ROOT + "`" +
+        "\n11. Restart ALL services — platform-aware:" +
+        "\n    macOS: `launchctl unload ~/Library/LaunchAgents/com.nova.<svc>.plist && launchctl load ~/Library/LaunchAgents/com.nova.<svc>.plist` for core, voice-server, dashboard, miniapp" +
+        "\n    Linux: `sudo systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp`" +
+        "\n12. CRASH WATCHDOG: wait 30 seconds, then check all services are running." +
+        "\n    If any crashed → auto-revert (`git -C " + PROJECT_ROOT + " revert HEAD && git -C " + PROJECT_ROOT + " push origin production`), restart again, and alert " + user.name + "." +
+        "\n13. CANARY WINDOW: keep the self-edit branch for 10 minutes instead of deleting immediately. Schedule delayed cleanup: `sleep 600 && git -C " + PROJECT_ROOT + " branch -d self-edit/<short-slug>`" +
+        "\n14. Tell " + user.name + " what you changed, confirm all services restarted successfully, and report health status." +
         "\n" +
         `\nCHANGELOG.md — You MUST maintain ${PROJECT_ROOT}/CHANGELOG.md. Append an entry for EVERY modification:` +
         "\n  Format:" +
@@ -1558,9 +1662,13 @@ function buildPrompt(
         "\nSAFETY RULES FOR SELF-MODIFICATION:" +
         "\n• ALWAYS git commit before AND after changes (never lose work)" +
         "\n• ALWAYS log every change in CHANGELOG.md" +
+        "\n• ALWAYS validate syntax with `bun build --no-bundle` before committing — never commit code that doesn't compile" +
+        "\n• ALWAYS run `bun install` and restart ALL services (relay + voice + dashboard + miniapp) after merging to production — not just relay" +
+        "\n• For core files (relay.ts, orchestrator.ts, planner.ts, voice-server.ts, agent-router.ts), send the diff to " + user.name + " via Telegram and wait for explicit approval before merging" +
+        "\n• After restarting, wait 30 seconds and verify all services are healthy — if any crashed, auto-revert the commit and restart" +
+        "\n• Keep self-edit branches for 10 minutes after merge (canary window) before deleting" +
         "\n• NEVER modify .env or credentials files" +
         "\n• NEVER delete files without asking " + user.name + " first" +
-        "\n• For core files (relay.ts, orchestrator.ts, planner.ts): describe the plan first and ask for confirmation" +
         "\n• For agent/skill files: you may edit freely but always log it" +
         "\n• If something breaks, tell " + user.name + " and offer to revert: `git -C " + PROJECT_ROOT + " revert HEAD`" +
         "\n• Max 5 self-initiated changes per day without explicit user request (prevents runaway self-modification)"
@@ -2189,6 +2297,28 @@ await channels.startAll();
 
 // Restore existing WhatsApp sessions (per-user, auto-reconnect)
 await whatsappManager.restoreConnectedSessions();
+
+// Internal WhatsApp webhook listener — miniapp forwards webhooks here
+const WA_WEBHOOK_PORT = parseInt(process.env.WA_WEBHOOK_PORT || "3035");
+Bun.serve({
+  port: WA_WEBHOOK_PORT,
+  fetch: async (req) => {
+    if (req.method === "POST" && new URL(req.url).pathname === "/webhook/kapso") {
+      const body = await req.json().catch(() => null);
+      if (!body) return new Response(JSON.stringify({ error: "invalid" }), { status: 400 });
+      const phoneNumberId = body.phone_number_id
+        || body.message?.kapso?.phone_number_id
+        || body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+      if (phoneNumberId) {
+        whatsappManager.routeWebhook(phoneNumberId, body).catch((e: any) =>
+          console.error("[kapso-webhook]", e));
+      }
+      return new Response(JSON.stringify({ status: "ok" }));
+    }
+    return new Response("Not found", { status: 404 });
+  },
+});
+console.log(`[wa-webhook] Internal listener on port ${WA_WEBHOOK_PORT}`);
 
 console.log("All channels started! Users are managed via the 'users' table in the local DB.");
 

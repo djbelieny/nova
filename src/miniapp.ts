@@ -2901,18 +2901,17 @@ const server = Bun.serve({
       }
     }
 
-    // ---- Kapso WhatsApp webhook (no auth — from Kapso servers) ----
+    // ---- Kapso WhatsApp webhook (no auth — forward to relay process) ----
     if (path === "/webhook/kapso" && method === "POST") {
       const body = await req.json().catch(() => null);
       if (!body) return jsonResponse({ error: "invalid" }, 400);
-      const manager = getWhatsAppManager();
-      const phoneNumberId = body.phone_number_id
-        || body.message?.kapso?.phone_number_id
-        || body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
-      if (phoneNumberId) {
-        manager.routeWebhook(phoneNumberId, body).catch((e: any) =>
-          console.error("[kapso-webhook]", e));
-      }
+      // Forward to relay's internal webhook listener (where the message handler lives)
+      const relayPort = process.env.WA_WEBHOOK_PORT || "3035";
+      fetch(`http://localhost:${relayPort}/webhook/kapso`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).catch((e: any) => console.error("[kapso-webhook] Failed to forward to relay:", e));
       return jsonResponse({ status: "ok" });
     }
 
