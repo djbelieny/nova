@@ -17,6 +17,10 @@ if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_ANON_KEY:-}" ] && [ ! -f /opt/
   bun run migrate:supabase
 fi
 
+# Ensure nova user owns data and user directories
+echo "Fixing file ownership..."
+chown -R nova:nova /opt/nova/.nova /opt/nova/data 2>/dev/null || true
+
 echo "Restarting services..."
 systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 
