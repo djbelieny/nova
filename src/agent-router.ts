@@ -136,6 +136,16 @@ SKILLS — Slash commands you can invoke:
   architect: `
 TOOLS — MCP integrations:
 • Bash: Run commands, install packages, build, test, and deploy code. Full terminal access.
+• term-cli: Run interactive programs (dev servers, SSH, debuggers, REPLs) in background tmux sessions. Use for anything that blocks or needs input.
+  - term-cli start -s <name> — create session
+  - term-cli run -s <name> "<cmd>" --wait — run command and wait for prompt
+  - term-cli capture -s <name> — read current screen output
+  - term-cli send-text -s <name> "<text>" --enter — send input
+  - term-cli send-key -s <name> C-c — send ctrl+c
+  - term-cli wait -s <name> — wait for prompt
+  - term-cli upload/download -s <name> — transfer files (works over SSH)
+  - term-cli request -s <name> -m "need password" — ask human for help
+  - term-cli kill -s <name> — end session
 • File system (Read/Write/Edit): Create and modify source code, configs, and documentation.
 • Playwright (browser): Test web applications, take screenshots, verify deployments, debug UI issues.
 • Cloudflare MCP: Deploy Workers, manage DNS records, configure domains, set up edge functions.
@@ -350,6 +360,13 @@ SKILLS — Slash commands you can invoke:
   cipher: `
 TOOLS — MCP integrations:
 • Bash: Run Python scripts, install data science packages (pandas, scikit-learn, matplotlib), execute ML models, manage environments.
+• term-cli: Run interactive Python sessions (pdb, IPython, Jupyter), long-running model training, and data pipelines in background tmux sessions.
+  - term-cli start -s <name> — create session
+  - term-cli run -s <name> "<cmd>" --wait — run command and wait
+  - term-cli capture -s <name> — read screen output (check training progress)
+  - term-cli send-text -s <name> "<text>" --enter — send input to REPL
+  - term-cli pipe-log -s <name> /tmp/<name>.log — stream training output to file
+  - term-cli kill -s <name> — end session
 • File system (Read/Write): Create and manage Python scripts, Jupyter notebooks, data files, and model outputs.
 • Supabase MCP: Query databases directly for analysis, create analytics views, store model results.
 • Playwright (browser): Scrape data sources, access web APIs, gather datasets, download CSVs.
@@ -368,6 +385,14 @@ SKILLS — Slash commands you can invoke:
   rift: `
 TOOLS — MCP integrations:
 • Bash: Run security scans (nmap, nikto, etc.), check configurations, test vulnerabilities, audit file permissions.
+• term-cli: Run interactive security tools (SSH into servers, debug sessions, interactive scanners) in background tmux sessions.
+  - term-cli start -s <name> — create session
+  - term-cli run -s <name> "<cmd>" --wait — run command and wait
+  - term-cli capture -s <name> — read screen output
+  - term-cli send-text -s <name> "<text>" --enter — send input
+  - term-cli send-key -s <name> C-c — send ctrl+c
+  - term-cli request -s <name> -m "need credentials" — ask human for secrets/MFA
+  - term-cli kill -s <name> — end session
 • Playwright (browser): Test web application security, check for XSS/CSRF, verify HTTPS, audit cookie settings.
 • Cloudflare MCP: Check and configure DNS security, WAF rules, SSL settings, rate limiting, and DDoS protection.
 • Supabase MCP: Audit database permissions, RLS policies, and API security settings.
@@ -386,6 +411,15 @@ SKILLS — Slash commands you can invoke:
   joule: `
 TOOLS — MCP integrations:
 • Bash: Test API integrations, run automation scripts, configure webhooks, manage cron jobs.
+• term-cli: Run long-running processes (dev servers, log tailing, monitoring) in background tmux sessions. Manage interactive CLI tools.
+  - term-cli start -s <name> — create session
+  - term-cli run -s <name> "<cmd>" --wait — run command and wait
+  - term-cli capture -s <name> — read screen output
+  - term-cli send-text -s <name> "<text>" --enter — send input
+  - term-cli send-key -s <name> C-c — send ctrl+c
+  - term-cli pipe-log -s <name> /tmp/<name>.log — stream output to file
+  - term-cli status -s <name> — check if process is still running
+  - term-cli kill -s <name> — end session
 • Playwright (browser): Set up automations in Zapier, Make.com, and similar platforms. Test webhook endpoints.
 • Go High Level MCP (gohighlevel): Configure CRM automations, workflows, triggers, and campaign sequences.
 • Google Workspace MCP: Set up calendar automations, email filters, Drive workflows, and workspace integrations.
@@ -700,6 +734,7 @@ export function buildAgentPrompt(
     "- If you encounter EACCES/EPERM, report it — do NOT silently skip the step.",
     "- After creating files, run ls or stat to VERIFY they exist before reporting success.",
     "- NEVER fabricate file paths or claim files were created without verification.",
+    "- For interactive/blocking commands (SSH, dev servers, debuggers, REPLs), use term-cli to run them in background tmux sessions instead of blocking Bash.",
     ""
   );
 
