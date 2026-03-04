@@ -140,33 +140,37 @@ const MCP_ROUTING_MAP: Record<string, string[]> = {
   "gohighlevel": ["ghl", "highlevel", "crm", "pipeline", "opportunity", "funnel", "contact", "social media", "post", "publish", "instagram", "facebook", "schedule post", "blog", "invoice", "sms", "workflow"],
   "clickup": ["clickup", "task", "project", "space", "list", "ticket", "todo", "sprint", "time track"],
   "playwright": ["browse", "screenshot", "webpage", "scrape", "website", "click", "navigate"],
+  "tavily": ["search", "research", "web search", "find online", "look up", "crawl"],
+  "firecrawl": ["scrape", "crawl", "extract", "web content", "website data"],
+  "exa": ["search", "research", "find", "similar", "company research", "code search"],
+  "browserbase": ["browse", "browser", "screenshot", "automate", "web agent"],
 };
 
 /** Agent slug → servers they commonly need */
 const AGENT_SERVER_MAP: Record<string, string[]> = {
-  orion: ["google-personal", "google-work", "gohighlevel"],
+  orion: ["google-personal", "google-work", "gohighlevel", "tavily"],
   zen: ["google-personal", "google-work", "notion", "clickup"],
   digit: ["square", "gohighlevel", "notion", "clickup"],
-  flux: ["square", "gohighlevel", "playwright"],
-  helios: ["gohighlevel", "playwright"],
+  flux: ["square", "gohighlevel", "playwright", "tavily"],
+  helios: ["gohighlevel", "playwright", "exa", "tavily"],
   echo: ["gohighlevel", "google-personal"],
-  cyra: ["playwright", "cloudflare", "notion"],
-  architect: ["cloudflare", "playwright"],
+  cyra: ["playwright", "cloudflare", "notion", "firecrawl"],
+  architect: ["cloudflare", "playwright", "firecrawl"],
   joule: ["cloudflare", "gohighlevel", "google-personal"],
-  pixel: ["gohighlevel", "playwright", "notion"],
-  kai: ["notion", "playwright", "google-personal"],
-  athena: ["playwright", "square", "gohighlevel", "notion", "clickup"],
-  aura: ["playwright", "notion"],
+  pixel: ["gohighlevel", "playwright", "notion", "tavily"],
+  kai: ["notion", "playwright", "google-personal", "tavily"],
+  athena: ["playwright", "square", "gohighlevel", "notion", "clickup", "tavily", "exa"],
+  aura: ["playwright", "notion", "tavily"],
   morpheus: ["playwright", "notion", "google-personal"],
-  magnus: ["playwright", "cloudflare", "notion"],
-  oracle: ["playwright", "notion", "clickup"],
+  magnus: ["playwright", "cloudflare", "notion", "tavily", "firecrawl", "exa"],
+  oracle: ["playwright", "notion", "clickup", "tavily", "exa"],
   nexus: ["playwright", "notion", "gohighlevel"],
-  lex: ["playwright", "notion", "google-personal"],
-  helia: ["google-personal", "playwright", "gohighlevel", "notion"],
-  bridge: ["google-personal", "playwright", "gohighlevel", "zoom", "notion"],
-  quill: ["playwright", "notion", "google-personal"],
-  tesseract: ["playwright", "notion", "clickup"],
-  cipher: ["playwright"],
+  lex: ["playwright", "notion", "google-personal", "tavily"],
+  helia: ["google-personal", "playwright", "gohighlevel", "notion", "tavily", "exa"],
+  bridge: ["google-personal", "playwright", "gohighlevel", "zoom", "notion", "exa"],
+  quill: ["playwright", "notion", "google-personal", "tavily"],
+  tesseract: ["playwright", "notion", "clickup", "tavily"],
+  cipher: ["playwright", "exa"],
   rift: ["playwright", "cloudflare"],
 };
 
@@ -250,7 +254,7 @@ export type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
 export type Provider = (typeof PER_USER_PROVIDERS)[number];
 
 // Global servers that every user inherits (read from project .mcp.json)
-const GLOBAL_SERVERS = ["cloudflare", "square", "playwright"];
+const GLOBAL_SERVERS = ["cloudflare", "square", "playwright", "tavily", "firecrawl", "exa", "browserbase"];
 
 export interface IntegrationStatus {
   provider: Provider;
