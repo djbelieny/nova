@@ -125,12 +125,15 @@ async function validateInitData(initDataRaw: string): Promise<{ valid: boolean; 
       .join("");
 
     if (computedHash !== hash) {
+      console.warn("[miniapp] initData HMAC mismatch");
       return { valid: false, user: null };
     }
 
-    // Check auth_date expiration (reject if older than 1 hour)
+    // Check auth_date expiration (reject if older than 24 hours)
     const authDate = parseInt(params.get("auth_date") || "0", 10);
-    if (authDate > 0 && Math.floor(Date.now() / 1000) - authDate > 3600) {
+    const ageSeconds = Math.floor(Date.now() / 1000) - authDate;
+    if (authDate > 0 && ageSeconds > 86400) {
+      console.warn(`[miniapp] initData expired: auth_date age = ${ageSeconds}s`);
       return { valid: false, user: null };
     }
 
