@@ -503,6 +503,10 @@ function getWhatsAppManager(): WhatsAppManager {
   // Standalone mode (miniapp running independently) — create ephemeral manager
   const manager = new WhatsAppManager(supabase);
   (globalThis as any).__novaWhatsAppManager = manager;
+  // Restore any previously connected sessions from DB
+  manager.restoreConnectedSessions().catch((e: any) =>
+    console.error("[miniapp] Failed to restore WhatsApp sessions:", e)
+  );
   return manager;
 }
 
