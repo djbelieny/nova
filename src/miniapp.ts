@@ -2286,7 +2286,6 @@ function renderMiniApp(): string {
       'google-work': { name: 'Google Work', icon: '\uD83C\uDFE2', color: '#0F9D58' },
       'notion': { name: 'Notion', icon: '\uD83D\uDCDD', color: '#000000' },
       'zoom': { name: 'Zoom', icon: '\uD83C\uDFA5', color: '#2D8CFF' },
-      'meta-social': { name: 'Meta (IG + FB)', icon: '\uD83D\uDCF8', color: '#E1306C' },
       'youtube': { name: 'YouTube', icon: '\u25B6\uFE0F', color: '#FF0000' },
       'tiktok': { name: 'TikTok', icon: '\uD83C\uDFB5', color: '#000000' },
       'gohighlevel': { name: 'Go High Level', icon: '\uD83C\uDFE2', color: '#FF6B35', apiKey: true },
