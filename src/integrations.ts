@@ -135,9 +135,12 @@ const MCP_ROUTING_MAP: Record<string, string[]> = {
   "google-work": ["email", "gmail", "calendar", "drive", "docs", "sheets", "slides", "meeting", "schedule", "event", "chat"],
   "notion": ["notion", "database", "page", "wiki", "notes", "workspace"],
   "zoom": ["zoom", "video call", "conference"],
+  "meta-social": ["instagram", "facebook", "post", "reel", "story", "carousel", "social media", "publish"],
+  "youtube": ["youtube", "shorts", "video upload", "channel"],
+  "tiktok": ["tiktok", "short video"],
   "cloudflare": ["cloudflare", "worker", "deploy", "dns", "domain", "r2", "d1", "kv"],
   "square": ["square", "payment", "invoice", "pos", "transaction", "order"],
-  "gohighlevel": ["ghl", "highlevel", "crm", "pipeline", "opportunity", "funnel", "contact", "social media", "post", "publish", "instagram", "facebook", "schedule post", "blog", "invoice", "sms", "workflow"],
+  "gohighlevel": ["ghl", "highlevel", "crm", "pipeline", "opportunity", "funnel", "contact", "schedule post", "blog", "invoice", "sms", "workflow"],
   "clickup": ["clickup", "task", "project", "space", "list", "ticket", "todo", "sprint", "time track"],
   "playwright": ["browse", "screenshot", "webpage", "scrape", "website", "click", "navigate"],
   "tavily": ["search", "research", "web search", "find online", "look up", "crawl"],
@@ -152,21 +155,21 @@ const AGENT_SERVER_MAP: Record<string, string[]> = {
   zen: ["google-personal", "google-work", "notion", "clickup"],
   digit: ["square", "gohighlevel", "notion", "clickup"],
   flux: ["square", "gohighlevel", "playwright", "tavily"],
-  helios: ["gohighlevel", "playwright", "exa", "tavily"],
+  helios: ["gohighlevel", "playwright", "exa", "tavily", "meta-social", "youtube", "tiktok"],
   echo: ["gohighlevel", "google-personal"],
   cyra: ["playwright", "cloudflare", "notion", "firecrawl"],
   architect: ["cloudflare", "playwright", "firecrawl"],
   joule: ["cloudflare", "gohighlevel", "google-personal"],
-  pixel: ["gohighlevel", "playwright", "notion", "tavily"],
-  kai: ["notion", "playwright", "google-personal", "tavily"],
+  pixel: ["gohighlevel", "playwright", "notion", "tavily", "meta-social", "youtube", "tiktok"],
+  kai: ["notion", "playwright", "google-personal", "tavily", "meta-social", "youtube", "tiktok"],
   athena: ["playwright", "square", "gohighlevel", "notion", "clickup", "tavily", "exa"],
   aura: ["playwright", "notion", "tavily"],
-  morpheus: ["playwright", "notion", "google-personal"],
+  morpheus: ["playwright", "notion", "google-personal", "meta-social", "youtube", "tiktok"],
   magnus: ["playwright", "cloudflare", "notion", "tavily", "firecrawl", "exa"],
   oracle: ["playwright", "notion", "clickup", "tavily", "exa"],
-  nexus: ["playwright", "notion", "gohighlevel"],
+  nexus: ["playwright", "notion", "gohighlevel", "meta-social", "youtube", "tiktok"],
   lex: ["playwright", "notion", "google-personal", "tavily"],
-  helia: ["google-personal", "playwright", "gohighlevel", "notion", "tavily", "exa"],
+  helia: ["google-personal", "playwright", "gohighlevel", "notion", "tavily", "exa", "meta-social", "youtube", "tiktok"],
   bridge: ["google-personal", "playwright", "gohighlevel", "zoom", "notion", "exa"],
   quill: ["playwright", "notion", "google-personal", "tavily"],
   tesseract: ["playwright", "notion", "clickup", "tavily"],
@@ -243,6 +246,9 @@ export const PER_USER_PROVIDERS = [
   "google-work",
   "notion",
   "zoom",
+  "meta-social",
+  "youtube",
+  "tiktok",
   "gohighlevel",
   "clickup",
 ] as const;
@@ -380,6 +386,62 @@ export function getOAuthUrl(
         `client_id=${encodeURIComponent(clientId)}` +
         `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&response_type=code` +
+        `&state=${stateEncoded}`;
+
+      return { url };
+    }
+
+    case "meta-social": {
+      const appId = process.env.META_APP_ID;
+      if (!appId) return { url: "", error: "META_APP_ID not configured in .env" };
+
+      const stateEncoded = signOAuthState({ provider, userId });
+      const scopes = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights,instagram_business_manage_comments";
+
+      const url = `https://www.instagram.com/oauth/authorize?` +
+        `client_id=${encodeURIComponent(appId)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=code` +
+        `&scope=${encodeURIComponent(scopes)}` +
+        `&state=${stateEncoded}`;
+
+      return { url };
+    }
+
+    case "youtube": {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) return { url: "", error: "GOOGLE_CLIENT_ID not configured in .env (YouTube reuses Google OAuth)" };
+
+      const stateEncoded = signOAuthState({ provider, userId });
+      const scopes = [
+        "https://www.googleapis.com/auth/youtube.upload",
+        "https://www.googleapis.com/auth/youtube.readonly",
+      ].join(" ");
+
+      const url = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${encodeURIComponent(clientId)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=code` +
+        `&scope=${encodeURIComponent(scopes)}` +
+        `&access_type=offline` +
+        `&prompt=consent` +
+        `&state=${stateEncoded}`;
+
+      return { url };
+    }
+
+    case "tiktok": {
+      const clientKey = process.env.TIKTOK_CLIENT_KEY;
+      if (!clientKey) return { url: "", error: "TIKTOK_CLIENT_KEY not configured in .env" };
+
+      const stateEncoded = signOAuthState({ provider, userId });
+      const scopes = "video.publish,video.list,user.info.basic";
+
+      const url = `https://www.tiktok.com/v2/auth/authorize/?` +
+        `client_key=${encodeURIComponent(clientKey)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&response_type=code` +
+        `&scope=${encodeURIComponent(scopes)}` +
         `&state=${stateEncoded}`;
 
       return { url };
@@ -550,6 +612,173 @@ export async function handleOAuthCallback(
         } catch {}
         break;
       }
+
+      case "meta-social": {
+        const appId = process.env.META_APP_ID;
+        const appSecret = process.env.META_APP_SECRET;
+        if (!appId || !appSecret) {
+          return { success: false, error: "Meta OAuth not configured (META_APP_ID + META_APP_SECRET)" };
+        }
+
+        // Instagram Business Login: exchange code for short-lived token
+        const tokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: appId,
+            client_secret: appSecret,
+            grant_type: "authorization_code",
+            redirect_uri: getRedirectUri(provider, process.env.MINIAPP_URL || "http://localhost:3034"),
+            code,
+          }),
+        });
+        if (!tokenRes.ok) {
+          const err = await tokenRes.text();
+          return { success: false, error: `Instagram token exchange failed: ${err}` };
+        }
+        const shortLived = await tokenRes.json();
+        // shortLived has: { access_token, user_id, permissions[] }
+
+        // Exchange for long-lived token (60 days)
+        const longLivedRes = await fetch(
+          `https://graph.instagram.com/access_token?` +
+          `grant_type=ig_exchange_token&client_secret=${appSecret}` +
+          `&access_token=${shortLived.access_token}`
+        );
+        if (!longLivedRes.ok) {
+          const err = await longLivedRes.text();
+          return { success: false, error: `Instagram long-lived token exchange failed: ${err}` };
+        }
+        const longLived = await longLivedRes.json();
+        // longLived has: { access_token, token_type, expires_in }
+
+        const igUserId = String(shortLived.user_id || "");
+
+        // Get user profile info
+        let igUsername = "";
+        try {
+          const profileRes = await fetch(
+            `https://graph.instagram.com/v21.0/me?fields=user_id,username,account_type,name&access_token=${longLived.access_token}`
+          );
+          if (profileRes.ok) {
+            const profile = await profileRes.json();
+            igUsername = profile.username || "";
+          }
+        } catch {}
+
+        credentials = {
+          access_token: longLived.access_token,
+          user_access_token: longLived.access_token,
+          refresh_token: longLived.access_token, // Meta uses token exchange for refresh
+          expires_at: Date.now() + (longLived.expires_in || 5184000) * 1000, // ~60 days
+          ig_user_id: igUserId,
+        };
+        metadata = {
+          ig_user_id: igUserId,
+          username: igUsername,
+          has_instagram: true,
+        };
+        break;
+      }
+
+      case "youtube": {
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+        if (!clientId || !clientSecret) {
+          return { success: false, error: "Google OAuth not configured (needed for YouTube)" };
+        }
+
+        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            code,
+            client_id: clientId,
+            client_secret: clientSecret,
+            redirect_uri: getRedirectUri(provider, process.env.MINIAPP_URL || "http://localhost:3034"),
+            grant_type: "authorization_code",
+          }),
+        });
+
+        if (!tokenRes.ok) {
+          const err = await tokenRes.text();
+          return { success: false, error: `YouTube token exchange failed: ${err}` };
+        }
+
+        const tokens = await tokenRes.json();
+        credentials = {
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
+        };
+
+        // Get channel info
+        try {
+          const channelRes = await fetch(
+            `https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true`,
+            { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+          );
+          if (channelRes.ok) {
+            const channelData = await channelRes.json();
+            const ch = channelData.items?.[0];
+            if (ch) {
+              metadata = { channel_name: ch.snippet.title, channel_id: ch.id };
+            }
+          }
+        } catch {}
+        break;
+      }
+
+      case "tiktok": {
+        const clientKey = process.env.TIKTOK_CLIENT_KEY;
+        const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
+        if (!clientKey || !clientSecret) {
+          return { success: false, error: "TikTok OAuth not configured (TIKTOK_CLIENT_KEY + TIKTOK_CLIENT_SECRET)" };
+        }
+
+        const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_key: clientKey,
+            client_secret: clientSecret,
+            code,
+            grant_type: "authorization_code",
+            redirect_uri: getRedirectUri(provider, process.env.MINIAPP_URL || "http://localhost:3034"),
+          }),
+        });
+
+        if (!tokenRes.ok) {
+          const err = await tokenRes.text();
+          return { success: false, error: `TikTok token exchange failed: ${err}` };
+        }
+
+        const tokens = await tokenRes.json();
+        credentials = {
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          expires_at: Date.now() + (tokens.expires_in || 86400) * 1000,
+          refresh_expires_at: Date.now() + (tokens.refresh_expires_in || 31536000) * 1000,
+          open_id: tokens.open_id,
+        };
+        metadata = { open_id: tokens.open_id };
+
+        // Get user info
+        try {
+          const userRes = await fetch(
+            "https://open.tiktokapis.com/v2/user/info/?fields=open_id,display_name,avatar_url",
+            { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+          );
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            const user = userData.data?.user;
+            if (user) {
+              metadata = { ...metadata, display_name: user.display_name, avatar_url: user.avatar_url };
+            }
+          }
+        } catch {}
+        break;
+      }
     }
 
     // Store in DB
@@ -672,6 +901,149 @@ async function refreshZoomToken(
   // Update DB with new tokens
   db.upsertIntegration({ user_id: userId, provider: "zoom", status: "connected", credentials: newCredentials });
 
+  return tokens.access_token;
+}
+
+// ============================================================
+// META TOKEN REFRESH
+// ============================================================
+
+async function refreshMetaToken(
+  db: Database,
+  userId: string,
+  credentials: Record<string, any>
+): Promise<string> {
+  // Instagram long-lived tokens last ~60 days; refresh when within 7 days of expiry
+  if (credentials.expires_at && Date.now() < credentials.expires_at - 7 * 24 * 60 * 60 * 1000) {
+    return credentials.access_token;
+  }
+
+  if (!credentials.access_token) {
+    return credentials.access_token;
+  }
+
+  console.log(`[integrations] Refreshing Instagram token for user ${userId}`);
+
+  // Instagram Business Login: refresh long-lived token
+  const res = await fetch(
+    `https://graph.instagram.com/refresh_access_token?` +
+    `grant_type=ig_refresh_token&access_token=${credentials.access_token}`
+  );
+
+  if (!res.ok) {
+    console.error(`[integrations] Instagram token refresh failed: ${res.status}`);
+    return credentials.access_token;
+  }
+
+  const data = await res.json();
+
+  const newCredentials = {
+    ...credentials,
+    access_token: data.access_token,
+    user_access_token: data.access_token,
+    refresh_token: data.access_token,
+    expires_at: Date.now() + (data.expires_in || 5184000) * 1000,
+  };
+
+  db.upsertIntegration({ user_id: userId, provider: "meta-social", status: "connected", credentials: newCredentials });
+  return data.access_token;
+}
+
+// ============================================================
+// YOUTUBE TOKEN REFRESH
+// ============================================================
+
+async function refreshYouTubeToken(
+  db: Database,
+  userId: string,
+  credentials: Record<string, any>
+): Promise<string> {
+  if (credentials.expires_at && Date.now() < credentials.expires_at - 60_000) {
+    return credentials.access_token;
+  }
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret || !credentials.refresh_token) {
+    return credentials.access_token;
+  }
+
+  console.log(`[integrations] Refreshing YouTube token for user ${userId}`);
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: credentials.refresh_token,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  if (!res.ok) {
+    console.error(`[integrations] YouTube token refresh failed: ${res.status}`);
+    return credentials.access_token;
+  }
+
+  const tokens = await res.json();
+  const newCredentials = {
+    ...credentials,
+    access_token: tokens.access_token,
+    expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
+  };
+
+  db.upsertIntegration({ user_id: userId, provider: "youtube", status: "connected", credentials: newCredentials });
+  return tokens.access_token;
+}
+
+// ============================================================
+// TIKTOK TOKEN REFRESH
+// ============================================================
+
+async function refreshTikTokToken(
+  db: Database,
+  userId: string,
+  credentials: Record<string, any>
+): Promise<string> {
+  if (credentials.expires_at && Date.now() < credentials.expires_at - 60_000) {
+    return credentials.access_token;
+  }
+
+  const clientKey = process.env.TIKTOK_CLIENT_KEY;
+  const clientSecret = process.env.TIKTOK_CLIENT_SECRET;
+  if (!clientKey || !clientSecret || !credentials.refresh_token) {
+    return credentials.access_token;
+  }
+
+  console.log(`[integrations] Refreshing TikTok token for user ${userId}`);
+
+  const res = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_key: clientKey,
+      client_secret: clientSecret,
+      refresh_token: credentials.refresh_token,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  if (!res.ok) {
+    console.error(`[integrations] TikTok token refresh failed: ${res.status}`);
+    return credentials.access_token;
+  }
+
+  const tokens = await res.json();
+  const newCredentials = {
+    ...credentials,
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token || credentials.refresh_token,
+    expires_at: Date.now() + (tokens.expires_in || 86400) * 1000,
+    refresh_expires_at: Date.now() + (tokens.refresh_expires_in || 31536000) * 1000,
+  };
+
+  db.upsertIntegration({ user_id: userId, provider: "tiktok", status: "connected", credentials: newCredentials });
   return tokens.access_token;
 }
 
@@ -809,6 +1181,52 @@ export async function regenerateMcpConfig(
               command: cmd.command,
               args: cmd.args,
               env: { CLICKUP_API_TOKEN: creds.api_token },
+            };
+          }
+          break;
+        }
+
+        case "meta-social": {
+          const metaCreds = integration.credentials || {};
+          if (metaCreds.access_token) {
+            const accessToken = await refreshMetaToken(db, userId, metaCreds);
+            mcpServers["meta-social"] = {
+              type: "stdio",
+              command: "bun",
+              args: ["run", join(PROJECT_ROOT, "services/meta-social-mcp.ts")],
+              env: {
+                META_ACCESS_TOKEN: accessToken,
+                META_PAGE_ID: metaCreds.page_id || "",
+                META_IG_USER_ID: metaCreds.ig_user_id || "",
+              },
+            };
+          }
+          break;
+        }
+
+        case "youtube": {
+          const ytCreds = integration.credentials || {};
+          if (ytCreds.access_token && ytCreds.refresh_token) {
+            const accessToken = await refreshYouTubeToken(db, userId, ytCreds);
+            mcpServers["youtube"] = {
+              type: "stdio",
+              command: "bun",
+              args: ["run", join(PROJECT_ROOT, "services/youtube-mcp.ts")],
+              env: { YOUTUBE_ACCESS_TOKEN: accessToken },
+            };
+          }
+          break;
+        }
+
+        case "tiktok": {
+          const ttCreds = integration.credentials || {};
+          if (ttCreds.access_token && ttCreds.refresh_token) {
+            const accessToken = await refreshTikTokToken(db, userId, ttCreds);
+            mcpServers["tiktok"] = {
+              type: "stdio",
+              command: "bun",
+              args: ["run", join(PROJECT_ROOT, "services/tiktok-mcp.ts")],
+              env: { TIKTOK_ACCESS_TOKEN: accessToken },
             };
           }
           break;

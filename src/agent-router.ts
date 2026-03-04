@@ -31,6 +31,9 @@ const AGENT_TOOLS: Record<string, string> = {
   helios: `
 TOOLS — MCP integrations:
 • Go High Level MCP (gohighlevel): Create campaigns, ad sets, ads, audiences, manage contacts and pipelines for ad leads.
+• Meta Social MCP (meta-social): Publish ad creative to Instagram and Facebook pages. Track post engagement and insights.
+• YouTube MCP (youtube): Upload video ads and Shorts to YouTube. Monitor video ad performance.
+• TikTok MCP (tiktok): Upload ad content to TikTok. Track video performance metrics.
 • Playwright (browser): Research products, landing pages, competitor ads. Take screenshots for creative reference.
 • Google Workspace MCP (Sheets): Pull ad performance data from connected sheets. Save budget/performance reports.
 • Square MCP: Pull sales/conversion data to measure ad-to-revenue performance.
@@ -56,6 +59,9 @@ WORKFLOW: When asked to create a campaign:
   pixel: `
 TOOLS — MCP integrations:
 • Go High Level MCP (gohighlevel): Schedule and publish social media posts across connected accounts. Manage social calendar.
+• Meta Social MCP (meta-social): Post photos, carousels, reels, stories to Instagram. Post to Facebook pages. Get engagement metrics.
+• YouTube MCP (youtube): Upload Shorts and videos to YouTube. Get channel stats and video analytics.
+• TikTok MCP (tiktok): Upload and publish TikTok videos. Get creator info and video stats.
 • Playwright (browser): Research trending content, view competitor profiles, check hashtag performance, screenshot reference posts.
 • Google Workspace MCP (Calendar): Coordinate posting schedule with the user's calendar. (Sheets): Track engagement metrics.
 • Notion MCP: Save content calendars, campaign briefs, and social media playbooks.
@@ -72,17 +78,22 @@ SKILLS — Slash commands you can invoke:
 
 PUBLISHING WORKFLOW (execute phase):
 When publishing content that has been approved:
-1. Use the GHL create-post tool to publish to each target platform.
-2. Set status to "PUBLISHED" for immediate posting, or "SCHEDULED" with a date if specified.
-3. Include all images from the prepare phase as media attachments.
-4. Use the approved caption text as the post body.
-5. Default platforms: Instagram AND Facebook (unless user specified otherwise).
-6. Report back the post IDs and status for each platform.
+1. If Meta Social MCP is connected, use it to publish directly to Instagram/Facebook (preferred for direct posting).
+2. If only GHL is connected, use the GHL create-post tool to publish to each target platform.
+3. For YouTube Shorts, use the YouTube MCP upload_video tool (include #Shorts in title for videos ≤60s).
+4. For TikTok, use the TikTok MCP upload_video tool.
+5. Include all images from the prepare phase as media attachments.
+6. Use the approved caption text as the post body.
+7. Default platforms: Instagram AND Facebook (unless user specified otherwise).
+8. Report back the post IDs and status for each platform.
 `,
 
   kai: `
 TOOLS — MCP integrations:
 • Notion MCP: Save content drafts, editorial calendars, brand guidelines, and content libraries to Notion.
+• Meta Social MCP (meta-social): Publish content directly to Instagram and Facebook. Create carousels from article visuals.
+• YouTube MCP (youtube): Upload video content and manage YouTube channel.
+• TikTok MCP (tiktok): Publish short-form video content to TikTok.
 • Playwright (browser): Research topics, read source material, verify facts, check competitor content.
 • Google Workspace MCP (Docs): Create and edit long-form content in Google Docs. (Drive): Search reference materials.
 
@@ -118,6 +129,9 @@ SKILLS — Slash commands you can invoke:
 
   morpheus: `
 TOOLS — MCP integrations:
+• Meta Social MCP (meta-social): Publish Instagram Reels and Facebook Reels directly. Upload stories with video content.
+• YouTube MCP (youtube): Upload videos and Shorts to YouTube. Manage video metadata, privacy, and analytics.
+• TikTok MCP (tiktok): Upload and publish TikTok videos. Track video performance and creator stats.
 • Playwright (browser): Research video trends, competitor content, reference material, and platform best practices.
 • Google Workspace MCP (Docs): Write and collaborate on scripts. (Drive): Store and organize video assets. (Sheets): Track production schedules.
 • Notion MCP: Save video production plans, shot lists, and content calendars.
@@ -304,6 +318,9 @@ SKILLS — Slash commands you can invoke:
   helia: `
 TOOLS — MCP integrations:
 • Gmail MCP (google-workspace): Draft and send press outreach emails, manage media relationships, follow up with journalists.
+• Meta Social MCP (meta-social): Publish PR announcements to Instagram and Facebook pages. Share press content as posts/stories.
+• YouTube MCP (youtube): Upload press videos, announcements, and event recordings to YouTube.
+• TikTok MCP (tiktok): Publish short PR clips and brand announcements to TikTok.
 • Playwright (browser): Research media coverage, journalist contacts, industry news, and publication editorial calendars.
 • Notion MCP: Save media lists, press coverage tracking, and PR campaign plans.
 • Google Workspace MCP (Docs): Write press releases. (Sheets): Track media outreach and coverage. (Calendar): Plan PR timelines.
@@ -440,6 +457,9 @@ SKILLS — Slash commands you can invoke:
   nexus: `
 TOOLS — MCP integrations:
 • Playwright (browser): Research community platforms (Discord, Circle, Discourse), analyze competitor communities, monitor engagement.
+• Meta Social MCP (meta-social): Post community updates to Instagram and Facebook. Share event announcements and highlights.
+• YouTube MCP (youtube): Upload community event recordings and tutorial videos.
+• TikTok MCP (tiktok): Share community highlights and event clips on TikTok.
 • Notion MCP: Save community guidelines, member directories, event calendars, and engagement playbooks.
 • Google Workspace MCP (Docs): Write community content. (Sheets): Track community metrics. (Calendar): Plan community events.
 • Go High Level MCP (gohighlevel): Manage community member contacts, send announcements, track member journeys.
