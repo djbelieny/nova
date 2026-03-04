@@ -1,3 +1,4 @@
+# Nova Changelog — self-maintained by Nova
 # Nova — Changelog
 
 All modifications to Nova's source code are logged here, whether triggered by user request, auto-correction, or self-learning.

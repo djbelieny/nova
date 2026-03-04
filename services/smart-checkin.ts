@@ -13,7 +13,7 @@
  * Run: bun run services/smart-checkin.ts
  */
 
-import { dirname } from "path";
+import { dirname, join } from "path";
 import { getDb, type Database } from "../src/db.ts";
 import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
