@@ -2849,7 +2849,7 @@ const server = Bun.serve({
     }
 
     // ---- OAuth callback (no auth required — comes from provider) ----
-    if (path === "/api/integrations/callback" && method === "GET") {
+    if ((path === "/api/integrations/callback" || path === "/api/integrations/callback/") && method === "GET") {
       const stateParam = url.searchParams.get("state");
       const code = url.searchParams.get("code");
       const error = url.searchParams.get("error");

@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@slack/bolt": "^4.6.0",
     "docx": "^9.5.3",
     "dotenv": "^17.3.1",

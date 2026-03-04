@@ -5,7 +5,7 @@
  * - Google Personal (google-personal)
  * - Google Work (google-work)
  * - Notion (notion)
- * - Zoom (zoom)
+ * - Zoom (zoom) — User OAuth (click "Connect" → Zoom authorize → callback)
  * - Go High Level (gohighlevel) — API-key based, no OAuth
  * - ClickUp (clickup) — API-key based, no OAuth
  *
@@ -21,6 +21,14 @@ import { createHmac } from "crypto";
 import type { Database } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
+
+/** Per-provider redirect URI overrides (env var). Falls back to standard callback path. */
+function getRedirectUri(provider: string, baseUrl: string): string {
+  const envKey = `${provider.toUpperCase().replace(/-/g, "_")}_REDIRECT_URI`;
+  const override = process.env[envKey];
+  if (override) return override;
+  return `${baseUrl}/api/integrations/callback`;
+}
 const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 const USERS_DIR = join(NOVA_DIR, "users");
 
@@ -306,7 +314,7 @@ export function getOAuthUrl(
   userId: string,
   callbackBaseUrl: string
 ): { url: string; error?: string } {
-  const redirectUri = `${callbackBaseUrl}/api/integrations/callback`;
+  const redirectUri = getRedirectUri(provider, callbackBaseUrl);
 
   switch (provider) {
     case "google-personal":
@@ -314,7 +322,7 @@ export function getOAuthUrl(
       const clientId = process.env.GOOGLE_CLIENT_ID;
       if (!clientId) return { url: "", error: "GOOGLE_CLIENT_ID not configured in .env" };
 
-      const googleRedirectUri = `${callbackBaseUrl}/api/integrations/callback`;
+      const googleRedirectUri = getRedirectUri(provider, callbackBaseUrl);
 
       const label = provider === "google-personal" ? "personal" : "work";
       const stateEncoded = signOAuthState({ provider, userId, label });
@@ -409,7 +417,7 @@ export async function handleOAuthCallback(
             code,
             client_id: clientId,
             client_secret: clientSecret,
-            redirect_uri: `${process.env.MINIAPP_URL || "http://localhost:3034"}/api/integrations/callback`,
+            redirect_uri: getRedirectUri(provider, process.env.MINIAPP_URL || "http://localhost:3034"),
             grant_type: "authorization_code",
           }),
         });
@@ -475,7 +483,7 @@ export async function handleOAuthCallback(
           body: JSON.stringify({
             grant_type: "authorization_code",
             code,
-            redirect_uri: `${process.env.MINIAPP_URL || "http://localhost:3034"}/api/integrations/callback`,
+            redirect_uri: getRedirectUri(provider, process.env.MINIAPP_URL || "http://localhost:3034"),
           }),
         });
 
@@ -510,7 +518,7 @@ export async function handleOAuthCallback(
           body: new URLSearchParams({
             grant_type: "authorization_code",
             code,
-            redirect_uri: `${process.env.MINIAPP_URL || "http://localhost:3034"}/api/integrations/callback`,
+            redirect_uri: getRedirectUri(provider, process.env.MINIAPP_URL || "http://localhost:3034"),
           }),
         });
 
@@ -525,6 +533,17 @@ export async function handleOAuthCallback(
           refresh_token: tokens.refresh_token,
           expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
         };
+
+        // Get user info
+        try {
+          const userInfoRes = await fetch("https://api.zoom.us/v2/users/me", {
+            headers: { Authorization: `Bearer ${tokens.access_token}` },
+          });
+          if (userInfoRes.ok) {
+            const userInfo = await userInfoRes.json();
+            metadata = { email: userInfo.email, name: `${userInfo.first_name} ${userInfo.last_name}`.trim() };
+          }
+        } catch {}
         break;
       }
     }
@@ -600,6 +619,59 @@ export async function disconnectIntegration(
 }
 
 // ============================================================
+// ZOOM TOKEN REFRESH
+// ============================================================
+
+async function refreshZoomToken(
+  db: Database,
+  userId: string,
+  credentials: Record<string, any>
+): Promise<string> {
+  // Still valid (with 60s buffer)
+  if (credentials.expires_at && Date.now() < credentials.expires_at - 60_000) {
+    return credentials.access_token;
+  }
+
+  const clientId = process.env.ZOOM_CLIENT_ID;
+  const clientSecret = process.env.ZOOM_CLIENT_SECRET;
+  if (!clientId || !clientSecret || !credentials.refresh_token) {
+    return credentials.access_token; // Can't refresh — return current token
+  }
+
+  console.log(`[integrations] Refreshing Zoom token for user ${userId}`);
+
+  const res = await fetch("https://zoom.us/oauth/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: credentials.refresh_token,
+    }),
+  });
+
+  if (!res.ok) {
+    console.error(`[integrations] Zoom token refresh failed: ${res.status}`);
+    return credentials.access_token; // Return stale token as fallback
+  }
+
+  const tokens = await res.json();
+  const newCredentials = {
+    ...credentials,
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token || credentials.refresh_token,
+    expires_at: Date.now() + (tokens.expires_in || 3600) * 1000,
+  };
+
+  // Update DB with new tokens
+  db.upsertIntegration({ user_id: userId, provider: "zoom", status: "connected", credentials: newCredentials });
+
+  return tokens.access_token;
+}
+
+// ============================================================
 // MCP CONFIG GENERATION
 // ============================================================
 
@@ -668,32 +740,41 @@ export async function regenerateMcpConfig(
         }
 
         case "zoom": {
-          // Zoom MCP uses Server-to-Server OAuth (account_credentials grant).
-          // It generates its own access tokens from ACCOUNT_ID + CLIENT_ID + CLIENT_SECRET.
-          // Prefer the server config from .mcp.json (correct binary path) over mcpCommand().
-          const globalZoom = globalConfig.mcpServers?.["zoom"];
-          if (globalZoom) {
-            mcpServers["zoom"] = {
-              ...globalZoom,
-              env: {
-                ZOOM_ACCOUNT_ID: process.env.ZOOM_ACCOUNT_ID || "",
-                ZOOM_CLIENT_ID: process.env.ZOOM_CLIENT_ID || "",
-                ZOOM_CLIENT_SECRET: process.env.ZOOM_CLIENT_SECRET || "",
-              },
-            };
-          } else {
-            // Fallback if zoom not in .mcp.json
-            const zoomCmd = mcpCommand("@prathamesh0901/zoom-mcp-server");
+          const zoomCreds = integration.credentials || {};
+          if (zoomCreds.access_token && zoomCreds.refresh_token) {
+            // User OAuth — refresh if needed, use local MCP server
+            const accessToken = await refreshZoomToken(db, userId, zoomCreds);
             mcpServers["zoom"] = {
               type: "stdio",
-              command: zoomCmd.command,
-              args: zoomCmd.args,
-              env: {
-                ZOOM_ACCOUNT_ID: process.env.ZOOM_ACCOUNT_ID || "",
-                ZOOM_CLIENT_ID: process.env.ZOOM_CLIENT_ID || "",
-                ZOOM_CLIENT_SECRET: process.env.ZOOM_CLIENT_SECRET || "",
-              },
+              command: "bun",
+              args: ["run", join(PROJECT_ROOT, "services/zoom-mcp.ts")],
+              env: { ZOOM_ACCESS_TOKEN: accessToken },
             };
+          } else if (zoomCreds.account_id && zoomCreds.client_id && zoomCreds.client_secret) {
+            // S2S fallback for existing users who saved credentials via old flow
+            const globalZoom = globalConfig.mcpServers?.["zoom"];
+            if (globalZoom) {
+              mcpServers["zoom"] = {
+                ...globalZoom,
+                env: {
+                  ZOOM_ACCOUNT_ID: zoomCreds.account_id,
+                  ZOOM_CLIENT_ID: zoomCreds.client_id,
+                  ZOOM_CLIENT_SECRET: zoomCreds.client_secret,
+                },
+              };
+            } else {
+              const zoomCmd = mcpCommand("@prathamesh0901/zoom-mcp-server");
+              mcpServers["zoom"] = {
+                type: "stdio",
+                command: zoomCmd.command,
+                args: zoomCmd.args,
+                env: {
+                  ZOOM_ACCOUNT_ID: zoomCreds.account_id,
+                  ZOOM_CLIENT_ID: zoomCreds.client_id,
+                  ZOOM_CLIENT_SECRET: zoomCreds.client_secret,
+                },
+              };
+            }
           }
           break;
         }
