@@ -2307,6 +2307,7 @@ Bun.serve({
       const body = await req.json().catch(() => null);
       if (!body) return new Response(JSON.stringify({ error: "invalid" }), { status: 400 });
       const phoneNumberId = body.phone_number_id
+        || body.data?.[0]?.phone_number_id
         || body.message?.kapso?.phone_number_id
         || body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
       if (phoneNumberId) {

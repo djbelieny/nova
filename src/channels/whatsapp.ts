@@ -23,6 +23,7 @@ import type {
 } from "./types.ts";
 
 const KAPSO_BASE = "https://api.kapso.ai/meta/whatsapp/v24.0";
+const KAPSO_PLATFORM = "https://api.kapso.ai/platform/v1";
 
 export type ConnectionState = "disconnected" | "connected" | "error";
 
@@ -71,12 +72,14 @@ export class WhatsAppAdapter implements ChannelAdapter {
     const webhookUrl = process.env.MINIAPP_PUBLIC_URL;
     if (webhookUrl) {
       try {
-        const res = await fetch(`${KAPSO_BASE}/whatsapp/phone_numbers/${this.phoneNumberId}/webhooks`, {
+        const res = await fetch(`${KAPSO_PLATFORM}/whatsapp/phone_numbers/${this.phoneNumberId}/webhooks`, {
           method: "POST",
           headers: this.headers(),
           body: JSON.stringify({
-            url: `${webhookUrl}/webhook/kapso`,
-            events: ["message.received"],
+            webhook: {
+              url: `${webhookUrl}/webhook/kapso`,
+              events: ["whatsapp.message.received"],
+            },
           }),
         });
         if (res.ok) {
@@ -118,22 +121,69 @@ export class WhatsAppAdapter implements ChannelAdapter {
   async handleWebhook(payload: any): Promise<void> {
     if (!this.messageHandler) return;
 
-    const message = payload.message || payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-    if (!message) return;
+    // Kapso sends batched or single message formats
+    const messages = this.extractMessages(payload);
+    for (const message of messages) {
+      await this.processMessage(message);
+    }
+  }
 
-    const senderPhone = message.from || "";
-    const chatId = senderPhone; // In Cloud API, chat ID is the sender's phone number
+  /** Extract messages from Kapso webhook payload (batched or single format). */
+  private extractMessages(payload: any): any[] {
+    // Batched format: { type: "whatsapp.message.received", batch: true, data: [...] }
+    if (payload.type === "whatsapp.message.received" && payload.data) {
+      return payload.data
+        .map((item: any) => item.message)
+        .filter((m: any) => m && m.kapso?.direction === "inbound");
+    }
+
+    // Single format: { message: {...}, conversation: {...}, phone_number_id: "..." }
+    if (payload.message) {
+      const msg = payload.message;
+      // Only process inbound messages
+      if (msg.kapso?.direction && msg.kapso.direction !== "inbound") return [];
+      return [msg];
+    }
+
+    // Meta forwarded format: { entry: [...] }
+    const metaMsg = payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    if (metaMsg) return [metaMsg];
+
+    return [];
+  }
+
+  /** Process a single extracted message. */
+  private async processMessage(message: any): Promise<void> {
+    if (!this.messageHandler) return;
+
+    const senderPhone = message.from || message.kapso?.phone_number || "";
+    const chatId = senderPhone;
     const messageId = message.id || "";
-    const isGroup = false; // Cloud API groups use a different structure; DMs for now
+    const isGroup = false;
 
-    // Button press
-    if (message.interactive?.button_reply) {
+    // Button press (interactive reply)
+    if (message.interactive?.button_reply || message.interactive?.list_reply) {
+      if (this.buttonHandler) {
+        const reply = message.interactive.button_reply || message.interactive.list_reply;
+        this.buttonHandler(
+          chatId,
+          "",
+          senderPhone,
+          reply.id,
+          async (outMsg) => { await this.send(chatId, outMsg); },
+        );
+      }
+      return;
+    }
+
+    // Button reply (older format)
+    if (message.type === "button" && message.button) {
       if (this.buttonHandler) {
         this.buttonHandler(
           chatId,
           "",
           senderPhone,
-          message.interactive.button_reply.id,
+          message.button.payload,
           async (outMsg) => { await this.send(chatId, outMsg); },
         );
       }
@@ -142,7 +192,6 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     // Text message
     if (message.text?.body) {
-      // Check if this is a numbered list response (legacy button emulation)
       const numberMatch = message.text.body.match(/^(\d+)$/);
       if (numberMatch && this.buttonHandler) {
         this.buttonHandler(
@@ -375,7 +424,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
   private headers(): Record<string, string> {
     return {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${this.apiKey}`,
+      "X-API-Key": this.apiKey,
     };
   }
 
@@ -409,7 +458,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     // Step 2: Download the actual media
     const res = await fetch(meta.url, {
-      headers: { "Authorization": `Bearer ${this.apiKey}` },
+      headers: { "X-API-Key": this.apiKey },
     });
     if (!res.ok) throw new Error(`Failed to download media: ${res.status}`);
     const arrayBuffer = await res.arrayBuffer();
@@ -423,7 +472,7 @@ export class WhatsAppAdapter implements ChannelAdapter {
 
     const res = await fetch(`${KAPSO_BASE}/${this.phoneNumberId}/media`, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${this.apiKey}` },
+      headers: { "X-API-Key": this.apiKey },
       body: formData,
     });
     if (!res.ok) {
