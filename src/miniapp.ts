@@ -2917,15 +2917,8 @@ const server = Bun.serve({
 
     // ---- API routes (require auth) ----
     if (path.startsWith("/api/")) {
-      const initDataHeader = req.headers.get("initdata") || req.headers.get("initData") || "";
-      if (!initDataHeader) {
-        console.warn(`[miniapp] API request to ${path} missing initData header`);
-      }
       const authResult = await authenticateRequest(req);
-      if (authResult instanceof Response) {
-        console.warn(`[miniapp] Auth failed for ${path}: initData length=${initDataHeader.length}, has hash=${initDataHeader.includes("hash=")}`);
-        return authResult;
-      }
+      if (authResult instanceof Response) return authResult;
 
       const { user } = authResult;
       const userId = user.id;
