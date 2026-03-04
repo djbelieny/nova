@@ -693,7 +693,6 @@ async function main() {
   const checks = await Promise.allSettled([
     checkServices(),
     checkTypescript(),
-    checkGitState(),
     checkDependencies(),
     checkResources(),
     checkLogs(),

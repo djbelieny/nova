@@ -16,7 +16,7 @@ const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
 
 // Config
-const MAX_DAILY_CHECKINS = parseInt(process.env.HEARTBEAT_MAX_DAILY || "3");
+const MAX_DAILY_CHECKINS = parseInt(process.env.HEARTBEAT_MAX_DAILY || "1");
 const ACTIVE_HOURS_RAW = process.env.HEARTBEAT_ACTIVE_HOURS || "8-22";
 const [ACTIVE_START, ACTIVE_END] = ACTIVE_HOURS_RAW.split("-").map(Number);
 

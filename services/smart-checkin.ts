@@ -28,6 +28,9 @@ registerProvider(new CodexProvider());
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 
+// Max non-urgent check-ins per day. 0 = unlimited. Default: 3.
+const MAX_DAILY_CHECKINS = parseInt(process.env.CHECKIN_MAX_DAILY || "3");
+
 interface ProactiveUser {
   id: string;
   telegram_id: string;
@@ -68,6 +71,21 @@ function loadState(userId: string): CheckinState {
 function saveState(userId: string, state: CheckinState): void {
   const db = getStateDb();
   db.setServiceState("smart-checkin", userId, JSON.stringify(state));
+}
+
+// ============================================================
+// DAILY LIMIT GATE
+// ============================================================
+
+function getCheckinsToday(db: Database, userId: string): number {
+  try {
+    return db.countTodayMessages(userId, {
+      role: "assistant",
+      metadataFilter: { source: "smart-checkin" },
+    });
+  } catch {
+    return 0;
+  }
 }
 
 // ============================================================
@@ -156,6 +174,78 @@ async function getLastActivity(db: Database, userId: string): Promise<string> {
   return `Last message: ~${hoursSince.toFixed(1)} hours ago (estimated)`;
 }
 
+function getRestOfDaySchedule(db: Database, userId: string, timezone: string): string {
+  try {
+    const now = new Date();
+    // End of day in user's timezone — compute midnight
+    const midnight = new Date(
+      now.toLocaleString("en-US", { timeZone: timezone })
+    );
+    midnight.setHours(23, 59, 59, 999);
+
+    const tasks = db.getUpcomingScheduledTasks(
+      userId,
+      now.toISOString(),
+      midnight.toISOString(),
+      8
+    );
+
+    if (!tasks?.length) return "None";
+
+    return tasks
+      .map((t: any) => {
+        const at = new Date(t.next_run_at).toLocaleTimeString("en-US", {
+          timeZone: timezone,
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        return `${t.title} at ${at}`;
+      })
+      .join("; ");
+  } catch (error) {
+    console.error("Rest-of-day schedule error:", error);
+    return "Could not fetch schedule";
+  }
+}
+
+function getChangesSinceLastCheckin(
+  db: Database,
+  userId: string,
+  lastCheckinTime: string,
+  timezone: string
+): string {
+  if (!lastCheckinTime) return "No previous check-in";
+
+  try {
+    const since = new Date(lastCheckinTime);
+    const allRecent = db.getRecentMessages(userId, 20);
+    if (!allRecent?.length) return "No new messages";
+
+    const newMsgs = allRecent.filter(
+      (m: any) => new Date(m.created_at) > since
+    );
+
+    if (!newMsgs.length) return "No new messages since last check-in";
+
+    const msgs = [...newMsgs].reverse();
+    return msgs
+      .map((m: any) => {
+        const ts = new Date(m.created_at).toLocaleTimeString("en-US", {
+          timeZone: timezone,
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+        return `[${ts} ${m.role}]: ${m.content.substring(0, 100)}`;
+      })
+      .join("\n");
+  } catch (error) {
+    console.error("Changes since last check-in error:", error);
+    return "Could not fetch recent changes";
+  }
+}
+
 // ============================================================
 // TELEGRAM
 // ============================================================
@@ -191,6 +281,15 @@ async function askClaudeToDecide(
   const goals = getGoals(db, user.id);
   const recentActivity = getRecentActivity(db, user.id);
   const activity = await getLastActivity(db, user.id);
+  const restOfDay = getRestOfDaySchedule(db, user.id, user.timezone);
+  const changesSince = getChangesSinceLastCheckin(
+    db,
+    user.id,
+    state.lastCheckinTime,
+    user.timezone
+  );
+  const checkinsToday = getCheckinsToday(db, user.id);
+  const dailyLimit = MAX_DAILY_CHECKINS > 0 ? MAX_DAILY_CHECKINS : "unlimited";
 
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -210,15 +309,22 @@ async function askClaudeToDecide(
 Time: ${timeStr} (${timeContext})
 ${activity}
 Last check-in: ${state.lastCheckinTime || "Never"}
+Check-ins today: ${checkinsToday}/${dailyLimit}
 Goals: ${goals.length > 0 ? goals.join("; ") : "None"}
 Pending: ${state.pendingItems.join("; ") || "None"}
+
+Scheduled for the rest of today:
+${restOfDay}
+
+New since last check-in:
+${changesSince}
 
 Recent messages:
 ${recentActivity}
 
 Check Gmail, Calendar, and Notion for urgent items if helpful.
 
-Rules: Must check in at least once/day. After that, only for concrete reasons (deadlines, events, urgent emails, 4h+ silence). Max 3/day. Be brief, reference real context.
+Rules: Only check in for concrete reasons (deadlines, urgent emails, upcoming events, or silence 4h+ during work hours). Urgent/security issues override the daily limit. For non-urgent items, keep check-ins spaced at least 2 hours apart. Be brief, reference real context. Include relevant upcoming schedule items or recent changes when they add value.
 
 RESPOND:
 DECISION: YES or NO
@@ -271,6 +377,15 @@ async function main() {
   for (const user of users) {
     console.log(`\nChecking ${user.name}...`);
 
+    // Hard daily gate (skips Claude call entirely when limit hit)
+    if (MAX_DAILY_CHECKINS > 0) {
+      const todayCount = getCheckinsToday(db, user.id);
+      if (todayCount >= MAX_DAILY_CHECKINS) {
+        console.log(`${user.name}: daily limit (${MAX_DAILY_CHECKINS}) reached — skipped`);
+        continue;
+      }
+    }
+
     const { shouldCheckin, message } = await askClaudeToDecide(db, user);
 
     if (shouldCheckin && message && message !== "none") {
@@ -281,6 +396,13 @@ async function main() {
         const state = loadState(user.id);
         state.lastCheckinTime = new Date().toISOString();
         saveState(user.id, state);
+        // Record in messages table so countTodayMessages can track the daily limit
+        db.saveMessage({
+          role: "assistant",
+          content: message,
+          user_id: user.id,
+          metadata: { source: "smart-checkin" },
+        });
         console.log(`Check-in sent to ${user.name}!`);
       } else {
         console.error(`Failed to send check-in to ${user.name}`);
