@@ -66,7 +66,22 @@ async function sendTelegram(chatId: string, message: string): Promise<boolean> {
         }),
       }
     );
-    return response.ok;
+    if (response.ok) return true;
+
+    // Fallback: send without Markdown parsing
+    const fallback = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: message,
+          disable_web_page_preview: true,
+        }),
+      }
+    );
+    return fallback.ok;
   } catch {
     return false;
   }
