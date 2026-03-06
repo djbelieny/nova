@@ -1,29 +1,34 @@
 /**
  * Smart Check-in (Multi-User)
  *
- * A proactive assistant pattern where Claude decides:
- * - IF to check in (based on real context from Supabase + MCPs)
- * - WHAT to say (based on goals, recent activity, calendar, etc.)
+ * A proactive assistant pattern where the LLM decides:
+ * - IF to check in (based on real context from DB + integrations)
+ * - WHAT to say (based on goals, recent activity, tasks, etc.)
  *
- * Iterates over all active users with proactive_checkin enabled.
- *
- * Run periodically (e.g., every 30 minutes) and Claude
- * intelligently decides whether to message each user.
+ * Uses Groq (direct API) for reliable background execution.
+ * Fetches real data from ClickUp and Notion via REST APIs.
  *
  * Run: bun run services/smart-checkin.ts
  */
 
 import { dirname, join } from "path";
 import { getDb, type Database } from "../src/db.ts";
-import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, setDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
+import { GroqProvider } from "../src/providers/groq.ts";
+import { getIntegrationContext } from "../src/service-integrations.ts";
 
-// Register AI providers (smart-checkin runs standalone)
+// Register AI providers — Groq preferred for background reliability
+registerProvider(new GroqProvider());
 registerProvider(new ClaudeProvider());
 registerProvider(new GeminiProvider());
 registerProvider(new CodexProvider());
+
+if (process.env.GROQ_API_KEY) {
+  setDefaultProvider("groq");
+}
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
@@ -101,7 +106,7 @@ function getAllProactiveUsers(db: Database): ProactiveUser[] {
 }
 
 // ============================================================
-// REAL CONTEXT FROM SUPABASE (per-user)
+// REAL CONTEXT FROM DB (per-user)
 // ============================================================
 
 function getGoals(db: Database, userId: string): string[] {
@@ -145,7 +150,6 @@ function getRecentActivity(db: Database, userId: string): string {
 }
 
 async function getLastActivity(db: Database, userId: string): Promise<string> {
-  // Query DB directly for the actual last user message — state file is unreliable
   try {
     const data = db.getRecentMessages(userId, 1);
 
@@ -166,7 +170,6 @@ async function getLastActivity(db: Database, userId: string): Promise<string> {
     console.error("Last activity query error:", error);
   }
 
-  // Fallback to state only if DB query fails
   const state = loadState(userId);
   const lastMsg = new Date(state.lastMessageTime);
   const now = new Date();
@@ -177,7 +180,6 @@ async function getLastActivity(db: Database, userId: string): Promise<string> {
 function getRestOfDaySchedule(db: Database, userId: string, timezone: string): string {
   try {
     const now = new Date();
-    // End of day in user's timezone — compute midnight
     const midnight = new Date(
       now.toLocaleString("en-US", { timeZone: timezone })
     );
@@ -270,10 +272,10 @@ async function sendTelegram(chatId: string, message: string): Promise<boolean> {
 }
 
 // ============================================================
-// CLAUDE DECISION (per-user, with real context + MCP access)
+// LLM DECISION (per-user, with real context)
 // ============================================================
 
-async function askClaudeToDecide(
+async function askToDecide(
   db: Database,
   user: ProactiveUser
 ): Promise<{ shouldCheckin: boolean; message: string }> {
@@ -290,6 +292,9 @@ async function askClaudeToDecide(
   );
   const checkinsToday = getCheckinsToday(db, user.id);
   const dailyLimit = MAX_DAILY_CHECKINS > 0 ? MAX_DAILY_CHECKINS : "unlimited";
+
+  // Fetch real integration data
+  const integrationContext = await getIntegrationContext();
 
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -321,10 +326,9 @@ ${changesSince}
 
 Recent messages:
 ${recentActivity}
+${integrationContext ? `\nExternal tasks & projects:\n${integrationContext}` : ""}
 
-Check Gmail, Calendar, and Notion for urgent items if helpful.
-
-Rules: Only check in for concrete reasons (deadlines, urgent emails, upcoming events, or silence 4h+ during work hours). Urgent/security issues override the daily limit. For non-urgent items, keep check-ins spaced at least 2 hours apart. Be brief, reference real context. Include relevant upcoming schedule items or recent changes when they add value.
+Rules: Only check in for concrete reasons (deadlines, urgent tasks, upcoming events, or silence 4h+ during work hours). Urgent/security issues override the daily limit. For non-urgent items, keep check-ins spaced at least 2 hours apart. Be brief, reference real context. Include relevant upcoming schedule items or recent changes when they add value.
 
 RESPOND:
 DECISION: YES or NO
@@ -334,8 +338,6 @@ REASON: [why]`;
   try {
     const result = await getDefaultProvider().call({
       prompt,
-      model: "haiku",
-      maxTurns: 5,
       outputFormat: "text",
     });
 
@@ -352,7 +354,7 @@ REASON: [why]`;
 
     return { shouldCheckin, message };
   } catch (error) {
-    console.error(`Claude error for ${user.name}:`, error);
+    console.error(`Check-in error for ${user.name}:`, error);
     return { shouldCheckin: false, message: "" };
   }
 }
@@ -377,7 +379,7 @@ async function main() {
   for (const user of users) {
     console.log(`\nChecking ${user.name}...`);
 
-    // Hard daily gate (skips Claude call entirely when limit hit)
+    // Hard daily gate (skips LLM call entirely when limit hit)
     if (MAX_DAILY_CHECKINS > 0) {
       const todayCount = getCheckinsToday(db, user.id);
       if (todayCount >= MAX_DAILY_CHECKINS) {
@@ -386,7 +388,7 @@ async function main() {
       }
     }
 
-    const { shouldCheckin, message } = await askClaudeToDecide(db, user);
+    const { shouldCheckin, message } = await askToDecide(db, user);
 
     if (shouldCheckin && message && message !== "none") {
       console.log(`Sending check-in to ${user.name}...`);
@@ -396,7 +398,6 @@ async function main() {
         const state = loadState(user.id);
         state.lastCheckinTime = new Date().toISOString();
         saveState(user.id, state);
-        // Record in messages table so countTodayMessages can track the daily limit
         db.saveMessage({
           role: "assistant",
           content: message,
@@ -414,19 +415,3 @@ async function main() {
 }
 
 main();
-
-// ============================================================
-// SCHEDULING
-// ============================================================
-//
-// Run every 30 minutes:
-//
-// CRON (Linux):
-//   0,30 * * * * cd /path/to/nova && bun run services/smart-checkin.ts
-//
-// LAUNCHD (macOS):
-//   See ~/Library/LaunchAgents/com.nova.smart-checkin.plist
-//
-// WINDOWS Task Scheduler:
-//   Create task with "Daily" trigger, set to repeat every 30 minutes
-//

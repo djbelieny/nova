@@ -1,6 +1,7 @@
 # Environment
 .env
 .env.local
+DEPLOYMENT_TARGET.md
 
 # Dependencies
 node_modules/

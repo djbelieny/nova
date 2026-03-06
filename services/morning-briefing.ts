@@ -2,30 +2,29 @@
  * Morning Briefing (Multi-User)
  *
  * Sends a daily summary via Telegram at each user's preferred briefing hour.
- * Fetches real data from Supabase (goals/facts) and uses Claude CLI
- * with MCPs (Gmail, Calendar, Notion) for live context.
- *
- * Iterates over all active users with morning_briefing enabled,
- * checks each user's local time against their briefing_hour preference.
- *
- * Schedule this with:
- * - macOS: launchd (see daemon/morning-briefing.plist)
- * - Linux: cron or systemd timer
- * - Windows: Task Scheduler
+ * Fetches real data from SQLite (goals/facts), ClickUp, and Notion.
+ * Uses Groq (direct API) for reliable background generation.
  *
  * Run manually: bun run services/morning-briefing.ts
  */
 
 import { getDb, type Database } from "../src/db.ts";
-import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, setDefaultProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
+import { GroqProvider } from "../src/providers/groq.ts";
+import { getIntegrationContext } from "../src/service-integrations.ts";
 
-// Register AI providers (morning-briefing runs standalone)
+// Register AI providers — Groq preferred for background reliability
+registerProvider(new GroqProvider());
 registerProvider(new ClaudeProvider());
 registerProvider(new GeminiProvider());
 registerProvider(new CodexProvider());
+
+if (process.env.GROQ_API_KEY) {
+  setDefaultProvider("groq");
+}
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -138,10 +137,10 @@ function getDbContext(db: Database, userId: string): string {
 }
 
 // ============================================================
-// CLAUDE CLI WITH MCPs (per-user context)
+// GENERATE BRIEFING
 // ============================================================
 
-async function getMCPBriefing(user: BriefingUser, dbContext: string): Promise<string> {
+async function generateBriefing(user: BriefingUser, dbContext: string): Promise<string> {
   const now = new Date();
   const dateStr = now.toLocaleDateString("en-US", {
     timeZone: user.timezone,
@@ -151,28 +150,28 @@ async function getMCPBriefing(user: BriefingUser, dbContext: string): Promise<st
     year: "numeric",
   });
 
+  // Fetch real integration data
+  const integrationContext = await getIntegrationContext();
+
   const prompt = `Morning briefing for ${user.name}, ${dateStr}.
 
-${dbContext ? dbContext + "\n" : ""}Check Gmail, Calendar, Notion. Build a Telegram Markdown briefing:
+${dbContext ? dbContext + "\n" : ""}${integrationContext ? integrationContext + "\n" : ""}Build a concise Telegram Markdown briefing:
 - Greeting + date
-- Schedule: today's events with times
-- Inbox: unread/important email count + highlights
-- Tasks: open tasks + active goals
-- Focus: 1-2 sentence priority suggestion
+- Tasks: open tasks from ClickUp/Notion + active goals (use real data above)
+- Focus: 1-2 sentence priority suggestion based on what's most urgent
 
-Skip sections with no data silently. Bullet points, be brief.`;
+${!integrationContext ? "Note: No external task data available today — focus on goals and general priorities." : ""}
+Skip sections with no data silently. Bullet points, be brief. Keep it under 300 words.`;
 
   try {
     const result = await getDefaultProvider().call({
       prompt,
-      model: "haiku",
-      maxTurns: 5,
       outputFormat: "text",
     });
 
     return result.text;
   } catch (error) {
-    console.error(`Claude CLI error for ${user.name}:`, error);
+    console.error(`Briefing generation error for ${user.name}:`, error);
     return "";
   }
 }
@@ -211,7 +210,7 @@ async function main() {
     console.log(`\nBuilding briefing for ${user.name}...`);
 
     const dbContext = getDbContext(db, user.id);
-    const briefing = await getMCPBriefing(user, dbContext);
+    const briefing = await generateBriefing(user, dbContext);
 
     if (!briefing) {
       console.error(`Failed to generate briefing for ${user.name}`);
@@ -231,36 +230,3 @@ async function main() {
 }
 
 main();
-
-// ============================================================
-// LAUNCHD PLIST FOR SCHEDULING (macOS)
-// ============================================================
-/*
-Save this as ~/Library/LaunchAgents/com.nova.morning-briefing.plist:
-Runs hourly; the script itself checks each user's timezone and briefing_hour.
-
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.nova.morning-briefing</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/Users/YOUR_USERNAME/.bun/bin/bun</string>
-        <string>run</string>
-        <string>services/morning-briefing.ts</string>
-    </array>
-    <key>WorkingDirectory</key>
-    <string>/path/to/nova</string>
-    <key>StartInterval</key>
-    <integer>3600</integer>
-    <key>StandardOutPath</key>
-    <string>/tmp/morning-briefing.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/morning-briefing.error.log</string>
-</dict>
-</plist>
-
-Load with: launchctl load ~/Library/LaunchAgents/com.nova.morning-briefing.plist
-*/
