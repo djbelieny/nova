@@ -45,40 +45,52 @@ function markRanToday(db: Database, userId: string, timezone: string): void {
 // ============================================================
 
 async function sendTelegram(chatId: string, message: string): Promise<boolean> {
-  try {
-    // Try with Markdown first, fall back to plain text if parsing fails
-    const response = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          parse_mode: "Markdown",
-          disable_web_page_preview: true,
-        }),
-      }
-    );
-    if (response.ok) return true;
-
-    // Fallback: send without Markdown parsing
-    const fallback = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message,
-          disable_web_page_preview: true,
-        }),
-      }
-    );
-    return fallback.ok;
-  } catch {
-    return false;
+  const MAX_LEN = 4000;
+  const chunks: string[] = [];
+  let remaining = message;
+  while (remaining.length > MAX_LEN) {
+    let splitAt = remaining.lastIndexOf("\n", MAX_LEN);
+    if (splitAt < MAX_LEN / 2) splitAt = MAX_LEN;
+    chunks.push(remaining.substring(0, splitAt));
+    remaining = remaining.substring(splitAt).trimStart();
   }
+  if (remaining) chunks.push(remaining);
+
+  for (const chunk of chunks) {
+    try {
+      const response = await fetch(
+        `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: chunk,
+            parse_mode: "Markdown",
+            disable_web_page_preview: true,
+          }),
+        }
+      );
+      if (!response.ok) {
+        const fallback = await fetch(
+          `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: chunk,
+              disable_web_page_preview: true,
+            }),
+          }
+        );
+        if (!fallback.ok) return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 // ============================================================
