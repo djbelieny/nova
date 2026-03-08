@@ -700,15 +700,12 @@ async function callAI(prompt: string, model?: LegacyModelTier | ModelTier, userI
 async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, userId?: string, hint?: string, forceProvider?: string, userDefaultProvider?: string): Promise<string> {
   const tier = legacyToGenericTier(model);
 
-  // Resolve MCP config for user (regenerate from DB if missing)
+  // Resolve MCP config for user — always regenerate so expired tokens are refreshed
   let mcpConfigPath: string | undefined;
   if (userId) {
-    if (!hasUserMcpConfig(userId)) {
-      const connected = supabase.getConnectedIntegrations(userId);
-      if (connected && connected.length > 0) {
-        console.log(`[ai] Regenerating missing MCP config for user ${userId} (${connected.length} integrations)`);
-        await regenerateMcpConfig(supabase, userId);
-      }
+    const connected = supabase.getConnectedIntegrations(userId);
+    if (connected && connected.length > 0) {
+      await regenerateMcpConfig(supabase, userId);
     }
     if (hasUserMcpConfig(userId)) {
       mcpConfigPath = hint
