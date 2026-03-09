@@ -428,6 +428,38 @@ export function computeNextTrigger(recurrence: string, timezone: string, lastTri
 }
 
 /**
+ * Get recent board decisions for prompt context injection.
+ * Queries the shared Supabase decisions table via ExecComms.
+ * Falls back gracefully if ExecComms is not initialized.
+ */
+export async function getDecisionContext(
+  userId: string,
+  comms?: any // ExecComms instance (optional)
+): Promise<string> {
+  if (!comms) return "";
+
+  try {
+    const decisions = await comms.getRecentDecisions(userId, 20);
+    if (!decisions?.length) return "";
+
+    const lines = decisions.map((d: any) => {
+      const date = new Date(d.created_at).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
+      const confidence = d.confidence ? ` (confidence: ${(d.confidence * 100).toFixed(0)}%)` : "";
+      const outcome = d.outcome && d.outcome !== "pending" ? ` [${d.outcome}]` : "";
+      return `- [${date}] ${d.question} → ${d.chosen_option}${confidence}${outcome}`;
+    });
+
+    return "PAST DECISIONS:\n" + lines.join("\n");
+  } catch (error) {
+    console.warn("Decision context error:", error);
+    return "";
+  }
+}
+
+/**
  * Get active scheduled tasks for prompt context injection.
  */
 export async function getScheduleContext(

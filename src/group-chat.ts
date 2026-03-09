@@ -1,0 +1,425 @@
+/**
+ * Group Chat — Executive Board Room
+ *
+ * Turns a Telegram group into a live executive board room where
+ * executives have natural conversations. Key behaviors:
+ *
+ * - Relevance check: each exec only responds when the message is in their domain
+ * - @mention activation: always respond when directly mentioned
+ * - Turn-taking: staggered delays prevent simultaneous responses
+ * - Reply threading: execs reply to each other's messages
+ * - Nova as moderator: can call on specific execs
+ *
+ * Usage: add all exec bots + Nova to a Telegram group.
+ */
+
+import type { ExecComms, ExecRosterEntry } from "./exec-comms.ts";
+
+// ============================================================
+// Types
+// ============================================================
+
+interface GroupMessage {
+  messageId: number;
+  chatId: number;
+  fromUserId: string;
+  fromName: string;
+  text: string;
+  replyToMessageId?: number;
+  replyToText?: string;
+  replyToFrom?: string;
+}
+
+interface GroupChatConfig {
+  role: string;
+  execName: string;
+  botUsername: string; // e.g., "Nova07CEO_bot"
+  userTelegramUsername?: string; // e.g., "djbelieny" — so execs can @mention the user
+}
+
+// ============================================================
+// Domain mappings — which topics each exec cares about
+// ============================================================
+
+const DOMAIN_KEYWORDS: Record<string, string[]> = {
+  ceo: [
+    "strategy", "vision", "direction", "mission", "pivot", "fundraise",
+    "board", "decision", "priority", "roadmap", "expansion", "acquisition",
+    "partnership", "leadership", "culture", "long-term", "competitive advantage",
+    "moat", "flywheel", "day one", "big picture", "overall",
+  ],
+  cfo: [
+    "budget", "revenue", "cost", "profit", "margin", "pricing", "finance",
+    "cash flow", "roi", "cac", "ltv", "unit economics", "forecast",
+    "financial", "spend", "expense", "invoice", "payment", "subscription",
+    "arr", "mrr", "burn rate", "runway", "investment", "tax",
+  ],
+  cmo: [
+    "marketing", "brand", "campaign", "social media", "content", "growth",
+    "audience", "engagement", "conversion", "funnel", "ads", "advertising",
+    "seo", "email marketing", "newsletter", "launch", "positioning",
+    "messaging", "creative", "viral", "influencer", "pr launch", "rebrand",
+  ],
+  cto: [
+    "technology", "architecture", "infrastructure", "code", "api", "database",
+    "security", "performance", "scalability", "tech stack", "deploy",
+    "server", "cloud", "bug", "technical debt", "integration", "build",
+    "system", "devops", "microservice", "latency", "uptime",
+  ],
+  coo: [
+    "operations", "process", "workflow", "efficiency", "bottleneck",
+    "execution", "timeline", "deadline", "project management", "status",
+    "progress", "blocked", "resource", "capacity", "hiring", "team",
+    "kpi", "metrics", "dashboard", "daily standup", "sprint",
+  ],
+  research: [
+    "research", "trend", "market", "competitor", "analysis", "data",
+    "industry", "report", "study", "insight", "forecast", "signal",
+    "opportunity", "disruption", "emerging", "benchmark", "landscape",
+  ],
+  critic: [
+    "risk", "concern", "problem", "issue", "fail", "mistake", "wrong",
+    "assumption", "bias", "blind spot", "downside", "worst case",
+    "devil's advocate", "challenge", "question", "red flag", "warning",
+  ],
+};
+
+// Turn-taking priority order — CEO first, then by domain relevance
+const ROLE_PRIORITY: Record<string, number> = {
+  ceo: 1,
+  cfo: 2,
+  cmo: 3,
+  cto: 4,
+  coo: 5,
+  research: 6,
+  critic: 7,
+};
+
+// Base delay per priority slot (ms) — staggers responses
+const STAGGER_DELAY_MS = 2000;
+
+// Cooldown: don't respond to same chat within N seconds (prevents spam)
+const RESPONSE_COOLDOWN_MS = 15_000;
+
+// ============================================================
+// State
+// ============================================================
+
+let _callAI: (prompt: string, tier?: string, hint?: string) => Promise<string>;
+let _comms: ExecComms;
+let _config: GroupChatConfig;
+let _execPrompt: string;
+
+// Track recent messages for context window
+const recentGroupMessages: GroupMessage[] = [];
+const MAX_CONTEXT_MESSAGES = 20;
+
+// Cooldown tracking per chat
+const lastResponseTime = new Map<number, number>();
+
+// Track which message IDs this bot sent (to avoid responding to self)
+const ownMessageIds = new Set<number>();
+
+// Roster of all execs — refreshed periodically by the node
+let _roster: ExecRosterEntry[] = [];
+
+export function initGroupChat(deps: {
+  callAI: (prompt: string, tier?: string, hint?: string) => Promise<string>;
+  comms: ExecComms;
+  config: GroupChatConfig;
+  execPrompt: string;
+}): void {
+  _callAI = deps.callAI;
+  _comms = deps.comms;
+  _config = deps.config;
+  _execPrompt = deps.execPrompt;
+}
+
+/**
+ * Update the exec roster so the AI knows how to @mention other execs.
+ * Called periodically from executive-node.ts.
+ */
+export function updateGroupRoster(roster: ExecRosterEntry[]): void {
+  _roster = roster;
+}
+
+// ============================================================
+// Main handler — called for every group message
+// ============================================================
+
+/**
+ * Handle a message in the executive group chat.
+ * Returns null if this exec should stay silent, or a response string.
+ */
+export async function handleGroupMessage(
+  msg: GroupMessage,
+): Promise<{ response: string; replyToMessageId: number; delay: number } | null> {
+  // Don't respond to own messages
+  if (ownMessageIds.has(msg.messageId)) return null;
+
+  // Check cooldown
+  const lastResponse = lastResponseTime.get(msg.chatId) || 0;
+  if (Date.now() - lastResponse < RESPONSE_COOLDOWN_MS) {
+    // Still in cooldown — only break it for direct mentions
+    if (!isDirectlyMentioned(msg.text)) return null;
+  }
+
+  // Track message for context
+  recentGroupMessages.push(msg);
+  if (recentGroupMessages.length > MAX_CONTEXT_MESSAGES) {
+    recentGroupMessages.shift();
+  }
+
+  // Determine if we should respond
+  const shouldRespond = await checkRelevance(msg);
+  if (!shouldRespond) return null;
+
+  // Calculate stagger delay based on role priority
+  const priority = ROLE_PRIORITY[_config.role] || 5;
+  const delay = priority * STAGGER_DELAY_MS;
+
+  // Generate response
+  const response = await generateGroupResponse(msg);
+  if (!response || response.trim().length === 0) return null;
+
+  // Update cooldown
+  lastResponseTime.set(msg.chatId, Date.now() + delay);
+
+  return {
+    response,
+    replyToMessageId: msg.messageId,
+    delay,
+  };
+}
+
+/**
+ * Register a message ID as sent by this bot (for self-detection).
+ */
+export function registerOwnMessage(messageId: number): void {
+  ownMessageIds.add(messageId);
+  // Keep set bounded
+  if (ownMessageIds.size > 200) {
+    const oldest = ownMessageIds.values().next().value;
+    if (oldest !== undefined) ownMessageIds.delete(oldest);
+  }
+}
+
+// ============================================================
+// Relevance check
+// ============================================================
+
+/**
+ * Determine if this executive should respond to a group message.
+ *
+ * Always respond: direct @mention, reply to our message
+ * Maybe respond: message matches our domain keywords
+ * Never respond: greetings, acknowledgments, off-domain
+ */
+async function checkRelevance(msg: GroupMessage): Promise<boolean> {
+  const text = msg.text.toLowerCase();
+
+  // Always respond to direct mentions
+  if (isDirectlyMentioned(msg.text)) return true;
+
+  // Always respond if someone replied to our message
+  if (msg.replyToFrom && msg.replyToFrom.toLowerCase().includes(_config.botUsername.toLowerCase())) {
+    return true;
+  }
+
+  // Skip very short messages (greetings, "ok", "thanks", etc.)
+  if (text.split(/\s+/).length < 4) return false;
+
+  // Skip messages that are clearly responses/acknowledgments
+  const skipPatterns = /^(ok|okay|thanks|thank you|got it|sure|yes|no|agreed|lol|haha|nice|great|cool|👍)/i;
+  if (skipPatterns.test(text.trim())) return false;
+
+  // Check domain keyword match
+  const keywords = DOMAIN_KEYWORDS[_config.role] || [];
+  const matchCount = keywords.filter((kw) => text.includes(kw)).length;
+
+  // Strong keyword match — respond
+  if (matchCount >= 2) return true;
+
+  // Single keyword match — use AI to decide (fast call)
+  if (matchCount === 1) {
+    return await aiRelevanceCheck(msg);
+  }
+
+  // No keyword match — check if it's a broad question directed at "the team" or "everyone"
+  const broadPatterns = /\b(everyone|team|thoughts|opinions|what do you|all think|board)\b/i;
+  if (broadPatterns.test(text)) {
+    return await aiRelevanceCheck(msg);
+  }
+
+  return false;
+}
+
+function isDirectlyMentioned(text: string): boolean {
+  const username = _config.botUsername.toLowerCase();
+  const textLower = text.toLowerCase();
+  // Check for @username mention
+  if (textLower.includes(`@${username}`)) return true;
+  // Check for role mention (e.g., "CEO", "CFO")
+  const roleName = _config.role.toUpperCase();
+  if (textLower.includes(roleName.toLowerCase())) return true;
+  // Check for exec name mention
+  if (textLower.includes(_config.execName.toLowerCase())) return true;
+  return false;
+}
+
+/**
+ * Fast AI check: "Should I respond to this?"
+ * Uses the cheapest model tier for speed.
+ */
+async function aiRelevanceCheck(msg: GroupMessage): Promise<boolean> {
+  try {
+    const prompt = [
+      `You are ${_config.execName} (${_config.role.toUpperCase()}).`,
+      `Your domain: ${DOMAIN_KEYWORDS[_config.role]?.slice(0, 10).join(", ")}`,
+      "",
+      `A message was sent in the executive group chat:`,
+      `"${msg.text.slice(0, 300)}"`,
+      "",
+      `Should you respond to this? Consider:`,
+      `- Is this in your domain or expertise?`,
+      `- Would your perspective add value?`,
+      `- Is someone asking for input from your area?`,
+      "",
+      `Reply with exactly YES or NO. Nothing else.`,
+    ].join("\n");
+
+    const result = await _callAI(prompt, "fast");
+    return result.trim().toUpperCase().startsWith("YES");
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
+// Response generation
+// ============================================================
+
+/**
+ * Build a reference block so the AI knows who's in the group and how to tag them.
+ */
+function buildRosterReference(): string {
+  const lines: string[] = ["EXECUTIVE ROSTER (use @username to tag):"];
+
+  // Other execs from roster
+  for (const entry of _roster) {
+    if (entry.role === _config.role) continue; // skip self
+    if (!entry.bot_username) continue;
+    const status = entry.status === "online" ? "" : " [offline]";
+    lines.push(`  - ${entry.exec_name} (${entry.role.toUpperCase()}): @${entry.bot_username}${status}`);
+  }
+
+  // The user
+  if (_config.userTelegramUsername) {
+    lines.push(`  - User (boss/founder): @${_config.userTelegramUsername}`);
+  }
+
+  // Self reminder
+  lines.push(`  - You are: ${_config.execName} (${_config.role.toUpperCase()}) @${_config.botUsername}`);
+
+  if (lines.length <= 2) {
+    // No roster loaded yet — provide role-only hints
+    lines.push("  (roster not yet loaded — use role names like CEO, CFO, CTO to address others)");
+  }
+
+  return lines.join("\n");
+}
+
+async function generateGroupResponse(msg: GroupMessage): Promise<string> {
+  // Build conversation context from recent messages
+  const contextLines = recentGroupMessages
+    .slice(-10)
+    .map((m) => `[${m.fromName}]: ${m.text.slice(0, 300)}`)
+    .join("\n");
+
+  const isDirect = isDirectlyMentioned(msg.text);
+  const isReplyToUs = msg.replyToFrom?.toLowerCase().includes(_config.botUsername.toLowerCase());
+
+  // Build roster reference so the AI knows how to @mention others
+  const rosterLines = buildRosterReference();
+
+  const prompt = [
+    _execPrompt,
+    "",
+    "=== GROUP CHAT CONTEXT ===",
+    "You are in an executive group chat with the user and other executives.",
+    "Keep responses CONCISE (2-4 sentences). This is a chat, not a memo.",
+    "Be conversational but substantive. Show your expertise without being verbose.",
+    isDirect ? "You were directly addressed — give a focused answer." : "",
+    isReplyToUs ? "Someone is replying to your previous message — continue the thread." : "",
+    "",
+    rosterLines,
+    "",
+    "TAGGING GUIDELINES:",
+    "- When you need input from another executive, tag them with @username (e.g., @Nova07CFO_bot).",
+    "- When you want the user's attention or decision, tag them directly.",
+    "- Tag naturally — don't force it. Only tag when another exec's expertise is genuinely needed.",
+    "- You can tag multiple execs in one message if the topic spans domains.",
+    "- Common patterns: ask CFO about costs, CTO about feasibility, Research for data, Critic for risks.",
+    "",
+    "Do NOT use [DELEGATE:], [BRIEF:], or [DECISION:] tags in group chat.",
+    "Do NOT repeat what others have said. Add YOUR unique perspective.",
+    "If you have nothing meaningful to add, say nothing (respond with empty string).",
+    "",
+    "RECENT CONVERSATION:",
+    contextLines,
+    "",
+    msg.replyToText
+      ? `REPLYING TO: [${msg.replyToFrom}]: ${msg.replyToText.slice(0, 200)}`
+      : "",
+    "",
+    `NEW MESSAGE from ${msg.fromName}: ${msg.text}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const response = await _callAI(prompt, "fast");
+
+    // Clean any accidental intent tags
+    let clean = response
+      .replace(/\[DELEGATE:[^\]]*\]/g, "")
+      .replace(/\[BRIEF:[^\]]*\]/g, "")
+      .replace(/\[DECISION:[^\]]*\]/g, "")
+      .replace(/\[REMEMBER:[^\]]*\]/g, "")
+      .trim();
+
+    // If response is too long for a group chat, truncate
+    if (clean.length > 1000) {
+      clean = clean.slice(0, 997) + "...";
+    }
+
+    return clean;
+  } catch (err) {
+    console.error(`[group-chat:${_config.role}] Error generating response:`, err);
+    return "";
+  }
+}
+
+// ============================================================
+// Supabase-based cross-exec coordination
+// ============================================================
+
+/**
+ * Record a group chat response in exec_messages so other execs
+ * can see what was said (even if they're polling, not in the group).
+ */
+export async function recordGroupResponse(
+  chatId: number,
+  text: string,
+  replyToRole?: string,
+): Promise<void> {
+  try {
+    await _comms.sendBrief(
+      null,
+      `group-chat`,
+      `[${_config.role.toUpperCase()} in group]: ${text.slice(0, 500)}`,
+    );
+  } catch {
+    // Non-critical — don't break the flow
+  }
+}

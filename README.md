@@ -1,26 +1,38 @@
 # Nova
 
-A personal AI assistant powered by Claude Code.
-
-You message it. Claude responds. Text, photos, documents, voice. It remembers across sessions, checks in proactively, and runs in the background.
+A multi-agent AI orchestration platform. 24 specialist agents, task decomposition, human-in-the-loop approval, persistent memory, and multi-channel messaging — all coordinated through Telegram, WhatsApp, or Slack.
 
 **Created by [Goda Go](https://youtube.com/@GodaGo)** | [AI Productivity Hub Community](https://skool.com/autonomee)
 
 ```
-You ──▶ Telegram ──▶ Nova ──▶ Claude Code CLI ──▶ Response
-                                  │
-                            SQLite (memory)
+User ──▶ Channel ──▶ relay.ts ──▶ orchestrator.ts ──▶ planner.ts
+         (Telegram/                  │ classify          │ decompose
+          WhatsApp/                  │ (heuristic →      │ (subtasks +
+          Slack)                     │  pattern cache →   │  dependencies)
+                                     │  LLM)             │
+                                     ▼                   ▼
+                              agent-router.ts ◀── 24 specialist agents
+                                     │
+                              Two-Phase Execution
+                             prepare ──▶ approve ──▶ execute
+                                     │
+                                Response ──▶ User
 ```
 
 ## What You Get
 
-- **AI Assistant**: Send messages on Telegram, get Claude responses back
-- **Memory**: Semantic search over conversation history, persistent facts and goals via local SQLite
-- **Proactive**: Smart check-ins that know when to reach out (and when not to)
-- **Briefings**: Daily morning summary with goals and schedule
-- **Voice**: Transcribe voice messages (Groq cloud or local Whisper — your choice)
-- **Always On**: Runs in the background, starts on boot, restarts on crash
-- **Guided Setup**: Claude Code reads CLAUDE.md and walks you through everything
+- **24 Specialist Agents**: Advertising, content, email, SEO, data science, legal, PR, strategy, and more — each with dedicated tools and MCP integrations
+- **Task Decomposition**: Complex requests auto-decomposed into subtasks with dependency resolution and parallel execution
+- **Human-in-the-Loop**: Two-phase execution — safe work first, then approval via Telegram buttons before consequential actions
+- **Pattern Learning**: Successful task plans cached and reused — skips classification on repeat requests
+- **Multi-Channel**: Telegram, WhatsApp, Slack via channel adapters
+- **Persistent Memory**: Local SQLite with vector search (all-MiniLM-L6-v2), semantic recall, facts, goals, scheduled tasks
+- **Smart AI Routing**: Claude, Gemini, Codex — auto-selects by task type, cost tier, and rate limits
+- **12 MCP Integrations**: Notion, Google Workspace, Playwright, Cloudflare, Square, GoHighLevel, and more
+- **21 Skills**: Image generation, document creation (DOCX/XLSX/PPTX/PDF), canvas design, web research, and more
+- **Proactive Services**: Smart check-ins, morning briefings, AI news, social post suggestions, lead generation
+- **Voice**: Transcribe voice messages via Groq or local Whisper
+- **Always On**: Background process with auto-restart (launchd/PM2)
 
 ## Quick Start
 
@@ -38,15 +50,7 @@ cd nova
 claude
 ```
 
-Claude Code reads `CLAUDE.md` and walks you through setup conversationally:
-
-1. Create a Telegram bot via BotFather
-2. Set up local SQLite database for persistent memory
-3. Personalize your profile
-4. Test the bot
-5. Configure always-on services
-6. Set up proactive check-ins and briefings
-7. Add voice transcription (optional)
+Claude Code reads `CLAUDE.md` and can guide you through setup. See **[SETUP.md](SETUP.md)** for the full walkthrough.
 
 ### Option B: Manual Setup
 
@@ -79,50 +83,59 @@ bun run setup:services     # Configure PM2 (Windows/Linux)
 
 # Use --service flag for specific services:
 # bun run setup:launchd -- --service core
-# bun run setup:launchd -- --service all    (core + checkin + briefing)
+# bun run setup:launchd -- --service all
 ```
 
 ## Project Structure
 
 ```
-CLAUDE.md                    # Guided setup (Claude Code reads this)
 src/
-  relay.ts                   # Core message handler
-  transcribe.ts              # Voice transcription (Groq / whisper.cpp)
-  memory.ts                  # Persistent memory (facts, goals, semantic search)
+  relay.ts                   # Entry point — channel setup, message coordination
+  orchestrator.ts            # 3-tier classification, approval gates, revision sessions
+  planner.ts                 # Task decomposition, parallel execution, artifact aggregation
+  agent-router.ts            # Agent catalog, tool/skill mapping, prompt construction
+  memory.ts                  # Intent tags, context injection (facts, goals, tasks, history)
+  db.ts                      # Split SQLite (shared.db + per-user DBs), vector search
+  ai-provider.ts             # Provider interface & registry
+  ai-router.ts               # Smart routing (force → preference → hint → fallback)
+  patterns.ts                # Pattern caching & reuse
+  channels/                  # Platform adapters (telegram, whatsapp, slack)
+  providers/                 # AI CLI wrappers (claude, gemini, codex, groq)
+  integrations.ts            # Per-user MCP config, credentials
+  scheduler.ts               # Scheduled task execution
+  embeddings.ts              # Local vector embeddings (all-MiniLM-L6-v2)
 services/
-  smart-checkin.ts           # Proactive check-ins
-  morning-briefing.ts        # Daily briefing
-  memory.ts                  # Memory persistence patterns
+  smart-checkin.ts           # Context-aware proactive check-ins
+  morning-briefing.ts        # Daily summary
+  ai-news-monitor.ts         # AI/tech news curation
+  social-post-suggester.ts   # Social media content ideas
+  lead-suggester.ts          # Business lead identification
+  meta-ads-report.ts         # Daily ad performance report
+  task-dispatcher.ts         # Scheduled task runner
+  health-monitor.ts          # System health checks
+.claude/
+  agents/                    # 24 specialist agent definitions (.md)
+  agents/shared/skills.md    # Shared skill registry
+  skills/                    # 21 skill definitions
 config/
-  profile.example.md         # Personalization template
+  profile.md                 # User personalization (loaded every message)
   schedule.example.json      # Scheduled tasks template
 data/
-  nova.db                    # Local SQLite database (auto-created)
-setup/
-  install.ts                 # Prerequisites checker
-  test-telegram.ts           # Telegram connectivity test
-  test-sqlite.ts             # SQLite connectivity test
-  test-voice.ts              # Voice transcription test
-  configure-launchd.ts       # macOS service setup
-  configure-services.ts      # Windows/Linux service setup
-  verify.ts                  # Full health check
-daemon/
-  launchagent.plist          # macOS daemon template
-  nova.service               # Linux systemd template
-  README-WINDOWS.md          # Windows options
+  shared.db                  # Shared database (users, logs, costs)
+  users/{id}.db              # Per-user database (messages, memory, tasks)
 ```
 
 ## How It Works
 
-Nova does three things:
-1. **Listen** for Telegram messages (via grammY)
-2. **Spawn** Claude Code CLI with context (your profile, memory, time)
-3. **Send** the response back on Telegram
+Nova classifies every incoming message through a 3-tier system:
 
-Claude Code gives you full power: tools, MCP servers, web search, file access. Not just a model — an AI with hands.
+1. **Heuristic** — short messages (<15 words without action verbs + conjunctions) go straight to Claude
+2. **Pattern Cache** — previously successful decomposition plans reused via keyword matching
+3. **LLM Classification** — Sonnet classifies as simple/routed/complex
 
-Nova remembers between sessions via a local SQLite database. Every message gets an embedding (generated locally using all-MiniLM-L6-v2) so the bot can semantically search past conversations for relevant context. It also tracks facts and goals — Claude detects when you mention something worth remembering and stores it automatically.
+Complex tasks get decomposed into subtasks with dependencies. Independent subtasks run in parallel. Each subtask is routed to a specialist agent with its own tools and MCP access.
+
+Consequential actions (publish, send, spend) require explicit approval via Telegram inline buttons before execution. Artifacts (images, copy, files) flow from the prepare phase to the execute phase.
 
 ## Environment Variables
 
@@ -142,19 +155,19 @@ VOICE_PROVIDER=         # "groq" or "local"
 GROQ_API_KEY=           # For Groq (free at console.groq.com)
 ```
 
-## What's Next
+## Documentation
 
-Nova is step one. It works standalone, forever. But it's also the foundation for something much bigger.
+- **[SETUP.md](SETUP.md)** — Guided setup walkthrough (8 phases)
+- **[CLAUDE.md](CLAUDE.md)** — Architecture & conventions (Claude Code reads this)
+- **[DEPLOY.md](DEPLOY.md)** — Production deployment
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — Deep technical reference
+- **[CHANGELOG.md](CHANGELOG.md)** — Change history
 
-200+ builders are running the full version right now — their AI calls them when something is urgent, runs board meetings with six specialized agents, sends emails with approval buttons, and never goes offline.
+## Community & Resources
 
-The key: it's not just about features. It's about **mastering Claude Code** — CLAUDE.md files, MCP servers, hooks, skills. That's what turns a chatbot into real AI infrastructure. The community and course teach you that.
-
-**[Read the full story → WHATS-NEXT.md](WHATS-NEXT.md)**
-
-**Free course (6 lessons):** [autonomee.ai/telegram-bot-course](https://autonomee.ai/telegram-bot-course)
-**Subscribe on YouTube:** [youtube.com/@GodaGo](https://youtube.com/@GodaGo)
-**Join the community:** [skool.com/autonomee](https://skool.com/autonomee)
+- **YouTube**: [youtube.com/@GodaGo](https://youtube.com/@GodaGo) — free tutorials
+- **Free Course**: [autonomee.ai/telegram-bot-course](https://autonomee.ai/telegram-bot-course)
+- **Community**: [skool.com/autonomee](https://skool.com/autonomee) — full course, direct support
 
 ## License
 

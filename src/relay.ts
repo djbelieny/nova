@@ -54,6 +54,10 @@ import {
   parseButtons,
   cleanResponseForUser,
 } from "./channels/telegram.ts";
+import { getDecisionContext } from "./memory.ts";
+
+// Executive board (optional — only active if SUPABASE_URL is configured)
+let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -456,6 +460,26 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
       console.error("[health-monitor] Button handler error:", e);
       await reply(`Error handling health monitor action: ${e.message}`);
     }
+    return;
+  }
+
+  // Board meeting option selection (board_option:<sessionId>:<optionIndex>)
+  if (buttonData.startsWith("board_option:") && boardModule) {
+    const parts = buttonData.split(":");
+    const sessionId = parts[1];
+    const optionIndex = parts[2];
+    if (sessionId && optionIndex) {
+      await reply(`Selected option ${parseInt(optionIndex) + 1}. Processing decision...`);
+      boardModule.handleBoardDecision(sessionId, optionIndex, user.id).catch((err) => {
+        console.error("[board] Decision handler error:", err);
+      });
+    }
+    return;
+  }
+
+  // Board meeting dismiss
+  if (buttonData.startsWith("board_dismiss:") && boardModule) {
+    await reply("Board meeting dismissed.");
     return;
   }
 
@@ -1071,6 +1095,22 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
     if (text.startsWith("/") && user.role === "admin" && msg.channelType === "telegram") {
       const handled = await handleAdminCommand(ctx._raw || ctx, text, user);
       if (handled) return;
+    }
+
+    // /board <question> — convene executive board meeting
+    if (text.startsWith("/board ") && boardModule) {
+      const question = text.substring(7).trim();
+      if (!question) {
+        await ctx.reply("Usage: /board <strategic question>");
+        return;
+      }
+      await ctx.replyWithChatAction("typing");
+      await saveMessage("user", text, user.id, undefined, msg.channelType);
+      boardModule.conveneBoard(question, user.id, msg.channelChatId).catch((err: Error) => {
+        console.error("[board] Error convening board:", err);
+        ctx.reply("Failed to convene board meeting. Check logs for details.");
+      });
+      return;
     }
 
     // Check for provider force-routing prefix: /claude <msg> or /gemini <msg>
@@ -2219,6 +2259,42 @@ initOrchestrator({
     });
   },
 });
+
+// ============================================================
+// EXECUTIVE BOARD (optional — requires Supabase)
+// ============================================================
+
+if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+  try {
+    const { ExecComms } = await import("./exec-comms.ts");
+    const { initBoard, conveneBoard, handleBoardDecision, startBoardPoller } = await import("./board.ts");
+
+    const novaComms = new ExecComms("nova");
+
+    initBoard({
+      callAI,
+      comms: novaComms,
+      sendMessage: async (chatId, text, keyboard) => {
+        const bot = telegramAdapter?.getBot();
+        if (!bot) return;
+        const html = markdownToTelegramHTML(text);
+        await bot.api.sendMessage(Number(chatId), html, {
+          parse_mode: "HTML",
+          ...(keyboard ? { reply_markup: keyboard } : {}),
+        }).catch(async () => {
+          await bot.api.sendMessage(Number(chatId), text, keyboard ? { reply_markup: keyboard } : {});
+        });
+      },
+    });
+
+    boardModule = { conveneBoard, handleBoardDecision };
+    await novaComms.registerNode(process.env.NODE_HOST);
+    startBoardPoller();
+    console.log("[board] Executive board system initialized");
+  } catch (err) {
+    console.warn("[board] Executive board not available:", (err as Error).message);
+  }
+}
 
 // ============================================================
 // HEARTBEAT — In-process proactive check-in loop

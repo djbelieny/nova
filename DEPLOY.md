@@ -39,8 +39,51 @@ ssh root@your-server.com "bash /opt/nova/scripts/deploy.sh"
 | Voice            | `nova-voice.service`     | 8080 | Voice/SMS server (Twilio)    |
 | Dashboard        | `nova-dashboard.service` | 3033 | Web dashboard                |
 | Mini App         | `nova-miniapp.service`   | 3034 | Telegram Mini App            |
+| Exec - CEO       | `nova-exec-ceo.service`  | —    | CEO executive bot            |
+| Exec - CFO       | `nova-exec-cfo.service`  | —    | CFO executive bot            |
+| Exec - CMO       | `nova-exec-cmo.service`  | —    | CMO executive bot            |
+| Exec - CTO       | `nova-exec-cto.service`  | —    | CTO executive bot            |
+| Exec - COO       | `nova-exec-coo.service`  | —    | COO executive bot            |
+| Exec - Research  | `nova-exec-research.service` | — | Research executive bot       |
+| Exec - Critic    | `nova-exec-critic.service`   | — | Critic executive bot         |
 | Scheduler        | cron (`/etc/cron.d/nova`) | —   | Periodic services            |
 | Caddy            | `caddy.service`          | 80, 443 | Reverse proxy, auto HTTPS |
+
+## Executive Board Setup
+
+The 7 executive bots run as separate systemd services on the same VPS, each with its own `.env.{role}` file.
+
+### First-time setup
+
+```bash
+# 1. Copy .env files to server (from local machine)
+scp .env.ceo .env.cfo .env.cmo .env.cto .env.coo .env.research .env.critic root@nova.07labs.com:/opt/nova/
+
+# 2. Fix ownership
+ssh root@nova.07labs.com "chown nova:nova /opt/nova/.env.*"
+
+# 3. Install and enable systemd services
+ssh root@nova.07labs.com "bash /opt/nova/scripts/setup-execs.sh"
+
+# 4. Start all executive services
+ssh root@nova.07labs.com "systemctl start nova-exec-ceo nova-exec-cfo nova-exec-cmo nova-exec-cto nova-exec-coo nova-exec-research nova-exec-critic"
+```
+
+### Logs
+
+```bash
+# All exec services
+journalctl -u 'nova-exec-*' -f
+
+# Specific exec
+journalctl -u nova-exec-ceo -f
+```
+
+### Status
+
+```bash
+systemctl status nova-exec-*
+```
 
 ## Server Structure
 

@@ -7,6 +7,46 @@ Each entry includes: when, what triggered it, which files changed, what happened
 
 ---
 
+## [2026-03-08] Documentation rewrite — describe Nova as it actually operates
+**Trigger:** user-request
+**Files:** CLAUDE.md, README.md, SETUP.md (new), docs/ARCHITECTURE.md (new), WHATS-NEXT.md (deleted), CHANGELOG.md
+**Summary:** Rewrote CLAUDE.md from a setup guide into an architecture reference (message flow, agent system, memory tags, two-phase execution, DB schema, MCP integrations, AI routing). Moved setup guide to SETUP.md. Created docs/ARCHITECTURE.md for deep technical reference. Updated README.md to reflect actual multi-agent platform. Deleted WHATS-NEXT.md (marketed features that already exist).
+**Risk:** low (documentation only)
+
+---
+
+## [2026-03-06] Add message chunking for long Telegram messages
+**Trigger:** user-request
+**Files:** src/channels/telegram.ts
+**Summary:** Long responses that exceed Telegram's 4096-character limit are now automatically split into multiple messages with smart boundary detection (paragraph breaks, sentence endings).
+**Risk:** low
+
+---
+
+## [2026-03-06] Fix Telegram Markdown fallback for proactive services
+**Trigger:** bug-fix
+**Files:** src/channels/telegram.ts
+**Summary:** Proactive service messages (check-ins, briefings) were failing to send when containing Markdown that Telegram couldn't parse. Added fallback to plain text on parse error.
+**Risk:** low
+
+---
+
+## [2026-03-06] Add proactive services: AI news, social posts, lead suggestions
+**Trigger:** user-request
+**Files:** services/ai-news-monitor.ts (new), services/social-post-suggester.ts (new), services/lead-suggester.ts (new)
+**Summary:** Three new proactive services: AI news monitor curates relevant AI/tech news, social post suggester generates content ideas, lead suggester identifies business leads. All follow the common service pattern (state tracking, Groq preference, timezone-aware scheduling).
+**Risk:** low
+
+---
+
+## [2026-03-04] Revert meta-social from miniapp, keep IG/FB via GHL
+**Trigger:** user-request
+**Files:** src/miniapp.ts, services/meta-social-mcp.ts
+**Summary:** Removed direct Meta API social posting from the miniapp interface. Instagram and Facebook posting now goes exclusively through GoHighLevel MCP integration, which is more reliable and handles auth centrally.
+**Risk:** low
+
+---
+
 ## [2026-02-26 11:38] Fix concurrent message flow tracking and approval recovery
 **Trigger:** user-request
 **Files:** src/orchestrator.ts, db/migration-concurrent-revisions.sql (new)

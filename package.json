@@ -18,7 +18,15 @@
     "dashboard:dev": "bun run --watch src/dashboard.ts",
     "miniapp": "bun run src/miniapp.ts",
     "miniapp:dev": "bun run --watch src/miniapp.ts",
-    "migrate:supabase": "bun run scripts/migrate-supabase.ts"
+    "migrate:supabase": "bun run scripts/migrate-supabase.ts",
+    "exec": "bun run src/executive-node.ts",
+    "exec:ceo": "bun run --env-file=.env.ceo src/executive-node.ts --role ceo",
+    "exec:cfo": "bun run --env-file=.env.cfo src/executive-node.ts --role cfo",
+    "exec:cmo": "bun run --env-file=.env.cmo src/executive-node.ts --role cmo",
+    "exec:cto": "bun run --env-file=.env.cto src/executive-node.ts --role cto",
+    "exec:coo": "bun run --env-file=.env.coo src/executive-node.ts --role coo",
+    "exec:research": "bun run --env-file=.env.research src/executive-node.ts --role research",
+    "exec:critic": "bun run --env-file=.env.critic src/executive-node.ts --role critic"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

@@ -1,0 +1,21 @@
+[Unit]
+Description=Nova Executive - COO
+After=network.target nova-relay.service
+
+[Service]
+Type=simple
+User=nova
+WorkingDirectory=/opt/nova
+ExecStart=/home/nova/.bun/bin/bun run --env-file=.env.coo src/executive-node.ts --role coo
+Restart=always
+RestartSec=10
+
+Environment=HOME=/home/nova
+Environment=PATH=/home/nova/.bun/bin:/usr/local/bin:/usr/bin:/bin
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-exec-coo
+
+[Install]
+WantedBy=multi-user.target

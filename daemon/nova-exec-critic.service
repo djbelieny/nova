@@ -1,0 +1,21 @@
+[Unit]
+Description=Nova Executive - Critic
+After=network.target nova-relay.service
+
+[Service]
+Type=simple
+User=nova
+WorkingDirectory=/opt/nova
+ExecStart=/home/nova/.bun/bin/bun run --env-file=.env.critic src/executive-node.ts --role critic
+Restart=always
+RestartSec=10
+
+Environment=HOME=/home/nova
+Environment=PATH=/home/nova/.bun/bin:/usr/local/bin:/usr/bin:/bin
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-exec-critic
+
+[Install]
+WantedBy=multi-user.target

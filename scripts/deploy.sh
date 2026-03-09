@@ -32,5 +32,14 @@ fi
 echo "Restarting services..."
 systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 
+# Restart executive services (skip if not installed yet)
+EXEC_SERVICES="nova-exec-ceo nova-exec-cfo nova-exec-cmo nova-exec-cto nova-exec-coo nova-exec-research nova-exec-critic"
+for svc in $EXEC_SERVICES; do
+  if systemctl is-enabled "$svc" &>/dev/null; then
+    systemctl restart "$svc"
+    echo "  Restarted $svc"
+  fi
+done
+
 echo "Deployed: $(sudo -u nova git log -1 --format='%h %s')"
-echo "Services restarted. Check status with: systemctl status nova-relay nova-voice nova-dashboard nova-miniapp"
+echo "Services restarted. Check status with: systemctl status nova-relay nova-voice nova-dashboard nova-miniapp nova-exec-*"
