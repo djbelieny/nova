@@ -326,6 +326,14 @@ async function main() {
     console.log(`[exec-node] Group chat initialized (roster fetch failed — will retry)`);
   }
 
+  // Log all updates for debugging group chat delivery
+  bot.use(async (ctx, next) => {
+    if (ctx.chat && (ctx.chat.type === "group" || ctx.chat.type === "supergroup")) {
+      console.log(`[exec-node:${role}] Group update: type=${ctx.updateType} chat=${ctx.chat.id} from=${ctx.from?.username || ctx.from?.id}`);
+    }
+    await next();
+  });
+
   bot.on("message:text", async (ctx) => {
     const chatType = ctx.chat.type;
     const isGroup = chatType === "group" || chatType === "supergroup";
@@ -342,6 +350,10 @@ async function main() {
 
     const userId = ctx.from.id.toString();
     const text = ctx.message.text;
+
+    if (isGroup) {
+      console.log(`[exec-node:${role}] Group message from ${ctx.from.first_name}: "${text.slice(0, 100)}"`);
+    }
 
     // ── GROUP CHAT ──
     if (isGroup) {
@@ -548,7 +560,7 @@ async function main() {
   const heartbeatInterval = setInterval(async () => {
     if (!running) return;
     try {
-      await comms.heartbeat(activeTasks);
+      await comms.heartbeat(activeTasks.length);
       // Refresh roster so group chat stays current with who's online
       const roster = await comms.getExecRoster();
       updateGroupRoster(roster);
