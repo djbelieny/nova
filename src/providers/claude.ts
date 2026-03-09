@@ -134,9 +134,10 @@ export class ClaudeProvider implements AIProvider {
 
       return this.parseJsonResult(json, modelLabel, durationMs);
     } catch {
-      // JSON parse failed — return raw text
+      // JSON parse failed — return raw text with empty fallback
+      const rawText = output.trim();
       return {
-        text: output.trim(),
+        text: rawText || "Sorry, I wasn't able to process that. Can you try again?",
         model: modelLabel,
         provider: this.name,
         duration_ms: durationMs,
