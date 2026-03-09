@@ -57,7 +57,8 @@ export class ClaudeProvider implements AIProvider {
     }
 
     if (opts.noMcp) {
-      args.push("--mcp-config", "{}", "--strict-mcp-config");
+      // Don't pass --mcp-config at all — rely on /tmp cwd having no .mcp.json
+      // Passing literal "{}" as --mcp-config breaks text output in newer CLI versions
     } else if (opts.mcpConfigPath) {
       args.push("--mcp-config", opts.mcpConfigPath, "--strict-mcp-config");
     }
@@ -88,8 +89,9 @@ export class ClaudeProvider implements AIProvider {
       if (exitCode !== 0) {
         throw new Error(`Claude CLI exited with code ${exitCode}: ${stderr.trim() || "(no stderr)"}`);
       }
+      const text = output.trim();
       return {
-        text: output.trim(),
+        text: text || "Sorry, I wasn't able to process that. Can you try again?",
         model: modelLabel,
         provider: this.name,
         duration_ms: durationMs,
