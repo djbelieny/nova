@@ -47,40 +47,48 @@ const DOMAIN_KEYWORDS: Record<string, string[]> = {
     "board", "decision", "priority", "roadmap", "expansion", "acquisition",
     "partnership", "leadership", "culture", "long-term", "competitive advantage",
     "moat", "flywheel", "day one", "big picture", "overall",
+    "goals", "okr", "target", "milestone", "customer", "product",
+    "hiring", "quarterly", "annual", "company",
   ],
   cfo: [
     "budget", "revenue", "cost", "profit", "margin", "pricing", "finance",
     "cash flow", "roi", "cac", "ltv", "unit economics", "forecast",
     "financial", "spend", "expense", "invoice", "payment", "subscription",
     "arr", "mrr", "burn rate", "runway", "investment", "tax",
+    "target", "goal", "growth", "sales",
   ],
   cmo: [
     "marketing", "brand", "campaign", "social media", "content", "growth",
     "audience", "engagement", "conversion", "funnel", "ads", "advertising",
     "seo", "email marketing", "newsletter", "launch", "positioning",
     "messaging", "creative", "viral", "influencer", "pr launch", "rebrand",
+    "customer", "feedback", "user", "community",
   ],
   cto: [
     "technology", "architecture", "infrastructure", "code", "api", "database",
     "security", "performance", "scalability", "tech stack", "deploy",
     "server", "cloud", "bug", "technical debt", "integration", "build",
     "system", "devops", "microservice", "latency", "uptime",
+    "product", "feature", "platform", "app",
   ],
   coo: [
     "operations", "process", "workflow", "efficiency", "bottleneck",
     "execution", "timeline", "deadline", "project management", "status",
     "progress", "blocked", "resource", "capacity", "hiring", "team",
     "kpi", "metrics", "dashboard", "daily standup", "sprint",
+    "goal", "okr", "target", "milestone", "quality",
   ],
   research: [
     "research", "trend", "market", "competitor", "analysis", "data",
     "industry", "report", "study", "insight", "forecast", "signal",
     "opportunity", "disruption", "emerging", "benchmark", "landscape",
+    "customer", "user", "product", "ai", "technology",
   ],
   critic: [
     "risk", "concern", "problem", "issue", "fail", "mistake", "wrong",
     "assumption", "bias", "blind spot", "downside", "worst case",
     "devil's advocate", "challenge", "question", "red flag", "warning",
+    "goal", "target", "quality", "incomplete",
   ],
 };
 
@@ -96,10 +104,11 @@ const ROLE_PRIORITY: Record<string, number> = {
 };
 
 // Base delay per priority slot (ms) — staggers responses
-const STAGGER_DELAY_MS = 2000;
+const STAGGER_DELAY_MS = 3000;
 
 // Cooldown: don't respond to same chat within N seconds (prevents spam)
-const RESPONSE_COOLDOWN_MS = 15_000;
+// Tracked per exec per chat — each exec has its own cooldown
+const RESPONSE_COOLDOWN_MS = 30_000;
 
 // ============================================================
 // State
@@ -114,8 +123,8 @@ let _execPrompt: string;
 const recentGroupMessages: GroupMessage[] = [];
 const MAX_CONTEXT_MESSAGES = 20;
 
-// Cooldown tracking per chat
-const lastResponseTime = new Map<number, number>();
+// Cooldown tracking per exec per chat (key: "chatId:role")
+const lastResponseTime = new Map<string, number>();
 
 // Track which message IDs this bot sent (to avoid responding to self)
 const ownMessageIds = new Set<number>();
@@ -157,8 +166,9 @@ export async function handleGroupMessage(
   // Don't respond to own messages
   if (ownMessageIds.has(msg.messageId)) return null;
 
-  // Check cooldown
-  const lastResponse = lastResponseTime.get(msg.chatId) || 0;
+  // Check cooldown (per exec per chat)
+  const cooldownKey = `${msg.chatId}:${_config.role}`;
+  const lastResponse = lastResponseTime.get(cooldownKey) || 0;
   if (Date.now() - lastResponse < RESPONSE_COOLDOWN_MS) {
     // Still in cooldown — only break it for direct mentions
     if (!isDirectlyMentioned(msg.text)) return null;
@@ -172,18 +182,22 @@ export async function handleGroupMessage(
 
   // Determine if we should respond
   const shouldRespond = await checkRelevance(msg);
-  if (!shouldRespond) return null;
+  if (!shouldRespond) {
+    console.log(`[group-chat:${_config.role}] SILENT for: "${msg.text.slice(0, 60)}..."`);
+    return null;
+  }
 
   // Calculate stagger delay based on role priority
   const priority = ROLE_PRIORITY[_config.role] || 5;
   const delay = priority * STAGGER_DELAY_MS;
 
   // Generate response
+  console.log(`[group-chat:${_config.role}] RESPONDING to: "${msg.text.slice(0, 60)}..." (delay: ${delay}ms)`);
   const response = await generateGroupResponse(msg);
   if (!response || response.trim().length === 0) return null;
 
   // Update cooldown
-  lastResponseTime.set(msg.chatId, Date.now() + delay);
+  lastResponseTime.set(cooldownKey, Date.now() + delay);
 
   return {
     response,
@@ -211,9 +225,9 @@ export function registerOwnMessage(messageId: number): void {
 /**
  * Determine if this executive should respond to a group message.
  *
- * Always respond: direct @mention, reply to our message
+ * Always respond: direct @mention, reply to our message, broad "everyone" address
  * Maybe respond: message matches our domain keywords
- * Never respond: greetings, acknowledgments, off-domain
+ * Never respond: single-word acks, off-domain
  */
 async function checkRelevance(msg: GroupMessage): Promise<boolean> {
   const text = msg.text.toLowerCase();
@@ -226,12 +240,16 @@ async function checkRelevance(msg: GroupMessage): Promise<boolean> {
     return true;
   }
 
-  // Skip very short messages (greetings, "ok", "thanks", etc.)
-  if (text.split(/\s+/).length < 4) return false;
+  // Skip single-word messages only
+  if (text.split(/\s+/).length < 2) return false;
 
-  // Skip messages that are clearly responses/acknowledgments
-  const skipPatterns = /^(ok|okay|thanks|thank you|got it|sure|yes|no|agreed|lol|haha|nice|great|cool|👍)/i;
+  // Skip messages that are ONLY acknowledgments (entire message is just an ack)
+  const skipPatterns = /^(ok|okay|thanks|thank you|got it|sure|yes|no|agreed|lol|haha|nice|great|cool|👍)$/i;
   if (skipPatterns.test(text.trim())) return false;
+
+  // Broad address — message is directed at the whole team → all execs respond
+  const broadPatterns = /\b(everyone|team|folks|anybody|anyone|all of you|y'all|people|what do you all|should we|can we|let's discuss|what are your|give me your|thoughts\??|opinions\??|ideas\??)\b/i;
+  if (broadPatterns.test(text)) return true;
 
   // Check domain keyword match
   const keywords = DOMAIN_KEYWORDS[_config.role] || [];
@@ -245,9 +263,8 @@ async function checkRelevance(msg: GroupMessage): Promise<boolean> {
     return await aiRelevanceCheck(msg);
   }
 
-  // No keyword match — check if it's a broad question directed at "the team" or "everyone"
-  const broadPatterns = /\b(everyone|team|thoughts|opinions|what do you|all think|board)\b/i;
-  if (broadPatterns.test(text)) {
+  // No keyword match but message is substantive (5+ words) — let AI decide
+  if (text.split(/\s+/).length >= 8) {
     return await aiRelevanceCheck(msg);
   }
 
@@ -284,13 +301,18 @@ async function aiRelevanceCheck(msg: GroupMessage): Promise<boolean> {
       `- Is this in your domain or expertise?`,
       `- Would your perspective add value?`,
       `- Is someone asking for input from your area?`,
+      `- Is this a general business question where your role's perspective matters?`,
       "",
       `Reply with exactly YES or NO. Nothing else.`,
     ].join("\n");
 
     const result = await _callAI(prompt, "fast");
-    return result.trim().toUpperCase().startsWith("YES");
-  } catch {
+    const answer = result.trim().toUpperCase();
+    const should = !answer.startsWith("NO");
+    console.log(`[group-chat:${_config.role}] AI relevance check: ${should ? "YES" : "NO"} for "${msg.text.slice(0, 40)}..."`);
+    return should;
+  } catch (err) {
+    console.error(`[group-chat:${_config.role}] AI relevance check failed:`, err);
     return false;
   }
 }
