@@ -1,18 +1,21 @@
 [Unit]
 Description=Nova Executive - CEO
-After=network.target nova-relay.service
+After=network-online.target nova-relay.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=nova
+Group=nova
 WorkingDirectory=/opt/nova
-ExecStart=/home/nova/.bun/bin/bun run --env-file=.env.ceo src/executive-node.ts --role ceo
+EnvironmentFile=/opt/nova/.env.ceo
+Environment=CLAUDE_PATH=/usr/bin/claude
+Environment=PROJECT_DIR=/opt/nova
+Environment=NOVA_DIR=/opt/nova/.nova
+Environment=HOME=/home/nova
+ExecStart=/usr/local/bin/bun run src/executive-node.ts --role ceo
 Restart=always
 RestartSec=10
-
-Environment=HOME=/home/nova
-Environment=PATH=/home/nova/.bun/bin:/usr/local/bin:/usr/bin:/bin
-
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=nova-exec-ceo
