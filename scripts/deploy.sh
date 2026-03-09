@@ -21,12 +21,14 @@ fi
 echo "Fixing file ownership..."
 chown -R nova:nova /opt/nova/.nova /opt/nova/data 2>/dev/null || true
 
-# Install/update cron schedule
+# Install/update cron schedule and restart cron service
 if [ -f /opt/nova/config/nova.cron ]; then
   echo "Updating cron schedule..."
   cp /opt/nova/config/nova.cron /etc/cron.d/nova
   chmod 644 /etc/cron.d/nova
   chown root:root /etc/cron.d/nova
+  echo "Reloading cron daemon..."
+  service cron reload
 fi
 
 echo "Restarting services..."
