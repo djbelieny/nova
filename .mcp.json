@@ -97,6 +97,22 @@
       "env": {
         "GEMINI_API_KEY": "${GEMINI_API_KEY}"
       }
+    },
+    "stitch": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "stitch-mcp"],
+      "env": {
+        "GOOGLE_CLOUD_PROJECT": "nova-agent-487506"
+      }
+    },
+    "magic": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@21st-dev/magic@latest"],
+      "env": {
+        "API_KEY": "3f525f27c7aee033f63ce367443174e22e0874a13f5361f53899bc6943a4626a"
+      }
     }
   }
 }
