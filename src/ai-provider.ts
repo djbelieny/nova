@@ -13,6 +13,7 @@ export interface AIProviderCallOpts {
   model?: string;
   mcpConfigPath?: string;
   noMcp?: boolean;
+  useMcp2cli?: boolean;
   maxTurns?: number;
   cwd?: string;
   outputFormat?: "json" | "text";

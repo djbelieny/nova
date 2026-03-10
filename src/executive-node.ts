@@ -10,10 +10,12 @@
 
 import { Bot } from "grammy";
 import type { Context } from "grammy";
-import { readFile } from "fs/promises";
+import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
+import { existsSync } from "fs";
 import { ExecComms } from "./exec-comms.ts";
 import { loadAgents, getAgentCatalog } from "./agent-router.ts";
+import { isMcp2cliAvailable, buildMcp2cliInstructions, loadProjectMcpConfig } from "./mcp2cli.ts";
 import {
   type ModelTier,
   type AIProviderResult,
@@ -169,7 +171,75 @@ function initProviders(): void {
 }
 
 // ============================================================
-// callAI — Simplified AI call for exec nodes
+// EXECUTIVE MCP SERVER MAPPING
+// Execs that need direct research access get exa, tavily, browserbase.
+// ============================================================
+
+const EXEC_MCP_SERVERS: Record<string, string[]> = {
+  research: ["exa", "tavily", "browserbase", "firecrawl"],
+  critic:   ["exa", "tavily", "browserbase"],
+  ceo:     ["exa", "tavily", "browserbase"],
+  cto:     ["exa", "tavily", "browserbase"],
+  cmo:     ["exa", "tavily", "browserbase"],
+  cfo:     ["exa", "tavily"],
+  coo:     [],  // COO delegates, doesn't research directly
+};
+
+let _execMcpConfigPath: string | undefined;
+let _execUseMcp2cli = false;
+
+/**
+ * Generate a focused MCP config for this exec role (only research servers).
+ * Called once at startup.
+ */
+async function initExecMcpConfig(execRole: string): Promise<void> {
+  const servers = EXEC_MCP_SERVERS[execRole] || [];
+  if (servers.length === 0) {
+    console.log(`[exec-node] No MCP servers for ${execRole}`);
+    return;
+  }
+
+  // Check mcp2cli availability first
+  _execUseMcp2cli = process.env.MCP2CLI_ENABLED !== "false" && (await isMcp2cliAvailable());
+  if (_execUseMcp2cli) {
+    console.log(`[exec-node] mcp2cli available — ${execRole} will use Bash-based tool access for: ${servers.join(", ")}`);
+    return; // No need for MCP config file — tools accessed via mcp2cli
+  }
+
+  // Fallback: generate a filtered MCP config file with only the exec's servers
+  try {
+    const globalMcpPath = join(PROJECT_ROOT, ".mcp.json");
+    if (!existsSync(globalMcpPath)) return;
+
+    const raw = await readFile(globalMcpPath, "utf-8");
+    const globalConfig = JSON.parse(raw);
+    const allServers = globalConfig.mcpServers || {};
+    const filtered: Record<string, any> = {};
+
+    for (const name of servers) {
+      if (allServers[name]) {
+        // Resolve ${VAR} env placeholders
+        const serverConfig = JSON.parse(
+          JSON.stringify(allServers[name]).replace(/\$\{(\w+)\}/g, (_, v) => process.env[v] || "")
+        );
+        filtered[name] = serverConfig;
+      }
+    }
+
+    if (Object.keys(filtered).length === 0) return;
+
+    const configDir = join(process.env.HOME || "/tmp", ".nova", "exec");
+    await mkdir(configDir, { recursive: true });
+    _execMcpConfigPath = join(configDir, `mcp-${execRole}.json`);
+    await writeFile(_execMcpConfigPath, JSON.stringify({ mcpServers: filtered }, null, 2));
+    console.log(`[exec-node] MCP config for ${execRole}: ${Object.keys(filtered).join(", ")} → ${_execMcpConfigPath}`);
+  } catch (err) {
+    console.warn(`[exec-node] Failed to generate exec MCP config:`, err);
+  }
+}
+
+// ============================================================
+// callAI — AI call for exec nodes, with optional MCP access
 // ============================================================
 
 export async function callAI(
@@ -190,6 +260,8 @@ export async function callAI(
       prompt,
       model: route.model,
       outputFormat: opts.outputFormat || "text",
+      mcpConfigPath: _execUseMcp2cli ? undefined : _execMcpConfigPath,
+      useMcp2cli: _execUseMcp2cli && !!EXEC_MCP_SERVERS[role]?.length,
     });
     return result.text;
   } catch (err) {
@@ -204,6 +276,8 @@ export async function callAI(
         prompt,
         model: fallbackModel,
         outputFormat: opts.outputFormat || "text",
+        mcpConfigPath: _execUseMcp2cli ? undefined : _execMcpConfigPath,
+        useMcp2cli: _execUseMcp2cli && !!EXEC_MCP_SERVERS[role]?.length,
       });
       return result.text;
     }
@@ -223,6 +297,18 @@ function buildPrompt(
   const sections: string[] = [];
 
   sections.push(`# Executive Persona: ${execDef.name}\n\n${execDef.prompt}`);
+
+  // Inject research tool instructions for execs with MCP access
+  const execServers = EXEC_MCP_SERVERS[execDef.role] || [];
+  if (execServers.length > 0 && _execUseMcp2cli) {
+    const mcpConfig = loadProjectMcpConfig(PROJECT_ROOT);
+    const instructions = buildMcp2cliInstructions(execServers, mcpConfig);
+    if (instructions) {
+      sections.push(`## Research Tools\n\nYou have direct access to research tools via Bash commands. Use these to gather real data, search the web, and verify facts — don't just reason from memory.\n\n${instructions}`);
+    }
+  } else if (execServers.length > 0 && _execMcpConfigPath) {
+    sections.push(`## Research Tools\n\nYou have direct access to research MCP servers: ${execServers.join(", ")}. Use them to search the web, gather data, and verify facts when analyzing questions.`);
+  }
 
   if (context?.agentCatalog) {
     sections.push(`## Available Agents\n\n${context.agentCatalog}`);
@@ -262,6 +348,9 @@ async function main() {
   // 2. Initialize AI providers
   initProviders();
   console.log(`[exec-node] AI providers initialized`);
+
+  // 2b. Initialize MCP config for research-capable execs
+  await initExecMcpConfig(role);
 
   // 3. Load all 24 agents
   await loadAgents();

@@ -63,9 +63,10 @@ export class GeminiProvider implements AIProvider {
 
     // MCP config: Gemini reads from ~/.gemini/settings.json, not a CLI flag.
     // If mcpConfigPath is provided, write a temp settings.json in a temp HOME dir.
+    // Skip MCP config when using mcp2cli — tools accessed via Bash commands instead.
     let cwd = opts.cwd || "/tmp";
     let homeOverride: string | undefined;
-    if (opts.mcpConfigPath) {
+    if (opts.mcpConfigPath && !opts.useMcp2cli) {
       homeOverride = await this.prepareMcpConfig(opts.mcpConfigPath);
     }
 

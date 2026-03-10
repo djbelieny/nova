@@ -9,6 +9,7 @@
 
 import { readFile, readdir } from "fs/promises";
 import { join, dirname } from "path";
+import { buildMcp2cliInstructions, loadProjectMcpConfig } from "./mcp2cli.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const AGENTS_DIR = join(PROJECT_ROOT, ".claude", "agents");
@@ -33,7 +34,9 @@ TOOLS — MCP integrations:
 • Go High Level MCP (gohighlevel): Create campaigns, ad sets, ads, audiences, manage contacts and pipelines for ad leads. Publish ad creative to Instagram and Facebook.
 • YouTube MCP (youtube): Upload video ads and Shorts to YouTube. Monitor video ad performance.
 • TikTok MCP (tiktok): Upload ad content to TikTok. Track video performance metrics.
-• Playwright (browser): Research products, landing pages, competitor ads. Take screenshots for creative reference.
+• Exa (exa): Semantic web search for researching products, competitors, and ad strategies. Find similar content and market intelligence.
+• Tavily (tavily): Web search and research for landing pages, competitor ads, market data, and ad copy inspiration.
+• Browserbase (browserbase): Cloud browser for visiting landing pages, taking screenshots of competitor ads, and visual research.
 • Google Workspace MCP (Sheets): Pull ad performance data from connected sheets. Save budget/performance reports.
 • Square MCP: Pull sales/conversion data to measure ad-to-revenue performance.
 
@@ -48,7 +51,7 @@ SKILLS — Slash commands you can invoke:
 • /telegram-file-sender: Send generated ad images, reports, and documents to the user.
 
 WORKFLOW: When asked to create a campaign:
-1. Research the product/landing page using Playwright (visit the URL, take screenshots)
+1. Research the product/landing page using Tavily/Exa (search and extract content) and Browserbase (visit URL, take screenshots)
 2. Analyze competitors using /competitive-ads-extractor if relevant
 3. Generate ad creative images using /image-gen (create multiple variations)
 4. Build the campaign structure (campaign → ad sets → ads) using Go High Level MCP
@@ -60,7 +63,9 @@ TOOLS — MCP integrations:
 • Go High Level MCP (gohighlevel): Schedule and publish social media posts across connected accounts (Instagram, Facebook). Manage social calendar.
 • YouTube MCP (youtube): Upload Shorts and videos to YouTube. Get channel stats and video analytics.
 • TikTok MCP (tiktok): Upload and publish TikTok videos. Get creator info and video stats.
-• Playwright (browser): Research trending content, view competitor profiles, check hashtag performance, screenshot reference posts.
+• Exa (exa): Semantic search for trending content, competitor analysis, and hashtag research.
+• Tavily (tavily): Web search for social media trends, competitor profiles, and content inspiration.
+• Browserbase (browserbase): Cloud browser for viewing competitor profiles, taking screenshots of reference posts, and visual research.
 • Google Workspace MCP (Calendar): Coordinate posting schedule with the user's calendar. (Sheets): Track engagement metrics.
 • Notion MCP: Save content calendars, campaign briefs, and social media playbooks.
 
@@ -91,7 +96,9 @@ TOOLS — MCP integrations:
 • Notion MCP: Save content drafts, editorial calendars, brand guidelines, and content libraries to Notion.
 • YouTube MCP (youtube): Upload video content and manage YouTube channel.
 • TikTok MCP (tiktok): Publish short-form video content to TikTok.
-• Playwright (browser): Research topics, read source material, verify facts, check competitor content.
+• Exa (exa): Semantic search for researching topics, finding source material, and discovering related content.
+• Tavily (tavily): Web search and content extraction for fact-checking, competitor research, and content inspiration.
+• Browserbase (browserbase): Cloud browser for reading source material, verifying facts, and checking competitor content.
 • Google Workspace MCP (Docs): Create and edit long-form content in Google Docs. (Drive): Search reference materials.
 
 SKILLS — Slash commands you can invoke:
@@ -110,7 +117,9 @@ SKILLS — Slash commands you can invoke:
 TOOLS — MCP integrations:
 • Gmail MCP (google-workspace): Draft, send, and schedule email campaigns. Search existing emails for templates. Manage email threads.
 • Go High Level MCP (gohighlevel): Create email templates, manage email campaigns, segment contacts, set up automation sequences, track opens/clicks.
-• Playwright (browser): Preview email renders, test landing pages linked from emails, research competitor email strategies.
+• Exa (exa): Semantic search for email marketing best practices, competitor email strategies, and content ideas.
+• Tavily (tavily): Web search for landing page research, email benchmarks, and competitor analysis.
+• Browserbase (browserbase): Cloud browser for previewing email renders and testing landing pages linked from emails.
 • Notion MCP: Save email templates, campaign plans, and segmentation strategies.
 
 SKILLS — Slash commands you can invoke:
@@ -128,7 +137,9 @@ SKILLS — Slash commands you can invoke:
 TOOLS — MCP integrations:
 • YouTube MCP (youtube): Upload videos and Shorts to YouTube. Manage video metadata, privacy, and analytics.
 • TikTok MCP (tiktok): Upload and publish TikTok videos. Track video performance and creator stats.
-• Playwright (browser): Research video trends, competitor content, reference material, and platform best practices.
+• Exa (exa): Semantic search for video trends, competitor content, and platform best practices.
+• Tavily (tavily): Web search for video reference material, trending formats, and audience insights.
+• Browserbase (browserbase): Cloud browser for researching competitor video content and taking screenshots.
 • Google Workspace MCP (Docs): Write and collaborate on scripts. (Drive): Store and organize video assets. (Sheets): Track production schedules.
 • Notion MCP: Save video production plans, shot lists, and content calendars.
 
@@ -157,7 +168,9 @@ TOOLS — MCP integrations:
   - term-cli request -s <name> -m "need password" — ask human for help
   - term-cli kill -s <name> — end session
 • File system (Read/Write/Edit): Create and modify source code, configs, and documentation.
-• Playwright (browser): Test web applications, take screenshots, verify deployments, debug UI issues.
+• Exa (exa): Semantic search for technical documentation, API references, and code examples.
+• Tavily (tavily): Web search for technical research, package documentation, and deployment guides.
+• Browserbase (browserbase): Cloud browser for testing web applications, taking screenshots, verifying deployments, and debugging UI issues.
 • Cloudflare MCP: Deploy Workers, manage DNS records, configure domains, set up edge functions.
 • Supabase MCP: Create tables, run migrations, deploy edge functions, manage database schema.
 • Notion MCP: Document technical specs, architecture decisions, API docs, and deployment configs.
@@ -173,7 +186,9 @@ SKILLS — Slash commands you can invoke:
 
   athena: `
 TOOLS — MCP integrations:
-• Playwright (browser): Research markets, competitors, industry data, company profiles, financial reports.
+• Exa (exa): Semantic search for market research, competitor analysis, industry reports, and company profiles.
+• Tavily (tavily): Web search for industry data, financial reports, market trends, and competitive intelligence.
+• Browserbase (browserbase): Cloud browser for accessing gated content, company profiles, and financial data.
 • Notion MCP: Save strategy frameworks, competitive intel, OKRs, and planning documents.
 • Google Workspace MCP (Sheets): Create and analyze financial models. (Docs): Write strategy documents. (Drive): Search reference materials.
 • Square MCP: Pull business revenue data, transaction trends, and customer analytics for strategy input.
@@ -192,7 +207,9 @@ SKILLS — Slash commands you can invoke:
 
   cyra: `
 TOOLS — MCP integrations:
-• Playwright (browser): Audit websites — check page speed, mobile responsiveness, UX flows, broken links, form testing. Take screenshots of issues.
+• Exa (exa): Semantic search for UX best practices, competitor website analysis, and optimization benchmarks.
+• Tavily (tavily): Web search for page speed tools, SEO auditing, and CRO research.
+• Browserbase (browserbase): Cloud browser for auditing websites — check page speed, mobile responsiveness, UX flows, broken links, form testing. Take screenshots of issues.
 • Google Workspace MCP (Sheets): Log audit findings in spreadsheets. (Docs): Write audit reports.
 • Cloudflare MCP: Check DNS configuration, SSL status, and edge caching settings.
 • Notion MCP: Save audit checklists, improvement trackers, and website optimization plans.
@@ -210,9 +227,11 @@ SKILLS — Slash commands you can invoke:
 
   magnus: `
 TOOLS — MCP integrations:
-• Playwright (browser): Crawl websites for SEO issues, check meta tags, analyze competitor rankings, research keywords, test structured data.
+• Exa (exa): Semantic search for keyword research, competitor SEO analysis, and backlink discovery.
+• Tavily (tavily): Web search for SEO data, SERP analysis, keyword trends, and ranking research.
+• Browserbase (browserbase): Cloud browser for crawling websites for SEO issues, checking meta tags, testing structured data, and accessing Search Console.
 • Notion MCP: Save SEO plans, keyword tracking, content calendars, and link building campaigns.
-• Google Workspace MCP (Sheets): Track keyword rankings and backlink profiles. (Docs): Write SEO briefs. (Search Console access via browser).
+• Google Workspace MCP (Sheets): Track keyword rankings and backlink profiles. (Docs): Write SEO briefs.
 • Cloudflare MCP: Check DNS records, redirect rules, and caching that affects SEO.
 
 SKILLS — Slash commands you can invoke:
@@ -232,7 +251,9 @@ TOOLS — MCP integrations:
 • Google Workspace MCP (Sheets): Create and analyze data in Google Sheets. (Drive): Access data files.
 • Supabase MCP: Query database tables directly for custom analytics and reporting.
 • Notion MCP: Save dashboards, KPI definitions, and reporting frameworks.
-• Playwright (browser): Access analytics platforms, scrape data from web dashboards.
+• Exa (exa): Semantic search for industry benchmarks, data sources, and analytics best practices.
+• Tavily (tavily): Web search for data research, market reports, and industry statistics.
+• Browserbase (browserbase): Cloud browser for accessing analytics platforms and extracting data from web dashboards.
 
 SKILLS — Slash commands you can invoke:
 • /xlsx: Create dashboards, data analysis spreadsheets, KPI trackers, reporting templates, and financial models.
@@ -249,7 +270,9 @@ TOOLS — MCP integrations:
 • Go High Level MCP (gohighlevel): Manage contacts, conversations, send responses to customers, search/update records, manage tags and workflows for support tickets.
 • Gmail MCP (google-workspace): Draft and send support emails, search email history for context, manage support inbox.
 • Notion MCP: Save support templates, FAQs, escalation procedures, and knowledge base articles.
-• Playwright (browser): Check customer-facing pages for issues, test support flows, research competitor support practices.
+• Exa (exa): Semantic search for support best practices, competitor support strategies, and knowledge base research.
+• Tavily (tavily): Web search for troubleshooting guides, product documentation, and customer support trends.
+• Browserbase (browserbase): Cloud browser for checking customer-facing pages for issues and testing support flows.
 • Google Workspace MCP (Sheets): Track support metrics and ticket data.
 
 SKILLS — Slash commands you can invoke:
@@ -263,7 +286,9 @@ SKILLS — Slash commands you can invoke:
 
   flux: `
 TOOLS — MCP integrations:
-• Playwright (browser): Audit funnels, test landing pages, check conversion flows, analyze competitor funnels, test checkout processes.
+• Exa (exa): Semantic search for funnel strategies, competitor analysis, and conversion optimization research.
+• Tavily (tavily): Web search for landing page examples, A/B test data, and funnel benchmarks.
+• Browserbase (browserbase): Cloud browser for auditing funnels, testing landing pages, checking conversion flows, and analyzing competitor funnels.
 • Go High Level MCP (gohighlevel): Build funnels, create landing pages, set up automation workflows, manage pipelines, create forms.
 • Google Workspace MCP (Sheets): Track conversion metrics and A/B test results. (Docs): Document funnel strategies.
 • Square MCP: Pull purchase/conversion data to measure funnel revenue impact.
@@ -282,7 +307,9 @@ SKILLS — Slash commands you can invoke:
 
   quill: `
 TOOLS — MCP integrations:
-• Playwright (browser): Research grant databases, funding organizations, eligibility requirements, and submission portals.
+• Exa (exa): Semantic search for grant databases, funding organizations, and eligibility requirements.
+• Tavily (tavily): Web search for grant opportunities, funder profiles, and submission guidelines.
+• Browserbase (browserbase): Cloud browser for accessing grant portals, submission forms, and funder websites.
 • Notion MCP: Save grant tracking, proposal templates, submission calendars, and funder research.
 • Google Workspace MCP (Docs): Draft proposals collaboratively. (Sheets): Create budget tables. (Drive): Store reference materials. (Calendar): Track submission deadlines.
 
@@ -297,7 +324,9 @@ SKILLS — Slash commands you can invoke:
 
   lex: `
 TOOLS — MCP integrations:
-• Playwright (browser): Research legal requirements, compliance standards, regulations, case law, and precedents.
+• Exa (exa): Semantic search for legal requirements, case law, regulations, and compliance standards.
+• Tavily (tavily): Web search for legal precedents, regulatory updates, and compliance research.
+• Browserbase (browserbase): Cloud browser for accessing legal databases, regulatory websites, and compliance portals.
 • Notion MCP: Save legal templates, compliance checklists, contract tracking, and regulatory calendars.
 • Google Workspace MCP (Docs): Draft and review legal documents. (Drive): Store signed contracts. (Calendar): Track legal deadlines.
 • Go High Level MCP (gohighlevel): Access client records for contract management.
@@ -316,7 +345,9 @@ TOOLS — MCP integrations:
 • Gmail MCP (google-workspace): Draft and send press outreach emails, manage media relationships, follow up with journalists.
 • YouTube MCP (youtube): Upload press videos, announcements, and event recordings to YouTube.
 • TikTok MCP (tiktok): Publish short PR clips and brand announcements to TikTok.
-• Playwright (browser): Research media coverage, journalist contacts, industry news, and publication editorial calendars.
+• Exa (exa): Semantic search for media coverage, journalist contacts, and publication research.
+• Tavily (tavily): Web search for industry news, editorial calendars, and media outlet research.
+• Browserbase (browserbase): Cloud browser for researching media coverage and publication websites.
 • Notion MCP: Save media lists, press coverage tracking, and PR campaign plans.
 • Google Workspace MCP (Docs): Write press releases. (Sheets): Track media outreach and coverage. (Calendar): Plan PR timelines.
 • Go High Level MCP (gohighlevel): Manage media contacts and PR pipeline.
@@ -336,7 +367,9 @@ SKILLS — Slash commands you can invoke:
   bridge: `
 TOOLS — MCP integrations:
 • Gmail MCP (google-workspace): Draft partnership outreach emails, follow up on proposals, manage deal communication.
-• Playwright (browser): Research potential partners' websites, offerings, market position, and financials.
+• Exa (exa): Semantic search for potential partners' profiles, market position, and company research.
+• Tavily (tavily): Web search for partner websites, financials, and market intelligence.
+• Browserbase (browserbase): Cloud browser for researching partner offerings and accessing company profiles.
 • Notion MCP: Save partnership tracking, deal pipelines, and collaboration frameworks.
 • Google Workspace MCP (Docs): Draft MOUs and partnership agreements. (Sheets): Track partnership pipeline. (Calendar): Schedule partner meetings.
 • Go High Level MCP (gohighlevel): Manage partner contacts and deal pipeline.
@@ -354,7 +387,9 @@ SKILLS — Slash commands you can invoke:
 
   oracle: `
 TOOLS — MCP integrations:
-• Playwright (browser): Research trends, emerging technologies, market shifts, industry reports, patent filings, and startup activity.
+• Exa (exa): Semantic search for emerging technologies, trends, patent filings, startup activity, and research papers.
+• Tavily (tavily): Web search for market shifts, industry reports, and trend data.
+• Browserbase (browserbase): Cloud browser for accessing gated research, trend databases, and industry publications.
 • Notion MCP: Save trend databases, scenario plans, and foresight libraries.
 • Google Workspace MCP (Docs): Write trend reports. (Sheets): Build scenario models. (Drive): Store research references.
 
@@ -381,7 +416,9 @@ TOOLS — MCP integrations:
   - term-cli kill -s <name> — end session
 • File system (Read/Write): Create and manage Python scripts, Jupyter notebooks, data files, and model outputs.
 • Supabase MCP: Query databases directly for analysis, create analytics views, store model results.
-• Playwright (browser): Scrape data sources, access web APIs, gather datasets, download CSVs.
+• Exa (exa): Semantic search for research papers, datasets, and data science methodologies.
+• Tavily (tavily): Web search for data sources, APIs, datasets, and analysis techniques.
+• Browserbase (browserbase): Cloud browser for accessing web APIs, gathering datasets, and downloading CSVs.
 • Google Workspace MCP (Sheets): Import/export data to Google Sheets. (Drive): Access data files and datasets.
 • Notion MCP: Document analysis methodologies, model documentation, and experiment tracking.
 
@@ -405,7 +442,9 @@ TOOLS — MCP integrations:
   - term-cli send-key -s <name> C-c — send ctrl+c
   - term-cli request -s <name> -m "need credentials" — ask human for secrets/MFA
   - term-cli kill -s <name> — end session
-• Playwright (browser): Test web application security, check for XSS/CSRF, verify HTTPS, audit cookie settings.
+• Exa (exa): Semantic search for security advisories, CVE databases, and vulnerability research.
+• Tavily (tavily): Web search for security best practices, threat intelligence, and compliance requirements.
+• Browserbase (browserbase): Cloud browser for testing web application security, checking XSS/CSRF, verifying HTTPS, and auditing cookie settings.
 • Cloudflare MCP: Check and configure DNS security, WAF rules, SSL settings, rate limiting, and DDoS protection.
 • Supabase MCP: Audit database permissions, RLS policies, and API security settings.
 • Google Workspace MCP: Audit workspace security settings, check sharing permissions, review access logs.
@@ -432,7 +471,9 @@ TOOLS — MCP integrations:
   - term-cli pipe-log -s <name> /tmp/<name>.log — stream output to file
   - term-cli status -s <name> — check if process is still running
   - term-cli kill -s <name> — end session
-• Playwright (browser): Set up automations in Zapier, Make.com, and similar platforms. Test webhook endpoints.
+• Exa (exa): Semantic search for automation tools, integration documentation, and workflow patterns.
+• Tavily (tavily): Web search for API documentation, webhook testing, and automation platform guides.
+• Browserbase (browserbase): Cloud browser for setting up automations in Zapier, Make.com, and testing webhook endpoints.
 • Go High Level MCP (gohighlevel): Configure CRM automations, workflows, triggers, and campaign sequences.
 • Google Workspace MCP: Set up calendar automations, email filters, Drive workflows, and workspace integrations.
 • Cloudflare MCP: Deploy webhook Workers, set up edge automations, configure cron triggers.
@@ -451,7 +492,9 @@ SKILLS — Slash commands you can invoke:
 
   nexus: `
 TOOLS — MCP integrations:
-• Playwright (browser): Research community platforms (Discord, Circle, Discourse), analyze competitor communities, monitor engagement.
+• Exa (exa): Semantic search for community building strategies, platform research, and competitor community analysis.
+• Tavily (tavily): Web search for community platforms (Discord, Circle, Discourse), engagement tactics, and moderation tools.
+• Browserbase (browserbase): Cloud browser for researching community platforms, analyzing competitor communities, and monitoring engagement.
 • YouTube MCP (youtube): Upload community event recordings and tutorial videos.
 • TikTok MCP (tiktok): Share community highlights and event clips on TikTok.
 • Notion MCP: Save community guidelines, member directories, event calendars, and engagement playbooks.
@@ -471,7 +514,9 @@ SKILLS — Slash commands you can invoke:
 
   aura: `
 TOOLS — MCP integrations:
-• Playwright (browser): Research competitor brands, positioning, visual identity, and messaging across websites and social media.
+• Exa (exa): Semantic search for competitor brands, positioning, visual identity, and messaging research.
+• Tavily (tavily): Web search for brand trends, audience preferences, and industry tone analysis.
+• Browserbase (browserbase): Cloud browser for researching competitor brands across websites and social media.
 • Notion MCP: Save brand guidelines, voice libraries, messaging frameworks, and brand asset trackers.
 • Google Workspace MCP (Docs): Write brand documents. (Drive): Store brand assets. (Slides): Create brand presentations.
 
@@ -490,7 +535,9 @@ SKILLS — Slash commands you can invoke:
 TOOLS — MCP integrations:
 • Google Workspace MCP (Calendar): Review and optimize the user's calendar, create time blocks, schedule focus time, identify meeting overload. (Gmail): Set up email filters, manage inbox rules. (Docs): Create workflow documentation.
 • Notion MCP: Create task boards, project trackers, productivity dashboards, and habit trackers.
-• Playwright (browser): Research productivity tools, set up integrations, configure apps.
+• Exa (exa): Semantic search for productivity tools, workflow methodologies, and efficiency research.
+• Tavily (tavily): Web search for productivity apps, integrations, and time management techniques.
+• Browserbase (browserbase): Cloud browser for researching and configuring productivity tools and integrations.
 • Go High Level MCP (gohighlevel): Review and optimize the user's task pipeline and CRM workflows for efficiency.
 
 SKILLS — Slash commands you can invoke:
@@ -504,7 +551,9 @@ SKILLS — Slash commands you can invoke:
 
   tesseract: `
 TOOLS — MCP integrations:
-• Playwright (browser): Research complex systems, gather data on interconnections, study industry dynamics and feedback loops.
+• Exa (exa): Semantic search for complex systems research, interdependencies, and feedback loop analysis.
+• Tavily (tavily): Web search for systems dynamics, industry data, and interconnection research.
+• Browserbase (browserbase): Cloud browser for gathering data on complex systems and studying industry dynamics.
 • Notion MCP: Save systems maps, causal loop diagrams, and leverage point analyses.
 • Google Workspace MCP (Docs): Write systems analysis reports. (Sheets): Build system models and simulation data.
 • Supabase MCP: Query data for systems analysis and model complex relationships.
@@ -520,6 +569,45 @@ SKILLS — Slash commands you can invoke:
 • /telegram-file-sender: Send analysis documents, diagrams, and reports to the user.
 `,
 };
+
+// ============================================================
+// AGENT ↔ MCP SERVER MAPPING (structured, for mcp2cli routing)
+// Maps each agent to the MCP servers they need access to.
+// ============================================================
+
+const AGENT_MCP_SERVERS: Record<string, string[]> = {
+  helios: ["gohighlevel", "exa", "tavily", "browserbase", "google-workspace", "square"],
+  pixel: ["gohighlevel", "exa", "tavily", "browserbase", "google-workspace", "notion"],
+  kai: ["notion", "exa", "tavily", "browserbase", "google-workspace"],
+  orion: ["google-workspace", "gohighlevel", "exa", "tavily", "browserbase", "notion"],
+  morpheus: ["exa", "tavily", "browserbase", "google-workspace", "notion"],
+  architect: ["exa", "tavily", "browserbase", "cloudflare", "notion", "google-workspace"],
+  athena: ["exa", "tavily", "browserbase", "notion", "google-workspace", "square", "gohighlevel"],
+  cyra: ["exa", "tavily", "browserbase", "google-workspace", "cloudflare", "notion"],
+  magnus: ["exa", "tavily", "browserbase", "notion", "google-workspace", "cloudflare"],
+  digit: ["square", "gohighlevel", "google-workspace", "notion", "exa", "tavily", "browserbase"],
+  echo: ["gohighlevel", "google-workspace", "notion", "exa", "tavily", "browserbase"],
+  flux: ["exa", "tavily", "browserbase", "gohighlevel", "google-workspace", "square", "notion"],
+  quill: ["exa", "tavily", "browserbase", "notion", "google-workspace"],
+  lex: ["exa", "tavily", "browserbase", "notion", "google-workspace", "gohighlevel"],
+  helia: ["google-workspace", "exa", "tavily", "browserbase", "notion", "gohighlevel"],
+  bridge: ["google-workspace", "exa", "tavily", "browserbase", "notion", "gohighlevel", "zoom"],
+  oracle: ["exa", "tavily", "browserbase", "notion", "google-workspace"],
+  cipher: ["exa", "tavily", "browserbase", "google-workspace", "notion"],
+  rift: ["exa", "tavily", "browserbase", "cloudflare", "google-workspace", "notion"],
+  joule: ["exa", "tavily", "browserbase", "gohighlevel", "google-workspace", "cloudflare", "notion", "zoom"],
+  nexus: ["exa", "tavily", "browserbase", "notion", "google-workspace", "gohighlevel"],
+  aura: ["exa", "tavily", "browserbase", "notion", "google-workspace"],
+  zen: ["google-workspace", "notion", "exa", "tavily", "browserbase", "gohighlevel"],
+  tesseract: ["exa", "tavily", "browserbase", "notion", "google-workspace"],
+};
+
+/**
+ * Get the MCP server names assigned to an agent.
+ */
+export function getAgentMcpServers(agentSlug: string): string[] {
+  return AGENT_MCP_SERVERS[agentSlug.toLowerCase()] || [];
+}
 
 /**
  * Load all agent definitions from .claude/agents/*.md
@@ -622,7 +710,7 @@ function extractToolNames(toolBlock: string): string {
   const names: string[] = [];
   const patterns = [
     /\/(\S+) skill/g,
-    /(Playwright|Bash|Gmail|Notion|Square|Cloudflare|Google Calendar|Go High Level|Meta Ads)/gi,
+    /(Exa|Tavily|Browserbase|Bash|Gmail|Notion|Square|Cloudflare|Google Calendar|Go High Level|Meta Ads)/gi,
   ];
   for (const pat of patterns) {
     for (const m of toolBlock.matchAll(pat)) {
@@ -702,7 +790,9 @@ export function buildAgentPrompt(
   basePrompt: string,
   depContext?: string,
   phase?: "prepare" | "execute",
-  workspaceDir?: string
+  workspaceDir?: string,
+  useMcp2cli?: boolean,
+  userMcpConfig?: Record<string, any>
 ): string {
   const agent = agents.get(agentSlug.toLowerCase());
 
@@ -732,7 +822,24 @@ export function buildAgentPrompt(
     "",
   ];
 
-  if (tools) {
+  // When mcp2cli is active, replace MCP tool descriptions with mcp2cli Bash instructions
+  if (useMcp2cli) {
+    const mcpConfig = userMcpConfig || loadProjectMcpConfig(PROJECT_ROOT);
+    const agentServers = AGENT_MCP_SERVERS[agentSlug.toLowerCase()] || [];
+    const mcp2cliBlock = buildMcp2cliInstructions(agentServers, mcpConfig);
+    if (mcp2cliBlock) {
+      parts.push(mcp2cliBlock);
+      parts.push("");
+    }
+    // Still include SKILLS section from the original tools block
+    if (tools) {
+      const skillsMatch = tools.match(/SKILLS[\s\S]*/);
+      if (skillsMatch) {
+        parts.push(skillsMatch[0].trim());
+        parts.push("");
+      }
+    }
+  } else if (tools) {
     parts.push(tools);
     parts.push("");
   }

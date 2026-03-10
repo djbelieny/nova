@@ -28,6 +28,7 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents } from "./agent-router.ts";
+import { isMcp2cliAvailable } from "./mcp2cli.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
 import {
   ChannelRegistry,
@@ -760,10 +761,15 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
     const noToolHints = ["heartbeat", "memory-review", "log-monitor"];
     const noMcp = hint ? noToolHints.includes(hint) : false;
 
+    // mcp2cli: skip --mcp-config when mcp2cli is enabled (tools accessed via Bash)
+    const mcp2cliEnabled = process.env.MCP2CLI_ENABLED !== "false" && (await isMcp2cliAvailable());
+    const useMcp2cli = mcp2cliEnabled && !noMcp && !!mcpConfigPath;
+
     const result: AIProviderResult = await provider.call({
       prompt,
       model: resolvedModel,
-      mcpConfigPath,
+      mcpConfigPath: useMcp2cli ? undefined : mcpConfigPath,
+      useMcp2cli,
       noMcp,
       outputFormat: "json",
     });
