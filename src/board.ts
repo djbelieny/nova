@@ -10,6 +10,7 @@
 import { InlineKeyboard } from "grammy";
 import type { ExecComms, BoardSession, BoardContribution } from "./exec-comms.ts";
 import { saveBoardMeeting, saveDecision } from "./notion-board.ts";
+import { emit } from "./events.ts";
 
 // ============================================================
 // Constants
@@ -57,7 +58,15 @@ export function initBoard(deps: {
 // Active session tracking
 // ============================================================
 
-const activeSessions = new Map<string, { userId: string; chatId: string | number }>();
+const activeSessions = new Map<string, { userId: string; chatId: string | number; createdAt: number }>();
+
+// Periodic cleanup of stale board sessions (30min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of activeSessions) {
+    if (now - session.createdAt > 30 * 60 * 1000) activeSessions.delete(id);
+  }
+}, 30 * 60 * 1000);
 
 // ============================================================
 // Convene Board
@@ -81,13 +90,14 @@ export async function conveneBoard(
     await _comms.updateSession(sessionId, { follow_up_of: followUpOf } as any);
   }
 
+  emit({ type: "board.convened", level: "info", data: { message: `Board convened for: "${question}"`, question, sessionId, module: "board" } });
   await _sendMessage(chatId, "Board convened. Executives analyzing independently...");
   await _comms.updateSession(sessionId, { status: "analyzing" });
 
   // Track and monitor
-  activeSessions.set(sessionId, { userId, chatId });
+  activeSessions.set(sessionId, { userId, chatId, createdAt: Date.now() });
   monitorSession(sessionId, userId, chatId).catch((err) => {
-    console.error(`[Board] Monitor error for session ${sessionId}:`, err);
+    emit({ type: "error", level: "error", data: { message: `Monitor error for session ${sessionId}`, module: "board", error: String(err) } });
     _sendMessage(chatId, "Board session encountered an error during analysis.").catch(() => {});
     activeSessions.delete(sessionId);
   });
@@ -243,7 +253,7 @@ Return ONLY the JSON array, no other text.`;
       `\n## Options Presented`,
       ...options.map((o, i) => `\n### Option ${i + 1}: ${o.title}\n${o.description}\n- Confidence: ${Math.round(o.confidence * 100)}%\n- Supporters: ${o.supporters.join(", ")}\n- Risks: ${o.risks}\n- Effort: ${o.effort}`),
     ].filter(Boolean).join("\n"),
-  }).catch((err) => console.error("[Board] Notion save failed:", err));
+  }).catch((err) => emit({ type: "error", level: "error", data: { message: "Notion save failed", module: "board", error: String(err) } }));
 
   activeSessions.delete(sessionId);
 }
@@ -272,7 +282,7 @@ function parseOptions(raw: string): BoardOption[] {
         effort: ["low", "medium", "high"].includes(o.effort) ? o.effort : "medium",
       }));
   } catch {
-    console.error("[Board] Failed to parse synthesis options");
+    emit({ type: "error", level: "error", data: { message: "Failed to parse synthesis options", module: "board" } });
     return [];
   }
 }
@@ -325,7 +335,7 @@ export async function handleBoardDecision(
 ): Promise<void> {
   const session = await _comms.getSession(sessionId);
   if (!session) {
-    console.error(`[Board] Session ${sessionId} not found for decision`);
+    emit({ type: "error", level: "error", data: { message: `Session ${sessionId} not found for decision`, module: "board" } });
     return;
   }
 
@@ -335,7 +345,7 @@ export async function handleBoardDecision(
   const chosen = options[optionIndex];
 
   if (!chosen) {
-    console.error(`[Board] Invalid option index ${optionIndex} for session ${sessionId}`);
+    emit({ type: "error", level: "error", data: { message: `Invalid option index ${optionIndex} for session ${sessionId}`, module: "board" } });
     return;
   }
 
@@ -356,6 +366,7 @@ Supporters: ${chosen.supporters.join(", ")}`;
   const consensus = await _callAI(consensusPrompt, "fast", "board-consensus");
 
   // Store consensus
+  emit({ type: "board.decision", level: "info", data: { message: `Board decision: ${chosen.title}`, decision: chosen.title, sessionId, question: session.question, confidence: chosen.confidence, module: "board" } });
   await _comms.updateSession(sessionId, { consensus });
 
   // Record in decisions table
@@ -383,7 +394,7 @@ Supporters: ${chosen.supporters.join(", ")}`;
     rationale: `${chosen.description}\n\nConsensus: ${consensus}`,
     confidence: chosen.confidence,
     impactAreas: chosen.supporters.length > 3 ? ["Strategy"] : undefined,
-  }).catch((err) => console.error("[Board] Notion decision save failed:", err));
+  }).catch((err) => emit({ type: "error", level: "error", data: { message: "Notion decision save failed", module: "board", error: String(err) } }));
 
   // Check for stalling
   const isStalling = await _comms.checkStalling(userId);
@@ -425,7 +436,7 @@ export function startBoardPoller(): void {
         if (activeSessions.has(session.id)) continue;
 
         pollerSessions.add(session.id);
-        console.log(`[Board] Poller picked up session ${session.id}: "${session.question}"`);
+        emit({ type: "board.convened", level: "info", data: { message: `Poller picked up session ${session.id}: "${session.question}"`, question: session.question, sessionId: session.id, module: "board" } });
 
         // These sessions were convened but not monitored by this node.
         // If status is still 'convened' or 'analyzing', start monitoring.
@@ -434,18 +445,18 @@ export function startBoardPoller(): void {
           activeSessions.set(session.id, { userId: session.user_id, chatId });
 
           monitorSession(session.id, session.user_id, chatId).catch((err) => {
-            console.error(`[Board] Poller monitor error for ${session.id}:`, err);
+            emit({ type: "error", level: "error", data: { message: `Poller monitor error for ${session.id}`, module: "board", error: String(err) } });
             activeSessions.delete(session.id);
           });
         }
       }
     } catch (err) {
-      console.error("[Board] Poller tick error:", err);
+      emit({ type: "error", level: "error", data: { message: "Poller tick error", module: "board", error: String(err) } });
     }
 
     setTimeout(tick, POLLER_INTERVAL);
   };
 
   setTimeout(tick, POLLER_INTERVAL);
-  console.log("[Board] Poller started");
+  emit({ type: "system.health", level: "info", data: { message: "Board poller started", module: "board" } });
 }

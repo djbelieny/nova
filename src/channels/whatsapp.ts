@@ -109,7 +109,9 @@ export class WhatsAppAdapter implements ChannelAdapter {
           method: "DELETE",
           headers: this.headers(),
         });
-      } catch {}
+      } catch (e) {
+        console.debug(`[whatsapp:${this.userId}] Webhook deregistration non-critical:`, e);
+      }
       this.webhookId = null;
     }
     this.connectionState = "disconnected";

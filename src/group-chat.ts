@@ -129,6 +129,20 @@ const lastResponseTime = new Map<string, number>();
 // Track which message IDs this bot sent (to avoid responding to self)
 const ownMessageIds = new Set<number>();
 
+// Periodic cleanup of stale entries (1h)
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, time] of lastResponseTime) {
+    if (now - time > 60 * 60 * 1000) lastResponseTime.delete(key);
+  }
+  // Trim ownMessageIds to last 200
+  if (ownMessageIds.size > 200) {
+    const arr = Array.from(ownMessageIds);
+    const toRemove = arr.slice(0, arr.length - 200);
+    for (const id of toRemove) ownMessageIds.delete(id);
+  }
+}, 60 * 60 * 1000);
+
 // Roster of all execs — refreshed periodically by the node
 let _roster: ExecRosterEntry[] = [];
 

@@ -64,6 +64,9 @@ interface CallUser {
 
 const phoneUserCache = new Map<string, CallUser | null>();
 
+// Periodic cleanup of phone user cache (1h)
+setInterval(() => { phoneUserCache.clear(); }, 60 * 60 * 1000);
+
 async function resolveUserByPhone(phone: string): Promise<CallUser | null> {
   const cached = phoneUserCache.get(phone);
   if (cached !== undefined) return cached;
@@ -187,9 +190,12 @@ function recordPinSuccess(): void {
 function sanitizeSpeechInput(text: string): string {
   // Strip patterns that could manipulate memory system
   let sanitized = text
-    .replace(/\[REMEMBER:[^\]]*\]/gi, "")
-    .replace(/\[GOAL:[^\]]*\]/gi, "")
-    .replace(/\[DONE:[^\]]*\]/gi, "")
+    .replace(/\[\s*REMEMBER\s*:[^\]]*\]/gi, "")
+    .replace(/\[\s*GOAL\s*:[^\]]*\]/gi, "")
+    .replace(/\[\s*DONE\s*:[^\]]*\]/gi, "")
+    .replace(/\[\s*TASK\s*:[^\]]*\]/gi, "")
+    .replace(/\[\s*SCHEDULE\s*:[^\]]*\]/gi, "")
+    .replace(/\[\s*SHARE\s*:[^\]]*\]/gi, "")
     // Strip system/assistant role injection attempts
     .replace(/^(system|assistant|human)\s*:/gim, "")
     // Strip XML/HTML tags that could interfere with TwiML or prompts

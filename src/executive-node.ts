@@ -39,6 +39,7 @@ import {
   markdownToTelegramHTML,
   cleanResponseForUser,
 } from "./channels/telegram.ts";
+import { emit } from "./events.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -195,14 +196,14 @@ let _execUseMcp2cli = false;
 async function initExecMcpConfig(execRole: string): Promise<void> {
   const servers = EXEC_MCP_SERVERS[execRole] || [];
   if (servers.length === 0) {
-    console.log(`[exec-node] No MCP servers for ${execRole}`);
+    emit({ type: "exec.message", level: "info", execRole: execRole, data: { message: `No MCP servers for ${execRole}`, module: "exec-node" } });
     return;
   }
 
   // Check mcp2cli availability first
   _execUseMcp2cli = process.env.MCP2CLI_ENABLED !== "false" && (await isMcp2cliAvailable());
   if (_execUseMcp2cli) {
-    console.log(`[exec-node] mcp2cli available — ${execRole} will use Bash-based tool access for: ${servers.join(", ")}`);
+    emit({ type: "exec.message", level: "info", execRole: execRole, data: { message: `mcp2cli available — ${execRole} will use Bash-based tool access for: ${servers.join(", ")}`, module: "exec-node" } });
     return; // No need for MCP config file — tools accessed via mcp2cli
   }
 
@@ -232,7 +233,7 @@ async function initExecMcpConfig(execRole: string): Promise<void> {
     await mkdir(configDir, { recursive: true });
     _execMcpConfigPath = join(configDir, `mcp-${execRole}.json`);
     await writeFile(_execMcpConfigPath, JSON.stringify({ mcpServers: filtered }, null, 2));
-    console.log(`[exec-node] MCP config for ${execRole}: ${Object.keys(filtered).join(", ")} → ${_execMcpConfigPath}`);
+    emit({ type: "exec.message", level: "info", execRole: execRole, data: { message: `MCP config for ${execRole}: ${Object.keys(filtered).join(", ")} → ${_execMcpConfigPath}`, module: "exec-node" } });
   } catch (err) {
     console.warn(`[exec-node] Failed to generate exec MCP config:`, err);
   }
@@ -338,16 +339,16 @@ function isAllowedUser(ctx: Context): boolean {
 // ============================================================
 
 async function main() {
-  console.log(`[exec-node] Starting executive node: ${role.toUpperCase()}`);
-  console.log(`[exec-node] AI provider: ${EXEC_AI_PROVIDER}`);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: `Starting executive node: ${role.toUpperCase()}`, module: "exec-node" } });
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: `AI provider: ${EXEC_AI_PROVIDER}`, module: "exec-node" } });
 
   // 1. Load executive definition
   const execDef = await loadExecDef(role);
-  console.log(`[exec-node] Loaded executive: ${execDef.name} — ${execDef.description}`);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: `Loaded executive: ${execDef.name} — ${execDef.description}`, module: "exec-node" } });
 
   // 2. Initialize AI providers
   initProviders();
-  console.log(`[exec-node] AI providers initialized`);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: "AI providers initialized", module: "exec-node" } });
 
   // 2b. Initialize MCP config for research-capable execs
   await initExecMcpConfig(role);
@@ -358,7 +359,7 @@ async function main() {
 
   // 4. Initialize Supabase comms
   const comms = new ExecComms(role, SUPABASE_URL!, SUPABASE_ANON_KEY!);
-  console.log(`[exec-node] Supabase comms initialized`);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: "Supabase comms initialized", module: "exec-node" } });
 
   // 5. Register node (bot username filled after bot.api.getMe below)
   const nodeHost = process.env.NODE_HOST || "localhost";
@@ -379,11 +380,11 @@ async function main() {
   // Get bot info (username) for group chat @mention detection
   const botInfo = await bot.api.getMe();
   const botUsername = botInfo.username || `${role}_bot`;
-  console.log(`[exec-node] Bot username: @${botUsername}`);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: `Bot username: @${botUsername}`, module: "exec-node" } });
 
   // Register node with bot username so other execs can discover @handles
   await comms.registerNode(nodeHost, { botUsername, execName: execDef.name });
-  console.log(`[exec-node] Node registered: ${nodeHost}`);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: `Node registered: ${nodeHost}`, module: "exec-node" } });
 
   // Wire up sendMessage now that bot exists
   botSendMessage = async (chatId: string | number, text: string) => {
@@ -410,9 +411,9 @@ async function main() {
   try {
     const roster = await comms.getExecRoster();
     updateGroupRoster(roster);
-    console.log(`[exec-node] Group chat initialized (roster: ${roster.length} execs)`);
+    emit({ type: "exec.message", level: "info", execRole: role, data: { message: `Group chat initialized (roster: ${roster.length} execs)`, module: "exec-node" } });
   } catch {
-    console.log(`[exec-node] Group chat initialized (roster fetch failed — will retry)`);
+    emit({ type: "exec.message", level: "warn", execRole: role, data: { message: "Group chat initialized (roster fetch failed — will retry)", module: "exec-node" } });
   }
 
   // Log all updates for debugging group chat delivery
@@ -521,7 +522,7 @@ async function main() {
         }
       }
     } catch (err) {
-      console.error(`[exec-node] Error handling message:`, err);
+      emit({ type: "error", level: "error", execRole: role, data: { message: "Error handling message", module: "exec-node", error: String(err) } });
       await ctx.reply("An error occurred processing your message. Please try again.");
     }
   });
@@ -577,7 +578,7 @@ async function main() {
         }
       }
     } catch (err) {
-      console.error(`[exec-node] Message poll error:`, err);
+      emit({ type: "error", level: "error", execRole: role, data: { message: "Message poll error", module: "exec-node", error: String(err) } });
     }
   }, 3000);
 
@@ -608,7 +609,7 @@ async function main() {
         }
       }
     } catch (err) {
-      console.error(`[exec-node] Board session poll error:`, err);
+      emit({ type: "error", level: "error", execRole: role, data: { message: "Board session poll error", module: "exec-node", error: String(err) } });
     }
   }, 3000);
 
@@ -640,7 +641,7 @@ async function main() {
           }
         }
       } catch (err) {
-        console.error(`[exec-node] Delegation poll error:`, err);
+        emit({ type: "error", level: "error", execRole: role, data: { message: "Delegation poll error", module: "exec-node", error: String(err) } });
       }
     }, 3000);
   }
@@ -654,7 +655,7 @@ async function main() {
       const roster = await comms.getExecRoster();
       updateGroupRoster(roster);
     } catch (err) {
-      console.error(`[exec-node] Heartbeat error:`, err);
+      emit({ type: "exec.heartbeat", level: "debug", execRole: role, data: { message: "Heartbeat error", module: "exec-node", error: String(err) } });
     }
   }, 30_000);
 
@@ -662,7 +663,7 @@ async function main() {
   async function shutdown(signal: string) {
     if (!running) return;
     running = false;
-    console.log(`\n[exec-node] ${signal} received. Shutting down ${execDef.name}...`);
+    emit({ type: "exec.message", level: "info", execRole: role, data: { message: `${signal} received. Shutting down ${execDef.name}...`, module: "exec-node" } });
 
     clearInterval(messagePollInterval);
     clearInterval(boardPollInterval);
@@ -671,13 +672,13 @@ async function main() {
 
     try {
       await comms.deregisterNode();
-      console.log(`[exec-node] Node deregistered`);
+      emit({ type: "exec.message", level: "info", execRole: role, data: { message: "Node deregistered", module: "exec-node" } });
     } catch (err) {
-      console.error(`[exec-node] Error deregistering node:`, err);
+      emit({ type: "error", level: "error", execRole: role, data: { message: "Error deregistering node", module: "exec-node", error: String(err) } });
     }
 
     bot.stop();
-    console.log(`[exec-node] ${execDef.name} shut down cleanly.`);
+    emit({ type: "exec.message", level: "info", execRole: role, data: { message: `${execDef.name} shut down cleanly`, module: "exec-node" } });
     process.exit(0);
   }
 
@@ -685,7 +686,7 @@ async function main() {
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   // 10. Start bot
-  console.log(`[exec-node] ${execDef.name} (${role.toUpperCase()}) is online and polling.`);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: `${execDef.name} (${role.toUpperCase()}) is online and polling`, module: "exec-node" } });
   bot.start();
 }
 

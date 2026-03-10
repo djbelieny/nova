@@ -24,6 +24,7 @@ import type { Database } from "./db.ts";
 import { stat } from "fs/promises";
 import type { ExecutionPlan } from "./patterns.ts";
 import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents } from "./agent-router.ts";
+import { emit } from "./events.ts";
 
 type ModelTier = "haiku" | "sonnet" | "opus";
 
@@ -146,8 +147,8 @@ export async function verifyAndRegisterArtifacts(
           delivered: false,
           metadata: { source_subtask: artifact.source },
         });
-      } catch {
-        // Table may not exist yet — non-critical
+      } catch (e) {
+        console.debug("[planner] Artifact save non-critical:", e);
       }
     }
   }
@@ -435,7 +436,7 @@ Request: ${text}`;
         let agent = String(s.agent || "general").toLowerCase();
         // Validate agent slug — reject hallucinated slugs
         if (!validSlugs.has(agent)) {
-          console.warn(`[planner] Unknown agent slug "${agent}" — falling back to "general"`);
+          emit({ type: "agent.dispatched", level: "warn", data: { message: `Unknown agent slug "${agent}" — falling back to "general"`, module: "planner" } });
           agent = "general";
         }
         return {
@@ -448,13 +449,14 @@ Request: ${text}`;
     };
 
     // Log the routing decisions
+    emit({ type: "task.created", level: "info", data: { message: `Decomposed into ${plan.subtasks.length} subtasks`, subtaskCount: plan.subtasks.length, module: "planner" } });
     for (const st of plan.subtasks) {
-      console.log(`[planner] → ${st.agent} [${st.phase}]: ${st.description.substring(0, 60)}`);
+      emit({ type: "agent.dispatched", level: "info", agentSlug: st.agent, data: { message: `→ ${st.agent} [${st.phase}]: ${st.description.substring(0, 60)}`, description: st.description, phase: st.phase, module: "planner" } });
     }
 
     return plan;
   } catch (error) {
-    console.error("Decomposition parse error:", error);
+    emit({ type: "error", level: "error", data: { message: `Decomposition parse error: ${error}`, module: "planner" } });
     return { subtasks: [{ description: text, agent: "general", phase: "prepare" }] };
   }
 }
@@ -504,7 +506,7 @@ export async function executePhase(
         });
         subtaskIds.push(id);
       } catch (insertErr: any) {
-        console.error(`[planner] Failed to insert subtask ${i} (${subtask.agent}):`, insertErr.message);
+        emit({ type: "error", level: "error", data: { message: `Failed to insert subtask ${i} (${subtask.agent}): ${insertErr.message}`, module: "planner" } });
         subtaskIds.push(null);
       }
     } else {
@@ -534,7 +536,7 @@ export async function executePhase(
       // Check if remaining subtasks are all from other phase (not a circular dep)
       const remaining = allIndices.filter((i) => !completed.has(i));
       if (remaining.length > 0) {
-        console.error("Circular dependency detected in subtasks");
+        emit({ type: "error", level: "error", data: { message: "Circular dependency detected in subtasks", module: "planner" } });
       }
       break;
     }
@@ -580,7 +582,7 @@ export async function executePhase(
           workspaceDir
         );
 
-        console.log(`[planner] Executing subtask ${idx} via ${agentSlug} [${phase}]: ${subtask.description.substring(0, 50)}`);
+        emit({ type: "agent.dispatched", level: "info", agentSlug, data: { message: `Executing subtask ${idx} via ${agentSlug} [${phase}]: ${subtask.description.substring(0, 50)}`, description: subtask.description, phase, subtaskIndex: idx, module: "planner" } });
         onProgress?.(idx, "started");
 
         try {
@@ -592,12 +594,12 @@ export async function executePhase(
 
           // Artifact validation: if the description implies deliverables but none were tagged, retry once
           if (phase === "prepare" && artifacts.length === 0 && shouldExpectArtifacts(subtask.description)) {
-            console.warn(`[planner] Subtask ${idx} (${agentSlug}) expected artifacts but produced none — retrying with explicit instruction`);
+            emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) expected artifacts but produced none — retrying with explicit instruction`, subtaskIndex: idx, module: "planner" } });
             const retryPrompt = prompt + `\n\nCRITICAL: Your previous attempt produced no [ARTIFACT:] tags. You MUST tag every deliverable you create:\n- Images: [ARTIFACT: image | /path/to/file.png]\n- Copy/text: [ARTIFACT: copy | "the text content"]\n- Files: [ARTIFACT: file | /path/to/file]\n- Data: [ARTIFACT: data | key finding]\nDo NOT describe what you would do — actually do it and tag the outputs.`;
             result = await _callClaude(retryPrompt, undefined, user?.id, routingHint);
             artifacts = extractArtifacts(result, idx);
             if (artifacts.length === 0) {
-              console.warn(`[planner] Subtask ${idx} still produced no artifacts after retry`);
+              emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx} still produced no artifacts after retry`, subtaskIndex: idx, module: "planner" } });
             }
           }
 
@@ -612,7 +614,7 @@ export async function executePhase(
             if (verification.missing.length > 0) {
               const warning = `\nWARNING: ${verification.missing.length} file(s) not found on disk: ${verification.missing.join(", ")}`;
               result += warning;
-              console.warn(`[planner] Subtask ${idx}: ${warning.trim()}`);
+              emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx}: ${warning.trim()}`, subtaskIndex: idx, module: "planner" } });
             }
           }
 
@@ -631,7 +633,7 @@ export async function executePhase(
             artifacts,
           };
         } catch (error) {
-          console.error(`Subtask ${idx} (${agentSlug}) error:`, error);
+          emit({ type: "agent.completed", level: "error", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) error: ${error}`, success: false, subtaskIndex: idx, module: "planner" } });
 
           if (db && subtaskIds[idx]) {
             db.updateTask(subtaskIds[idx]!, { status: "blocked", result: String(error) });

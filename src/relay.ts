@@ -56,6 +56,7 @@ import {
   cleanResponseForUser,
 } from "./channels/telegram.ts";
 import { getDecisionContext } from "./memory.ts";
+import { emit, initEventBus, startStallDetection, shutdownEventBus } from "./events.ts";
 
 // Executive board (optional — only active if SUPABASE_URL is configured)
 let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
@@ -148,6 +149,10 @@ async function gracefulShutdown(signal: string): Promise<void> {
 
   // Stop WhatsApp sessions gracefully
   try { await whatsappManager.stopAll(); } catch {}
+
+  // Flush event bus and close database
+  shutdownEventBus();
+  try { supabase.close(); } catch {}
 
   await releaseLock();
   process.exit(0);
@@ -695,7 +700,12 @@ async function callAI(prompt: string, model?: LegacyModelTier | ModelTier, userI
       try {
         if (attempt > 0) {
           const delay = 3000 * Math.pow(3, attempt - 1);
-          console.log(`[retry] Attempt ${attempt + 1}/${maxRetries + 1} after ${delay / 1000}s delay`);
+          emit({
+            type: "error",
+            level: "warn",
+            userId: userId,
+            data: { message: `Attempt ${attempt + 1}/${maxRetries + 1} after ${delay / 1000}s delay`, module: "retry" },
+          });
           await new Promise((r) => setTimeout(r, delay));
         }
         return await _callAIOnce(prompt, model, userId, hint, forceProvider, userDefaultProvider);
@@ -754,7 +764,18 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
   });
 
   const { provider, model: resolvedModel, reason } = route;
-  console.log(`[ai] Calling ${provider.name} [${resolvedModel}] (${runningClaude}/${MAX_CONCURRENT_CLAUDE} slots, ${claudeQueue.length} queued, route: ${reason}): ${prompt.substring(0, 50)}...`);
+  emit({
+    type: "agent.dispatched",
+    level: "info",
+    userId: userId,
+    data: {
+      message: `Calling ${provider.name} [${resolvedModel}] (${runningClaude}/${MAX_CONCURRENT_CLAUDE} slots, ${claudeQueue.length} queued, route: ${reason}): ${prompt.substring(0, 50)}...`,
+      module: "ai",
+      provider: provider.name,
+      model: resolvedModel,
+      reason,
+    },
+  });
 
   try {
     // Only disable MCP for explicitly tool-free contexts (heartbeat, etc.)
@@ -789,6 +810,19 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
         cost_usd: result.cost_usd || 0,
         duration_ms: result.duration_ms,
         session_id: result.session_id || undefined,
+      });
+      emit({
+        type: "cost.tracked",
+        level: "debug",
+        userId: userId,
+        data: {
+          message: `${result.provider} ${result.model}: $${(result.cost_usd || 0).toFixed(4)}`,
+          provider: result.provider,
+          model: result.model,
+          cost_usd: result.cost_usd || 0,
+          input_tokens: result.usage?.input_tokens || 0,
+          output_tokens: result.usage?.output_tokens || 0,
+        },
       });
     }
 
@@ -913,6 +947,13 @@ function runTask(
         await saveMessage("assistant", response, userId, undefined, channelType);
       }
       await sendResponseWithVoice(ctx, response, userId);
+
+      emit({
+        type: "message.responded",
+        level: "info",
+        userId,
+        data: { message: `Response sent to ${((ctx as any).novaUser as NovaUser)?.name || "user"}`, responseLength: response?.length || 0 },
+      });
 
       // Auto-reload after self-edit: if the response mentions a self-edit commit
       // and production branch was pushed, schedule a process restart so the new code loads
@@ -1074,7 +1115,12 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
   if (msg.text) {
     const text = msg.text;
     (ctx as any).novaReplyTo = msg.channelMessageId;
-    console.log(`[${msg.channelType}] Message from ${user.name}: ${text.substring(0, 50)}...`);
+    emit({
+      type: "message.received",
+      level: "info",
+      userId: user.id,
+      data: { message: `${user.name}: ${text.substring(0, 80)}`, channel: msg.channelType, textLength: text.length },
+    });
 
     // Rate limit check (skip for admin commands)
     if (!text.startsWith("/") && isRateLimited(user.id)) {
@@ -2373,6 +2419,24 @@ const MINIAPP_URL = process.env.MINIAPP_URL;
 if (MINIAPP_URL && telegramAdapter) {
   telegramAdapter.setMenuButton(MINIAPP_URL);
 }
+
+// Initialize event bus for structured observability
+initEventBus({ db: supabase, digestIntervalMs: 15 * 60 * 1000 });
+startStallDetection();
+
+// Daily data retention cleanup (logs: 30d, cost_tracking: 90d)
+setInterval(() => {
+  try {
+    const result = supabase.runRetentionCleanup();
+    if (result.logsDeleted > 0 || result.costDeleted > 0) {
+      emit({ type: "system.health", level: "info", data: { message: `Retention cleanup: ${result.logsDeleted} logs, ${result.costDeleted} cost records deleted`, module: "db" } });
+    }
+  } catch (err) {
+    emit({ type: "error", level: "error", data: { message: "Retention cleanup failed", module: "db", error: String(err) } });
+  }
+}, 24 * 60 * 60 * 1000);
+// Run once at startup (delayed 30s to let system settle)
+setTimeout(() => { try { supabase.runRetentionCleanup(); } catch {} }, 30_000);
 
 // Start all channel adapters
 await channels.startAll();

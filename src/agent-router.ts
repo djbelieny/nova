@@ -10,6 +10,7 @@
 import { readFile, readdir } from "fs/promises";
 import { join, dirname } from "path";
 import { buildMcp2cliInstructions, loadProjectMcpConfig } from "./mcp2cli.ts";
+import { emit } from "./events.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const AGENTS_DIR = join(PROJECT_ROOT, ".claude", "agents");
@@ -636,9 +637,9 @@ export async function loadAgents(): Promise<void> {
       }
     }
 
-    console.log(`[agent-router] Loaded ${agents.size} agents: ${[...agents.keys()].join(", ")}`);
+    emit({ type: "system.health", level: "info", data: { message: `Loaded ${agents.size} agents: ${[...agents.keys()].join(", ")}`, count: agents.size, module: "agent-router" } });
   } catch (e) {
-    console.error("[agent-router] Could not read agents directory:", e);
+    emit({ type: "error", level: "error", data: { message: "Could not read agents directory", module: "agent-router", error: String(e) } });
   }
 }
 

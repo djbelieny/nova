@@ -8,6 +8,7 @@
 
 import type { ExecComms, Delegation } from "./exec-comms.ts";
 import { getAllAgents, getAgent, buildAgentPrompt } from "./agent-router.ts";
+import { emit } from "./events.ts";
 
 // ============================================================
 // State
@@ -38,24 +39,42 @@ export function initCooPipeline(deps: {
 // Start
 // ============================================================
 
+// Adaptive polling — fast when active, slows down when idle
+const MIN_POLL_MS = 3000;
+const MAX_POLL_MS = 30000;
+let _pollInterval = MIN_POLL_MS;
+let _idleStreak = 0;
+
 export function startCooPipeline(): void {
-  setInterval(async () => {
+  const tick = async () => {
     try {
-      await processPendingDelegations();
+      const hadWork = await processPendingDelegations();
+      if (hadWork) {
+        _idleStreak = 0;
+        _pollInterval = MIN_POLL_MS;
+      } else {
+        _idleStreak++;
+        // Double interval after 5 consecutive idle polls, up to max
+        if (_idleStreak >= 5) {
+          _pollInterval = Math.min(_pollInterval * 2, MAX_POLL_MS);
+        }
+      }
     } catch (err) {
-      console.error("[coo-pipeline] Error:", err);
+      emit({ type: "error", level: "error", data: { message: "Delegation processing error", module: "coo-pipeline", error: String(err) } });
     }
-  }, 3000);
-  console.log("[coo-pipeline] Started delegation polling");
+    setTimeout(tick, _pollInterval);
+  };
+  setTimeout(tick, MIN_POLL_MS);
+  emit({ type: "exec.delegation", level: "info", data: { message: "COO pipeline started", module: "coo-pipeline" } });
 }
 
 // ============================================================
 // Core: process pending delegations
 // ============================================================
 
-async function processPendingDelegations(): Promise<void> {
+async function processPendingDelegations(): Promise<boolean> {
   const pending = await _comms.pollDelegations();
-  if (pending.length === 0) return;
+  if (pending.length === 0) return false;
 
   for (const delegation of pending) {
     // Skip if we're already working on this one
@@ -67,20 +86,21 @@ async function processPendingDelegations(): Promise<void> {
       _activeDelegations.delete(delegation.id);
     });
   }
+  return true;
 }
 
 async function processDelegation(delegation: Delegation): Promise<void> {
   try {
     // 1. Claim the delegation
     await _comms.claimDelegation(delegation.id);
-    console.log(`[coo-pipeline] Claimed delegation ${delegation.id}: ${delegation.task_description.slice(0, 80)}`);
+    emit({ type: "exec.delegation", level: "info", data: { message: `Claimed delegation: ${delegation.task_description.slice(0, 80)}`, delegationId: delegation.id, module: "coo-pipeline" } });
 
     // 2. Determine agent
     const agentSlug = delegation.assigned_agent
       ? delegation.assigned_agent
       : await selectAgent(delegation.task_description);
 
-    console.log(`[coo-pipeline] Using agent "${agentSlug}" for delegation ${delegation.id}`);
+    emit({ type: "exec.delegation", level: "info", agentSlug, data: { message: `Using agent "${agentSlug}" for delegation ${delegation.id}`, delegationId: delegation.id, module: "coo-pipeline" } });
 
     // 3. Build prompt and execute
     const result = await executeWithAgent(agentSlug, delegation);
@@ -90,10 +110,10 @@ async function processDelegation(delegation: Delegation): Promise<void> {
 
     // 5. Complete the delegation
     await _comms.completeDelegation(delegation.id, result, artifacts);
-    console.log(`[coo-pipeline] Completed delegation ${delegation.id} (${artifacts.length} artifacts)`);
+    emit({ type: "exec.delegation", level: "info", data: { message: `Delegation completed (${artifacts.length} artifacts)`, delegationId: delegation.id, status: "completed", artifactCount: artifacts.length, module: "coo-pipeline" } });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error(`[coo-pipeline] Delegation ${delegation.id} failed:`, errorMsg);
+    emit({ type: "error", level: "error", data: { message: `Delegation ${delegation.id} failed: ${errorMsg}`, delegationId: delegation.id, module: "coo-pipeline", error: errorMsg } });
 
     // Attempt retries
     await retryDelegation(delegation, errorMsg, 0);
@@ -128,10 +148,10 @@ Reply with just the agent slug (e.g., "pixel", "kai", "architect"). Nothing else
     // Validate the slug exists
     if (getAgent(slug)) return slug;
 
-    console.warn(`[coo-pipeline] AI selected unknown agent "${slug}", falling back to general`);
+    emit({ type: "exec.delegation", level: "warn", data: { message: `AI selected unknown agent "${slug}", falling back to general`, module: "coo-pipeline" } });
     return "general";
   } catch (err) {
-    console.error("[coo-pipeline] Agent selection failed:", err);
+    emit({ type: "error", level: "error", data: { message: "Agent selection failed", module: "coo-pipeline", error: String(err) } });
     return "general";
   }
 }
@@ -187,14 +207,12 @@ async function retryDelegation(
       "Delegation Failed",
       `Task "${delegation.task_description}" failed after 3 retries. Last error: ${error}`,
     );
-    console.error(
-      `[coo-pipeline] Delegation ${delegation.id} permanently failed after 3 attempts`,
-    );
+    emit({ type: "error", level: "error", data: { message: `Delegation ${delegation.id} permanently failed after 3 attempts`, delegationId: delegation.id, module: "coo-pipeline", error } });
     return;
   }
 
   const retryNum = attempt + 1;
-  console.log(`[coo-pipeline] Retry ${retryNum}/3 for delegation ${delegation.id}`);
+  emit({ type: "exec.delegation", level: "info", data: { message: `Retry ${retryNum}/3 for delegation ${delegation.id}`, delegationId: delegation.id, retryNum, module: "coo-pipeline" } });
 
   try {
     let agentSlug: string;
@@ -222,10 +240,10 @@ async function retryDelegation(
     const artifacts = parseArtifacts(result);
 
     await _comms.completeDelegation(delegation.id, result, artifacts);
-    console.log(`[coo-pipeline] Delegation ${delegation.id} succeeded on retry ${retryNum}`);
+    emit({ type: "exec.delegation", level: "info", data: { message: `Delegation ${delegation.id} succeeded on retry ${retryNum}`, delegationId: delegation.id, status: "completed", retryNum, module: "coo-pipeline" } });
   } catch (retryErr) {
     const retryErrMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
-    console.error(`[coo-pipeline] Retry ${retryNum} failed:`, retryErrMsg);
+    emit({ type: "error", level: "error", data: { message: `Retry ${retryNum} failed for delegation ${delegation.id}`, delegationId: delegation.id, module: "coo-pipeline", error: retryErrMsg } });
     await retryDelegation(delegation, retryErrMsg, retryNum);
   }
 }
