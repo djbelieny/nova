@@ -297,7 +297,18 @@ function buildPrompt(
 ): string {
   const sections: string[] = [];
 
+  const timeStr = new Date().toLocaleString("en-US", {
+    timeZone: "UTC",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
   sections.push(`# Executive Persona: ${execDef.name}\n\n${execDef.prompt}`);
+  sections.push(`Current time: ${timeStr} UTC`);
 
   // Inject research tool instructions for execs with MCP access
   const execServers = EXEC_MCP_SERVERS[execDef.role] || [];
