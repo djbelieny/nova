@@ -222,7 +222,18 @@ function buildPrompt(
 ): string {
   const sections: string[] = [];
 
+  const timeStr = new Date().toLocaleString("en-US", {
+    timeZone: "UTC",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
   sections.push(`# Executive Persona: ${execDef.name}\n\n${execDef.prompt}`);
+  sections.push(`Current time: ${timeStr} UTC`);
 
   if (context?.agentCatalog) {
     sections.push(`## Available Agents\n\n${context.agentCatalog}`);

@@ -577,7 +577,8 @@ export async function executePhase(
           basePrompt,
           fullDepContext || undefined,
           phase,
-          workspaceDir
+          workspaceDir,
+          user?.timezone
         );
 
         console.log(`[planner] Executing subtask ${idx} via ${agentSlug} [${phase}]: ${subtask.description.substring(0, 50)}`);

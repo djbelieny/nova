@@ -702,7 +702,8 @@ export function buildAgentPrompt(
   basePrompt: string,
   depContext?: string,
   phase?: "prepare" | "execute",
-  workspaceDir?: string
+  workspaceDir?: string,
+  userTimezone?: string
 ): string {
   const agent = agents.get(agentSlug.toLowerCase());
 
@@ -722,8 +723,20 @@ export function buildAgentPrompt(
   // when the agent receives a single specific subtask from the orchestrator.
   const compactIdentity = getCompactIdentity(agent);
 
+  const timeStr = new Date().toLocaleString("en-US", {
+    timeZone: userTimezone || "UTC",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
   const parts = [
     compactIdentity,
+    "",
+    `Current time: ${timeStr}`,
     "",
     "---",
     "",

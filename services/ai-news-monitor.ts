@@ -104,11 +104,11 @@ async function sendTelegram(chatId: string, message: string): Promise<boolean> {
 // FETCH & SUMMARIZE NEWS
 // ============================================================
 
-async function fetchAndSummarizeNews(): Promise<string> {
+async function fetchAndSummarizeNews(timeLabel: string, dateLabel: string): Promise<string> {
   const queries = [
-    "latest AI news breakthroughs today",
-    "AI startups funding announcements today",
-    "AI tools and products launched this week",
+    `latest AI news breakthroughs ${dateLabel}`,
+    `AI startups funding announcements ${dateLabel}`,
+    `AI tools and products launched this week`,
   ];
 
   // Fetch from multiple angles
@@ -138,17 +138,18 @@ async function fetchAndSummarizeNews(): Promise<string> {
 
   const prompt = `You are an AI news curator for a tech entrepreneur who runs an AI mentorship business and builds AI-powered tools.
 
-Here are today's top AI/tech articles:
+Here are today's top AI/tech articles (fetched live on ${dateLabel}, ${timeLabel}):
 
 ${articlesText}
 
 Create a concise Telegram digest:
-- Use a headline like "AI News Digest" with the time of day (morning/afternoon/evening)
+- Use a headline like "📰 AI News Digest — ${timeLabel}, ${dateLabel}"
 - Pick the 5-7 most important/relevant stories
 - For each: one-line summary + the URL
 - End with a "Key Takeaway" — one sentence on the biggest trend or opportunity
 - Use Markdown formatting (bold headlines, bullet points)
-- Keep it scannable — busy entrepreneur should get the gist in 30 seconds`;
+- Keep it scannable — busy entrepreneur should get the gist in 30 seconds
+- IMPORTANT: Only include stories from these actual articles. Do NOT repeat stories from previous digests.`;
 
   try {
     const result = await getDefaultProvider().call({
@@ -193,8 +194,21 @@ async function main() {
       continue;
     }
 
+    const now = new Date();
+    const userHour = parseInt(
+      now.toLocaleString("en-US", { timeZone: user.timezone, hour: "numeric", hour12: false })
+    );
+    const windowLabel = userHour < 12 ? "Morning" : userHour < 17 ? "Afternoon" : "Evening";
+    const dateLabel = now.toLocaleDateString("en-US", {
+      timeZone: user.timezone,
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+
     console.log(`Fetching news for ${user.name}...`);
-    const digest = await fetchAndSummarizeNews();
+    const digest = await fetchAndSummarizeNews(windowLabel, dateLabel);
 
     if (!digest) {
       console.error(`Failed to generate news digest for ${user.name}`);
