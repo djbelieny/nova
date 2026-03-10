@@ -258,6 +258,7 @@ export function createSSEStream(): Response | null {
 
   let controller: ReadableStreamDefaultController<Uint8Array>;
   let idleTimer: ReturnType<typeof setTimeout>;
+  let keepaliveTimer: ReturnType<typeof setInterval>;
 
   const stream = new ReadableStream<Uint8Array>({
     start(c) {
@@ -267,8 +268,19 @@ export function createSSEStream(): Response | null {
       // Send initial keepalive
       controller.enqueue(new TextEncoder().encode(": connected\n\n"));
 
+      // Periodic keepalive every 15s to prevent browser/proxy timeout
+      keepaliveTimer = setInterval(() => {
+        try {
+          controller.enqueue(new TextEncoder().encode(": ping\n\n"));
+        } catch {
+          clearInterval(keepaliveTimer);
+          sseConnections.delete(controller);
+        }
+      }, 15_000);
+
       // Auto-close after idle timeout
       idleTimer = setTimeout(() => {
+        clearInterval(keepaliveTimer);
         try {
           controller.close();
         } catch {}
@@ -277,6 +289,7 @@ export function createSSEStream(): Response | null {
     },
     cancel() {
       clearTimeout(idleTimer);
+      clearInterval(keepaliveTimer);
       sseConnections.delete(controller);
     },
   });

@@ -13,7 +13,7 @@ import { readFile, readdir, stat } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { getDb, type Database } from "./db.ts";
-import { createSSEStream, getActiveAgents, getSSEConnectionCount } from "./events.ts";
+import { createSSEStream, getActiveAgents, getSSEConnectionCount, initEventBus } from "./events.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -25,6 +25,9 @@ const LOGS_DIR = join(PROJECT_ROOT, "logs");
 const supabase: Database = getDb();
 
 const startTime = Date.now();
+
+// Initialize event bus so SSE listeners are registered
+initEventBus({ db: supabase });
 
 // ============================================================
 // AUTH — cookie-based session login
