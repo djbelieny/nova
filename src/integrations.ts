@@ -15,7 +15,7 @@
 
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { execSync } from "child_process";
 import { createHmac } from "crypto";
 import type { Database } from "./db.ts";
@@ -150,30 +150,30 @@ const MCP_ROUTING_MAP: Record<string, string[]> = {
 
 /** Agent slug → servers they commonly need */
 const AGENT_SERVER_MAP: Record<string, string[]> = {
-  orion: ["google-personal", "google-work", "gohighlevel", "tavily"],
-  zen: ["google-personal", "google-work", "notion", "clickup"],
-  digit: ["square", "gohighlevel", "notion", "clickup"],
-  flux: ["square", "gohighlevel", "playwright", "tavily"],
-  helios: ["gohighlevel", "playwright", "exa", "tavily", "youtube", "tiktok"],
-  echo: ["gohighlevel", "google-personal"],
-  cyra: ["playwright", "cloudflare", "notion", "firecrawl"],
-  architect: ["cloudflare", "playwright", "firecrawl"],
-  joule: ["cloudflare", "gohighlevel", "google-personal"],
-  pixel: ["gohighlevel", "playwright", "notion", "tavily", "youtube", "tiktok"],
-  kai: ["notion", "playwright", "google-personal", "tavily", "youtube", "tiktok"],
-  athena: ["playwright", "square", "gohighlevel", "notion", "clickup", "tavily", "exa"],
-  aura: ["playwright", "notion", "tavily"],
-  morpheus: ["playwright", "notion", "google-personal", "youtube", "tiktok"],
-  magnus: ["playwright", "cloudflare", "notion", "tavily", "firecrawl", "exa"],
-  oracle: ["playwright", "notion", "clickup", "tavily", "exa"],
-  nexus: ["playwright", "notion", "gohighlevel", "youtube", "tiktok"],
-  lex: ["playwright", "notion", "google-personal", "tavily"],
-  helia: ["google-personal", "playwright", "gohighlevel", "notion", "tavily", "exa", "youtube", "tiktok"],
-  bridge: ["google-personal", "playwright", "gohighlevel", "zoom", "notion", "exa"],
-  quill: ["playwright", "notion", "google-personal", "tavily"],
-  tesseract: ["playwright", "notion", "clickup", "tavily"],
-  cipher: ["playwright", "exa"],
-  rift: ["playwright", "cloudflare"],
+  orion: ["google-personal", "google-work", "gohighlevel", "tavily", "exa", "browserbase"],
+  zen: ["google-personal", "google-work", "notion", "clickup", "exa", "tavily", "browserbase"],
+  digit: ["square", "gohighlevel", "notion", "clickup", "exa", "tavily", "browserbase"],
+  flux: ["square", "gohighlevel", "exa", "tavily", "browserbase"],
+  helios: ["gohighlevel", "exa", "tavily", "browserbase", "youtube", "tiktok"],
+  echo: ["gohighlevel", "google-personal", "exa", "tavily", "browserbase"],
+  cyra: ["exa", "tavily", "browserbase", "cloudflare", "notion", "firecrawl"],
+  architect: ["cloudflare", "exa", "tavily", "browserbase", "firecrawl"],
+  joule: ["cloudflare", "gohighlevel", "google-personal", "exa", "tavily", "browserbase"],
+  pixel: ["gohighlevel", "exa", "tavily", "browserbase", "notion", "youtube", "tiktok"],
+  kai: ["notion", "exa", "tavily", "browserbase", "google-personal", "youtube", "tiktok"],
+  athena: ["exa", "tavily", "browserbase", "square", "gohighlevel", "notion", "clickup"],
+  aura: ["exa", "tavily", "browserbase", "notion"],
+  morpheus: ["exa", "tavily", "browserbase", "notion", "google-personal", "youtube", "tiktok"],
+  magnus: ["exa", "tavily", "browserbase", "cloudflare", "notion", "firecrawl"],
+  oracle: ["exa", "tavily", "browserbase", "notion", "clickup"],
+  nexus: ["exa", "tavily", "browserbase", "notion", "gohighlevel", "youtube", "tiktok"],
+  lex: ["exa", "tavily", "browserbase", "notion", "google-personal"],
+  helia: ["google-personal", "exa", "tavily", "browserbase", "gohighlevel", "notion", "youtube", "tiktok"],
+  bridge: ["google-personal", "exa", "tavily", "browserbase", "gohighlevel", "zoom", "notion"],
+  quill: ["exa", "tavily", "browserbase", "notion", "google-personal"],
+  tesseract: ["exa", "tavily", "browserbase", "notion", "clickup"],
+  cipher: ["exa", "tavily", "browserbase"],
+  rift: ["exa", "tavily", "browserbase", "cloudflare"],
 };
 
 /**
@@ -1246,3 +1246,25 @@ export async function regenerateMcpConfig(
 export function hasUserMcpConfig(userId: string): boolean {
   return existsSync(getUserMcpConfigPath(userId));
 }
+
+// ============================================================
+// MCP2CLI PER-USER COMMANDS
+// ============================================================
+
+/**
+ * Generate mcp2cli command map for a user's resolved MCP config.
+ * Returns a record of serverName → McpServerConfig suitable for buildMcp2cliInstructions().
+ */
+export function getUserMcpServersConfig(userId: string): Record<string, any> | null {
+  const configPath = getUserMcpConfigPath(userId);
+  if (!existsSync(configPath)) return null;
+
+  try {
+    const raw = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(raw);
+    return config.mcpServers || null;
+  } catch {
+    return null;
+  }
+}
+

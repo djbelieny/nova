@@ -56,13 +56,13 @@ export class ClaudeProvider implements AIProvider {
       args.push("--model", opts.model);
     }
 
-    if (opts.noMcp) {
-      // Don't pass --mcp-config at all — rely on /tmp cwd having no .mcp.json
-      // Passing literal "{}" as --mcp-config breaks text output in newer CLI versions
+    if (opts.noMcp || opts.useMcp2cli) {
+      // Don't pass --mcp-config — either no tools needed, or tools accessed via mcp2cli Bash commands
     } else if (opts.mcpConfigPath) {
       args.push("--mcp-config", opts.mcpConfigPath, "--strict-mcp-config");
     }
 
+    // When using mcp2cli, keep PROJECT_ROOT as cwd (agent needs file system access)
     const cwd = opts.noMcp ? "/tmp" : (opts.cwd || PROJECT_ROOT);
     const startTime = Date.now();
 
