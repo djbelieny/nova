@@ -14,6 +14,7 @@
  */
 
 import type { ExecComms, ExecRosterEntry } from "./exec-comms.ts";
+import { emit } from "./events.ts";
 
 // ============================================================
 // Types
@@ -207,8 +208,11 @@ export async function handleGroupMessage(
 
   // Generate response
   console.log(`[group-chat:${_config.role}] RESPONDING to: "${msg.text.slice(0, 60)}..." (delay: ${delay}ms)`);
+  emit({ type: "exec.message", level: "info", execRole: _config.role, data: { message: `${_config.role.toUpperCase()} responding in group chat`, module: "group-chat", trigger: msg.text.slice(0, 80) } });
   const response = await generateGroupResponse(msg);
   if (!response || response.trim().length === 0) return null;
+
+  emit({ type: "board.contribution", level: "info", execRole: _config.role, data: { message: `${_config.role.toUpperCase()}: ${response.slice(0, 100)}`, module: "group-chat" } });
 
   // Update cooldown
   lastResponseTime.set(cooldownKey, Date.now() + delay);
