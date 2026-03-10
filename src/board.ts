@@ -9,6 +9,7 @@
 
 import { InlineKeyboard } from "grammy";
 import type { ExecComms, BoardSession, BoardContribution } from "./exec-comms.ts";
+import { saveBoardMeeting, saveDecision } from "./notion-board.ts";
 
 // ============================================================
 // Constants
@@ -222,6 +223,28 @@ Return ONLY the JSON array, no other text.`;
   const keyboard = buildOptionKeyboard(sessionId, options);
   await _sendMessage(chatId, message, keyboard);
 
+  // Save board meeting summary to Notion (non-blocking)
+  const contributingRoles = nonCriticContributions.map((c) => c.role);
+  if (critique) contributingRoles.push("critic");
+  saveBoardMeeting({
+    topic: session.question,
+    sessionId,
+    participants: contributingRoles,
+    summary: message.slice(0, 2000),
+    decisionMade: false,
+    confidenceScore: options.length > 0
+      ? options.reduce((s, o) => s + o.confidence, 0) / options.length
+      : undefined,
+    bodyMarkdown: [
+      `## Question\n${session.question}`,
+      `\n## Executive Contributions`,
+      ...nonCriticContributions.map((c) => `\n### ${c.role.toUpperCase()}\n${c.contribution}`),
+      critique ? `\n## Critic's Analysis\n${critique.contribution}` : "",
+      `\n## Options Presented`,
+      ...options.map((o, i) => `\n### Option ${i + 1}: ${o.title}\n${o.description}\n- Confidence: ${Math.round(o.confidence * 100)}%\n- Supporters: ${o.supporters.join(", ")}\n- Risks: ${o.risks}\n- Effort: ${o.effort}`),
+    ].filter(Boolean).join("\n"),
+  }).catch((err) => console.error("[Board] Notion save failed:", err));
+
   activeSessions.delete(sessionId);
 }
 
@@ -352,6 +375,15 @@ Supporters: ${chosen.supporters.join(", ")}`;
     "Board Decision",
     `Decision made on: "${session.question}"\n\nChosen: ${chosen.title}\n\n${consensus}`,
   );
+
+  // Save decision to Notion (non-blocking)
+  saveDecision({
+    decision: chosen.title,
+    proposedBy: chosen.supporters[0] || "CEO",
+    rationale: `${chosen.description}\n\nConsensus: ${consensus}`,
+    confidence: chosen.confidence,
+    impactAreas: chosen.supporters.length > 3 ? ["Strategy"] : undefined,
+  }).catch((err) => console.error("[Board] Notion decision save failed:", err));
 
   // Check for stalling
   const isStalling = await _comms.checkStalling(userId);
