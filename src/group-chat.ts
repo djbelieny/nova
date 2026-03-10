@@ -383,7 +383,13 @@ async function generateGroupResponse(msg: GroupMessage): Promise<string> {
     "- You can tag multiple execs in one message if the topic spans domains.",
     "- Common patterns: ask CFO about costs, CTO about feasibility, Research for data, Critic for risks.",
     "",
-    "Do NOT use [DELEGATE:], [BRIEF:], or [DECISION:] tags in group chat.",
+    "AGENT TASKS:",
+    "- The 24 specialist agents (Pixel, Kai, Architect, etc.) are NOT in this chat — you cannot @mention them.",
+    "- To assign work to an agent, use [DELEGATE: agent_slug | task description] — this spawns them as a subagent.",
+    "- Example: [DELEGATE: pixel | Create 3 social media post variations for our new product launch]",
+    "- The agent will execute the task autonomously and report results back.",
+    "",
+    "Do NOT use [BRIEF:] or [DECISION:] tags in group chat — those are for DM sessions.",
     "Do NOT repeat what others have said. Add YOUR unique perspective.",
     "If you have nothing meaningful to add, say nothing (respond with empty string).",
     "",
@@ -402,12 +408,22 @@ async function generateGroupResponse(msg: GroupMessage): Promise<string> {
   try {
     const response = await _callAI(prompt, "fast");
 
-    // Clean any accidental intent tags
+    // Parse and dispatch delegation tags from group chat responses
+    const delegations = parseDelegationsFromResponse(response);
+    if (delegations.length > 0 && _comms) {
+      for (const d of delegations) {
+        console.log(`[group-chat:${_config.role}] Spawning agent task: ${d.agent} — ${d.task.slice(0, 80)}`);
+        await _comms.requestDelegation(d.task, "", d.agent);
+      }
+    }
+
+    // Clean tags that shouldn't appear in chat (keep text around delegations)
     let clean = response
       .replace(/\[DELEGATE:[^\]]*\]/g, "")
       .replace(/\[BRIEF:[^\]]*\]/g, "")
       .replace(/\[DECISION:[^\]]*\]/g, "")
       .replace(/\[REMEMBER:[^\]]*\]/g, "")
+      .replace(/\n{3,}/g, "\n\n")
       .trim();
 
     // If response is too long for a group chat, truncate
@@ -444,4 +460,26 @@ export async function recordGroupResponse(
   } catch {
     // Non-critical — don't break the flow
   }
+}
+
+// ============================================================
+// Delegation parsing for group chat
+// ============================================================
+
+/**
+ * Parse [DELEGATE: agent | task] tags from an AI response.
+ * Used to let execs spawn agent subagents directly from group chat.
+ */
+function parseDelegationsFromResponse(
+  response: string,
+): Array<{ agent: string; task: string }> {
+  const delegations: Array<{ agent: string; task: string }> = [];
+  const regex = /\[DELEGATE:\s*([^|\]]+?)\s*\|\s*([^|\]]+?)(?:\s*\|\s*PROVIDER:\s*[^|\]]+?)?\s*\]/g;
+  for (const m of response.matchAll(regex)) {
+    delegations.push({
+      agent: m[1].trim(),
+      task: m[2].trim(),
+    });
+  }
+  return delegations;
 }
