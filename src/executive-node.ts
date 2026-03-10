@@ -39,7 +39,8 @@ import {
   markdownToTelegramHTML,
   cleanResponseForUser,
 } from "./channels/telegram.ts";
-import { emit } from "./events.ts";
+import { emit, initEventBus } from "./events.ts";
+import { getDb } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
@@ -350,6 +351,9 @@ function isAllowedUser(ctx: Context): boolean {
 // ============================================================
 
 async function main() {
+  // Initialize event bus so events are persisted to shared.db logs table
+  initEventBus({ db: getDb() });
+
   emit({ type: "exec.message", level: "info", execRole: role, data: { message: `Starting executive node: ${role.toUpperCase()}`, module: "exec-node" } });
   emit({ type: "exec.message", level: "info", execRole: role, data: { message: `AI provider: ${EXEC_AI_PROVIDER}`, module: "exec-node" } });
 
