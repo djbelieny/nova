@@ -816,8 +816,13 @@ const EXEC_ROSTER = [
 
 async function getAgentCatalog(): Promise<unknown> {
   try {
-    const { getAllAgents } = await import("./agent-router.ts");
-    const agents = getAllAgents();
+    const { getAllAgents, loadAgents } = await import("./agent-router.ts");
+    let agents = getAllAgents();
+    if (agents.length === 0) {
+      await loadAgents(); // Dashboard process needs to load agents explicitly
+      agents = getAllAgents();
+    }
+    if (agents.length === 0) throw new Error("No agents loaded");
     return {
       agents: agents.map(a => ({
         slug: a.slug,
@@ -928,7 +933,7 @@ function renderDashboard(): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NOVA — GOD'S EYE</title>
+<title>NOVA — EAGLE EYE</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -1347,7 +1352,7 @@ function renderDashboard(): string {
 <div class="header">
   <div class="logo">
     <div class="logo-badge">N</div>
-    <div><div class="logo-title">Nova</div><div class="logo-subtitle">God's Eye</div></div>
+    <div><div class="logo-title">Nova</div><div class="logo-subtitle">Eagle Eye</div></div>
   </div>
   <div class="header-info">
     <span><span class="live-dot"></span>Live</span>
@@ -1718,51 +1723,44 @@ document.querySelectorAll('.event-filter-btn').forEach(btn => {
   });
 });
 
-// SSE connection
-try {
-  const evtSource = new EventSource(BASE + '/api/activity/stream');
-  evtSource.onopen = function() {
-    sseConnected = true;
-    $('sse-badge').textContent = 'SSE LIVE';
-    $('sse-badge').classList.remove('disconnected');
-  };
-  evtSource.onmessage = function(e) {
-    try { addEvent(JSON.parse(e.data)); } catch {}
-  };
-  evtSource.onerror = function() {
-    sseConnected = false;
-    $('sse-badge').textContent = 'SSE OFF';
-    $('sse-badge').classList.add('disconnected');
-    evtSource.close();
-    startActivityPolling();
-  };
-} catch(e) { startActivityPolling(); }
-
-function startActivityPolling() {
-  loadActivityPoll();
-  setInterval(loadActivityPoll, 10000);
-}
-
+// Activity polling — dashboard runs as separate process, so poll the shared DB
 async function loadActivityPoll() {
-  if (sseConnected) return;
   try {
     const lastTs = activityEvents.length > 0 ? activityEvents[activityEvents.length-1].created_at : null;
     const params = lastTs ? '?since=' + encodeURIComponent(lastTs) + '&limit=50' : '?limit=50';
     const r = await fetch(BASE + '/api/activity' + params);
     const data = await r.json();
     if (Array.isArray(data) && data.length > 0) {
-      for (const ev of data.reverse()) addEvent(ev);
+      const newEvents = lastTs ? data.reverse() : data.reverse();
+      for (const ev of newEvents) addEvent(ev);
+      if (!sseConnected) {
+        sseConnected = true;
+        $('sse-badge').textContent = 'LIVE';
+        $('sse-badge').classList.remove('disconnected');
+      }
     }
-  } catch {}
+  } catch {
+    sseConnected = false;
+    $('sse-badge').textContent = 'OFFLINE';
+    $('sse-badge').classList.add('disconnected');
+  }
 }
 
-// Initial activity load
+// Initial load + start polling
 (async function() {
   try {
     const r = await fetch(BASE + '/api/activity?limit=50');
     const data = await r.json();
-    if (Array.isArray(data)) { activityEvents = data.reverse(); renderEventStream(); }
+    if (Array.isArray(data)) {
+      activityEvents = data.reverse();
+      renderEventStream();
+      sseConnected = true;
+      $('sse-badge').textContent = 'LIVE';
+      $('sse-badge').classList.remove('disconnected');
+    }
   } catch {}
+  // Poll every 3s for near-real-time updates
+  setInterval(loadActivityPoll, 3000);
 })();
 
 // ==== BOTTOM DOCK ====
