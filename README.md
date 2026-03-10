@@ -2,8 +2,6 @@
 
 A multi-agent AI orchestration platform. 24 specialist agents, task decomposition, human-in-the-loop approval, persistent memory, and multi-channel messaging — all coordinated through Telegram, WhatsApp, or Slack.
 
-**Created by [Goda Go](https://youtube.com/@GodaGo)** | [AI Productivity Hub Community](https://skool.com/autonomee)
-
 ```
 User ──▶ Channel ──▶ relay.ts ──▶ orchestrator.ts ──▶ planner.ts
          (Telegram/                  │ classify          │ decompose
@@ -165,9 +163,7 @@ GROQ_API_KEY=           # For Groq (free at console.groq.com)
 
 ## Community & Resources
 
-- **YouTube**: [youtube.com/@GodaGo](https://youtube.com/@GodaGo) — free tutorials
-- **Free Course**: [autonomee.ai/telegram-bot-course](https://autonomee.ai/telegram-bot-course)
-- **Community**: [skool.com/autonomee](https://skool.com/autonomee) — full course, direct support
+- **YouTube**: [youtube.com/@djbelieny](https://youtube.com/@djbelieny) — free tutorials
 
 ## License
 
@@ -175,4 +171,4 @@ MIT — Take it, customize it, make it yours.
 
 ---
 
-Built by [Goda Go](https://youtube.com/@GodaGo)
+Built by [DJ Belieny](https://youtube.com/@djbelieny)

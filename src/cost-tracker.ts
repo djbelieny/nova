@@ -21,6 +21,9 @@ export interface CostEntry {
   session_id?: string;
   user_id?: string;
   metadata?: Record<string, unknown>;
+  agent_slug?: string;
+  exec_role?: string;
+  request_id?: string;
 }
 
 let _db: Database | null = null;
@@ -45,6 +48,9 @@ export async function trackCost(entry: CostEntry): Promise<void> {
       session_id: entry.session_id || undefined,
       user_id: entry.user_id || undefined,
       metadata: entry.metadata || {},
+      agent_slug: entry.agent_slug || undefined,
+      exec_role: entry.exec_role || undefined,
+      request_id: entry.request_id || undefined,
     });
   } catch (e) {
     console.error("Cost tracking insert error:", e);

@@ -7,6 +7,7 @@
  */
 
 import type { ExecComms, Delegation, Project, BoardSession } from "./exec-comms.ts";
+import { emit } from "./events.ts";
 
 // ============================================================
 // State
@@ -64,18 +65,18 @@ export async function createProjectFromDecision(
   // 1. Get the board session for context
   const session = await _comms.getSession(sessionId);
   if (!session) {
-    console.error(`[execution-engine] Session ${sessionId} not found`);
+    emit({ type: "error", level: "error", data: { message: `Session ${sessionId} not found`, module: "execution-engine" } });
     return "";
   }
 
   // 2. Decompose decision into work items
   const workItems = await decomposeDecision(decision, session);
   if (workItems.length === 0) {
-    console.error("[execution-engine] Decomposition produced no work items");
+    emit({ type: "error", level: "error", data: { message: "Decomposition produced no work items", module: "execution-engine" } });
     return "";
   }
 
-  console.log(`[execution-engine] Decomposed into ${workItems.length} work items`);
+  emit({ type: "task.created", level: "info", data: { message: `Decomposed into ${workItems.length} work items`, workItemCount: workItems.length, module: "execution-engine" } });
 
   // 3. Create the project
   const projectId = await _comms.createProject({
@@ -88,7 +89,7 @@ export async function createProjectFromDecision(
   });
 
   if (!projectId) {
-    console.error("[execution-engine] Failed to create project");
+    emit({ type: "error", level: "error", data: { message: "Failed to create project", module: "execution-engine" } });
     return "";
   }
 
@@ -123,9 +124,7 @@ export async function createProjectFromDecision(
 
   _projectDelegations.set(projectId, tracked);
 
-  console.log(
-    `[execution-engine] Project ${projectId} created with ${tracked.filter((t) => t.delegationId).length} initial delegations`,
-  );
+  emit({ type: "task.created", level: "info", data: { message: `Project ${projectId} created with ${tracked.filter((t) => t.delegationId).length} initial delegations`, projectId, delegationCount: tracked.filter((t) => t.delegationId).length, module: "execution-engine" } });
 
   return projectId;
 }
@@ -167,7 +166,7 @@ Reply with ONLY the JSON array, no other text.`;
 
     // Validate structure
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      console.error("[execution-engine] Invalid decomposition result");
+      emit({ type: "error", level: "error", data: { message: "Invalid decomposition result", module: "execution-engine" } });
       return [];
     }
 
@@ -178,7 +177,7 @@ Reply with ONLY the JSON array, no other text.`;
       depends_on: Array.isArray(item.depends_on) ? item.depends_on.filter((n) => typeof n === "number") : [],
     }));
   } catch (err) {
-    console.error("[execution-engine] Decomposition failed:", err);
+    emit({ type: "error", level: "error", data: { message: "Decomposition failed", module: "execution-engine", error: String(err) } });
     return [];
   }
 }
@@ -215,18 +214,18 @@ export function startProjectMonitor(): void {
     try {
       await monitorActiveProjects();
     } catch (err) {
-      console.error("[execution-engine] Monitor error:", err);
+      emit({ type: "error", level: "error", data: { message: "Monitor error", module: "execution-engine", error: String(err) } });
     }
   }, 30_000);
 
-  console.log("[execution-engine] Started project monitor (30s interval)");
+  emit({ type: "system.health", level: "info", data: { message: "Started project monitor (30s interval)", module: "execution-engine" } });
 }
 
 export function stopProjectMonitor(): void {
   if (_monitorInterval) {
     clearInterval(_monitorInterval);
     _monitorInterval = null;
-    console.log("[execution-engine] Stopped project monitor");
+    emit({ type: "system.health", level: "info", data: { message: "Stopped project monitor", module: "execution-engine" } });
   }
 }
 
@@ -238,7 +237,7 @@ async function monitorActiveProjects(): Promise<void> {
     try {
       await checkAndHeal(project);
     } catch (err) {
-      console.error(`[execution-engine] Error monitoring project ${project.id}:`, err);
+      emit({ type: "error", level: "error", data: { message: `Error monitoring project ${project.id}`, projectId: project.id, module: "execution-engine", error: String(err) } });
     }
   }
 }
@@ -275,9 +274,7 @@ async function checkAndHeal(project: Project): Promise<void> {
         failed++;
         const retries = (delegation.metadata?.retries as number) || 0;
         if (retries < 3) {
-          console.log(
-            `[execution-engine] Reassigning failed delegation ${delegation.id} (retry ${retries + 1})`,
-          );
+          emit({ type: "task.status", level: "info", data: { message: `Reassigning failed delegation ${delegation.id} (retry ${retries + 1})`, delegationId: delegation.id, status: "retrying", module: "execution-engine" } });
           await reassignDelegation(delegation, project);
         }
         break;
@@ -319,7 +316,7 @@ async function checkAndHeal(project: Project): Promise<void> {
       status: "completed",
       progress_pct: 100,
     });
-    console.log(`[execution-engine] Project ${project.id} completed`);
+    emit({ type: "task.completed", level: "info", data: { message: `Project ${project.id} completed`, projectId: project.id, status: "completed", module: "execution-engine" } });
 
     // Notify user
     if (project.user_id) {
@@ -331,7 +328,7 @@ async function checkAndHeal(project: Project): Promise<void> {
   } else if (failed >= total - completed && inProgress === 0 && pending === 0) {
     // All remaining items have failed
     await _comms.updateProject(project.id, { status: "failed" });
-    console.error(`[execution-engine] Project ${project.id} failed — all remaining items exhausted`);
+    emit({ type: "error", level: "error", data: { message: `Project ${project.id} failed — all remaining items exhausted`, projectId: project.id, status: "failed", module: "execution-engine" } });
 
     if (project.user_id) {
       await _sendMessage(
@@ -379,9 +376,7 @@ async function tryScheduleDependentItem(
   // All dependencies met — create the delegation
   const delegationId = await createDelegationForWorkItem(workItem, project.user_id, project.id);
   item.delegationId = delegationId;
-  console.log(
-    `[execution-engine] Scheduled dependent work item ${item.workItemIndex} for project ${project.id}`,
-  );
+  emit({ type: "task.status", level: "info", data: { message: `Scheduled dependent work item ${item.workItemIndex} for project ${project.id}`, projectId: project.id, workItemIndex: item.workItemIndex, status: "scheduled", module: "execution-engine" } });
 }
 
 // ============================================================
@@ -418,7 +413,7 @@ async function reassignDelegation(
 // ============================================================
 
 export async function recoverInProgressDelegations(): Promise<void> {
-  console.log("[execution-engine] Checking for stale in_progress delegations to recover...");
+  emit({ type: "system.health", level: "info", data: { message: "Checking for stale in_progress delegations to recover", module: "execution-engine" } });
 
   // Get all active projects and rebuild tracking state
   const projects = await _comms.getActiveProjects();
@@ -428,7 +423,7 @@ export async function recoverInProgressDelegations(): Promise<void> {
 
     // Rebuild tracked delegations from project work items if not in memory
     if (!_projectDelegations.has(project.id)) {
-      console.log(`[execution-engine] Rebuilding tracking for project ${project.id}`);
+      emit({ type: "task.status", level: "info", data: { message: `Rebuilding tracking for project ${project.id}`, projectId: project.id, status: "recovering", module: "execution-engine" } });
       const tracked: TrackedDelegation[] = (project.work_items as WorkItem[]).map(
         (item, idx) => ({
           delegationId: "", // Will be resolved below
@@ -441,9 +436,7 @@ export async function recoverInProgressDelegations(): Promise<void> {
     }
   }
 
-  console.log(
-    `[execution-engine] Recovery check complete. Tracking ${_projectDelegations.size} projects.`,
-  );
+  emit({ type: "system.health", level: "info", data: { message: `Recovery check complete. Tracking ${_projectDelegations.size} projects`, projectCount: _projectDelegations.size, module: "execution-engine" } });
 }
 
 // ============================================================

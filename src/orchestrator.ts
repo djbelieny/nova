@@ -46,6 +46,7 @@ import {
   getTaskContext,
   getScheduleContext,
 } from "./memory.ts";
+import { emit } from "./events.ts";
 
 type ModelTier = "haiku" | "sonnet" | "opus";
 
@@ -133,6 +134,17 @@ interface RevisionSession {
 
 // Keyed by sessionId — supports multiple concurrent revision sessions per user
 const revisionSessions = new Map<string, RevisionSession>();
+
+// Periodic cleanup of expired approvals (24h) and revision sessions (1h)
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, approval] of pendingApprovals) {
+    if (now - approval.startTime > 24 * 60 * 60 * 1000) pendingApprovals.delete(id);
+  }
+  for (const [id, session] of revisionSessions) {
+    if (now - session.createdAt > 60 * 60 * 1000) revisionSessions.delete(id);
+  }
+}, 30 * 60 * 1000);
 
 /**
  * Find the most recent pending revision session for a user.
@@ -401,6 +413,7 @@ export async function handleApproval(
     console.log(`[orchestrator] Recovered approval ${approvalId} from Supabase on-demand`);
   }
 
+  emit({ type: "approval.resolved", level: "info", userId: pending.user.id, data: { message: `Approval: ${action}`, action } });
   await ctx.answerCallbackQuery({ text: action === "approve" ? "Executing..." : action === "revise" ? "Send your revision" : "Cancelled" });
 
   // Remove buttons from the approval message
@@ -489,7 +502,7 @@ export async function handleApproval(
     if (approvalChatId && pending.workspaceDir) {
       const fileCount = await deliverWorkspaceFiles(approvalChatId, pending.workspaceDir, pending.parentTaskId, pending.user.id, pending.supabase);
       if (fileCount > 0) {
-        console.log(`[orchestrator] Delivered ${fileCount} file(s) from workspace (post-approval)`);
+        emit({ type: "task.completed", level: "info", userId: pending.user.id, data: { message: `Delivered ${fileCount} file(s) from workspace (post-approval)`, fileCount } });
       }
     }
     await _sendResponseWithVoice(ctx, processed, pending.user.id);
@@ -969,7 +982,7 @@ export function orchestrate(
   const revSession = getRevisionSession(user.id);
   if (revSession) {
     revisionSessions.delete(revSession.sessionId);
-    console.log(`[orchestrator] Revision session detected for ${user.name}: "${text.substring(0, 50)}"`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Revision session for ${user.name}: "${text.substring(0, 50)}"`, classification: "revision" } });
     _runTask(ctx, `Revision: ${text.substring(0, 40)}`, async () => {
       await handleRevision(ctx, text, user, supabase, revSession);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
@@ -1025,7 +1038,7 @@ function orchestrateMain(
 ): void {
   // Step 1: Fast heuristic — no Claude call needed
   if (isSimpleMessage(text)) {
-    console.log(`[orchestrator] Simple path (heuristic): ${text.substring(0, 50)}`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Simple path (heuristic): ${text.substring(0, 50)}`, classification: "simple" } });
     routeSimple(ctx, text, user, supabase);
     return;
   }
@@ -1033,7 +1046,7 @@ function orchestrateMain(
   // Step 1.5: Detect social media workflow — hard-coded pipeline
   const socialReq = detectSocialMediaRequest(text);
   if (socialReq) {
-    console.log(`[orchestrator] Social media workflow: "${socialReq.topic}" → ${socialReq.platforms.join(", ")}`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Social media workflow: "${socialReq.topic}" → ${socialReq.platforms.join(", ")}`, classification: "social-media" } });
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildSocialMediaPlan(socialReq.topic, socialReq.platforms);
       await routeComplex(ctx, text, user, supabase, plan, "social-media", requestId);
@@ -1051,7 +1064,7 @@ function orchestrateMain(
   // Step 1.6: Detect other deterministic workflows
   const emailReq = detectEmailCampaignRequest(text);
   if (emailReq) {
-    console.log(`[orchestrator] Email campaign workflow: "${emailReq.topic}"`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Email campaign workflow: "${emailReq.topic}"`, classification: "email-campaign" } });
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildEmailCampaignPlan(emailReq.topic, emailReq.audience);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
@@ -1065,7 +1078,7 @@ function orchestrateMain(
 
   const blogReq = detectBlogPostRequest(text);
   if (blogReq) {
-    console.log(`[orchestrator] Blog post workflow: "${blogReq.topic}"`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Blog post workflow: "${blogReq.topic}"`, classification: "blog-post" } });
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildBlogPostPlan(blogReq.topic);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
@@ -1079,7 +1092,7 @@ function orchestrateMain(
 
   const presReq = detectPresentationRequest(text);
   if (presReq) {
-    console.log(`[orchestrator] Presentation workflow: "${presReq.topic}"`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Presentation workflow: "${presReq.topic}"`, classification: "presentation" } });
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildPresentationPlan(presReq.topic);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
@@ -1093,7 +1106,7 @@ function orchestrateMain(
 
   const adReq = detectAdCampaignRequest(text);
   if (adReq) {
-    console.log(`[orchestrator] Ad campaign workflow: "${adReq.topic}" → ${adReq.platforms.join(", ")}`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Ad campaign workflow: "${adReq.topic}" → ${adReq.platforms.join(", ")}`, classification: "ad-campaign" } });
     _runTask(ctx, text.substring(0, 50), async () => {
       const plan = buildAdCampaignPlan(adReq.topic, adReq.platforms);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
@@ -1110,14 +1123,14 @@ function orchestrateMain(
     // Check for cached pattern first
     const pattern = await findPattern(supabase, text, user.id);
     if (pattern) {
-      console.log(`[orchestrator] Pattern cache hit: ${pattern.task_signature.substring(0, 50)}`);
+      emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Pattern cache hit: ${pattern.task_signature.substring(0, 50)}`, classification: "cached" } });
       await routeComplex(ctx, text, user, supabase, pattern.plan, undefined, requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }
 
     // Classify via cheap Haiku call
     const classification = await classify(text);
-    console.log(`[orchestrator] Classified as: ${classification.type}`);
+    emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Classified as: ${classification.type}`, classification: classification.type } });
 
     if (classification.type === "simple") {
       const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
@@ -1135,7 +1148,7 @@ function orchestrateMain(
 
     if (classification.type === "routed" && classification.agent) {
       // Single-agent task — build a 1-subtask plan and route directly
-      console.log(`[orchestrator] Routed to ${classification.agent}`);
+      emit({ type: "agent.dispatched", level: "info", requestId, userId: user.id, agentSlug: classification.agent, data: { message: `Routed to ${classification.agent}`, agent: classification.agent } });
       const singlePlan: ExecutionPlan = {
         subtasks: [{
           description: text,
@@ -1320,14 +1333,14 @@ async function routeComplex(
 
     // Decompose using Haiku (cheap) or use cached plan
     const plan = cachedPlan || (await decompose(text, user));
-    console.log(`[orchestrator] Plan: ${plan.subtasks.length} subtasks`);
+    emit({ type: "task.created", level: "info", requestId, userId: user.id, data: { message: `Plan: ${plan.subtasks.length} subtasks`, subtaskCount: plan.subtasks.length } });
 
     const hasExecutePhase = plan.subtasks.some((s) => s.phase === "execute");
 
     // If no execute subtasks or auto-approve: run everything straight through
     if (!hasExecutePhase || autoApprove) {
       if (autoApprove && hasExecutePhase) {
-        console.log("[orchestrator] Auto-approve detected — running all phases");
+        emit({ type: "approval.resolved", level: "info", requestId, userId: user.id, data: { message: "Auto-approve detected — running all phases", action: "auto-approve" } });
       }
 
       // Send progress checklist for auto-approve/no-execute path
@@ -1387,7 +1400,7 @@ async function routeComplex(
       if (chatId) {
         const fileCount = await deliverWorkspaceFiles(chatId, workspaceDir, parentTaskId, user.id, supabase);
         if (fileCount > 0) {
-          console.log(`[orchestrator] Delivered ${fileCount} file(s) from workspace`);
+          emit({ type: "task.completed", level: "info", requestId, userId: user.id, data: { message: `Delivered ${fileCount} file(s) from workspace`, fileCount } });
         }
       }
       await _sendResponseWithVoice(ctx, processed, user.id);
@@ -1602,7 +1615,7 @@ export function startMiniAppApprovalPolling(supabase: Database | null): void {
         const action = actionMap[row.status];
         if (!action) continue;
 
-        console.log(`[orchestrator] Mini App approval: ${row.id} → ${action}`);
+        emit({ type: "approval.resolved", level: "info", data: { message: `Mini App approval: ${row.id} → ${action}`, action } });
 
         // Use the stored ctx to handle the approval
         await handleApproval(row.id, action, pending.ctx, row.feedback || undefined);

@@ -3,7 +3,7 @@
     "notion": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/@notionhq/notion-mcp-server/bin/cli.mjs"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@notionhq/notion-mcp-server/bin/cli.mjs"],
       "env": {
         "OPENAPI_MCP_HEADERS": "${NOTION_MCP_HEADERS}"
       }
@@ -11,7 +11,7 @@
     "google-workspace": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/@presto-ai/google-workspace-mcp/bin/cli.js"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@presto-ai/google-workspace-mcp/bin/cli.js"],
       "env": {
         "GEMINI_CLI_WORKSPACE_FORCE_FILE_STORAGE": "true"
       }
@@ -19,13 +19,13 @@
     "playwright": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/@playwright/mcp/cli.js"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@playwright/mcp/cli.js"],
       "env": {}
     },
     "cloudflare": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/@cloudflare/mcp-server-cloudflare/dist/index.js", "run", "${CLOUDFLARE_ACCOUNT_ID}"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@cloudflare/mcp-server-cloudflare/dist/index.js", "run", "${CLOUDFLARE_ACCOUNT_ID}"],
       "env": {
         "CLOUDFLARE_API_TOKEN": "${CLOUDFLARE_API_TOKEN}"
       }
@@ -33,7 +33,7 @@
     "zoom": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/@prathamesh0901/zoom-mcp-server/dist/index.js"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@prathamesh0901/zoom-mcp-server/dist/index.js"],
       "env": {
         "ZOOM_ACCOUNT_ID": "${ZOOM_ACCOUNT_ID}",
         "ZOOM_CLIENT_ID": "${ZOOM_CLIENT_ID}",
@@ -43,7 +43,7 @@
     "square": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/square-mcp-server/dist/index.js", "start"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/square-mcp-server/dist/index.js", "start"],
       "env": {
         "ACCESS_TOKEN": "${SQUARE_ACCESS_TOKEN}",
         "PRODUCTION": "true"
@@ -52,7 +52,7 @@
     "clickup": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/@chykalophia/clickup-mcp-server/dist/index.js"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@chykalophia/clickup-mcp-server/dist/index.js"],
       "env": {
         "CLICKUP_API_TOKEN": "${CLICKUP_API_TOKEN}"
       }
@@ -60,7 +60,7 @@
     "gohighlevel": {
       "type": "stdio",
       "command": "node",
-      "args": ["/usr/lib/node_modules/@drausal/gohighlevel-mcp/build/index.js"],
+      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@drausal/gohighlevel-mcp/build/index.js"],
       "env": {
         "BEARER_TOKEN_BEARERAUTH": "${GHL_BEARER_TOKEN}",
         "BEARER_TOKEN_BEARER": "${GHL_BEARER_TOKEN}"
@@ -68,7 +68,7 @@
     },
     "firecrawl": {
       "type": "stdio",
-      "command": "/usr/bin/firecrawl-mcp",
+      "command": "/Users/djbelieny/.nvm/versions/node/v23.11.1/bin/firecrawl-mcp",
       "args": [],
       "env": {
         "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
@@ -76,7 +76,7 @@
     },
     "tavily": {
       "type": "stdio",
-      "command": "/usr/bin/tavily-mcp",
+      "command": "/Users/djbelieny/.nvm/versions/node/v23.11.1/bin/tavily-mcp",
       "args": [],
       "env": {
         "TAVILY_API_KEY": "${TAVILY_API_KEY}"
@@ -84,7 +84,7 @@
     },
     "exa": {
       "type": "stdio",
-      "command": "/usr/bin/exa-mcp-server",
+      "command": "/Users/djbelieny/.nvm/versions/node/v23.11.1/bin/exa-mcp-server",
       "args": [],
       "env": {
         "EXA_API_KEY": "${EXA_API_KEY}"
@@ -92,8 +92,8 @@
     },
     "browserbase": {
       "type": "stdio",
-      "command": "/usr/bin/npx",
-      "args": ["-y", "@browserbasehq/mcp-server-browserbase", "--browserbaseApiKey", "bb_live_WbZiNPO-u_UfBx1qPir5QSl_3dM", "--browserbaseProjectId", "759b8e71-5d93-4f44-992d-598bd67b44a2", "--modelApiKey", "${GEMINI_API_KEY}"],
+      "command": "/Users/djbelieny/.nvm/versions/node/v23.11.1/bin/npx",
+      "args": ["-y", "@browserbasehq/mcp-server-browserbase", "--browserbaseApiKey", "${BROWSERBASE_API_KEY}", "--browserbaseProjectId", "${BROWSERBASE_PROJECT_ID}", "--modelApiKey", "${GEMINI_API_KEY}"],
       "env": {
         "GEMINI_API_KEY": "${GEMINI_API_KEY}"
       }
@@ -111,7 +111,7 @@
       "command": "npx",
       "args": ["-y", "@21st-dev/magic@latest"],
       "env": {
-        "API_KEY": "3f525f27c7aee033f63ce367443174e22e0874a13f5361f53899bc6943a4626a"
+        "API_KEY": "${STITCH_API_KEY}"
       }
     }
   }

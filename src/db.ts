@@ -245,6 +245,11 @@ class SharedDatabase {
     `);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_cost_tracking_created_at ON cost_tracking(created_at DESC)`);
 
+    // Migration: add agent_slug and exec_role columns to cost_tracking
+    try { this.db.run(`ALTER TABLE cost_tracking ADD COLUMN agent_slug TEXT`); } catch {}
+    try { this.db.run(`ALTER TABLE cost_tracking ADD COLUMN exec_role TEXT`); } catch {}
+    try { this.db.run(`ALTER TABLE cost_tracking ADD COLUMN request_id TEXT`); } catch {}
+
     this.db.run(`
       CREATE TABLE IF NOT EXISTS memory (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -1671,12 +1676,15 @@ export class Database {
     session_id?: string;
     user_id?: string;
     metadata?: Record<string, unknown>;
+    agent_slug?: string;
+    exec_role?: string;
+    request_id?: string;
   }): void {
     this.shared.db.run(`
       INSERT INTO cost_tracking (id, provider, model, input_tokens, output_tokens,
         cache_read_tokens, cache_creation_tokens, cost_usd, duration_ms,
-        session_id, metadata, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        session_id, metadata, user_id, agent_slug, exec_role, request_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       uuid(),
       data.provider || "claude",
@@ -1690,6 +1698,9 @@ export class Database {
       data.session_id || null,
       JSON.stringify(data.metadata || {}),
       data.user_id || null,
+      data.agent_slug || null,
+      data.exec_role || null,
+      data.request_id || null,
     ]);
   }
 
@@ -2036,6 +2047,23 @@ export class Database {
       data.duration_ms || null,
       data.user_id || null,
     ]);
+  }
+
+  // ============================================================
+  // Data retention — periodic cleanup of old records
+  // ============================================================
+
+  runRetentionCleanup(): { logsDeleted: number; costDeleted: number } {
+    const logsResult = this.shared.db.run(
+      `DELETE FROM logs WHERE created_at < datetime('now', '-30 days')`
+    );
+    const costResult = this.shared.db.run(
+      `DELETE FROM cost_tracking WHERE created_at < datetime('now', '-90 days')`
+    );
+    return {
+      logsDeleted: logsResult.changes,
+      costDeleted: costResult.changes,
+    };
   }
 
   // ============================================================

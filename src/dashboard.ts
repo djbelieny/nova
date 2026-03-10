@@ -13,6 +13,7 @@ import { readFile, readdir, stat } from "fs/promises";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { getDb, type Database } from "./db.ts";
+import { createSSEStream, getActiveAgents, getSSEConnectionCount } from "./events.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -37,6 +38,39 @@ const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // In-memory session store (survives for container lifetime)
 const sessions = new Map<string, { user: string; expiresAt: number }>();
+
+// Rate limiting — 120 req/min per session
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 120;
+const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(sessionId: string): boolean {
+  const now = Date.now();
+  let bucket = rateLimitBuckets.get(sessionId);
+  if (!bucket || now > bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateLimitBuckets.set(sessionId, bucket);
+  }
+  bucket.count++;
+  return bucket.count <= RATE_LIMIT_MAX;
+}
+
+function getSessionIdFromRequest(req: Request): string | null {
+  const cookie = req.headers.get("cookie") || "";
+  const match = cookie.match(/nova_session=([a-f0-9]+)/);
+  return match ? match[1] : null;
+}
+
+// Periodic cleanup of expired sessions and rate limit buckets
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of sessions) {
+    if (session.expiresAt < now) sessions.delete(id);
+  }
+  for (const [id, bucket] of rateLimitBuckets) {
+    if (bucket.resetAt < now) rateLimitBuckets.delete(id);
+  }
+}, 30 * 60 * 1000); // every 30 min
 
 function generateSessionId(): string {
   const bytes = new Uint8Array(32);
@@ -764,6 +798,124 @@ async function getAgentTasks(userId?: string): Promise<unknown> {
 }
 
 // ============================================================
+// EXECUTIVE & AGENT CATALOG HANDLERS
+// ============================================================
+
+const EXEC_ROSTER = [
+  { role: "ceo", name: "CEO", provider: "Claude", persona: "Jeff Bezos", color: "#f59e0b", agents: ["athena", "oracle", "tesseract"] },
+  { role: "cfo", name: "CFO", provider: "Gemini", persona: "Patrick Campbell", color: "#22c55e", agents: ["digit", "flux"] },
+  { role: "cmo", name: "CMO", provider: "Gemini", persona: "Seth Godin", color: "#ec4899", agents: ["pixel", "kai", "aura", "nexus"] },
+  { role: "cto", name: "CTO", provider: "Codex", persona: "Werner Vogels", color: "#06b6d4", agents: ["architect", "cipher", "rift", "joule"] },
+  { role: "coo", name: "COO", provider: "Claude", persona: "Operations", color: "#8b5cf6", agents: ["zen"] },
+  { role: "research", name: "Research", provider: "Gemini", persona: "Ben Thompson", color: "#3b82f6", agents: ["oracle", "magnus", "cyra"] },
+  { role: "critic", name: "Critic", provider: "Claude", persona: "Charlie Munger", color: "#ef4444", agents: [] },
+];
+
+async function getAgentCatalog(): Promise<unknown> {
+  try {
+    const { getAllAgents } = await import("./agent-router.ts");
+    const agents = getAllAgents();
+    return {
+      agents: agents.map(a => ({
+        slug: a.slug,
+        name: a.name,
+        description: a.description,
+      })),
+    };
+  } catch (e: any) {
+    // Fallback static roster if agent-router not available
+    const AGENT_ROSTER = [
+      { slug: "helios", name: "Helios", description: "Paid advertising" },
+      { slug: "pixel", name: "Pixel", description: "Social media" },
+      { slug: "kai", name: "Kai", description: "Content writing" },
+      { slug: "orion", name: "Orion", description: "Email marketing" },
+      { slug: "morpheus", name: "Morpheus", description: "Video content" },
+      { slug: "architect", name: "Architect", description: "Web development" },
+      { slug: "athena", name: "Athena", description: "Business strategy" },
+      { slug: "digit", name: "Digit", description: "Data analytics" },
+      { slug: "echo", name: "Echo", description: "Customer support" },
+      { slug: "flux", name: "Flux", description: "Funnel engineering" },
+      { slug: "quill", name: "Quill", description: "Grant writing" },
+      { slug: "lex", name: "Lex", description: "Legal & compliance" },
+      { slug: "helia", name: "Helia", description: "Public relations" },
+      { slug: "bridge", name: "Bridge", description: "Partnerships" },
+      { slug: "oracle", name: "Oracle", description: "Trend forecasting" },
+      { slug: "cipher", name: "Cipher", description: "Data science" },
+      { slug: "rift", name: "Rift", description: "Cybersecurity" },
+      { slug: "joule", name: "Joule", description: "Workflow automation" },
+      { slug: "nexus", name: "Nexus", description: "Community building" },
+      { slug: "aura", name: "Aura", description: "Brand voice" },
+      { slug: "zen", name: "Zen", description: "Productivity" },
+      { slug: "tesseract", name: "Tesseract", description: "Systems thinking" },
+      { slug: "magnus", name: "Magnus", description: "SEO" },
+      { slug: "cyra", name: "Cyra", description: "Website optimization" },
+    ];
+    return { agents: AGENT_ROSTER };
+  }
+}
+
+async function getExecutives(): Promise<unknown> {
+  return { executives: EXEC_ROSTER };
+}
+
+async function getRecentBoardSessions(): Promise<unknown> {
+  try {
+    const rows = supabase.shared.db.query(
+      `SELECT * FROM logs WHERE event LIKE 'board.%' ORDER BY created_at DESC LIMIT 20`
+    ).all();
+    return { sessions: rows };
+  } catch {
+    return { sessions: [] };
+  }
+}
+
+async function getActiveDelegations(): Promise<unknown> {
+  try {
+    const rows = supabase.shared.db.query(
+      `SELECT * FROM logs WHERE event = 'exec.delegation' ORDER BY created_at DESC LIMIT 20`
+    ).all();
+    return { delegations: rows };
+  } catch {
+    return { delegations: [] };
+  }
+}
+
+// ============================================================
+// OBSERVABILITY HANDLERS
+// ============================================================
+
+async function getActivity(since: string | null, limit: number): Promise<any[]> {
+  const conditions: string[] = [];
+  const params: any[] = [];
+  if (since) {
+    conditions.push("created_at > ?");
+    params.push(since);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  return supabase.shared.db.query(
+    `SELECT id, created_at, level, event, message, metadata, user_id FROM logs ${where} ORDER BY created_at DESC LIMIT ?`
+  ).all(...params, limit) as any[];
+}
+
+async function getTrace(requestId: string): Promise<any[]> {
+  // Escape LIKE wildcards to prevent pattern injection
+  const escaped = requestId.replace(/[%_\\]/g, (c) => `\\${c}`);
+  return supabase.shared.db.query(
+    `SELECT id, created_at, level, event, message, metadata, user_id FROM logs WHERE metadata LIKE ? ESCAPE '\\' ORDER BY created_at ASC`
+  ).all(`%"requestId":"${escaped}"%`) as any[];
+}
+
+async function getCostBreakdown(period: string, groupBy: string): Promise<any[]> {
+  // Whitelist values to prevent SQL injection
+  const dayOffsets: Record<string, string> = { week: "-7 days", month: "-30 days", day: "-1 day" };
+  const offset = dayOffsets[period] || "-1 day";
+  const groupCol = groupBy === "provider" ? "provider" : "model";
+  return supabase.shared.db.query(
+    `SELECT ${groupCol} as group_key, COUNT(*) as calls, SUM(cost_usd) as total_cost, SUM(input_tokens) as total_input, SUM(output_tokens) as total_output FROM cost_tracking WHERE created_at > datetime('now', ?) GROUP BY ${groupCol} ORDER BY total_cost DESC`
+  ).all(offset) as any[];
+}
+
+// ============================================================
 // HTML DASHBOARD
 // ============================================================
 
@@ -773,26 +925,36 @@ function renderDashboard(): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NOVA COMMAND CENTER</title>
+<title>NOVA — GOD'S EYE</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #0a0a0f;
-    --surface: #12121a;
+    --bg: #06060b;
+    --surface: rgba(255,255,255,0.04);
     --glass: rgba(255,255,255,0.055);
     --glass-border: rgba(255,255,255,0.10);
+    --glass-hover: rgba(255,255,255,0.08);
     --indigo: #6366f1;
     --violet: #8b5cf6;
     --teal: #06b6d4;
     --success: #22c55e;
     --warning: #f59e0b;
     --error: #ef4444;
-    --text: rgba(255,255,255,0.95);
-    --text-secondary: rgba(255,255,255,0.7);
-    --text-dim: rgba(255,255,255,0.4);
+    --pink: #ec4899;
+    --blue: #3b82f6;
+    --text: rgba(255,255,255,0.92);
+    --text-secondary: rgba(255,255,255,0.6);
+    --text-dim: rgba(255,255,255,0.3);
+    --ceo: #f59e0b;
+    --cfo: #22c55e;
+    --cmo: #ec4899;
+    --cto: #06b6d4;
+    --coo: #8b5cf6;
+    --research: #3b82f6;
+    --critic: #ef4444;
   }
 
   body {
@@ -801,702 +963,623 @@ function renderDashboard(): string {
     color: var(--text);
     font-size: 13px;
     line-height: 1.5;
-    min-height: 100vh;
-    overflow-x: hidden;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
+  @keyframes pulse-dot { 0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+  @keyframes pulse-glow { 0%,100% { filter: drop-shadow(0 0 4px currentColor); } 50% { filter: drop-shadow(0 0 12px currentColor); } }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes orbit-pulse { 0%,100% { opacity: 0.15; } 50% { opacity: 0.3; } }
+  @keyframes particle-move { 0% { offset-distance: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
+  @keyframes flash-node { 0% { r: 20; opacity: 0.8; } 100% { r: 35; opacity: 0; } }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
   .blink { animation: blink 1.5s infinite; }
 
-  .container { max-width: 1600px; margin: 0 auto; padding: 12px; }
-
-  /* Header */
+  /* === HEADER === */
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 20px;
-    border: 1px solid var(--glass-border);
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--glass-border);
     background: var(--glass);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    border-radius: 14px;
-    margin-bottom: 12px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    flex-shrink: 0;
+    z-index: 100;
   }
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
+  .logo { display: flex; align-items: center; gap: 10px; }
   .logo-badge {
-    width: 36px;
-    height: 36px;
+    width: 32px; height: 32px;
     background: linear-gradient(135deg, var(--indigo), var(--violet));
-    border-radius: 10px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.9rem; font-weight: 700; color: #fff;
+  }
+  .logo-title { font-size: 1.1rem; font-weight: 700; }
+  .logo-subtitle { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 2px; }
+  .header-info { display: flex; align-items: center; gap: 16px; color: var(--text-dim); font-size: 11px; }
+  .header-info .live-dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--success); margin-right: 4px; animation: pulse-dot 2s infinite;
+  }
+  .sse-badge {
+    padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
+    background: rgba(34,197,94,0.15); color: var(--success); border: 1px solid rgba(34,197,94,0.3);
+  }
+  .sse-badge.disconnected { background: rgba(239,68,68,0.15); color: var(--error); border-color: rgba(239,68,68,0.3); }
+  .header-controls { display: flex; align-items: center; gap: 8px; }
+  .header-controls select {
+    background: rgba(255,255,255,0.055); color: var(--text); border: 1px solid var(--glass-border);
+    padding: 4px 8px; font-family: inherit; font-size: 11px; border-radius: 6px;
+  }
+  .header-controls select:focus { outline: none; border-color: var(--indigo); }
+
+  /* === MAIN 3-COLUMN LAYOUT === */
+  .main-layout {
+    display: grid;
+    grid-template-columns: 260px 1fr 280px;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* === LEFT SIDEBAR — EXECUTIVE BOARD === */
+  .sidebar-left {
+    border-right: 1px solid var(--glass-border);
+    background: var(--surface);
+    overflow-y: auto;
+    padding: 12px;
+  }
+  .sidebar-left::-webkit-scrollbar { width: 3px; }
+  .sidebar-left::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+  .section-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: var(--text-dim); font-weight: 600; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .exec-card {
+    background: var(--glass); border: 1px solid var(--glass-border);
+    border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+    cursor: pointer; transition: background 0.2s, border-color 0.2s;
+    position: relative; overflow: hidden;
+  }
+  .exec-card:hover { background: var(--glass-hover); }
+  .exec-card .exec-accent {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  }
+  .exec-card-header { display: flex; align-items: center; gap: 8px; margin-left: 6px; }
+  .exec-role-badge {
+    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .exec-provider {
+    font-size: 9px; padding: 1px 6px; border-radius: 8px;
+    background: rgba(255,255,255,0.06); color: var(--text-dim);
+    margin-left: auto;
+  }
+  .exec-persona { font-size: 10px; color: var(--text-dim); margin-left: 6px; margin-top: 2px; }
+  .exec-agents {
+    display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; margin-left: 6px;
+  }
+  .exec-agent-tag {
+    font-size: 9px; padding: 1px 5px; border-radius: 4px;
+    background: rgba(255,255,255,0.05); color: var(--text-dim);
+  }
+  .exec-stats { display: flex; gap: 12px; margin-top: 6px; margin-left: 6px; }
+  .exec-stat { font-size: 10px; color: var(--text-dim); }
+  .exec-stat-val { font-weight: 600; }
+
+  /* === CENTER STAGE — ORBITAL VIZ === */
+  .center-stage {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    font-size: 1rem;
-    font-weight: 700;
-    color: #fff;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(ellipse at center, rgba(99,102,241,0.03) 0%, transparent 70%);
+  }
+  .orbital-container {
+    width: 100%; height: 100%;
+    position: relative;
+  }
+  .orbital-svg {
+    width: 100%; height: 100%;
+  }
+  .orbital-node { cursor: pointer; transition: opacity 0.2s; }
+  .orbital-node:hover { opacity: 1 !important; }
+  .orbital-node text { pointer-events: none; }
+  .orbital-label {
+    font-family: 'Inter', sans-serif;
+    font-size: 9px;
+    fill: var(--text-secondary);
+    text-anchor: middle;
+  }
+  .orbital-ring {
+    fill: none;
+    stroke: rgba(255,255,255,0.04);
+    stroke-width: 1;
+  }
+  .connection-line {
+    stroke: rgba(255,255,255,0.06);
+    stroke-width: 0.5;
+    stroke-dasharray: 4 4;
+  }
+
+  /* Center stats overlay */
+  .center-stats {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; pointer-events: none; z-index: 5;
+  }
+  .center-stats .nova-label { font-size: 14px; font-weight: 700; color: var(--indigo); letter-spacing: 3px; }
+  .center-stats .stat-row { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+  .center-stats .stat-val { color: var(--text-secondary); font-weight: 600; }
+
+  /* === RIGHT SIDEBAR — EVENTS + STATUS === */
+  .sidebar-right {
+    border-left: 1px solid var(--glass-border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .event-stream {
+    flex: 1; overflow-y: auto; padding: 8px 10px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  }
+  .event-stream::-webkit-scrollbar { width: 3px; }
+  .event-stream::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+  .event-entry {
+    padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.03);
+    animation: fade-in 0.3s ease;
+  }
+  .event-time { color: var(--text-dim); }
+  .event-type { font-weight: 600; }
+  .event-msg { color: var(--text-secondary); word-break: break-word; }
+  .event-filter-bar {
+    display: flex; gap: 4px; padding: 8px 10px; border-bottom: 1px solid var(--glass-border);
     flex-shrink: 0;
   }
-  .logo-title {
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: var(--text);
-    line-height: 1.2;
+  .event-filter-btn {
+    font-size: 9px; padding: 2px 8px; border-radius: 10px;
+    background: none; border: 1px solid var(--glass-border);
+    color: var(--text-dim); cursor: pointer; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 0.5px;
   }
-  .logo-subtitle {
-    font-size: 0.7rem;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .header-info {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    color: var(--text-dim);
-    font-size: 12px;
-  }
-  .live-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--success);
-    margin-right: 6px;
-    animation: pulse-dot 2s infinite;
-  }
-  @keyframes pulse-dot {
-    0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
-    50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
-  }
+  .event-filter-btn.active { background: var(--indigo); color: #fff; border-color: var(--indigo); }
 
-  /* Grid layout */
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
+  /* Right sidebar panels */
+  .right-panel {
+    padding: 10px; border-top: 1px solid var(--glass-border);
+    flex-shrink: 0;
   }
-  .full-width { grid-column: 1 / -1; }
+  .right-panel .section-title { margin-bottom: 6px; }
+  .mini-stat-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+  }
+  .mini-stat {
+    background: var(--glass); border: 1px solid var(--glass-border);
+    border-radius: 8px; padding: 8px; text-align: center;
+  }
+  .mini-stat-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .mini-stat-value { font-size: 16px; font-weight: 700; color: var(--indigo); }
+  .mini-stat-value.green { color: var(--success); }
+  .mini-stat-value.amber { color: var(--warning); }
+  .mini-stat-value.cyan { color: var(--teal); }
 
-  /* Panels */
-  .panel {
-    background: var(--glass);
+  /* Active agents compact list */
+  .active-agent-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 0; font-size: 11px;
+  }
+  .active-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--success); animation: pulse-dot 2s infinite;
+    flex-shrink: 0;
+  }
+  .active-agent-name { color: var(--teal); font-weight: 600; flex: 1; }
+  .active-agent-time { color: var(--text-dim); font-size: 10px; }
+
+  /* === BOTTOM DOCK === */
+  .bottom-dock {
+    border-top: 1px solid var(--glass-border);
+    background: rgba(6,6,11,0.95);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    border: 1px solid var(--glass-border);
-    border-radius: 14px;
-    overflow: hidden;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-  }
-  .panel-header {
-    padding: 10px 16px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid var(--glass-border);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--text-secondary);
-    font-weight: 600;
-  }
-  .panel-header .indicator {
-    font-size: 10px;
-    color: var(--text-dim);
-  }
-  .panel-body {
-    padding: 12px;
-    max-height: 350px;
-    overflow-y: auto;
-  }
-  .panel-body::-webkit-scrollbar { width: 4px; }
-  .panel-body::-webkit-scrollbar-track { background: transparent; }
-  .panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-
-  /* Service cards */
-  .service-card {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--glass-border);
-    margin-bottom: 6px;
-    background: rgba(255,255,255,0.03);
-    border-radius: 8px;
-    transition: background 0.2s;
-  }
-  .service-card:hover { background: rgba(255,255,255,0.06); }
-  .status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
     flex-shrink: 0;
+    z-index: 50;
+    transition: height 0.3s ease;
+    display: flex;
+    flex-direction: column;
   }
-  .status-dot.running { background: var(--success); box-shadow: 0 0 6px var(--success); }
-  .status-dot.error { background: var(--error); box-shadow: 0 0 6px var(--error); }
-  .status-dot.idle { background: var(--warning); box-shadow: 0 0 6px var(--warning); }
-  .status-dot.not_installed, .status-dot.unknown { background: var(--text-dim); }
-  .service-name { flex: 1; color: var(--text); }
-  .service-meta { font-size: 10px; color: var(--text-dim); }
+  .bottom-dock.collapsed { height: 36px; overflow: hidden; }
+  .bottom-dock.expanded { height: 45vh; }
+  .dock-tabs {
+    display: flex; align-items: center; gap: 2px;
+    padding: 0 12px; height: 36px; flex-shrink: 0;
+    border-bottom: 1px solid var(--glass-border);
+    cursor: pointer;
+  }
+  .dock-tab {
+    padding: 6px 14px; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--text-dim);
+    background: none; border: none; cursor: pointer;
+    font-family: inherit; font-weight: 600; border-radius: 6px 6px 0 0;
+    transition: color 0.2s, background 0.2s;
+  }
+  .dock-tab:hover { color: var(--text-secondary); }
+  .dock-tab.active { color: var(--indigo); background: rgba(99,102,241,0.1); }
+  .dock-toggle {
+    margin-left: auto; background: none; border: none; color: var(--text-dim);
+    cursor: pointer; font-size: 14px; padding: 4px 8px;
+  }
+  .dock-content {
+    flex: 1; overflow-y: auto; padding: 12px;
+  }
+  .dock-content::-webkit-scrollbar { width: 4px; }
+  .dock-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
-  /* Messages / Activity feed */
-  .msg-entry {
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    font-size: 12px;
+  /* Dock panel reusable styles */
+  .dock-panel { display: none; }
+  .dock-panel.active { display: block; }
+
+  /* Tables in dock */
+  .data-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+  .data-table th {
+    text-align: left; color: var(--text-dim); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 6px 8px; border-bottom: 1px solid var(--glass-border);
+    position: sticky; top: 0; background: var(--bg);
   }
-  .msg-entry:last-child { border-bottom: none; }
+  .data-table td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .data-table tr:hover td { background: rgba(255,255,255,0.02); }
+
   .msg-role {
-    display: inline-block;
-    padding: 2px 8px;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-right: 6px;
-    border-radius: 4px;
+    display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.5px; border-radius: 3px;
   }
   .msg-role.user { color: #fff; background: var(--teal); }
   .msg-role.assistant { color: #fff; background: var(--indigo); }
   .msg-role.system { color: #fff; background: var(--warning); }
-  .msg-channel {
-    font-size: 10px;
-    color: var(--text-dim);
-    margin-left: 4px;
-  }
-  .msg-time {
-    font-size: 10px;
-    color: var(--text-dim);
-    float: right;
-  }
-  .msg-content {
-    color: var(--text-secondary);
-    margin-top: 2px;
-    word-break: break-word;
-    max-height: 60px;
-    overflow: hidden;
-  }
 
-  /* Memory entries */
-  .mem-entry {
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-    font-size: 12px;
+  .tabs { display: flex; gap: 3px; margin-bottom: 8px; flex-wrap: wrap; }
+  .tab {
+    padding: 4px 12px; cursor: pointer; font-size: 10px; color: var(--text-dim);
+    border: none; background: none; font-family: inherit;
+    text-transform: uppercase; letter-spacing: 0.5px; border-radius: 16px;
+    transition: color 0.2s, background 0.2s;
   }
+  .tab:hover { color: var(--text-secondary); background: rgba(255,255,255,0.05); }
+  .tab.active { color: #fff; background: var(--indigo); }
+
+  .metric-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .metric-label { color: var(--text-dim); }
+  .metric-value { color: var(--indigo); font-weight: 600; }
+
+  .cost-summary { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .cost-card {
+    flex: 1; min-width: 140px; background: var(--glass); border: 1px solid var(--glass-border);
+    padding: 10px; text-align: center; border-radius: 10px;
+  }
+  .cost-card-label { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
+  .cost-card-value { font-size: 20px; font-weight: 700; color: var(--indigo); }
+  .cost-card-value.amber { color: var(--warning); }
+  .cost-card-value.cyan { color: var(--teal); }
+
+  .cost-model-table { width: 100%; font-size: 11px; border-collapse: collapse; margin-top: 6px; }
+  .cost-model-table th { text-align: left; color: var(--text-dim); font-size: 9px; text-transform: uppercase; padding: 4px 6px; border-bottom: 1px solid var(--glass-border); }
+  .cost-model-table td { padding: 4px 6px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .cost-model-table td.cost-val { color: var(--indigo); font-weight: 700; text-align: right; }
+
+  .stacked-bar-chart { display: flex; align-items: flex-end; gap: 2px; height: 70px; margin-top: 6px; }
+  .stacked-bar { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; min-height: 1px; position: relative; }
+  .stacked-bar-segment { width: 100%; min-height: 0; transition: height 0.3s; opacity: 0.8; }
+  .stacked-bar-segment:hover { opacity: 1; }
+  .bar-label { position: absolute; bottom: -14px; left: 50%; transform: translateX(-50%); font-size: 8px; color: var(--text-dim); white-space: nowrap; }
+  .cost-legend { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; font-size: 10px; }
+  .cost-legend-item { display: flex; align-items: center; gap: 4px; }
+  .cost-legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+  .cost-section { margin-bottom: 16px; }
+  .cost-section-title { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; padding-bottom: 3px; border-bottom: 1px solid var(--glass-border); }
+  .cost-chart-container { display: flex; gap: 12px; flex-wrap: wrap; }
+  .cost-chart-block { flex: 1; min-width: 260px; }
+
+  .bar-chart { display: flex; align-items: flex-end; gap: 2px; height: 50px; margin-top: 8px; }
+  .bar { flex: 1; background: linear-gradient(to top, var(--indigo), var(--violet)); min-height: 1px; position: relative; opacity: 0.7; border-radius: 2px 2px 0 0; }
+  .bar:hover { opacity: 1; }
+
+  .log-content { font-family: 'JetBrains Mono', monospace; font-size: 10px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--text-dim); }
+  .log-file-name { color: var(--warning); font-size: 10px; margin: 6px 0 3px; padding: 3px 0; border-bottom: 1px solid var(--glass-border); }
+
+  .resource-bar-container { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .resource-label { width: 70px; font-size: 10px; color: var(--text-dim); }
+  .resource-bar { flex: 1; height: 10px; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); overflow: hidden; border-radius: 5px; }
+  .resource-bar-fill { height: 100%; background: linear-gradient(90deg, var(--indigo), var(--violet)); border-radius: 5px; }
+  .resource-value { width: 70px; font-size: 10px; color: var(--indigo); text-align: right; }
+
+  .service-card {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    border: 1px solid var(--glass-border); margin-bottom: 4px;
+    background: rgba(255,255,255,0.03); border-radius: 6px;
+  }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.running { background: var(--success); box-shadow: 0 0 6px var(--success); }
+  .status-dot.error { background: var(--error); box-shadow: 0 0 6px var(--error); }
+  .status-dot.idle { background: var(--warning); }
+  .status-dot.not_installed, .status-dot.unknown { background: var(--text-dim); }
+  .service-name { flex: 1; color: var(--text); font-size: 12px; }
+  .service-meta { font-size: 10px; color: var(--text-dim); }
+
   .mem-type {
-    display: inline-block;
-    padding: 2px 8px;
-    font-size: 10px;
-    font-weight: 600;
-    text-transform: uppercase;
-    margin-right: 6px;
-    border-radius: 4px;
+    display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 600;
+    text-transform: uppercase; margin-right: 4px; border-radius: 3px;
   }
   .mem-type.fact { color: #fff; background: var(--teal); }
   .mem-type.goal { color: #fff; background: var(--warning); }
   .mem-type.completed_goal { color: #fff; background: var(--success); }
   .mem-type.preference { color: #fff; background: var(--violet); }
 
-  /* Tabs */
-  .tabs {
-    display: flex;
-    gap: 4px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-  }
-  .tab {
-    padding: 5px 14px;
-    cursor: pointer;
-    font-size: 11px;
-    color: var(--text-dim);
-    border: none;
-    background: none;
-    font-family: inherit;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-radius: 20px;
-    transition: color 0.2s, background 0.2s;
-  }
-  .tab:hover { color: var(--text-secondary); background: rgba(255,255,255,0.05); }
-  .tab.active {
-    color: #fff;
-    background: var(--indigo);
-  }
-
-  /* Metrics */
-  .metric-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 6px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-  }
-  .metric-label { color: var(--text-dim); }
-  .metric-value { color: var(--indigo); font-weight: 600; }
-
-  .bar-chart {
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 60px;
-    margin-top: 12px;
-    padding-top: 4px;
-  }
-  .bar {
-    flex: 1;
-    background: linear-gradient(to top, var(--indigo), var(--violet));
-    min-height: 1px;
-    position: relative;
-    opacity: 0.7;
-    transition: opacity 0.2s;
-    border-radius: 2px 2px 0 0;
-  }
-  .bar:hover { opacity: 1; }
-  .bar-label {
-    position: absolute;
-    bottom: -16px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 8px;
-    color: var(--text-dim);
-    white-space: nowrap;
-  }
-
-  /* Log viewer */
-  .log-content {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: var(--text-dim);
-    max-height: 300px;
-    overflow-y: auto;
-  }
-  .log-content::-webkit-scrollbar { width: 4px; }
-  .log-content::-webkit-scrollbar-track { background: transparent; }
-  .log-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-  .log-file-name {
-    color: var(--warning);
-    font-size: 11px;
-    margin: 8px 0 4px;
-    padding: 4px 0;
-    border-bottom: 1px solid var(--glass-border);
-  }
-  .log-file-name:first-child { margin-top: 0; }
-
-  /* Resource bars */
-  .resource-bar-container {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-  .resource-label { width: 80px; font-size: 11px; color: var(--text-dim); }
-  .resource-bar {
-    flex: 1;
-    height: 12px;
-    background: rgba(255,255,255,0.05);
-    border: 1px solid var(--glass-border);
-    overflow: hidden;
-    border-radius: 6px;
-  }
-  .resource-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--indigo), var(--violet));
-    transition: width 0.5s;
-    border-radius: 6px;
-  }
-  .resource-value { width: 80px; font-size: 11px; color: var(--indigo); text-align: right; }
-
-  /* Task / skill tables */
-  .data-table {
-    width: 100%;
-    font-size: 12px;
-    border-collapse: collapse;
-  }
-  .data-table th {
-    text-align: left;
-    color: var(--text-dim);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--glass-border);
-  }
-  .data-table td {
-    padding: 8px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-  }
-  .data-table tr:hover td {
-    background: rgba(255,255,255,0.02);
-  }
-
-  /* Select / filter controls */
-  .filter-row {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
+  .filter-row { display: flex; gap: 6px; margin-bottom: 6px; }
   select, input[type="text"] {
-    background: rgba(255,255,255,0.055);
-    color: var(--text);
-    border: 1px solid var(--glass-border);
-    padding: 6px 10px;
-    font-family: inherit;
-    font-size: 11px;
-    border-radius: 8px;
-    transition: border-color 0.2s, box-shadow 0.2s;
+    background: rgba(255,255,255,0.055); color: var(--text); border: 1px solid var(--glass-border);
+    padding: 4px 8px; font-family: inherit; font-size: 11px; border-radius: 6px;
   }
-  select:focus, input[type="text"]:focus { outline: none; border-color: var(--indigo); box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
-
-  /* Cost charts */
-  .cost-summary {
-    display: flex;
-    gap: 16px;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-  }
-  .cost-card {
-    flex: 1;
-    min-width: 180px;
-    background: var(--glass);
-    border: 1px solid var(--glass-border);
-    padding: 14px;
-    text-align: center;
-    border-radius: 12px;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-  }
-  .cost-card-label {
-    font-size: 10px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 4px;
-  }
-  .cost-card-value {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--indigo);
-  }
-  .cost-card-value.amber { color: var(--warning); }
-  .cost-card-value.cyan { color: var(--teal); }
-
-  .cost-section {
-    margin-bottom: 20px;
-  }
-  .cost-section-title {
-    font-size: 11px;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 8px;
-    padding-bottom: 4px;
-    border-bottom: 1px solid var(--glass-border);
-  }
-  .cost-chart-container {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
-  }
-  .cost-chart-block {
-    flex: 1;
-    min-width: 280px;
-  }
-
-  .stacked-bar-chart {
-    display: flex;
-    align-items: flex-end;
-    gap: 2px;
-    height: 80px;
-    margin-top: 8px;
-    padding-top: 4px;
-    position: relative;
-  }
-  .stacked-bar {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end;
-    min-height: 1px;
-    position: relative;
-  }
-  .stacked-bar-segment {
-    width: 100%;
-    min-height: 0;
-    transition: height 0.3s;
-    opacity: 0.8;
-  }
-  .stacked-bar-segment:hover { opacity: 1; }
-  .stacked-bar .bar-label {
-    position: absolute;
-    bottom: -16px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 8px;
-    color: var(--text-dim);
-    white-space: nowrap;
-  }
-
-  .cost-legend {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-top: 20px;
-    font-size: 11px;
-  }
-  .cost-legend-item {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .cost-legend-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 2px;
-    flex-shrink: 0;
-  }
-
-  .cost-model-table {
-    width: 100%;
-    font-size: 12px;
-    border-collapse: collapse;
-    margin-top: 8px;
-  }
-  .cost-model-table th {
-    text-align: left;
-    color: var(--text-dim);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--glass-border);
-  }
-  .cost-model-table td {
-    padding: 5px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-  }
-  .cost-model-table td.cost-val {
-    color: var(--indigo);
-    font-weight: 700;
-    text-align: right;
-  }
+  select:focus, input[type="text"]:focus { outline: none; border-color: var(--indigo); }
 
   /* Responsive */
-  @media (max-width: 900px) {
-    .grid { grid-template-columns: 1fr; }
-    .header { flex-direction: column; gap: 8px; text-align: center; }
-    .header-info { justify-content: center; flex-wrap: wrap; }
+  @media (max-width: 1100px) {
+    .main-layout { grid-template-columns: 1fr; }
+    .sidebar-left, .sidebar-right { display: none; }
+    .bottom-dock.expanded { height: 60vh; }
   }
 </style>
 </head>
 <body>
-<div class="container">
 
-  <!-- HEADER -->
-  <div class="header">
-    <div class="logo"><div class="logo-badge">N</div><div><div class="logo-title">Nova</div><div class="logo-subtitle">Command Center</div></div></div>
-    <div class="header-info">
-      <span><span class="live-dot"></span>Live</span>
-      <span id="header-time"></span>
-      <span>Uptime: <span id="header-uptime">--</span></span>
+<!-- HEADER -->
+<div class="header">
+  <div class="logo">
+    <div class="logo-badge">N</div>
+    <div><div class="logo-title">Nova</div><div class="logo-subtitle">God's Eye</div></div>
+  </div>
+  <div class="header-info">
+    <span><span class="live-dot"></span>Live</span>
+    <span id="header-time"></span>
+    <span>Up: <span id="header-uptime">--</span></span>
+    <span class="sse-badge" id="sse-badge">SSE</span>
+  </div>
+  <div class="header-controls">
+    <select id="user-selector"><option value="">All Users</option></select>
+  </div>
+</div>
+
+<!-- MAIN 3-COLUMN LAYOUT -->
+<div class="main-layout">
+
+  <!-- LEFT SIDEBAR: EXECUTIVE BOARD -->
+  <div class="sidebar-left">
+    <div class="section-title">Executive Board</div>
+    <div id="exec-panel">
+      <div style="color:var(--text-dim);font-size:11px">Loading...</div>
+    </div>
+    <div style="margin-top:16px">
+      <div class="section-title">System Status</div>
+      <div id="status-panel">
+        <div style="color:var(--text-dim);font-size:11px">Loading...</div>
+      </div>
     </div>
   </div>
 
-  <!-- USER SELECTOR -->
-  <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
-    <label style="color:var(--text-secondary);font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">User Filter:</label>
-    <select id="user-selector" style="min-width:200px;">
-      <option value="">All Users (Admin View)</option>
-    </select>
+  <!-- CENTER: ORBITAL VISUALIZATION -->
+  <div class="center-stage">
+    <div class="center-stats">
+      <div class="nova-label">NOVA</div>
+      <div class="stat-row">Agents: <span class="stat-val" id="stat-agents">24</span></div>
+      <div class="stat-row">Active: <span class="stat-val" id="stat-active">0</span></div>
+      <div class="stat-row">Today: $<span class="stat-val" id="stat-cost">0.00</span></div>
+    </div>
+    <div class="orbital-container">
+      <svg id="orbital-svg" class="orbital-svg" viewBox="0 0 800 800"></svg>
+    </div>
   </div>
 
-  <div class="grid">
-
-    <!-- SYSTEM STATUS -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>System Status</span>
-        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 10s</span>
-      </div>
-      <div class="panel-body" id="status-panel">
-        <div style="color:var(--text-dim)">Loading...</div>
+  <!-- RIGHT SIDEBAR: EVENTS + STATUS -->
+  <div class="sidebar-right">
+    <div class="event-filter-bar">
+      <button class="event-filter-btn active" data-filter="all">All</button>
+      <button class="event-filter-btn" data-filter="agent">Agents</button>
+      <button class="event-filter-btn" data-filter="exec">Execs</button>
+      <button class="event-filter-btn" data-filter="error">Errors</button>
+    </div>
+    <div class="event-stream" id="event-stream">
+      <div style="color:var(--text-dim)">Connecting...</div>
+    </div>
+    <div class="right-panel">
+      <div class="section-title">Active Agents</div>
+      <div id="active-agents-compact" style="max-height:120px;overflow-y:auto">
+        <div style="color:var(--text-dim);font-size:10px">None</div>
       </div>
     </div>
-
-    <!-- PERFORMANCE METRICS -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>Performance Metrics</span>
-        <span class="indicator">30s</span>
-      </div>
-      <div class="panel-body" id="metrics-panel">
-        <div style="color:var(--text-dim)">Loading...</div>
+    <div class="right-panel">
+      <div class="mini-stat-grid">
+        <div class="mini-stat"><div class="mini-stat-label">Today</div><div class="mini-stat-value" id="cost-today">$0</div></div>
+        <div class="mini-stat"><div class="mini-stat-label">Month</div><div class="mini-stat-value amber" id="cost-month">$0</div></div>
+        <div class="mini-stat"><div class="mini-stat-label">Msgs 24h</div><div class="mini-stat-value cyan" id="msgs-today">0</div></div>
+        <div class="mini-stat"><div class="mini-stat-label">SSE</div><div class="mini-stat-value green" id="sse-count">0</div></div>
       </div>
     </div>
+  </div>
 
-    <!-- API COSTS -->
-    <div class="panel full-width">
-      <div class="panel-header">
-        <span>API Costs</span>
-        <span class="indicator">30s</span>
-      </div>
-      <div class="panel-body" id="costs-panel" style="max-height:500px">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
+</div>
 
-    <!-- USAGE BY USER -->
-    <div class="panel full-width">
-      <div class="panel-header">
-        <span>Usage by User</span>
-        <span class="indicator">30s</span>
-      </div>
-      <div class="panel-body" id="usage-by-user-panel" style="max-height:400px">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- ACTIVITY FEED -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>Activity Feed</span>
-        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 15s</span>
-      </div>
-      <div class="panel-body" id="messages-panel" style="max-height:400px">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- MEMORY BANK -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>Memory Bank</span>
-        <span class="indicator">30s</span>
-      </div>
-      <div class="panel-body" id="memory-panel">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- SCHEDULED TASKS -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>Scheduled Tasks</span>
-        <span class="indicator">30s</span>
-      </div>
-      <div class="panel-body" id="tasks-panel">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- SKILLS & INTEGRATIONS -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>Skills &amp; Integrations</span>
-        <span class="indicator">60s</span>
-      </div>
-      <div class="panel-body" id="skills-panel">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- VOICE CALLS -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>Voice Calls</span>
-        <span class="indicator">30s</span>
-      </div>
-      <div class="panel-body" id="voice-panel">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- AGENT TASKS -->
-    <div class="panel full-width">
-      <div class="panel-header">
-        <span>Agent Tasks</span>
-        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 15s</span>
-      </div>
-      <div class="panel-body" id="agent-tasks-panel" style="max-height:400px">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- SYSTEM RESOURCES -->
-    <div class="panel">
-      <div class="panel-header">
-        <span>System Resources</span>
-        <span class="indicator">20s</span>
-      </div>
-      <div class="panel-body" id="resources-panel">
-        <div style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
-    <!-- LOG VIEWER -->
-    <div class="panel full-width">
-      <div class="panel-header">
-        <span>Log Viewer</span>
-        <span class="indicator"><span class="blink" style="color:var(--success)">●</span> 10s</span>
-      </div>
-      <div class="panel-body" id="logs-panel" style="max-height:400px">
-        <div class="filter-row">
-          <select id="log-service">
-            <option value="all">All Services</option>
-            <option value="relay">Nova Core</option>
-            <option value="voice-server">Voice Server</option>
-            <option value="smart-checkin">Smart Check-in</option>
-            <option value="morning-briefing">Morning Briefing</option>
-          </select>
-        </div>
-        <div id="logs-content" style="color:var(--text-dim)">Loading...</div>
-      </div>
-    </div>
-
+<!-- BOTTOM DOCK -->
+<div class="bottom-dock collapsed" id="bottom-dock">
+  <div class="dock-tabs">
+    <button class="dock-tab active" data-panel="messages-dock">Messages</button>
+    <button class="dock-tab" data-panel="agent-tasks-dock">Agent Tasks</button>
+    <button class="dock-tab" data-panel="costs-dock">Costs</button>
+    <button class="dock-tab" data-panel="memory-dock">Memory</button>
+    <button class="dock-tab" data-panel="logs-dock">Logs</button>
+    <button class="dock-tab" data-panel="resources-dock">Resources</button>
+    <button class="dock-tab" data-panel="skills-dock">Skills</button>
+    <button class="dock-toggle" id="dock-toggle">&#9650;</button>
+  </div>
+  <div class="dock-content">
+    <div class="dock-panel active" id="messages-dock"></div>
+    <div class="dock-panel" id="agent-tasks-dock"></div>
+    <div class="dock-panel" id="costs-dock"></div>
+    <div class="dock-panel" id="memory-dock"></div>
+    <div class="dock-panel" id="logs-dock"></div>
+    <div class="dock-panel" id="resources-dock"></div>
+    <div class="dock-panel" id="skills-dock"></div>
   </div>
 </div>
 
 <script>
 const BASE = '${DASHBOARD_BASE}';
 const $ = (id) => document.getElementById(id);
-const esc = (s) => {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
-};
+const esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+function timeAgo(ts) { const s=Math.floor((Date.now()-new Date(ts).getTime())/1000); if(s<60) return s+'s'; if(s<3600) return Math.floor(s/60)+'m'; if(s<86400) return Math.floor(s/3600)+'h'; return Math.floor(s/86400)+'d'; }
+function fmtUptime(sec) { const d=Math.floor(sec/86400),h=Math.floor((sec%86400)/3600),m=Math.floor((sec%3600)/60); if(d>0) return d+'d '+h+'h'; if(h>0) return h+'h '+m+'m'; return m+'m'; }
 
-function timeAgo(ts) {
-  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-  if (s < 60) return s + 's ago';
-  if (s < 3600) return Math.floor(s/60) + 'm ago';
-  if (s < 86400) return Math.floor(s/3600) + 'h ago';
-  return Math.floor(s/86400) + 'd ago';
-}
-
-function fmtUptime(sec) {
-  const d = Math.floor(sec / 86400);
-  const h = Math.floor((sec % 86400) / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
-  if (h > 0) return h + 'h ' + m + 'm';
-  return m + 'm ' + (sec % 60) + 's';
-}
-
-// Update clock
+// Clock
 setInterval(() => {
-  const now = new Date();
-  $('header-time').textContent = now.toLocaleString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit'
-  });
+  $('header-time').textContent = new Date().toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit'});
 }, 1000);
 
-// ---- STATUS ----
+let selectedUserId = '';
+function userParam() { return selectedUserId ? '&user_id=' + selectedUserId : ''; }
+
+// ==== EXEC COLORS MAP ====
+const EXEC_COLORS = { ceo:'#f59e0b', cfo:'#22c55e', cmo:'#ec4899', cto:'#06b6d4', coo:'#8b5cf6', research:'#3b82f6', critic:'#ef4444' };
+
+// ==== ORBITAL VISUALIZATION ====
+let orbitalAgents = [];
+let orbitalExecs = [];
+let activeAgentSlugs = new Set();
+
+function hashColor(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+  const hue = Math.abs(h) % 360;
+  return 'hsl(' + hue + ', 60%, 55%)';
+}
+
+function drawOrbital() {
+  const svg = $('orbital-svg');
+  if (!svg) return;
+  const cx = 400, cy = 400;
+  const innerR = 130, outerR = 290;
+
+  let html = '';
+  // Background rings
+  html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+innerR+'" class="orbital-ring" style="animation:orbit-pulse 4s infinite"/>';
+  html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+outerR+'" class="orbital-ring" style="animation:orbit-pulse 4s infinite 2s"/>';
+  html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+(innerR+outerR)/2+'" class="orbital-ring" style="opacity:0.3"/>';
+
+  // Connection lines: exec → agents
+  for (const exec of orbitalExecs) {
+    const eAngle = exec._angle;
+    const ex = cx + innerR * Math.cos(eAngle);
+    const ey = cy + innerR * Math.sin(eAngle);
+    for (const agentSlug of (exec.agents || [])) {
+      const agent = orbitalAgents.find(a => a.slug === agentSlug);
+      if (!agent) continue;
+      const ax = cx + outerR * Math.cos(agent._angle);
+      const ay = cy + outerR * Math.sin(agent._angle);
+      html += '<line x1="'+ex+'" y1="'+ey+'" x2="'+ax+'" y2="'+ay+'" class="connection-line" data-exec="'+exec.role+'" data-agent="'+agentSlug+'"/>';
+    }
+  }
+
+  // Exec nodes (inner ring)
+  orbitalExecs.forEach((exec, i) => {
+    const angle = exec._angle;
+    const x = cx + innerR * Math.cos(angle);
+    const y = cy + innerR * Math.sin(angle);
+    const color = EXEC_COLORS[exec.role] || '#888';
+    html += '<g class="orbital-node" data-type="exec" data-role="'+exec.role+'">';
+    html += '<circle cx="'+x+'" cy="'+y+'" r="18" fill="'+color+'" opacity="0.2"/>';
+    html += '<circle cx="'+x+'" cy="'+y+'" r="12" fill="'+color+'" opacity="0.8"/>';
+    html += '<text x="'+x+'" y="'+(y+28)+'" class="orbital-label" style="fill:'+color+';font-weight:600;font-size:10px">'+esc(exec.name)+'</text>';
+    html += '</g>';
+  });
+
+  // Agent nodes (outer ring)
+  orbitalAgents.forEach((agent, i) => {
+    const angle = agent._angle;
+    const x = cx + outerR * Math.cos(angle);
+    const y = cy + outerR * Math.sin(angle);
+    const color = hashColor(agent.slug);
+    const isActive = activeAgentSlugs.has(agent.slug);
+    const r = isActive ? 10 : 7;
+    const opacity = isActive ? 1 : 0.5;
+    html += '<g class="orbital-node" data-type="agent" data-slug="'+agent.slug+'" style="opacity:'+opacity+'">';
+    if (isActive) {
+      html += '<circle cx="'+x+'" cy="'+y+'" r="16" fill="'+color+'" opacity="0.15" style="animation:pulse-glow 2s infinite;color:'+color+'"/>';
+    }
+    html += '<circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="'+color+'"/>';
+    html += '<text x="'+x+'" y="'+(y+(i%2===0?-14:20))+'" class="orbital-label">'+esc(agent.name)+'</text>';
+    html += '</g>';
+  });
+
+  svg.innerHTML = html;
+}
+
+async function loadOrbitalData() {
+  try {
+    const [agentRes, execRes] = await Promise.all([
+      fetch(BASE + '/api/agents/catalog').then(r => r.json()),
+      fetch(BASE + '/api/executives').then(r => r.json())
+    ]);
+
+    orbitalExecs = (execRes.executives || []).map((e, i, arr) => {
+      e._angle = (2 * Math.PI * i / arr.length) - Math.PI / 2;
+      return e;
+    });
+
+    orbitalAgents = (agentRes.agents || []).map((a, i, arr) => {
+      a._angle = (2 * Math.PI * i / arr.length) - Math.PI / 2;
+      return a;
+    });
+
+    $('stat-agents').textContent = orbitalAgents.length;
+    drawOrbital();
+  } catch(e) { console.error('Orbital load error:', e); }
+}
+
+// ==== EXEC PANEL ====
+async function loadExecPanel() {
+  try {
+    const r = await fetch(BASE + '/api/executives');
+    const d = await r.json();
+    let html = '';
+    for (const exec of (d.executives || [])) {
+      const color = EXEC_COLORS[exec.role] || '#888';
+      html += '<div class="exec-card" data-role="'+exec.role+'">';
+      html += '<div class="exec-accent" style="background:'+color+'"></div>';
+      html += '<div class="exec-card-header">';
+      html += '<span class="exec-role-badge" style="color:'+color+'">'+esc(exec.name)+'</span>';
+      html += '<span class="exec-provider">'+esc(exec.provider)+'</span>';
+      html += '</div>';
+      html += '<div class="exec-persona">'+esc(exec.persona)+'</div>';
+      if (exec.agents && exec.agents.length) {
+        html += '<div class="exec-agents">';
+        for (const a of exec.agents) {
+          html += '<span class="exec-agent-tag">'+esc(a)+'</span>';
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    $('exec-panel').innerHTML = html || '<div style="color:var(--text-dim)">No executives</div>';
+  } catch(e) { $('exec-panel').innerHTML = '<div style="color:var(--error)">Error</div>'; }
+}
+
+// ==== STATUS ====
 async function loadStatus() {
   try {
     const r = await fetch(BASE + '/api/status');
@@ -1507,528 +1590,534 @@ async function loadStatus() {
       html += '<div class="service-card">'
         + '<div class="status-dot ' + s.status + '"></div>'
         + '<span class="service-name">' + esc(s.label) + '</span>'
-        + '<span class="service-meta">'
-        + (s.pid ? 'PID ' + s.pid : s.status.replace('_', ' '))
-        + '</span></div>';
+        + '<span class="service-meta">' + (s.pid ? 'PID ' + s.pid : s.status.replace('_',' ')) + '</span></div>';
     }
-    $('status-panel').innerHTML = html || '<div style="color:var(--text-dim)">No services found</div>';
-  } catch(e) { $('status-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
+    $('status-panel').innerHTML = html || '<div style="color:var(--text-dim)">No services</div>';
+  } catch(e) { $('status-panel').innerHTML = '<div style="color:var(--error)">Error</div>'; }
 }
 
-// ---- METRICS ----
-async function loadMetrics() {
+// ==== ACTIVE AGENTS ====
+async function loadActiveAgents() {
   try {
-    const r = await fetch(BASE + '/api/metrics' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
-    const d = await r.json();
-    if (d.error) { $('metrics-panel').innerHTML = '<div style="color:var(--text-dim)">' + esc(d.error) + '</div>'; return; }
+    const r = await fetch(BASE + '/api/agents/active');
+    const agents = await r.json();
+    activeAgentSlugs.clear();
 
-    let html = '<div class="metric-row"><span class="metric-label">Messages (24h)</span><span class="metric-value">' + d.today + '</span></div>';
-    html += '<div class="metric-row"><span class="metric-label">Messages (7d)</span><span class="metric-value">' + d.thisWeek + '</span></div>';
-
-    // Channel breakdown
-    for (const [ch, count] of Object.entries(d.byChannel || {})) {
-      html += '<div class="metric-row"><span class="metric-label">  ' + esc(ch) + '</span><span class="metric-value">' + count + '</span></div>';
+    if (!Array.isArray(agents) || agents.length === 0) {
+      $('active-agents-compact').innerHTML = '<div style="color:var(--text-dim);font-size:10px">None running</div>';
+      $('stat-active').textContent = '0';
+      drawOrbital();
+      return;
     }
 
-    // Role breakdown
-    for (const [role, count] of Object.entries(d.byRole || {})) {
-      html += '<div class="metric-row"><span class="metric-label">  ' + esc(role) + '</span><span class="metric-value">' + count + '</span></div>';
+    $('stat-active').textContent = agents.length;
+    let html = '';
+    for (const a of agents) {
+      const elapsed = a.elapsedMs < 60000 ? Math.round(a.elapsedMs/1000)+'s' : Math.round(a.elapsedMs/60000)+'m';
+      html += '<div class="active-agent-item">'
+        + '<div class="active-dot"></div>'
+        + '<span class="active-agent-name">' + esc(a.key) + '</span>'
+        + '<span class="active-agent-time">' + elapsed + '</span></div>';
+      // Try to match to a slug
+      const slug = a.key.split('-')[0].toLowerCase();
+      activeAgentSlugs.add(slug);
+      activeAgentSlugs.add(a.key);
     }
-
-    // Hourly chart
-    const hourly = d.hourly || {};
-    const maxVal = Math.max(1, ...Object.values(hourly));
-    html += '<div class="bar-chart">';
-    for (let i = 0; i < 24; i++) {
-      const v = hourly[i] || 0;
-      const pct = (v / maxVal) * 100;
-      html += '<div class="bar" style="height:' + Math.max(1, pct) + '%" title="' + i + ':00 — ' + v + ' msgs">'
-        + (i % 4 === 0 ? '<span class="bar-label">' + i + '</span>' : '')
-        + '</div>';
-    }
-    html += '</div>';
-
-    $('metrics-panel').innerHTML = html;
-  } catch(e) { $('metrics-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
+    $('active-agents-compact').innerHTML = html;
+    drawOrbital();
+  } catch(e) { $('active-agents-compact').innerHTML = '<div style="color:var(--error);font-size:10px">Error</div>'; }
 }
 
-// ---- MESSAGES ----
+// ==== EVENT STREAM (SSE) ====
+let activityEvents = [];
+const MAX_EVENTS = 200;
+let eventFilter = 'all';
+let sseConnected = false;
+let eventStreamPinned = false;
+
+function matchesFilter(ev) {
+  if (eventFilter === 'all') return true;
+  const type = ev.type || ev.event || '';
+  if (eventFilter === 'agent') return type.startsWith('agent.');
+  if (eventFilter === 'exec') return type.startsWith('exec.') || type.startsWith('board.');
+  if (eventFilter === 'error') return ev.level === 'error' || ev.level === 'warn';
+  return true;
+}
+
+const EVENT_COLORS = { error:'var(--error)', warn:'var(--warning)', info:'var(--teal)', debug:'var(--text-dim)' };
+const TYPE_ICONS = {
+  'message.received':'\\u2709', 'agent.dispatched':'\\u26A1', 'agent.completed':'\\u2714',
+  'board.convened':'\\u{1F3DB}', 'board.decision':'\\u2696', 'exec.delegation':'\\u27A1',
+  'error':'\\u26D4', 'cost.tracked':'\\u{1F4B0}', 'task.created':'\\u{1F4CB}',
+  'approval.requested':'\\u{1F6A8}', 'approval.resolved':'\\u2705'
+};
+
+function renderEventEntry(ev) {
+  if (!matchesFilter(ev)) return '';
+  const color = EVENT_COLORS[ev.level] || 'var(--teal)';
+  const ts = ev.timestamp || ev.created_at || '';
+  const short = ts ? new Date(ts).toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'}) : '';
+  const msg = esc(ev.data?.message || ev.message || '');
+  const evType = ev.type || ev.event || '';
+  const icon = TYPE_ICONS[evType] || '\\u25CF';
+  return '<div class="event-entry" data-type="'+esc(evType)+'" data-agent="'+esc(ev.agentSlug||'')+'" data-exec="'+esc(ev.execRole||'')+'">'
+    + '<span class="event-time">' + short + '</span> '
+    + '<span class="event-type" style="color:'+color+'">'+icon+' '+esc(evType)+'</span> '
+    + '<span class="event-msg">' + msg + '</span>'
+    + '</div>';
+}
+
+function renderEventStream() {
+  const panel = $('event-stream');
+  const wasAtBottom = !eventStreamPinned && (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 30);
+  const filtered = activityEvents.filter(matchesFilter);
+  if (filtered.length === 0) {
+    panel.innerHTML = '<div style="color:var(--text-dim)">No events</div>';
+    return;
+  }
+  panel.innerHTML = filtered.map(renderEventEntry).join('');
+  if (wasAtBottom) panel.scrollTop = panel.scrollHeight;
+}
+
+function addEvent(ev) {
+  activityEvents.push(ev);
+  if (activityEvents.length > MAX_EVENTS) activityEvents.shift();
+  renderEventStream();
+  // Flash orbital node
+  flashOrbitalNode(ev);
+}
+
+function flashOrbitalNode(ev) {
+  const type = ev.type || '';
+  const slug = ev.agentSlug || ev.data?.agentSlug || '';
+  if (!slug) return;
+  const node = document.querySelector('[data-slug="'+slug+'"]');
+  if (node) {
+    node.style.opacity = '1';
+    node.style.transition = 'opacity 0.1s';
+    setTimeout(() => { node.style.opacity = ''; node.style.transition = ''; }, 1500);
+  }
+}
+
+// Pin detection
+$('event-stream').addEventListener('scroll', function() {
+  const el = this;
+  eventStreamPinned = (el.scrollTop + el.clientHeight < el.scrollHeight - 50);
+});
+
+// Filter buttons
+document.querySelectorAll('.event-filter-btn').forEach(btn => {
+  btn.addEventListener('click', function() {
+    document.querySelectorAll('.event-filter-btn').forEach(b => b.classList.remove('active'));
+    this.classList.add('active');
+    eventFilter = this.dataset.filter;
+    renderEventStream();
+  });
+});
+
+// SSE connection
+try {
+  const evtSource = new EventSource(BASE + '/api/activity/stream');
+  evtSource.onopen = function() {
+    sseConnected = true;
+    $('sse-badge').textContent = 'SSE LIVE';
+    $('sse-badge').classList.remove('disconnected');
+  };
+  evtSource.onmessage = function(e) {
+    try { addEvent(JSON.parse(e.data)); } catch {}
+  };
+  evtSource.onerror = function() {
+    sseConnected = false;
+    $('sse-badge').textContent = 'SSE OFF';
+    $('sse-badge').classList.add('disconnected');
+    evtSource.close();
+    startActivityPolling();
+  };
+} catch(e) { startActivityPolling(); }
+
+function startActivityPolling() {
+  loadActivityPoll();
+  setInterval(loadActivityPoll, 10000);
+}
+
+async function loadActivityPoll() {
+  if (sseConnected) return;
+  try {
+    const lastTs = activityEvents.length > 0 ? activityEvents[activityEvents.length-1].created_at : null;
+    const params = lastTs ? '?since=' + encodeURIComponent(lastTs) + '&limit=50' : '?limit=50';
+    const r = await fetch(BASE + '/api/activity' + params);
+    const data = await r.json();
+    if (Array.isArray(data) && data.length > 0) {
+      for (const ev of data.reverse()) addEvent(ev);
+    }
+  } catch {}
+}
+
+// Initial activity load
+(async function() {
+  try {
+    const r = await fetch(BASE + '/api/activity?limit=50');
+    const data = await r.json();
+    if (Array.isArray(data)) { activityEvents = data.reverse(); renderEventStream(); }
+  } catch {}
+})();
+
+// ==== BOTTOM DOCK ====
+const dock = $('bottom-dock');
+const dockToggle = $('dock-toggle');
+let dockExpanded = false;
+let activeDockPanel = 'messages-dock';
+let dockPanelsLoaded = {};
+
+dockToggle.addEventListener('click', function(e) {
+  e.stopPropagation();
+  dockExpanded = !dockExpanded;
+  dock.classList.toggle('collapsed', !dockExpanded);
+  dock.classList.toggle('expanded', dockExpanded);
+  dockToggle.innerHTML = dockExpanded ? '&#9660;' : '&#9650;';
+  if (dockExpanded && !dockPanelsLoaded[activeDockPanel]) loadDockPanel(activeDockPanel);
+});
+
+document.querySelectorAll('.dock-tab').forEach(tab => {
+  tab.addEventListener('click', function() {
+    const panel = this.dataset.panel;
+    if (!panel) return;
+    document.querySelectorAll('.dock-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.dock-panel').forEach(p => p.classList.remove('active'));
+    this.classList.add('active');
+    $(panel).classList.add('active');
+    activeDockPanel = panel;
+    if (!dockExpanded) {
+      dockExpanded = true;
+      dock.classList.remove('collapsed');
+      dock.classList.add('expanded');
+      dockToggle.innerHTML = '&#9660;';
+    }
+    if (!dockPanelsLoaded[panel]) loadDockPanel(panel);
+  });
+});
+
+function loadDockPanel(panel) {
+  dockPanelsLoaded[panel] = true;
+  switch(panel) {
+    case 'messages-dock': loadMessages(); break;
+    case 'agent-tasks-dock': loadAgentTasks(); break;
+    case 'costs-dock': loadCosts(); break;
+    case 'memory-dock': loadMemory(); break;
+    case 'logs-dock': loadLogs(); break;
+    case 'resources-dock': loadResources(); break;
+    case 'skills-dock': loadSkills(); break;
+  }
+}
+
+// ==== DOCK PANEL LOADERS ====
+
+// Messages
 async function loadMessages() {
   try {
     const r = await fetch(BASE + '/api/messages?limit=50' + userParam());
     const d = await r.json();
-    if (!d.messages.length) { $('messages-panel').innerHTML = '<div style="color:var(--text-dim)">No messages yet</div>'; return; }
-
-    let html = '';
+    if (!d.messages.length) { $('messages-dock').innerHTML = '<div style="color:var(--text-dim)">No messages yet</div>'; return; }
+    let html = '<table class="data-table"><tr><th>Time</th><th>Role</th><th>Channel</th><th>Content</th></tr>';
     for (const m of d.messages) {
-      html += '<div class="msg-entry">'
-        + '<span class="msg-time">' + timeAgo(m.created_at) + '</span>'
-        + '<span class="msg-role ' + m.role + '">' + esc(m.role) + '</span>'
-        + '<span class="msg-channel">' + esc(m.channel || '') + '</span>'
-        + '<div class="msg-content">' + esc((m.content || '').substring(0, 200)) + '</div>'
-        + '</div>';
-    }
-    $('messages-panel').innerHTML = html;
-  } catch(e) { $('messages-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
-}
-
-// ---- MEMORY ----
-let memoryType = 'all';
-async function loadMemory() {
-  try {
-    const r = await fetch(BASE + '/api/memory?type=' + memoryType + userParam());
-    const d = await r.json();
-
-    let html = '<div class="tabs">';
-    for (const t of ['all','fact','goal','completed_goal','preference']) {
-      html += '<button class="tab' + (memoryType === t ? ' active' : '') + '" onclick="memoryType=\\'' + t + '\\';loadMemory()">' + t.replace('_',' ') + '</button>';
-    }
-    html += '</div>';
-
-    if (!d.memory.length) {
-      html += '<div style="color:var(--text-dim)">No entries</div>';
-    } else {
-      for (const m of d.memory) {
-        html += '<div class="mem-entry">'
-          + '<span class="mem-type ' + m.type + '">' + esc(m.type) + '</span>'
-          + '<span style="color:var(--text-dim);font-size:10px">' + timeAgo(m.created_at) + '</span>'
-          + (m.deadline ? '<span style="color:var(--warning);font-size:10px;margin-left:8px">deadline: ' + new Date(m.deadline).toLocaleDateString() + '</span>' : '')
-          + '<div style="margin-top:2px">' + esc((m.content || '').substring(0, 200)) + '</div>'
-          + '</div>';
-      }
-    }
-    $('memory-panel').innerHTML = html;
-  } catch(e) { $('memory-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
-}
-
-// ---- TASKS ----
-async function loadTasks() {
-  try {
-    const r = await fetch(BASE + '/api/tasks');
-    const d = await r.json();
-    if (!d.tasks.length) { $('tasks-panel').innerHTML = '<div style="color:var(--text-dim)">No scheduled tasks</div>'; return; }
-
-    let html = '<table class="data-table"><tr><th>Service</th><th>Schedule</th><th>Status</th></tr>';
-    for (const t of d.tasks) {
-      const statusColor = t.installed ? 'var(--success)' : 'var(--text-dim)';
-      html += '<tr><td>' + esc(t.label) + '</td><td>' + esc(t.schedule) + '</td><td style="color:' + statusColor + '">' + (t.installed ? 'INSTALLED' : 'NOT FOUND') + '</td></tr>';
+      html += '<tr><td style="white-space:nowrap;color:var(--text-dim);font-size:10px">' + timeAgo(m.created_at) + '</td>'
+        + '<td><span class="msg-role ' + m.role + '">' + esc(m.role) + '</span></td>'
+        + '<td style="color:var(--text-dim);font-size:10px">' + esc(m.channel || '') + '</td>'
+        + '<td style="color:var(--text-secondary);max-width:500px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc((m.content||'').substring(0,200)) + '</td></tr>';
     }
     html += '</table>';
-    $('tasks-panel').innerHTML = html;
-  } catch(e) { $('tasks-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
+    $('messages-dock').innerHTML = html;
+  } catch(e) { $('messages-dock').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
 }
 
-// ---- VOICE ----
-async function loadVoice() {
-  try {
-    const r = await fetch(BASE + '/api/voice' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
-    const d = await r.json();
-    if (!d.calls || !d.calls.length) { $('voice-panel').innerHTML = '<div style="color:var(--text-dim)">No recent voice activity</div>'; return; }
-
-    let html = '';
-    for (const c of d.calls) {
-      html += '<div class="msg-entry">'
-        + '<span class="msg-time">' + timeAgo(c.created_at) + '</span>'
-        + '<span class="msg-role ' + c.role + '">' + esc(c.role) + '</span>'
-        + '<div class="msg-content">' + esc((c.content || '').substring(0, 150)) + '</div>'
-        + '</div>';
-    }
-    $('voice-panel').innerHTML = html;
-  } catch(e) { $('voice-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
-}
-
-// ---- SKILLS ----
-async function loadSkills() {
-  try {
-    const r = await fetch(BASE + '/api/skills');
-    const d = await r.json();
-
-    let html = '';
-    if (d.mcp && d.mcp.length) {
-      html += '<div style="color:var(--warning);font-size:11px;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">MCP Integrations</div>';
-      html += '<table class="data-table"><tr><th>Name</th><th>Type</th></tr>';
-      for (const m of d.mcp) {
-        html += '<tr><td style="color:var(--teal)">' + esc(m.name) + '</td><td>' + esc(m.type) + '</td></tr>';
-      }
-      html += '</table>';
-    }
-
-    if (d.skills && d.skills.length) {
-      html += '<div style="color:var(--warning);font-size:11px;margin:12px 0 6px;text-transform:uppercase;letter-spacing:1px">Skills</div>';
-      html += '<table class="data-table"><tr><th>Name</th><th>Description</th></tr>';
-      for (const s of d.skills) {
-        html += '<tr><td style="color:var(--indigo)">' + esc(s.name) + '</td><td>' + esc(s.description) + '</td></tr>';
-      }
-      html += '</table>';
-    }
-
-    if (!html) html = '<div style="color:var(--text-dim)">No skills or integrations found</div>';
-    $('skills-panel').innerHTML = html;
-  } catch(e) { $('skills-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
-}
-
-// ---- AGENT TASKS ----
+// Agent Tasks
 let agentTaskFilter = 'all';
 async function loadAgentTasks() {
   try {
-    const r = await fetch(BASE + '/api/agent-tasks' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
+    const r = await fetch(BASE + '/api/agent-tasks' + (selectedUserId ? '?user_id='+selectedUserId : ''));
     const d = await r.json();
-
     let html = '<div class="tabs">';
     for (const t of ['all','pending','in_progress','done','blocked','cancelled']) {
-      const label = t === 'in_progress' ? 'active' : t;
-      html += '<button class="tab' + (agentTaskFilter === t ? ' active' : '') + '" onclick="agentTaskFilter=\\'' + t + '\\';loadAgentTasks()">' + label + '</button>';
+      const label = t==='in_progress'?'active':t;
+      html += '<button class="tab'+(agentTaskFilter===t?' active':'')+'" onclick="agentTaskFilter=\\''+t+'\\';loadAgentTasks()">'+label+'</button>';
     }
     html += '</div>';
-
-    const tasks = (d.tasks || []).filter(function(t) {
-      return agentTaskFilter === 'all' || t.status === agentTaskFilter;
-    });
-
+    const tasks = (d.tasks||[]).filter(t => agentTaskFilter==='all' || t.status===agentTaskFilter);
     if (!tasks.length) {
-      html += '<div style="color:var(--text-dim)">No ' + (agentTaskFilter === 'all' ? '' : agentTaskFilter + ' ') + 'tasks</div>';
+      html += '<div style="color:var(--text-dim)">No '+(agentTaskFilter==='all'?'':agentTaskFilter+' ')+'tasks</div>';
     } else {
       html += '<table class="data-table"><tr><th>Agent</th><th>Task</th><th>Status</th><th>Result</th><th>Updated</th></tr>';
       for (const t of tasks) {
-        const statusColors = { in_progress: 'var(--success)', blocked: 'var(--warning)', done: 'var(--teal)', pending: 'var(--text-dim)', cancelled: 'var(--text-dim)' };
-        const color = statusColors[t.status] || 'var(--text-dim)';
-        html += '<tr>'
-          + '<td style="color:var(--teal)">' + esc(t.agent) + '</td>'
-          + '<td>' + esc((t.description || '').substring(0, 80)) + '</td>'
-          + '<td style="color:' + color + ';font-weight:700;text-transform:uppercase;font-size:10px">' + esc(t.status) + '</td>'
-          + '<td style="color:var(--text-dim);font-size:11px">' + esc((t.result || '—').substring(0, 60)) + '</td>'
-          + '<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">' + timeAgo(t.updated_at) + '</td>'
-          + '</tr>';
+        const sc = {in_progress:'var(--success)',blocked:'var(--warning)',done:'var(--teal)',pending:'var(--text-dim)',cancelled:'var(--text-dim)'};
+        const color = sc[t.status]||'var(--text-dim)';
+        html += '<tr><td style="color:var(--teal)">'+esc(t.agent)+'</td>'
+          +'<td>'+esc((t.description||'').substring(0,80))+'</td>'
+          +'<td style="color:'+color+';font-weight:700;text-transform:uppercase;font-size:10px">'+esc(t.status)+'</td>'
+          +'<td style="color:var(--text-dim);font-size:11px">'+esc((t.result||'—').substring(0,60))+'</td>'
+          +'<td style="color:var(--text-dim);font-size:10px;white-space:nowrap">'+timeAgo(t.updated_at)+'</td></tr>';
       }
       html += '</table>';
     }
-
-    $('agent-tasks-panel').innerHTML = html;
-  } catch(e) { $('agent-tasks-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
+    $('agent-tasks-dock').innerHTML = html;
+  } catch(e) { $('agent-tasks-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
 }
 
-// ---- RESOURCES ----
-async function loadResources() {
-  try {
-    const r = await fetch(BASE + '/api/resources');
-    const d = await r.json();
-
-    const maxDisk = Math.max(1, d.disk.uploads.size, d.disk.temp.size, d.disk.logs.size);
-
-    let html = '';
-    for (const [label, info] of [['uploads', d.disk.uploads], ['temp', d.disk.temp], ['logs', d.disk.logs]]) {
-      const pct = Math.min(100, (info.size / Math.max(maxDisk, 1)) * 100);
-      html += '<div class="resource-bar-container">'
-        + '<span class="resource-label">' + label + '</span>'
-        + '<div class="resource-bar"><div class="resource-bar-fill" style="width:' + pct + '%"></div></div>'
-        + '<span class="resource-value">' + info.formatted + '</span>'
-        + '</div>';
-    }
-
-    if (d.processes && d.processes.length) {
-      html += '<div style="color:var(--warning);font-size:11px;margin:12px 0 6px;text-transform:uppercase;letter-spacing:1px">Processes</div>';
-      html += '<table class="data-table"><tr><th>Service</th><th>PID</th><th>CPU</th><th>MEM</th></tr>';
-      for (const p of d.processes) {
-        html += '<tr><td>' + esc(p.name) + '</td><td>' + p.pid + '</td><td>' + esc(p.cpu) + '</td><td>' + esc(p.mem) + '</td></tr>';
-      }
-      html += '</table>';
-    }
-
-    $('resources-panel').innerHTML = html;
-  } catch(e) { $('resources-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
-}
-
-// ---- LOGS ----
-async function loadLogs() {
-  try {
-    const service = $('log-service').value;
-    const r = await fetch(BASE + '/api/logs?service=' + service + '&lines=80');
-    const d = await r.json();
-
-    if (!d.logs.length) { $('logs-content').innerHTML = '<div style="color:var(--text-dim)">No log files found</div>'; return; }
-
-    let html = '';
-    for (const f of d.logs) {
-      html += '<div class="log-file-name">// ' + esc(f.name) + '</div>';
-      html += '<div class="log-content">' + esc(f.content || '(empty)') + '</div>';
-    }
-    $('logs-content').innerHTML = html;
-  } catch(e) { $('logs-content').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
-}
-
-$('log-service').addEventListener('change', loadLogs);
-
-// ---- COSTS ----
-const PROVIDER_COLORS = {
-  claude: '#6366f1', openai: '#06b6d4', groq: '#f59e0b', elevenlabs: '#8b5cf6',
-  ultravox: '#ef4444', fal: '#ec4899', heygen: '#06b6d4'
-};
+// Costs
+const PROVIDER_COLORS = {claude:'#6366f1',openai:'#06b6d4',groq:'#f59e0b',elevenlabs:'#8b5cf6',ultravox:'#ef4444',fal:'#ec4899',heygen:'#06b6d4',gemini:'#22c55e'};
 const FALLBACK_COLORS = ['#22c55e','#f59e0b','#06b6d4','#8b5cf6','#ef4444','#ec4899','#eab308'];
-function getProviderColor(name) { return PROVIDER_COLORS[name] || FALLBACK_COLORS[Object.keys(PROVIDER_COLORS).length % FALLBACK_COLORS.length]; }
-function getSeriesColor(idx) {
-  const all = Object.values(PROVIDER_COLORS).concat(FALLBACK_COLORS);
-  return all[idx % all.length];
-}
+function getProviderColor(name) { return PROVIDER_COLORS[name]||FALLBACK_COLORS[Object.keys(PROVIDER_COLORS).length%FALLBACK_COLORS.length]; }
+function getSeriesColor(idx) { return Object.values(PROVIDER_COLORS).concat(FALLBACK_COLORS)[idx%12]; }
 
 function renderProviderTable(byProvider) {
-  const providers = Object.entries(byProvider || {}).sort(function(a,b) { return b[1].cost - a[1].cost; });
-  if (!providers.length) return '<div style="color:var(--text-dim);font-size:11px">No data</div>';
-  let html = '<table class="cost-model-table"><tr><th>Provider</th><th>Calls</th><th style="text-align:right">Input Tok</th><th style="text-align:right">Output Tok</th><th style="text-align:right">Cost</th></tr>';
-  for (const [provider, d] of providers) {
-    const color = getProviderColor(provider);
-    html += '<tr>'
-      + '<td style="color:' + color + ';font-weight:700;text-transform:uppercase">' + esc(provider) + '</td>'
-      + '<td>' + d.count + '</td>'
-      + '<td style="text-align:right">' + (d.input_tokens || 0).toLocaleString() + '</td>'
-      + '<td style="text-align:right">' + (d.output_tokens || 0).toLocaleString() + '</td>'
-      + '<td class="cost-val">$' + d.cost.toFixed(4) + '</td>'
-      + '</tr>';
+  const providers = Object.entries(byProvider||{}).sort((a,b) => b[1].cost-a[1].cost);
+  if (!providers.length) return '<div style="color:var(--text-dim);font-size:10px">No data</div>';
+  let html = '<table class="cost-model-table"><tr><th>Provider</th><th>Calls</th><th style="text-align:right">In Tok</th><th style="text-align:right">Out Tok</th><th style="text-align:right">Cost</th></tr>';
+  for (const [p,d] of providers) {
+    html += '<tr><td style="color:'+getProviderColor(p)+';font-weight:700;text-transform:uppercase">'+esc(p)+'</td><td>'+d.count+'</td><td style="text-align:right">'+(d.input_tokens||0).toLocaleString()+'</td><td style="text-align:right">'+(d.output_tokens||0).toLocaleString()+'</td><td class="cost-val">$'+d.cost.toFixed(4)+'</td></tr>';
   }
-  html += '</table>';
-  return html;
+  return html+'</table>';
 }
 
 function renderModelTable(byModel) {
-  const models = Object.entries(byModel || {}).sort(function(a,b) { return b[1].cost - a[1].cost; });
-  if (!models.length) return '<div style="color:var(--text-dim);font-size:11px">No data</div>';
-  let html = '<table class="cost-model-table"><tr><th>Model</th><th>Calls</th><th style="text-align:right">Input Tok</th><th style="text-align:right">Output Tok</th><th style="text-align:right">Cost</th></tr>';
-  for (const [model, d] of models) {
-    const shortName = model.replace(/^claude-/, '').replace(/-\\d{8}$/, '');
-    html += '<tr>'
-      + '<td style="color:var(--teal)">' + esc(shortName) + '</td>'
-      + '<td>' + d.count + '</td>'
-      + '<td style="text-align:right">' + (d.input_tokens || 0).toLocaleString() + '</td>'
-      + '<td style="text-align:right">' + (d.output_tokens || 0).toLocaleString() + '</td>'
-      + '<td class="cost-val">$' + d.cost.toFixed(4) + '</td>'
-      + '</tr>';
+  const models = Object.entries(byModel||{}).sort((a,b) => b[1].cost-a[1].cost);
+  if (!models.length) return '';
+  let html = '<table class="cost-model-table"><tr><th>Model</th><th>Calls</th><th style="text-align:right">Cost</th></tr>';
+  for (const [m,d] of models) {
+    html += '<tr><td style="color:var(--teal)">'+esc(m.replace(/^claude-/,'').replace(/-\\d{8}$/,''))+'</td><td>'+d.count+'</td><td class="cost-val">$'+d.cost.toFixed(4)+'</td></tr>';
   }
-  html += '</table>';
-  return html;
+  return html+'</table>';
 }
 
 function renderStackedChart(chartData, labelFn, maxBuckets) {
-  const series = Object.keys(chartData || {});
-  if (!series.length) return '<div style="color:var(--text-dim);font-size:11px">No chart data</div>';
+  const series = Object.keys(chartData||{});
+  if (!series.length) return '';
   const allKeys = new Set();
   for (const s of series) for (const k of Object.keys(chartData[s])) allKeys.add(k);
   let buckets = Array.from(allKeys).sort();
   if (maxBuckets && buckets.length > maxBuckets) buckets = buckets.slice(-maxBuckets);
   let maxVal = 0;
-  for (const b of buckets) {
-    let sum = 0;
-    for (const s of series) sum += (chartData[s][b] || 0);
-    if (sum > maxVal) maxVal = sum;
-  }
-  if (maxVal === 0) maxVal = 1;
-
+  for (const b of buckets) { let sum=0; for (const s of series) sum+=(chartData[s][b]||0); if(sum>maxVal) maxVal=sum; }
+  if (maxVal===0) maxVal=1;
   let html = '<div class="stacked-bar-chart">';
-  for (let i = 0; i < buckets.length; i++) {
-    const b = buckets[i];
-    let total = 0;
-    for (const s of series) total += (chartData[s][b] || 0);
-    html += '<div class="stacked-bar" style="height:100%" title="' + labelFn(b) + ': $' + total.toFixed(4) + '">';
-    for (let si = 0; si < series.length; si++) {
-      const val = chartData[series[si]][b] || 0;
-      const pct = (val / maxVal) * 100;
-      const color = getProviderColor(series[si]) || getSeriesColor(si);
-      if (pct > 0) {
-        html += '<div class="stacked-bar-segment" style="height:' + pct + '%;background:' + color + '" title="' + series[si] + ': $' + val.toFixed(4) + '"></div>';
-      }
+  for (let i=0; i<buckets.length; i++) {
+    const b=buckets[i]; let total=0;
+    for (const s of series) total+=(chartData[s][b]||0);
+    html += '<div class="stacked-bar" style="height:100%" title="'+labelFn(b)+': $'+total.toFixed(4)+'">';
+    for (let si=0; si<series.length; si++) {
+      const val=chartData[series[si]][b]||0; const pct=(val/maxVal)*100;
+      const color=getProviderColor(series[si])||getSeriesColor(si);
+      if(pct>0) html+='<div class="stacked-bar-segment" style="height:'+pct+'%;background:'+color+'" title="'+series[si]+': $'+val.toFixed(4)+'"></div>';
     }
-    const showLabel = buckets.length <= 12 || (i % Math.ceil(buckets.length / 12) === 0);
-    if (showLabel) html += '<span class="bar-label">' + labelFn(b) + '</span>';
-    html += '</div>';
+    const showLabel=buckets.length<=12||(i%Math.ceil(buckets.length/12)===0);
+    if(showLabel) html+='<span class="bar-label">'+labelFn(b)+'</span>';
+    html+='</div>';
   }
-  html += '</div>';
-
-  html += '<div class="cost-legend">';
-  for (let si = 0; si < series.length; si++) {
-    const color = getProviderColor(series[si]) || getSeriesColor(si);
-    html += '<div class="cost-legend-item"><div class="cost-legend-dot" style="background:' + color + '"></div><span>' + esc(series[si]) + '</span></div>';
+  html += '</div><div class="cost-legend">';
+  for (let si=0; si<series.length; si++) {
+    const color=getProviderColor(series[si])||getSeriesColor(si);
+    html+='<div class="cost-legend-item"><div class="cost-legend-dot" style="background:'+color+'"></div><span>'+esc(series[si])+'</span></div>';
   }
-  html += '</div>';
-  return html;
+  return html+'</div>';
 }
 
 async function loadCosts() {
   try {
-    const r = await fetch(BASE + '/api/costs' + (selectedUserId ? '?user_id=' + selectedUserId : ''));
+    const r = await fetch(BASE + '/api/costs' + (selectedUserId ? '?user_id='+selectedUserId : ''));
     const d = await r.json();
-    if (d.error) { $('costs-panel').innerHTML = '<div style="color:var(--text-dim)">' + esc(d.error) + '</div>'; return; }
+    if (d.error) { $('costs-dock').innerHTML = '<div style="color:var(--text-dim)">'+esc(d.error)+'</div>'; return; }
 
-    // Summary cards — total + per provider
+    // Update sidebar mini stats
+    $('cost-today').textContent = '$'+(d.totalDaily||0).toFixed(2);
+    $('cost-month').textContent = '$'+(d.totalMonthly||0).toFixed(0);
+    $('stat-cost').textContent = (d.totalDaily||0).toFixed(2);
+
     let html = '<div class="cost-summary">';
-    html += '<div class="cost-card"><div class="cost-card-label">Today</div><div class="cost-card-value">$' + (d.totalDaily || 0).toFixed(4) + '</div></div>';
-    html += '<div class="cost-card"><div class="cost-card-label">This Month</div><div class="cost-card-value amber">$' + (d.totalMonthly || 0).toFixed(2) + '</div></div>';
-    html += '<div class="cost-card"><div class="cost-card-label">Lifetime</div><div class="cost-card-value cyan">$' + (d.totalLifetime || 0).toFixed(2) + '</div></div>';
+    html += '<div class="cost-card"><div class="cost-card-label">Today</div><div class="cost-card-value">$'+(d.totalDaily||0).toFixed(4)+'</div></div>';
+    html += '<div class="cost-card"><div class="cost-card-label">Month</div><div class="cost-card-value amber">$'+(d.totalMonthly||0).toFixed(2)+'</div></div>';
+    html += '<div class="cost-card"><div class="cost-card-label">Lifetime</div><div class="cost-card-value cyan">$'+(d.totalLifetime||0).toFixed(2)+'</div></div>';
     html += '</div>';
 
-    // Provider summary for the month
-    if (d.monthly.byProvider && Object.keys(d.monthly.byProvider).length > 0) {
-      html += '<div class="cost-summary" style="margin-top:8px">';
-      const provEntries = Object.entries(d.monthly.byProvider).sort(function(a,b) { return b[1].cost - a[1].cost; });
-      for (const [prov, pdata] of provEntries) {
-        const color = getProviderColor(prov);
-        html += '<div class="cost-card" style="border-color:' + color + '40"><div class="cost-card-label" style="color:' + color + '">' + esc(prov.toUpperCase()) + '</div><div class="cost-card-value" style="color:' + color + ';font-size:16px">$' + pdata.cost.toFixed(2) + '</div><div style="font-size:10px;color:var(--text-dim)">' + pdata.count + ' calls</div></div>';
+    // Provider summary cards
+    if (d.monthly.byProvider && Object.keys(d.monthly.byProvider).length) {
+      html += '<div class="cost-summary">';
+      for (const [prov, pdata] of Object.entries(d.monthly.byProvider).sort((a,b)=>b[1].cost-a[1].cost)) {
+        const c = getProviderColor(prov);
+        html += '<div class="cost-card" style="border-color:'+c+'40"><div class="cost-card-label" style="color:'+c+'">'+esc(prov.toUpperCase())+'</div><div class="cost-card-value" style="color:'+c+';font-size:16px">$'+pdata.cost.toFixed(2)+'</div><div style="font-size:9px;color:var(--text-dim)">'+pdata.count+' calls</div></div>';
       }
       html += '</div>';
     }
 
-    // Today — hourly chart by provider + provider table + model table
-    html += '<div class="cost-section">';
-    html += '<div class="cost-section-title">Today — Hourly by Provider</div>';
-    html += '<div class="cost-chart-container">';
-    html += '<div class="cost-chart-block">';
-    html += renderStackedChart(d.daily.hourlyChart, function(h) { return h + ':00'; }, 24);
-    html += '</div>';
-    html += '<div class="cost-chart-block">';
+    // Today section
+    html += '<div class="cost-section"><div class="cost-section-title">Today — Hourly</div><div class="cost-chart-container"><div class="cost-chart-block">';
+    html += renderStackedChart(d.daily.hourlyChart, h => h+':00', 24);
+    html += '</div><div class="cost-chart-block">';
     html += renderProviderTable(d.daily.byProvider);
-    html += '<div style="margin-top:12px;font-size:10px;color:var(--warning);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
     html += renderModelTable(d.daily.byModel);
-    html += '</div>';
-    html += '</div></div>';
+    html += '</div></div></div>';
 
-    // This Month — daily chart by provider + tables
-    html += '<div class="cost-section">';
-    html += '<div class="cost-section-title">This Month — Daily by Provider</div>';
-    html += '<div class="cost-chart-container">';
-    html += '<div class="cost-chart-block">';
-    html += renderStackedChart(d.monthly.dailyChart, function(day) { return 'Day ' + day; }, 31);
-    html += '</div>';
-    html += '<div class="cost-chart-block">';
+    // Month section
+    html += '<div class="cost-section"><div class="cost-section-title">Month — Daily</div><div class="cost-chart-container"><div class="cost-chart-block">';
+    html += renderStackedChart(d.monthly.dailyChart, day => 'Day '+day, 31);
+    html += '</div><div class="cost-chart-block">';
     html += renderProviderTable(d.monthly.byProvider);
-    html += '<div style="margin-top:12px;font-size:10px;color:var(--warning);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
-    html += renderModelTable(d.monthly.byModel);
-    html += '</div>';
-    html += '</div></div>';
+    html += '</div></div></div>';
 
-    // Lifetime — monthly chart by provider + tables
-    html += '<div class="cost-section">';
-    html += '<div class="cost-section-title">Lifetime — Monthly by Provider</div>';
-    html += '<div class="cost-chart-container">';
-    html += '<div class="cost-chart-block">';
-    html += renderStackedChart(d.lifetime.monthlyChart, function(m) { return m; }, 24);
-    html += '</div>';
-    html += '<div class="cost-chart-block">';
+    // Lifetime section
+    html += '<div class="cost-section"><div class="cost-section-title">Lifetime — Monthly</div><div class="cost-chart-container"><div class="cost-chart-block">';
+    html += renderStackedChart(d.lifetime.monthlyChart, m => m, 24);
+    html += '</div><div class="cost-chart-block">';
     html += renderProviderTable(d.lifetime.byProvider);
-    html += '<div style="margin-top:12px;font-size:10px;color:var(--warning);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">By Model</div>';
-    html += renderModelTable(d.lifetime.byModel);
-    html += '</div>';
-    html += '</div></div>';
+    html += '</div></div></div>';
 
-    $('costs-panel').innerHTML = html;
-  } catch(e) { $('costs-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
+    $('costs-dock').innerHTML = html;
+  } catch(e) { $('costs-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
 }
 
-// ---- USER SELECTOR ----
-let selectedUserId = '';
+// Memory
+let memoryType = 'all';
+async function loadMemory() {
+  try {
+    const r = await fetch(BASE + '/api/memory?type=' + memoryType + userParam());
+    const d = await r.json();
+    let html = '<div class="tabs">';
+    for (const t of ['all','fact','goal','completed_goal','preference']) {
+      html += '<button class="tab'+(memoryType===t?' active':'')+'" onclick="memoryType=\\''+t+'\\';loadMemory()">'+t.replace('_',' ')+'</button>';
+    }
+    html += '</div>';
+    if (!d.memory.length) { html += '<div style="color:var(--text-dim)">No entries</div>'; }
+    else {
+      for (const m of d.memory) {
+        html += '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px">'
+          + '<span class="mem-type '+m.type+'">'+esc(m.type)+'</span>'
+          + '<span style="color:var(--text-dim);font-size:10px">'+timeAgo(m.created_at)+'</span>'
+          + (m.deadline ? '<span style="color:var(--warning);font-size:10px;margin-left:6px">'+new Date(m.deadline).toLocaleDateString()+'</span>' : '')
+          + '<div style="margin-top:2px;color:var(--text-secondary)">'+esc((m.content||'').substring(0,200))+'</div></div>';
+      }
+    }
+    $('memory-dock').innerHTML = html;
+  } catch(e) { $('memory-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
+}
 
+// Logs
+async function loadLogs() {
+  try {
+    let html = '<div class="filter-row"><select id="log-service-dock" onchange="loadLogs()">'
+      + '<option value="all">All</option><option value="relay">Core</option>'
+      + '<option value="voice-server">Voice</option><option value="dashboard">Dashboard</option></select></div>';
+    const svc = document.getElementById('log-service-dock')?.value || 'all';
+    const r = await fetch(BASE + '/api/logs?service='+svc+'&lines=80');
+    const d = await r.json();
+    if (!d.logs.length) { html += '<div style="color:var(--text-dim)">No logs</div>'; }
+    else {
+      for (const f of d.logs) {
+        html += '<div class="log-file-name">// '+esc(f.name)+'</div><div class="log-content">'+esc(f.content||'(empty)')+'</div>';
+      }
+    }
+    $('logs-dock').innerHTML = html;
+  } catch(e) { $('logs-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
+}
+
+// Resources
+async function loadResources() {
+  try {
+    const r = await fetch(BASE + '/api/resources');
+    const d = await r.json();
+    const maxDisk = Math.max(1, d.disk.uploads.size, d.disk.temp.size, d.disk.logs.size);
+    let html = '';
+    for (const [label,info] of [['uploads',d.disk.uploads],['temp',d.disk.temp],['logs',d.disk.logs]]) {
+      const pct = Math.min(100,(info.size/Math.max(maxDisk,1))*100);
+      html += '<div class="resource-bar-container"><span class="resource-label">'+label+'</span>'
+        + '<div class="resource-bar"><div class="resource-bar-fill" style="width:'+pct+'%"></div></div>'
+        + '<span class="resource-value">'+info.formatted+'</span></div>';
+    }
+    if (d.processes && d.processes.length) {
+      html += '<table class="data-table" style="margin-top:8px"><tr><th>Service</th><th>PID</th><th>CPU</th><th>MEM</th></tr>';
+      for (const p of d.processes) html += '<tr><td>'+esc(p.name)+'</td><td>'+p.pid+'</td><td>'+esc(p.cpu)+'</td><td>'+esc(p.mem)+'</td></tr>';
+      html += '</table>';
+    }
+    $('resources-dock').innerHTML = html;
+  } catch(e) { $('resources-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
+}
+
+// Skills
+async function loadSkills() {
+  try {
+    const r = await fetch(BASE + '/api/skills');
+    const d = await r.json();
+    let html = '';
+    if (d.mcp && d.mcp.length) {
+      html += '<div style="color:var(--warning);font-size:10px;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">MCP Integrations</div>';
+      html += '<table class="data-table"><tr><th>Name</th><th>Type</th></tr>';
+      for (const m of d.mcp) html += '<tr><td style="color:var(--teal)">'+esc(m.name)+'</td><td>'+esc(m.type)+'</td></tr>';
+      html += '</table>';
+    }
+    if (d.skills && d.skills.length) {
+      html += '<div style="color:var(--warning);font-size:10px;margin:10px 0 4px;text-transform:uppercase;letter-spacing:1px">Skills</div>';
+      html += '<table class="data-table"><tr><th>Name</th><th>Description</th></tr>';
+      for (const s of d.skills) html += '<tr><td style="color:var(--indigo)">'+esc(s.name)+'</td><td>'+esc(s.description)+'</td></tr>';
+      html += '</table>';
+    }
+    if (!html) html = '<div style="color:var(--text-dim)">No skills found</div>';
+    $('skills-dock').innerHTML = html;
+  } catch(e) { $('skills-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
+}
+
+// Metrics (for sidebar stats)
+async function loadMetrics() {
+  try {
+    const r = await fetch(BASE + '/api/metrics' + (selectedUserId ? '?user_id='+selectedUserId : ''));
+    const d = await r.json();
+    $('msgs-today').textContent = d.today || 0;
+  } catch {}
+}
+
+// User selector
 async function loadUsers() {
   try {
     const r = await fetch(BASE + '/api/users');
     const d = await r.json();
     const sel = $('user-selector');
-    // Keep the "All Users" option
-    sel.innerHTML = '<option value="">All Users (Admin View)</option>';
-    for (const u of (d.users || [])) {
-      const status = u.active ? '' : ' (inactive)';
-      sel.innerHTML += '<option value="' + u.id + '">' + esc(u.name) + ' — ' + esc(u.role) + status + '</option>';
+    sel.innerHTML = '<option value="">All Users</option>';
+    for (const u of (d.users||[])) {
+      sel.innerHTML += '<option value="'+u.id+'">'+esc(u.name)+'</option>';
     }
     sel.value = selectedUserId;
-  } catch(e) { console.error('Users load error:', e); }
+  } catch {}
 }
 
 $('user-selector').addEventListener('change', function() {
   selectedUserId = this.value;
-  // Reload all data with new filter
-  loadMessages(); loadMemory(); loadMetrics(); loadVoice(); loadCosts(); loadAgentTasks();
+  loadMetrics(); loadCosts();
+  if (dockPanelsLoaded['messages-dock']) loadMessages();
+  if (dockPanelsLoaded['agent-tasks-dock']) loadAgentTasks();
+  if (dockPanelsLoaded['memory-dock']) loadMemory();
 });
 
-function userParam() {
-  return selectedUserId ? '&user_id=' + selectedUserId : '';
-}
-
-// ---- USAGE BY USER ----
-async function loadUsageByUser() {
-  try {
-    const r = await fetch(BASE + '/api/usage-by-user');
-    const d = await r.json();
-    if (d.error) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--text-dim)">' + esc(d.error) + '</div>'; return; }
-    if (!d.users || !d.users.length) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--text-dim)">No users found</div>'; return; }
-
-    const providers = d.providers || [];
-
-    let html = '<table class="data-table">';
-    html += '<tr><th>User</th><th>Status</th><th style="text-align:right">Msgs 24h</th><th style="text-align:right">Msgs 7d</th>';
-    // Dynamic provider columns
-    for (const p of providers) {
-      const color = getProviderColor(p);
-      html += '<th style="text-align:right;color:' + color + '">' + esc(p.toUpperCase()) + '</th>';
-    }
-    html += '<th style="text-align:right">TOTAL</th></tr>';
-
-    for (const u of d.users) {
-      const statusColor = u.active ? 'var(--success)' : 'var(--text-dim)';
-      const statusText = u.active ? 'ACTIVE' : 'INACTIVE';
-      html += '<tr>'
-        + '<td style="color:var(--teal);font-weight:700">' + esc(u.name) + '</td>'
-        + '<td style="color:' + statusColor + ';font-size:10px;font-weight:700">' + statusText + '</td>'
-        + '<td style="text-align:right">' + u.msgs24h + '</td>'
-        + '<td style="text-align:right">' + u.msgs7d + '</td>';
-      for (const p of providers) {
-        const cost = (u.byProvider && u.byProvider[p]) || 0;
-        const color = getProviderColor(p);
-        html += '<td style="text-align:right;color:' + color + ';font-weight:700">$' + cost.toFixed(2) + '</td>';
-      }
-      html += '<td class="cost-val">$' + (u.costMonth || 0).toFixed(2) + '</td>';
-      html += '</tr>';
-    }
-
-    // Totals row
-    if (d.totals) {
-      const t = d.totals;
-      html += '<tr style="border-top:2px solid var(--glass-border)">'
-        + '<td style="color:var(--warning);font-weight:700">TOTAL</td>'
-        + '<td></td>'
-        + '<td style="text-align:right;color:var(--warning);font-weight:700">' + t.msgs24h + '</td>'
-        + '<td style="text-align:right;color:var(--warning);font-weight:700">' + t.msgs7d + '</td>';
-      for (const p of providers) {
-        const cost = (t.byProvider && t.byProvider[p]) || 0;
-        const color = getProviderColor(p);
-        html += '<td style="text-align:right;color:' + color + ';font-weight:700">$' + cost.toFixed(2) + '</td>';
-      }
-      html += '<td class="cost-val" style="color:var(--warning)">$' + (t.costMonth || 0).toFixed(2) + '</td>';
-      html += '</tr>';
-    }
-
-    html += '</table>';
-    html += '<div style="font-size:10px;color:var(--text-dim);margin-top:8px">Costs shown for current month</div>';
-    $('usage-by-user-panel').innerHTML = html;
-  } catch(e) { $('usage-by-user-panel').innerHTML = '<div style="color:var(--error)">Error: ' + esc(e.message) + '</div>'; }
-}
-
-// ---- INIT & INTERVALS ----
+// ==== INIT ====
 loadUsers();
-loadStatus();  loadMetrics();  loadMessages();  loadMemory();
-loadTasks();   loadVoice();    loadSkills();     loadResources();  loadLogs();
-loadAgentTasks(); loadCosts(); loadUsageByUser();
+loadOrbitalData();
+loadExecPanel();
+loadStatus();
+loadActiveAgents();
+loadMetrics();
+loadCosts();
 
+// ==== INTERVALS ====
 setInterval(loadStatus, 10000);
-setInterval(loadLogs, 10000);
-setInterval(loadMessages, 15000);
-setInterval(loadAgentTasks, 15000);
-setInterval(loadResources, 20000);
+setInterval(loadActiveAgents, 5000);
 setInterval(loadMetrics, 30000);
-setInterval(loadMemory, 30000);
-setInterval(loadTasks, 30000);
-setInterval(loadVoice, 30000);
 setInterval(loadCosts, 30000);
-setInterval(loadUsageByUser, 30000);
-setInterval(loadSkills, 60000);
+setInterval(() => { if(dockPanelsLoaded['messages-dock']) loadMessages(); }, 15000);
+setInterval(() => { if(dockPanelsLoaded['agent-tasks-dock']) loadAgentTasks(); }, 15000);
+setInterval(() => { if(dockPanelsLoaded['memory-dock']) loadMemory(); }, 30000);
+setInterval(() => { if(dockPanelsLoaded['logs-dock']) loadLogs(); }, 15000);
+setInterval(() => { if(dockPanelsLoaded['resources-dock']) loadResources(); }, 20000);
+setInterval(() => { if(dockPanelsLoaded['skills-dock']) loadSkills(); }, 60000);
 </script>
 </body>
 </html>`;
 }
+
 
 // ============================================================
 // SERVER
@@ -2060,6 +2149,14 @@ const server = Bun.serve({
     }
     if (!authResult) {
       return loginPage();
+    }
+
+    // Rate limit API requests
+    if (path.startsWith("/api/")) {
+      const sid = getSessionIdFromRequest(req);
+      if (sid && !checkRateLimit(sid)) {
+        return jsonResponse({ error: "Rate limit exceeded" }, 429);
+      }
     }
 
     // Dashboard HTML
@@ -2099,6 +2196,59 @@ const server = Bun.serve({
     if (path === "/api/voice") return jsonResponse(await getVoice(userId));
     if (path === "/api/skills") return jsonResponse(await getSkills());
 
+    // Activity feed — recent events from logs table
+    if (path === "/api/activity") {
+      const since = url.searchParams.get("since");
+      const limit = parseInt(url.searchParams.get("limit") || "50");
+      return jsonResponse(await getActivity(since, Math.min(limit, 200)));
+    }
+
+    // SSE stream for real-time events
+    if (path === "/api/activity/stream") {
+      const stream = createSSEStream();
+      if (!stream) return jsonResponse({ error: "Max SSE connections reached" }, 429);
+      return stream;
+    }
+
+    // Active agents
+    if (path === "/api/agents/active") {
+      return jsonResponse(getActiveAgents());
+    }
+
+    // Request trace — all events for a specific requestId
+    if (path === "/api/trace") {
+      const requestId = url.searchParams.get("requestId");
+      if (!requestId) return jsonResponse({ error: "requestId required" }, 400);
+      return jsonResponse(await getTrace(requestId));
+    }
+
+    // Cost breakdown with groupBy
+    if (path === "/api/costs/breakdown") {
+      const period = url.searchParams.get("period") || "day";
+      const groupBy = url.searchParams.get("groupBy") || "model";
+      return jsonResponse(await getCostBreakdown(period, groupBy));
+    }
+
+    // Agent catalog
+    if (path === "/api/agents/catalog") {
+      return jsonResponse(await getAgentCatalog());
+    }
+
+    // Executives
+    if (path === "/api/executives") {
+      return jsonResponse(await getExecutives());
+    }
+
+    // Board sessions
+    if (path === "/api/board/recent") {
+      return jsonResponse(await getRecentBoardSessions());
+    }
+
+    // Active delegations
+    if (path === "/api/delegations/active") {
+      return jsonResponse(await getActiveDelegations());
+    }
+
     return new Response("Not found", { status: 404 });
   },
 });
@@ -2120,3 +2270,12 @@ console.log("  GET  /api/agent-tasks — Agent task tracking");
 console.log("  GET  /api/resources — System resources");
 console.log("  GET  /api/voice     — Voice call activity");
 console.log("  GET  /api/skills    — Skills & integrations");
+console.log("  GET  /api/activity   — Activity feed");
+console.log("  GET  /api/activity/stream — SSE real-time events");
+console.log("  GET  /api/agents/active — Active agents");
+console.log("  GET  /api/trace      — Request trace");
+console.log("  GET  /api/costs/breakdown — Cost breakdown");
+console.log("  GET  /api/agents/catalog — Agent catalog");
+console.log("  GET  /api/executives — Executive roster");
+console.log("  GET  /api/board/recent — Recent board sessions");
+console.log("  GET  /api/delegations/active — Active delegations");
