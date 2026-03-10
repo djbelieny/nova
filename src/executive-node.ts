@@ -322,18 +322,6 @@ function buildPrompt(
     sections.push(`## Research Tools\n\nYou have direct access to research MCP servers: ${execServers.join(", ")}. Use them to search the web, gather data, and verify facts when analyzing questions.`);
   }
 
-  // Inject research tool instructions for execs with MCP access
-  const execServers = EXEC_MCP_SERVERS[execDef.role] || [];
-  if (execServers.length > 0 && _execUseMcp2cli) {
-    const mcpConfig = loadProjectMcpConfig(PROJECT_ROOT);
-    const instructions = buildMcp2cliInstructions(execServers, mcpConfig);
-    if (instructions) {
-      sections.push(`## Research Tools\n\nYou have direct access to research tools via Bash commands. Use these to gather real data, search the web, and verify facts — don't just reason from memory.\n\n${instructions}`);
-    }
-  } else if (execServers.length > 0 && _execMcpConfigPath) {
-    sections.push(`## Research Tools\n\nYou have direct access to research MCP servers: ${execServers.join(", ")}. Use them to search the web, gather data, and verify facts when analyzing questions.`);
-  }
-
   if (context?.agentCatalog) {
     sections.push(`## Available Agents\n\n${context.agentCatalog}`);
   }
