@@ -1633,7 +1633,7 @@ function renderDashboard(): string {
     .bottom-dock.expanded { height: 60vh; }
   }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 </head>
 <body>
 
