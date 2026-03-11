@@ -1248,11 +1248,7 @@ function renderDashboard(): string {
   @keyframes pulse-dot { 0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
   @keyframes pulse-glow { 0%,100% { filter: drop-shadow(0 0 4px currentColor); } 50% { filter: drop-shadow(0 0 12px currentColor); } }
   @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-  @keyframes orbit-pulse { 0%,100% { opacity: 0.15; } 50% { opacity: 0.3; } }
-  @keyframes particle-move { 0% { offset-distance: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
-  @keyframes flash-node { 0% { r: 20; opacity: 0.8; } 100% { r: 35; opacity: 0; } }
-  @keyframes halo-pulse { 0% { opacity: 0.7; } 50% { opacity: 0.3; } 100% { opacity: 0.7; } }
-  @keyframes halo-expand { 0% { r: 18; opacity: 0.6; } 100% { r: 32; opacity: 0; } }
+  /* SVG orbital keyframes removed — replaced by Three.js 3D sphere */
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
   .blink { animation: blink 1.5s infinite; }
 
@@ -1364,27 +1360,13 @@ function renderDashboard(): string {
     width: 100%; height: 100%;
     position: relative;
   }
-  .orbital-svg {
+  #orbital-canvas {
     width: 100%; height: 100%;
+    display: block;
+    cursor: grab;
   }
-  .orbital-node { cursor: pointer; transition: opacity 0.2s; }
-  .orbital-node:hover { opacity: 1 !important; }
-  .orbital-node text { pointer-events: none; }
-  .orbital-label {
-    font-family: 'Inter', sans-serif;
-    font-size: 9px;
-    fill: var(--text-secondary);
-    text-anchor: middle;
-  }
-  .orbital-ring {
-    fill: none;
-    stroke: rgba(255,255,255,0.04);
-    stroke-width: 1;
-  }
-  .connection-line {
-    stroke: rgba(255,255,255,0.06);
-    stroke-width: 0.5;
-    stroke-dasharray: 4 4;
+  #orbital-canvas:active {
+    cursor: grabbing;
   }
 
   /* Center stats overlay */
@@ -1651,6 +1633,7 @@ function renderDashboard(): string {
     .bottom-dock.expanded { height: 60vh; }
   }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.min.js"><\/script>
 </head>
 <body>
 
@@ -1696,15 +1679,8 @@ function renderDashboard(): string {
       <div class="stat-row">Active: <span class="stat-val" id="stat-active">0</span></div>
       <div class="stat-row">Today: $<span class="stat-val" id="stat-cost">0.00</span></div>
     </div>
-    <div class="orbital-container">
-      <svg id="orbital-svg" class="orbital-svg" viewBox="0 0 800 800">
-        <defs>
-          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4" result="blur"/>
-            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-          </filter>
-        </defs>
-      </svg>
+    <div class="orbital-container" id="orbital-container">
+      <canvas id="orbital-canvas"></canvas>
     </div>
   </div>
 
@@ -1798,10 +1774,24 @@ function userParam() { return selectedUserId ? '&user_id=' + selectedUserId : ''
 // ==== EXEC COLORS MAP ====
 const EXEC_COLORS = { ceo:'#f59e0b', cfo:'#22c55e', cmo:'#ec4899', cto:'#06b6d4', coo:'#8b5cf6', research:'#3b82f6', critic:'#ef4444' };
 
-// ==== ORBITAL VISUALIZATION ====
+// ==== 3D SPHERE VISUALIZATION (Three.js) ====
 let orbitalAgents = [];
 let orbitalExecs = [];
 let activeAgentSlugs = new Set();
+
+// Three.js state
+let scene3d, camera3d, renderer3d;
+let nodeMap3d = new Map();       // key -> { mesh, label }
+let activeParticles3d = [];
+let activeGlows3d = new Map();
+let animFrameId3d;
+let isDragging3d = false, prevMouse3d = {x:0,y:0};
+let rot3d = {x:0.3,y:0}, rotTarget3d = {x:0.3,y:0}, zoom3d = 5.5;
+const INNER_R = 1.4, OUTER_R = 2.9;
+const MAX_PARTICLES = 60;
+
+// Shared geometries for performance
+let execGeo, agentGeo, particleGeo;
 
 function hashColor(str) {
   let h = 0;
@@ -1809,65 +1799,218 @@ function hashColor(str) {
   const hue = Math.abs(h) % 360;
   return 'hsl(' + hue + ', 60%, 55%)';
 }
+function hashColorThree(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+  return new THREE.Color().setHSL((Math.abs(h) % 360) / 360, 0.6, 0.55);
+}
+
+function fibSpherePoint(index, total, radius) {
+  const phi = Math.acos(1 - 2 * (index + 0.5) / total);
+  const theta = Math.PI * (1 + Math.sqrt(5)) * index;
+  return new THREE.Vector3(
+    radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+function makeTextSprite(text, color, fontSize) {
+  const c = document.createElement('canvas');
+  const ctx = c.getContext('2d');
+  c.width = 256; c.height = 64;
+  ctx.font = (fontSize || 24) + 'px Inter, system-ui, sans-serif';
+  ctx.fillStyle = color || '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 32);
+  const tex = new THREE.CanvasTexture(c);
+  tex.minFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(0.6, 0.15, 1);
+  return sprite;
+}
+
+function initOrbitalScene() {
+  const container = $('orbital-container');
+  const canvas = $('orbital-canvas');
+  if (!container || !canvas || typeof THREE === 'undefined') return;
+
+  const w = container.clientWidth || 600;
+  const h = container.clientHeight || 600;
+
+  scene3d = new THREE.Scene();
+  camera3d = new THREE.PerspectiveCamera(55, w / h, 0.1, 100);
+  camera3d.position.set(0, 1.5, zoom3d);
+
+  renderer3d = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer3d.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer3d.setSize(w, h);
+  renderer3d.setClearColor(0x000000, 0);
+
+  // Lighting
+  scene3d.add(new THREE.AmbientLight(0x404060, 0.6));
+  const pointLight = new THREE.PointLight(0x6366f1, 2, 20);
+  scene3d.add(pointLight);
+
+  // Shared geometries
+  execGeo = new THREE.SphereGeometry(0.1, 16, 16);
+  agentGeo = new THREE.SphereGeometry(0.06, 12, 12);
+  particleGeo = new THREE.SphereGeometry(0.025, 8, 8);
+
+  // Wireframe reference spheres
+  const wireMat = new THREE.MeshBasicMaterial({ color: 0x6366f1, wireframe: true, opacity: 0.04, transparent: true });
+  scene3d.add(new THREE.Mesh(new THREE.SphereGeometry(INNER_R, 24, 24), wireMat));
+  scene3d.add(new THREE.Mesh(new THREE.SphereGeometry(OUTER_R, 32, 32), wireMat.clone()));
+
+  // Drag controls
+  canvas.addEventListener('pointerdown', function(e) { isDragging3d = true; prevMouse3d = {x:e.clientX, y:e.clientY}; });
+  canvas.addEventListener('pointermove', function(e) {
+    if (!isDragging3d) return;
+    rotTarget3d.y += (e.clientX - prevMouse3d.x) * 0.005;
+    rotTarget3d.x += (e.clientY - prevMouse3d.y) * 0.005;
+    rotTarget3d.x = Math.max(-1.2, Math.min(1.2, rotTarget3d.x));
+    prevMouse3d = {x:e.clientX, y:e.clientY};
+  });
+  canvas.addEventListener('pointerup', function() { isDragging3d = false; });
+  canvas.addEventListener('pointerleave', function() { isDragging3d = false; });
+  canvas.addEventListener('wheel', function(e) {
+    zoom3d = Math.max(2.5, Math.min(9, zoom3d + e.deltaY * 0.005));
+    e.preventDefault();
+  }, { passive: false });
+
+  // Resize handler
+  window.addEventListener('resize', function() {
+    if (!renderer3d || !container) return;
+    const nw = container.clientWidth, nh = container.clientHeight;
+    camera3d.aspect = nw / nh;
+    camera3d.updateProjectionMatrix();
+    renderer3d.setSize(nw, nh);
+  });
+
+  // Start render loop
+  function animate() {
+    animFrameId3d = requestAnimationFrame(animate);
+    if (!isDragging3d) rotTarget3d.y += 0.0008;
+    rot3d.x += (rotTarget3d.x - rot3d.x) * 0.06;
+    rot3d.y += (rotTarget3d.y - rot3d.y) * 0.06;
+    camera3d.position.x = zoom3d * Math.sin(rot3d.y) * Math.cos(rot3d.x);
+    camera3d.position.y = zoom3d * Math.sin(rot3d.x);
+    camera3d.position.z = zoom3d * Math.cos(rot3d.y) * Math.cos(rot3d.x);
+    camera3d.lookAt(0, 0, 0);
+
+    // Animate particles
+    for (let i = activeParticles3d.length - 1; i >= 0; i--) {
+      const p = activeParticles3d[i];
+      p.progress += p.speed;
+      if (p.progress >= 1) {
+        scene3d.remove(p.mesh);
+        if (p.trail) scene3d.remove(p.trail);
+        activeParticles3d.splice(i, 1);
+      } else {
+        const pos = p.curve.getPoint(p.progress);
+        p.mesh.position.copy(pos);
+        p.mesh.material.opacity = p.progress < 0.1 ? p.progress * 10 : (p.progress > 0.85 ? (1 - p.progress) * 6.6 : 1);
+        p.mesh.scale.setScalar(0.8 + 0.4 * Math.sin(p.progress * Math.PI));
+      }
+    }
+
+    // Pulse active glows
+    const t = Date.now() * 0.003;
+    activeGlows3d.forEach(function(glow, key) {
+      const entry = nodeMap3d.get(key);
+      if (entry) {
+        entry.mesh.material.emissiveIntensity = 0.6 + 0.5 * Math.sin(t + glow.phase);
+        entry.mesh.scale.setScalar(1 + 0.15 * Math.sin(t * 1.5 + glow.phase));
+      }
+    });
+
+    renderer3d.render(scene3d, camera3d);
+  }
+  animate();
+}
 
 function drawOrbital() {
-  const svg = $('orbital-svg');
-  if (!svg) return;
-  const cx = 400, cy = 400;
-  const innerR = 130, outerR = 290;
+  if (!scene3d) return;
 
-  let html = '<defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>';
-  // Background rings
-  html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+innerR+'" class="orbital-ring" style="animation:orbit-pulse 4s infinite"/>';
-  html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+outerR+'" class="orbital-ring" style="animation:orbit-pulse 4s infinite 2s"/>';
-  html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+(innerR+outerR)/2+'" class="orbital-ring" style="opacity:0.3"/>';
+  // Clear previous nodes
+  nodeMap3d.forEach(function(entry) {
+    if (entry.mesh) scene3d.remove(entry.mesh);
+    if (entry.label) scene3d.remove(entry.label);
+  });
+  nodeMap3d.clear();
 
-  // Connection lines: exec → agents
+  // Remove old connection lines
+  scene3d.children = scene3d.children.filter(function(c) { return !c.userData.isConnection; });
+
+  // Exec nodes (inner sphere)
+  orbitalExecs.forEach(function(exec, i) {
+    const pos = fibSpherePoint(i, orbitalExecs.length, INNER_R);
+    const color = new THREE.Color(EXEC_COLORS[exec.role] || '#888');
+    const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, transparent: true, opacity: 0.9 });
+    const mesh = new THREE.Mesh(execGeo, mat);
+    mesh.position.copy(pos);
+    scene3d.add(mesh);
+
+    const label = makeTextSprite(exec.name, EXEC_COLORS[exec.role] || '#888', 26);
+    label.position.copy(pos).multiplyScalar(1.15);
+    scene3d.add(label);
+
+    exec._pos3d = pos;
+    nodeMap3d.set('exec-' + exec.role, { mesh, label });
+  });
+
+  // Agent nodes (outer sphere)
+  orbitalAgents.forEach(function(agent, i) {
+    const pos = fibSpherePoint(i, orbitalAgents.length, OUTER_R);
+    const color = hashColorThree(agent.slug);
+    const isActive = activeAgentSlugs.has(agent.slug);
+    const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: isActive ? 0.6 : 0.2, transparent: true, opacity: isActive ? 1 : 0.45 });
+    const mesh = new THREE.Mesh(agentGeo, mat);
+    mesh.position.copy(pos);
+    if (isActive) mesh.scale.setScalar(1.4);
+    scene3d.add(mesh);
+
+    const label = makeTextSprite(agent.name, '#' + color.getHexString(), 20);
+    label.position.copy(pos).multiplyScalar(1.08);
+    label.scale.set(0.45, 0.11, 1);
+    scene3d.add(label);
+
+    agent._pos3d = pos;
+    nodeMap3d.set(agent.slug, { mesh, label });
+  });
+
+  // Connection arcs (exec → agent)
+  const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.06, transparent: true });
   for (const exec of orbitalExecs) {
-    const eAngle = exec._angle;
-    const ex = cx + innerR * Math.cos(eAngle);
-    const ey = cy + innerR * Math.sin(eAngle);
-    for (const agentSlug of (exec.agents || [])) {
-      const agent = orbitalAgents.find(a => a.slug === agentSlug);
-      if (!agent) continue;
-      const ax = cx + outerR * Math.cos(agent._angle);
-      const ay = cy + outerR * Math.sin(agent._angle);
-      html += '<line x1="'+ex+'" y1="'+ey+'" x2="'+ax+'" y2="'+ay+'" class="connection-line" data-exec="'+exec.role+'" data-agent="'+agentSlug+'"/>';
+    if (!exec._pos3d) continue;
+    for (const slug of (exec.agents || [])) {
+      const agent = orbitalAgents.find(function(a) { return a.slug === slug; });
+      if (!agent || !agent._pos3d) continue;
+      const mid = exec._pos3d.clone().add(agent._pos3d).multiplyScalar(0.5);
+      mid.multiplyScalar(1.15); // push outward
+      const curve = new THREE.QuadraticBezierCurve3(exec._pos3d, mid, agent._pos3d);
+      const pts = curve.getPoints(20);
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.Line(geo, lineMat.clone());
+      line.userData.isConnection = true;
+      line.userData.execRole = exec.role;
+      line.userData.agentSlug = slug;
+      scene3d.add(line);
     }
   }
+}
 
-  // Exec nodes (inner ring)
-  orbitalExecs.forEach((exec, i) => {
-    const angle = exec._angle;
-    const x = cx + innerR * Math.cos(angle);
-    const y = cy + innerR * Math.sin(angle);
-    const color = EXEC_COLORS[exec.role] || '#888';
-    html += '<g class="orbital-node" data-type="exec" data-role="'+exec.role+'">';
-    html += '<circle cx="'+x+'" cy="'+y+'" r="18" fill="'+color+'" opacity="0.2"/>';
-    html += '<circle cx="'+x+'" cy="'+y+'" r="12" fill="'+color+'" opacity="0.8"/>';
-    html += '<text x="'+x+'" y="'+(y+28)+'" class="orbital-label" style="fill:'+color+';font-weight:600;font-size:10px">'+esc(exec.name)+'</text>';
-    html += '</g>';
-  });
-
-  // Agent nodes (outer ring)
-  orbitalAgents.forEach((agent, i) => {
-    const angle = agent._angle;
-    const x = cx + outerR * Math.cos(angle);
-    const y = cy + outerR * Math.sin(angle);
-    const color = hashColor(agent.slug);
+function updateNodeActivity() {
+  for (const agent of orbitalAgents) {
+    const entry = nodeMap3d.get(agent.slug);
+    if (!entry) continue;
     const isActive = activeAgentSlugs.has(agent.slug);
-    const r = isActive ? 10 : 7;
-    const opacity = isActive ? 1 : 0.5;
-    html += '<g class="orbital-node" data-type="agent" data-slug="'+agent.slug+'" style="opacity:'+opacity+'">';
-    if (isActive) {
-      html += '<circle cx="'+x+'" cy="'+y+'" r="16" fill="'+color+'" opacity="0.15" style="animation:pulse-glow 2s infinite;color:'+color+'"/>';
-    }
-    html += '<circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="'+color+'"/>';
-    html += '<text x="'+x+'" y="'+(y+(i%2===0?-14:20))+'" class="orbital-label">'+esc(agent.name)+'</text>';
-    html += '</g>';
-  });
-
-  svg.innerHTML = html;
+    entry.mesh.material.opacity = isActive ? 1 : 0.45;
+    entry.mesh.material.emissiveIntensity = isActive ? 0.6 : 0.2;
+    entry.mesh.scale.setScalar(isActive ? 1.4 : 1);
+  }
 }
 
 async function loadOrbitalData() {
@@ -1876,18 +2019,16 @@ async function loadOrbitalData() {
       fetch(BASE + '/api/agents/catalog').then(r => r.json()),
       fetch(BASE + '/api/executives').then(r => r.json())
     ]);
-
-    orbitalExecs = (execRes.executives || []).map((e, i, arr) => {
+    orbitalExecs = (execRes.executives || []).map(function(e, i, arr) {
       e._angle = (2 * Math.PI * i / arr.length) - Math.PI / 2;
       return e;
     });
-
-    orbitalAgents = (agentRes.agents || []).map((a, i, arr) => {
+    orbitalAgents = (agentRes.agents || []).map(function(a, i, arr) {
       a._angle = (2 * Math.PI * i / arr.length) - Math.PI / 2;
       return a;
     });
-
     $('stat-agents').textContent = orbitalAgents.length;
+    if (!scene3d) initOrbitalScene();
     drawOrbital();
   } catch(e) { console.error('Orbital load error:', e); }
 }
@@ -1947,7 +2088,7 @@ async function loadActiveAgents() {
     if (!Array.isArray(agents) || agents.length === 0) {
       $('active-agents-compact').innerHTML = '<div style="color:var(--text-dim);font-size:10px">None running</div>';
       $('stat-active').textContent = '0';
-      drawOrbital();
+      updateNodeActivity();
       return;
     }
 
@@ -1959,13 +2100,12 @@ async function loadActiveAgents() {
         + '<div class="active-dot"></div>'
         + '<span class="active-agent-name">' + esc(a.key) + '</span>'
         + '<span class="active-agent-time">' + elapsed + '</span></div>';
-      // Try to match to a slug
       const slug = a.key.split('-')[0].toLowerCase();
       activeAgentSlugs.add(slug);
       activeAgentSlugs.add(a.key);
     }
     $('active-agents-compact').innerHTML = html;
-    drawOrbital();
+    updateNodeActivity();
   } catch(e) { $('active-agents-compact').innerHTML = '<div style="color:var(--error);font-size:10px">Error</div>'; }
 }
 
@@ -2028,97 +2168,79 @@ function addEvent(ev) {
   flashOrbitalNode(ev);
 }
 
-// Track which nodes have active halos so we can manage them
-const activeHalos = new Map(); // key -> timeout
+// ==== 3D NODE EFFECTS ====
+
+function pulseNode3d(key, color) {
+  const entry = nodeMap3d.get(key);
+  if (!entry) return;
+  entry.mesh.material.emissiveIntensity = 1.5;
+  entry.mesh.material.opacity = 1;
+  entry.mesh.scale.setScalar(1.8);
+
+  if (activeGlows3d.has(key)) clearTimeout(activeGlows3d.get(key).timeout);
+  const timeout = setTimeout(function() {
+    if (!entry.mesh) return;
+    entry.mesh.scale.setScalar(key.startsWith('exec-') ? 1 : (activeAgentSlugs.has(key) ? 1.4 : 1));
+    entry.mesh.material.emissiveIntensity = key.startsWith('exec-') ? 0.4 : 0.2;
+    if (!activeAgentSlugs.has(key) && !key.startsWith('exec-')) entry.mesh.material.opacity = 0.45;
+    activeGlows3d.delete(key);
+  }, 8000);
+  activeGlows3d.set(key, { timeout, phase: Math.random() * Math.PI * 2 });
+}
+
+function spawnFlowParticle(fromKey, toKey, color) {
+  if (!scene3d || activeParticles3d.length >= MAX_PARTICLES) return;
+  const fromEntry = nodeMap3d.get(fromKey);
+  const toEntry = nodeMap3d.get(toKey);
+  if (!fromEntry || !toEntry) return;
+
+  const start = fromEntry.mesh.position.clone();
+  const end = toEntry.mesh.position.clone();
+  const mid = start.clone().add(end).multiplyScalar(0.5).multiplyScalar(1.2);
+  const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+  const mat = new THREE.MeshBasicMaterial({ color: color || 0x6366f1, transparent: true, opacity: 0.9 });
+  const mesh = new THREE.Mesh(particleGeo, mat);
+  scene3d.add(mesh);
+  activeParticles3d.push({ mesh, curve, progress: 0, speed: 0.012 + Math.random() * 0.008 });
+}
 
 function flashOrbitalNode(ev) {
+  if (!scene3d) return;
   const type = ev.type || ev.event || '';
   const slug = ev.agentSlug || ev.data?.agentSlug || '';
   const execRole = ev.execRole || ev.data?.execRole || '';
 
-  // Try agent match
-  if (slug) {
-    const node = document.querySelector('[data-slug="'+slug+'"]');
-    if (node) addHaloToNode(node, slug, hashColor(slug));
+  if (slug && nodeMap3d.has(slug)) {
+    pulseNode3d(slug, hashColorThree(slug));
+    // Spawn particle from connected exec to this agent
+    const exec = orbitalExecs.find(function(e) { return (e.agents || []).includes(slug); });
+    if (exec) {
+      const c = new THREE.Color(EXEC_COLORS[exec.role] || '#888');
+      spawnFlowParticle('exec-' + exec.role, slug, c);
+    }
   }
-
-  // Try exec match
-  if (execRole) {
-    const node = document.querySelector('[data-role="'+execRole+'"]');
-    if (node) addHaloToNode(node, 'exec-'+execRole, EXEC_COLORS[execRole] || '#888');
+  if (execRole && nodeMap3d.has('exec-' + execRole)) {
+    pulseNode3d('exec-' + execRole, new THREE.Color(EXEC_COLORS[execRole] || '#888'));
   }
-
-  // Board events light up all execs
+  // Board events: light up all execs and spawn particles between them
   if (type.startsWith('board.')) {
-    document.querySelectorAll('[data-type="exec"]').forEach(function(node) {
-      const role = node.getAttribute('data-role');
-      addHaloToNode(node, 'exec-'+role, EXEC_COLORS[role] || '#888');
+    orbitalExecs.forEach(function(exec) {
+      pulseNode3d('exec-' + exec.role, new THREE.Color(EXEC_COLORS[exec.role] || '#888'));
     });
+    // Particle from one random exec to another to show communication
+    if (orbitalExecs.length > 1) {
+      const a = Math.floor(Math.random() * orbitalExecs.length);
+      let b = (a + 1 + Math.floor(Math.random() * (orbitalExecs.length - 1))) % orbitalExecs.length;
+      spawnFlowParticle('exec-' + orbitalExecs[a].role, 'exec-' + orbitalExecs[b].role, new THREE.Color(0x6366f1));
+    }
   }
-}
-
-function addHaloToNode(node, key, color) {
-  // Find the main circle in this node
-  const circles = node.querySelectorAll('circle');
-  const mainCircle = circles[circles.length - 1]; // last circle is the filled one
-  if (!mainCircle) return;
-  const cx = mainCircle.getAttribute('cx');
-  const cy = mainCircle.getAttribute('cy');
-
-  // Remove existing halo for this key
-  const existingId = 'halo-' + key.replace(/[^a-z0-9]/gi, '-');
-  const existing = document.getElementById(existingId);
-  if (existing) existing.remove();
-
-  // Create halo group
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const g = document.createElementNS(svgNS, 'g');
-  g.id = existingId;
-
-  // Outer expanding ring (one-shot)
-  const expandRing = document.createElementNS(svgNS, 'circle');
-  expandRing.setAttribute('cx', cx);
-  expandRing.setAttribute('cy', cy);
-  expandRing.setAttribute('r', '18');
-  expandRing.setAttribute('fill', 'none');
-  expandRing.setAttribute('stroke', color);
-  expandRing.setAttribute('stroke-width', '2');
-  expandRing.setAttribute('opacity', '0.6');
-  expandRing.style.animation = 'halo-expand 1s ease-out forwards';
-
-  // Steady glow ring (persists while active)
-  const glowRing = document.createElementNS(svgNS, 'circle');
-  glowRing.setAttribute('cx', cx);
-  glowRing.setAttribute('cy', cy);
-  glowRing.setAttribute('r', '22');
-  glowRing.setAttribute('fill', 'none');
-  glowRing.setAttribute('stroke', color);
-  glowRing.setAttribute('stroke-width', '1.5');
-  glowRing.setAttribute('filter', 'url(#glow)');
-  glowRing.style.animation = 'halo-pulse 2s ease-in-out infinite';
-
-  g.appendChild(expandRing);
-  g.appendChild(glowRing);
-
-  // Insert halo before the node so it renders behind
-  node.parentNode.insertBefore(g, node);
-
-  // Boost node opacity while active
-  node.style.opacity = '1';
-  node.style.transition = 'opacity 0.2s';
-
-  // Clear previous timeout for this key
-  if (activeHalos.has(key)) clearTimeout(activeHalos.get(key));
-
-  // Remove halo after 8 seconds of inactivity
-  const timeout = setTimeout(function() {
-    const el = document.getElementById(existingId);
-    if (el) { el.style.transition = 'opacity 0.5s'; el.style.opacity = '0'; setTimeout(function(){ el.remove(); }, 500); }
-    node.style.opacity = '';
-    node.style.transition = '';
-    activeHalos.delete(key);
-  }, 8000);
-  activeHalos.set(key, timeout);
+  // Delegation: particle from exec to agent
+  if (type === 'exec.delegation' && execRole) {
+    const targetSlug = ev.data?.agentSlug || ev.data?.agent;
+    if (targetSlug && nodeMap3d.has(targetSlug)) {
+      spawnFlowParticle('exec-' + execRole, targetSlug, new THREE.Color(EXEC_COLORS[execRole] || '#888'));
+    }
+  }
 }
 
 // Pin detection
@@ -2823,7 +2945,7 @@ const server = Bun.serve({
       return new Response(renderDashboard(), {
         headers: {
           "Content-Type": "text/html",
-          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
         },
       });
     }
