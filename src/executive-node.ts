@@ -174,17 +174,19 @@ function initProviders(): void {
 
 // ============================================================
 // EXECUTIVE MCP SERVER MAPPING
-// Execs that need direct research access get exa, tavily, browserbase.
+// Only execs that actively research get MCP servers.
+// Others receive briefings from Research or delegate via COO.
+// browserbase dropped — uses npx (heavy), rarely needed.
 // ============================================================
 
 const EXEC_MCP_SERVERS: Record<string, string[]> = {
-  research: ["exa", "tavily", "browserbase", "firecrawl"],
-  critic:   ["exa", "tavily", "browserbase"],
-  ceo:     ["exa", "tavily", "browserbase"],
-  cto:     ["exa", "tavily", "browserbase"],
-  cmo:     ["exa", "tavily", "browserbase"],
-  cfo:     ["exa", "tavily"],
-  coo:     [],  // COO delegates, doesn't research directly
+  research: ["exa", "tavily", "firecrawl"],  // primary researcher
+  cto:      ["exa", "tavily"],               // occasional tech research
+  cmo:      ["exa", "tavily"],               // occasional market research
+  critic:   [],  // analyzes contributions, doesn't need live search
+  ceo:      [],  // strategizes from briefings, not live data
+  cfo:      [],  // internal data analysis
+  coo:      [],  // delegates only
 };
 
 let _execMcpConfigPath: string | undefined;

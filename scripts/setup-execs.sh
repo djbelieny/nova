@@ -20,6 +20,21 @@ for role in $EXEC_ROLES; do
   echo "  Installed nova-exec-${role}.service"
 done
 
+# Install systemd resource limit drop-ins to prevent any single exec from OOM-ing the box
+echo ""
+echo "Installing resource limit overrides..."
+for role in $EXEC_ROLES; do
+  override_dir="/etc/systemd/system/nova-exec-${role}.service.d"
+  mkdir -p "$override_dir"
+  cat > "${override_dir}/limits.conf" <<'LIMITS'
+[Service]
+CPUQuota=50%
+MemoryMax=1G
+TasksMax=30
+LIMITS
+  echo "  Resource limits for nova-exec-${role}"
+done
+
 echo ""
 echo "Reloading systemd daemon..."
 systemctl daemon-reload

@@ -11,6 +11,13 @@ sudo -u nova git pull origin production
 echo "Installing dependencies..."
 bun install
 
+# Ensure mcp2cli is available (exec nodes use it for on-demand MCP tool access
+# instead of spawning persistent MCP server processes)
+if ! command -v mcp2cli &>/dev/null; then
+  echo "Installing mcp2cli globally..."
+  npm install -g mcp2cli
+fi
+
 # Migrate from Supabase if credentials are set and shared.db doesn't exist yet
 if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_ANON_KEY:-}" ] && [ ! -f /opt/nova/data/shared.db ]; then
   echo "Running Supabase → SQLite migration..."
@@ -34,12 +41,14 @@ fi
 echo "Restarting services..."
 systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 
-# Restart executive services (skip if not installed yet)
-EXEC_SERVICES="nova-exec-ceo nova-exec-cfo nova-exec-cmo nova-exec-cto nova-exec-coo nova-exec-research nova-exec-critic"
+# Restart executive services with staggered delays to avoid resource storm.
+# Order: no-MCP execs first, then MCP-enabled execs last.
+EXEC_SERVICES="nova-exec-coo nova-exec-critic nova-exec-ceo nova-exec-cfo nova-exec-cmo nova-exec-cto nova-exec-research"
 for svc in $EXEC_SERVICES; do
   if systemctl is-enabled "$svc" &>/dev/null; then
     systemctl restart "$svc"
     echo "  Restarted $svc"
+    sleep 5  # stagger to avoid CPU/RAM storm from concurrent MCP spawns
   fi
 done
 
