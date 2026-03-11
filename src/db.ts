@@ -60,6 +60,8 @@ export interface DbMemory {
   id: string;
   created_at: string;
   updated_at: string;
+  last_accessed_at: string;
+  weight: number;
   type: string;
   content: string;
   deadline: string | null;
@@ -160,6 +162,25 @@ class SharedDatabase {
 
   private createSchema(): void {
     this.db.run(`
+      CREATE TABLE IF NOT EXISTS llm_traces (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        trace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        response TEXT NOT NULL,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cost_usd REAL DEFAULT 0.0,
+        duration_ms INTEGER DEFAULT 0,
+        metadata TEXT DEFAULT '{}'
+      )
+    `);
+    try { this.db.run(`CREATE INDEX IF NOT EXISTS idx_traces_user_trace ON llm_traces(user_id, trace_id)`); } catch {}
+
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
         created_at TEXT DEFAULT (datetime('now')),
@@ -255,6 +276,8 @@ class SharedDatabase {
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now')),
+        last_accessed_at TEXT DEFAULT (datetime('now')),
+        weight REAL DEFAULT 1.0,
         type TEXT NOT NULL CHECK (type IN ('fact', 'goal', 'completed_goal', 'preference')),
         content TEXT NOT NULL,
         deadline TEXT,
@@ -266,6 +289,9 @@ class SharedDatabase {
         embedding BLOB
       )
     `);
+    // Safe migration for existing databases
+    try { this.db.run(`ALTER TABLE memory ADD COLUMN last_accessed_at TEXT DEFAULT (datetime('now'))`); } catch {}
+    try { this.db.run(`ALTER TABLE memory ADD COLUMN weight REAL DEFAULT 1.0`); } catch {}
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_user_created ON memory(user_id, created_at DESC)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope)`);
@@ -322,6 +348,8 @@ class UserDatabase {
         id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now')),
+        last_accessed_at TEXT DEFAULT (datetime('now')),
+        weight REAL DEFAULT 1.0,
         type TEXT NOT NULL CHECK (type IN ('fact', 'goal', 'completed_goal', 'preference')),
         content TEXT NOT NULL,
         deadline TEXT,
@@ -333,6 +361,9 @@ class UserDatabase {
         embedding BLOB
       )
     `);
+    // Safe migration for existing databases
+    try { this.db.run(`ALTER TABLE memory ADD COLUMN last_accessed_at TEXT DEFAULT (datetime('now'))`); } catch {}
+    try { this.db.run(`ALTER TABLE memory ADD COLUMN weight REAL DEFAULT 1.0`); } catch {}
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_user_created ON memory(user_id, created_at DESC)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory(scope)`);
@@ -1012,14 +1043,15 @@ export class Database {
     deadline?: string | null;
     embedding?: number[] | null;
     priority?: number;
+    weight?: number;
   }): string {
     const id = uuid();
     const scope = data.scope || "private";
     const targetDb = scope === "shared" ? this.shared.db : this.getUserDb(data.user_id).db;
 
     targetDb.run(`
-      INSERT INTO memory (id, type, content, user_id, scope, deadline, embedding, priority)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory (id, type, content, user_id, scope, deadline, embedding, priority, weight, last_accessed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     `, [
       id,
       data.type,
@@ -1029,8 +1061,42 @@ export class Database {
       data.deadline || null,
       data.embedding ? embeddingToBlob(data.embedding) : null,
       data.priority || 0,
+      data.weight ?? 1.0,
     ]);
     return id;
+  }
+
+  updateMemoryAccessTime(id: string): void {
+    const sql = `UPDATE memory SET last_accessed_at = datetime('now') WHERE id = ?`;
+    this.shared.db.run(sql, [id]);
+    this.runOnAllUserDbs(db => db.run(sql, [id]));
+  }
+
+  updateMultipleMemoryAccessTimes(ids: string[]): void {
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => "?").join(",");
+    const sql = `UPDATE memory SET last_accessed_at = datetime('now') WHERE id IN (${placeholders})`;
+    this.shared.db.run(sql, ids);
+    this.runOnAllUserDbs(db => db.run(sql, ids));
+  }
+
+  updateMemoryWeight(id: string, weight: number): void {
+    const sql = `UPDATE memory SET weight = ? WHERE id = ?`;
+    this.shared.db.run(sql, [weight, id]);
+    this.runOnAllUserDbs(db => db.run(sql, [weight, id]));
+  }
+
+  updateMemory(id: string, updates: Partial<DbMemory>): void {
+    const ALLOWED_FIELDS = new Set(["type", "content", "deadline", "completed_at", "priority", "scope", "weight", "last_accessed_at", "embedding"]);
+    const fields = Object.keys(updates).filter(k => ALLOWED_FIELDS.has(k));
+    if (fields.length === 0) return;
+
+    const setClause = fields.map(f => `${f} = ?`).join(", ");
+    const values = fields.map(f => (updates as any)[f]);
+    const sql = `UPDATE memory SET ${setClause}, updated_at = datetime('now') WHERE id = ?`;
+
+    this.shared.db.run(sql, [...values, id]);
+    this.runOnAllUserDbs(db => db.run(sql, [...values, id]));
   }
 
   getFacts(userId: string): any[] {
@@ -1079,29 +1145,11 @@ export class Database {
     `).get(type, userId, `%${searchText}%`) as any;
   }
 
-  updateMemory(id: string, updates: Record<string, any>): void {
-    const setClauses: string[] = [];
-    const values: any[] = [];
 
-    for (const [key, val] of Object.entries(updates)) {
-      setClauses.push(`${key} = ?`);
-      values.push(val);
-    }
-
-    setClauses.push(`updated_at = datetime('now')`);
-    values.push(id);
-
-    const sql = `UPDATE memory SET ${setClauses.join(", ")} WHERE id = ?`;
-
-    // Try shared DB
-    this.shared.db.run(sql, values);
-    // Try all user DBs
-    this.runOnAllUserDbs(db => db.run(sql, values));
-  }
 
   getMemoryForDashboard(opts?: { type?: string; userId?: string; limit?: number }): any[] {
     const limit = opts?.limit || 100;
-    let sql = `SELECT id, created_at, type, content, deadline, completed_at, priority, scope FROM memory`;
+    let sql = `SELECT id, created_at, updated_at, last_accessed_at, weight, type, content, deadline, completed_at, priority, scope FROM memory`;
     const conditions: string[] = [];
     const params: any[] = [];
 
@@ -1574,6 +1622,37 @@ export class Database {
     return row || null;
   }
 
+  saveLlmTrace(data: {
+    trace_id: string;
+    user_id: string;
+    provider: string;
+    model: string;
+    prompt: string;
+    response: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost_usd: number;
+    duration_ms: number;
+    metadata?: any;
+  }): void {
+    this.shared.db.run(`
+      INSERT INTO llm_traces (trace_id, user_id, provider, model, prompt, response, input_tokens, output_tokens, cost_usd, duration_ms, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      data.trace_id,
+      data.user_id,
+      data.provider,
+      data.model,
+      data.prompt,
+      data.response,
+      data.input_tokens,
+      data.output_tokens,
+      data.cost_usd,
+      data.duration_ms,
+      data.metadata ? JSON.stringify(data.metadata) : "{}"
+    ]);
+  }
+
   insertPattern(data: {
     task_signature: string;
     plan: any;
@@ -1755,7 +1834,7 @@ export class Database {
     if (opts.userId) { conditions.push("user_id = ?"); params.push(opts.userId); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = opts.limit || 100;
-    const sql = `SELECT id, created_at, type, content, deadline, completed_at, priority, scope FROM memory ${where} ORDER BY created_at DESC LIMIT ?`;
+    const sql = `SELECT id, created_at, type, content, deadline, completed_at, priority, scope, last_accessed_at, weight FROM memory ${where} ORDER BY created_at DESC LIMIT ?`;
 
     // Query shared
     const sharedRows = this.shared.db.query(sql).all(...params, limit) as any[];

@@ -8,7 +8,7 @@
 import type { Database } from "./db.ts";
 
 export interface ExecutionPlan {
-  subtasks: { description: string; agent?: string; dependsOn?: number[]; phase?: "prepare" | "execute" }[];
+  subtasks: { description: string; agent?: string; reviewAgent?: string; dependsOn?: number[]; phase?: "prepare" | "execute" }[];
 }
 
 export interface ExecutionPattern {

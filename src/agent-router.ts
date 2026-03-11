@@ -603,6 +603,96 @@ const AGENT_MCP_SERVERS: Record<string, string[]> = {
   tesseract: ["exa", "tavily", "browserbase", "notion", "google-workspace"],
 };
 
+// ============================================================
+// TOOL REGISTRY — All available MCPs and Skills
+// ============================================================
+
+const ALL_TOOLS: Record<string, string> = {
+  "gohighlevel": "Go High Level MCP: Create campaigns, ad sets, ads, audiences, manage contacts, pipelines, and publish to Instagram/Facebook.",
+  "youtube": "YouTube MCP: Upload videos and Shorts, manage metadata, and track analytics.",
+  "tiktok": "TikTok MCP: Upload and publish videos, track creator stats and video performance.",
+  "exa": "Exa MCP: Semantic web search for deep research, finding source material, and competitor analysis.",
+  "tavily": "Tavily MCP: Web search for fact-checking, extracting content from URLs, and market research.",
+  "browserbase": "Browserbase MCP: Cloud browser for visiting URLs, taking screenshots, and verifying web state.",
+  "google-workspace": "Google Workspace MCP: Access Gmail (send/search), Calendar (manage events), Drive (search/manage files), and Sheets (read/write data).",
+  "notion": "Notion MCP: Create and manage pages, databases, and blocks in Notion workspaces.",
+  "square": "Square MCP: Query business sales, transactions, customer data, and revenue reports.",
+  "cloudflare": "Cloudflare MCP: Manage DNS, deploy Workers, and configure edge security/caching.",
+  "zoom": "Zoom MCP: Schedule meetings, manage recordings, and get meeting details.",
+  "bash": "Bash: Run terminal commands, manage files, install packages, and execute scripts locally.",
+  "term-cli": "term-cli: Manage interactive/blocking CLI programs (dev servers, SSH, REPLs) in background tmux sessions.",
+  "image-gen": "/image-gen skill: Generate AI images, ad creative, story visuals, and illustrations.",
+  "canvas-design": "/canvas-design skill: Create designed graphics, story templates, carousel slides, and mockups as PNG/PDF.",
+  "competitive-ads-extractor": "/competitive-ads-extractor skill: Research competitor ads from Facebook, LinkedIn, and other ad libraries.",
+  "content-research-writer": "/content-research-writer skill: Deep research and writing for ad copy, blog posts, scripts, and email campaigns.",
+  "xlsx": "/xlsx skill: Create and manage Excel spreadsheets, data dashboards, and financial models.",
+  "docx": "/docx skill: Create and edit Word documents, articles, strategy guides, and reports.",
+  "pptx": "/pptx skill: Create PowerPoint presentations, pitch decks, and strategy briefings.",
+  "pdf": "/pdf skill: Create polished PDF documents from various content types.",
+  "ghostwriter": "/ghostwriter skill: Transform transcriptions into complete, formatted books.",
+  "lead-research-assistant": "/lead-research-assistant skill: Research and identify potential business leads, partners, and decision-makers.",
+  "platform-maker": "/platform-maker skill: Generate complete SaaS platforms from YAML configuration.",
+  "telegram-file-sender": "/telegram-file-sender skill: Send files, documents, and images directly to the user via Telegram.",
+  "file-organizer": "/file-organizer skill: Clean up and organize workspace files and directories.",
+  "notebooklm": "/notebooklm skill: Query and summarize information using Google NotebookLM patterns.",
+};
+
+/**
+ * Find the most relevant tool for a given need.
+ */
+export function queryToolRegistry(query: string): { name: string; description: string } | null {
+  const lower = query.toLowerCase();
+  let bestMatch: { name: string; description: string } | null = null;
+  let bestScore = 0;
+
+  for (const [name, desc] of Object.entries(ALL_TOOLS)) {
+    const nameWords = name.toLowerCase().split(/[-_]/);
+    const descWords = desc.toLowerCase().split(/\W+/);
+    
+    let score = 0;
+    // Name matches are high value
+    if (lower.includes(name.toLowerCase())) score += 5;
+    
+    // Keyword matches
+    const queryWords = lower.split(/\W+/);
+    for (const qw of queryWords) {
+      if (qw.length < 3) continue;
+      if (nameWords.includes(qw)) score += 3;
+      if (descWords.includes(qw)) score += 1;
+    }
+
+    if (score > bestScore && score > 2) {
+      bestScore = score;
+      bestMatch = { name, description: desc };
+    }
+  }
+
+  return bestMatch;
+}
+
+/**
+ * Get full instructions for a specific tool.
+ */
+export function getToolInstructions(toolName: string, mcpConfig?: any): string {
+  const normalized = toolName.toLowerCase();
+  
+  // Is it an MCP?
+  const mcpNames = ["gohighlevel", "youtube", "tiktok", "exa", "tavily", "browserbase", "google-workspace", "notion", "square", "cloudflare", "zoom", "bash", "term-cli"];
+  if (mcpNames.includes(normalized)) {
+    if (normalized === "bash") return "Bash: Use the built-in terminal to run commands and manage files.";
+    if (normalized === "term-cli") return "term-cli: Use to run interactive or blocking programs in background tmux sessions.";
+    
+    const config = mcpConfig || loadProjectMcpConfig(PROJECT_ROOT);
+    return buildMcp2cliInstructions([normalized], config);
+  }
+
+  // Is it a skill?
+  const desc = ALL_TOOLS[normalized];
+  if (desc) return `Skill: ${desc}\nUsage: Invoke via its slash command (e.g. /${normalized}).`;
+
+  return "";
+}
+
 /**
  * Get the MCP server names assigned to an agent.
  */
@@ -857,6 +947,7 @@ export function buildAgentPrompt(
     "- After creating files, run ls or stat to VERIFY they exist before reporting success.",
     "- NEVER fabricate file paths or claim files were created without verification.",
     "- For interactive/blocking commands (SSH, dev servers, debuggers, REPLs), use term-cli to run them in background tmux sessions instead of blocking Bash.",
+    "- If you lack a tool required to complete this task, you may request access to one by outputting ONLY: [REQUEST_TOOL: description of what you need to do]. Do NOT output anything else if you request a tool.",
     ""
   );
 

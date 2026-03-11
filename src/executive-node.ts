@@ -630,6 +630,7 @@ async function main() {
 
   // Delegation poller (COO only)
   let delegationPollInterval: ReturnType<typeof setInterval> | null = null;
+  let delegationErrorLastLogged = 0;
   if (role === "coo") {
     delegationPollInterval = setInterval(async () => {
       if (!running) return;
@@ -656,7 +657,12 @@ async function main() {
           }
         }
       } catch (err) {
-        emit({ type: "error", level: "error", execRole: role, data: { message: "Delegation poll error", module: "exec-node", error: String(err) } });
+        // Throttle: only log once per 60s to avoid spamming the dashboard
+        const now = Date.now();
+        if (!delegationErrorLastLogged || now - delegationErrorLastLogged > 60000) {
+          delegationErrorLastLogged = now;
+          emit({ type: "error", level: "warn", execRole: role, data: { message: "Delegation poll error (throttled)", module: "exec-node", error: String(err) } });
+        }
       }
     }, 3000);
   }

@@ -786,6 +786,8 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
     const mcp2cliEnabled = process.env.MCP2CLI_ENABLED !== "false" && (await isMcp2cliAvailable());
     const useMcp2cli = mcp2cliEnabled && !noMcp && !!mcpConfigPath;
 
+    const traceId = crypto.randomUUID();
+
     const result: AIProviderResult = await provider.call({
       prompt,
       model: resolvedModel,
@@ -793,7 +795,32 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
       useMcp2cli,
       noMcp,
       outputFormat: "json",
+      userId,
+      traceId,
     });
+
+    // Async logging of the trace to DB (no await)
+    if (userId) {
+      (async () => {
+        try {
+          supabase.saveLlmTrace({
+            trace_id: traceId,
+            user_id: userId,
+            provider: result.provider,
+            model: result.model,
+            prompt, // Scrubbing sensitive info could be added here
+            response: result.text,
+            input_tokens: result.usage?.input_tokens || 0,
+            output_tokens: result.usage?.output_tokens || 0,
+            cost_usd: result.cost_usd || 0,
+            duration_ms: result.duration_ms,
+            metadata: { hint, reason },
+          });
+        } catch (e) {
+          console.error("[tracing] Failed to log trace:", e);
+        }
+      })();
+    }
 
     // Record stats
     recordCall(true, result.model, result.duration_ms, false);
