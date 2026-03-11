@@ -2261,11 +2261,16 @@ document.querySelectorAll('.event-filter-btn').forEach(btn => {
 
 // Activity polling — dashboard runs as separate process, so poll the shared DB
 function normalizeEvent(ev) {
-  // DB rows have event/metadata/user_id; normalize to type/data/userId
+  // DB rows have event/metadata/user_id; normalize to type/data/userId/agentSlug/execRole
   if (ev.event && !ev.type) ev.type = ev.event;
   if (ev.user_id && !ev.userId) ev.userId = ev.user_id;
   if (ev.metadata && !ev.data) {
     try { ev.data = typeof ev.metadata === 'string' ? JSON.parse(ev.metadata) : ev.metadata; } catch {}
+  }
+  // Extract agentSlug and execRole from data (stored inside metadata JSON by events.ts)
+  if (ev.data) {
+    if (ev.data.agentSlug && !ev.agentSlug) ev.agentSlug = ev.data.agentSlug;
+    if (ev.data.execRole && !ev.execRole) ev.execRole = ev.data.execRole;
   }
   return ev;
 }
