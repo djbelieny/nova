@@ -16,8 +16,8 @@ import { emit } from "./events.ts";
 // Constants
 // ============================================================
 
-const ALL_EXEC_ROLES = ["ceo", "cfo", "cmo", "cto", "coo", "research", "critic"];
-const NON_CRITIC_ROLES = ["ceo", "cfo", "cmo", "cto", "coo", "research"];
+const ALL_EXEC_ROLES = ["ceo", "cfo", "cmo", "cto", "research", "critic"];  // COO excluded — delegates only
+const NON_CRITIC_ROLES = ["ceo", "cfo", "cmo", "cto", "research"];
 const CRITIC_ROLE = "critic";
 const POLL_INTERVAL = 3000;
 const PHASE1_TIMEOUT = 5 * 60 * 1000;

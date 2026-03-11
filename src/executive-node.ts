@@ -600,8 +600,13 @@ async function main() {
   }, 3000);
 
   // Board session poller — contribute to board discussions
+  // Stagger poll start per role so execs don't all spawn AI processes simultaneously.
+  // Each role gets a different delay offset (0-50s) to spread load across time.
+  const BOARD_ROLE_DELAY: Record<string, number> = {
+    research: 0, ceo: 10_000, cfo: 20_000, cmo: 30_000, cto: 40_000, critic: 50_000, coo: 0,
+  };
   const boardSessionsInProgress = new Set<string>();
-  const boardPollInterval = setInterval(async () => {
+  const boardPollTick = async () => {
     if (!running) return;
     try {
       const sessions = await comms.getPendingSessions();
@@ -649,7 +654,14 @@ async function main() {
     } catch (err) {
       emit({ type: "error", level: "error", execRole: role, data: { message: "Board session poll error", module: "exec-node", error: String(err) } });
     }
-  }, 10_000);  // 10s instead of 3s — reduces Supabase polling load
+  };
+  // Staggered start, then poll every 15s
+  const roleDelay = BOARD_ROLE_DELAY[role] ?? 0;
+  let boardPollInterval: ReturnType<typeof setInterval> | null = null;
+  setTimeout(() => {
+    boardPollTick();
+    boardPollInterval = setInterval(boardPollTick, 15_000);
+  }, roleDelay);
 
   // Delegation poller (COO only)
   let delegationPollInterval: ReturnType<typeof setInterval> | null = null;
@@ -710,7 +722,7 @@ async function main() {
     emit({ type: "exec.message", level: "info", execRole: role, data: { message: `${signal} received. Shutting down ${execDef.name}...`, module: "exec-node" } });
 
     clearInterval(messagePollInterval);
-    clearInterval(boardPollInterval);
+    if (boardPollInterval) clearInterval(boardPollInterval);
     if (delegationPollInterval) clearInterval(delegationPollInterval);
     clearInterval(heartbeatInterval);
 
