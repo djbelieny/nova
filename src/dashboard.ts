@@ -120,8 +120,9 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
       callAI: dashboardCallAI,
       comms,
       sendMessage: async (chatId: string | number, text: string) => {
-        // Route board messages back to the web chat via SSE
+        // Route board messages back to the web chat — persist + SSE
         const userId = String(chatId).replace("web-", "");
+        supabase.saveMessage({ role: "assistant", content: text, user_id: userId, channel: "web" });
         emit({ type: "chat.reply", level: "info", data: { messageId: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, text, userId }, userId });
       },
     });
