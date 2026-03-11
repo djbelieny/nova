@@ -18,6 +18,8 @@ import { orchestrate, initOrchestrator, type WebContext } from "./orchestrator.t
 import { transcribe } from "./transcribe.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { registerProvider, getProvider } from "./ai-provider.ts";
+import { ExecComms } from "./exec-comms.ts";
+import { initBoard, conveneBoard, startBoardPoller } from "./board.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -104,6 +106,33 @@ initOrchestrator({
   novaDir: NOVA_DIR,
   supabase,
 });
+
+// ============================================================
+// BOARD MODULE — executive board meetings via Supabase
+// ============================================================
+
+let _boardAvailable = false;
+
+if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+  try {
+    const comms = new ExecComms("nova");
+    initBoard({
+      callAI: dashboardCallAI,
+      comms,
+      sendMessage: async (chatId: string | number, text: string) => {
+        // Route board messages back to the web chat via SSE
+        const userId = String(chatId).replace("web-", "");
+        emit({ type: "chat.reply", level: "info", data: { messageId: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`, text, userId }, userId });
+      },
+    });
+    comms.registerNode(process.env.NODE_HOST || "dashboard").catch(() => {});
+    startBoardPoller();
+    _boardAvailable = true;
+    console.log("[dashboard] Board module initialized");
+  } catch (e: any) {
+    console.warn("[dashboard] Board module failed to initialize:", e.message);
+  }
+}
 
 // ============================================================
 // AUTH — cookie-based session login
@@ -974,8 +1003,24 @@ async function handleChat(req: Request): Promise<Response> {
       (ctx as any)._webAttachments = attachments;
     }
 
-    // Save user message and call orchestrator (async — response comes via SSE)
+    // Save user message
     supabase.saveMessage({ role: "user", content: messageText, user_id: userId, channel: "web" });
+
+    // Handle /board command — convene executive board meeting
+    if (messageText.startsWith("/board ") && _boardAvailable) {
+      const question = messageText.substring(7).trim();
+      if (!question) {
+        await ctx.reply("Usage: /board <strategic question>");
+      } else {
+        conveneBoard(question, user.id, ctx.chatId).catch((err: Error) => {
+          console.error("[dashboard] Board error:", err);
+          ctx.reply("Failed to convene board meeting. Check logs.");
+        });
+      }
+      return jsonResponse({ success: true });
+    }
+
+    // Normal orchestration (async — response comes via SSE)
     orchestrate(ctx as any, messageText, user, supabase);
 
     return jsonResponse({ success: true });
@@ -2093,6 +2138,16 @@ document.querySelectorAll('.event-filter-btn').forEach(btn => {
 });
 
 // Activity polling — dashboard runs as separate process, so poll the shared DB
+function normalizeEvent(ev) {
+  // DB rows have event/metadata/user_id; normalize to type/data/userId
+  if (ev.event && !ev.type) ev.type = ev.event;
+  if (ev.user_id && !ev.userId) ev.userId = ev.user_id;
+  if (ev.metadata && !ev.data) {
+    try { ev.data = typeof ev.metadata === 'string' ? JSON.parse(ev.metadata) : ev.metadata; } catch {}
+  }
+  return ev;
+}
+
 async function loadActivityPoll() {
   try {
     const lastTs = activityEvents.length > 0 ? activityEvents[activityEvents.length-1].created_at : null;
@@ -2101,7 +2156,7 @@ async function loadActivityPoll() {
     const data = await r.json();
     if (Array.isArray(data) && data.length > 0) {
       const newEvents = lastTs ? data.reverse() : data.reverse();
-      for (const ev of newEvents) addEvent(ev);
+      for (const ev of newEvents) addEvent(normalizeEvent(ev));
       if (!sseConnected) {
         sseConnected = true;
         $('sse-badge').textContent = 'LIVE';
@@ -2121,7 +2176,7 @@ async function loadActivityPoll() {
     const r = await fetch(BASE + '/api/activity?limit=50');
     const data = await r.json();
     if (Array.isArray(data)) {
-      activityEvents = data.reverse();
+      activityEvents = data.reverse().map(normalizeEvent);
       renderEventStream();
       sseConnected = true;
       $('sse-badge').textContent = 'LIVE';
