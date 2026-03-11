@@ -933,6 +933,21 @@ async function handlePin(body: string): Promise<Response> {
   return twiml(retryGather);
 }
 
+async function handleStreamRequest(body: string): Promise<Response> {
+  const params = parseFormBody(body);
+  const callSid = params.CallSid || "unknown";
+  
+  // Convert http:// or https:// to ws:// or wss:// for the stream URL
+  const wsUrl = VOICE_SERVER_URL.replace(/^http/, "ws") + "/voice/media-stream";
+  
+  return twiml(`
+    <Say voice="Polly.Joanna">Connecting to Nova's live stream. This is a beta feature for real-time conversation.</Say>
+    <Connect>
+      <Stream url="${wsUrl}" />
+    </Connect>
+  `);
+}
+
 async function handleGather(body: string): Promise<Response> {
   const params = parseFormBody(body);
   const callSid = params.CallSid || "unknown";
@@ -1106,9 +1121,14 @@ function handleAudio(id: string): Response {
 
 const server = Bun.serve({
   port: PORT,
-  async fetch(req) {
+  async fetch(req, server) {
     const url = new URL(req.url);
     const path = url.pathname;
+
+    // Upgrade to WebSocket for Media Streams
+    if (path === "/voice/media-stream") {
+      if (server.upgrade(req)) return;
+    }
 
     // Health check
     if (path === "/health" && req.method === "GET") {
@@ -1135,7 +1155,7 @@ const server = Bun.serve({
       const body = await req.text();
 
       // Verify Twilio signature on all webhook endpoints
-      const twilioRoutes = ["/voice/incoming", "/voice/outgoing", "/voice/pin", "/voice/gather", "/voice/status", "/sms/incoming"];
+      const twilioRoutes = ["/voice/incoming", "/voice/outgoing", "/voice/pin", "/voice/gather", "/voice/status", "/sms/incoming", "/voice/stream"];
       if (twilioRoutes.includes(path)) {
         const signature = req.headers.get("X-Twilio-Signature") || "";
         const params = parseFormBody(body);
@@ -1148,6 +1168,7 @@ const server = Bun.serve({
       }
 
       if (path === "/voice/incoming") return handleIncoming(body);
+      if (path === "/voice/stream") return handleStreamRequest(body);
       if (path === "/voice/outgoing") return handleOutgoing(body);
       if (path === "/voice/pin") return handlePin(body);
       if (path === "/voice/gather") return handleGather(body);
@@ -1157,6 +1178,28 @@ const server = Bun.serve({
 
     return new Response("Not found", { status: 404 });
   },
+  websocket: {
+    async open(ws) {
+      console.log("[ws] Stream connected");
+    },
+    async message(ws, message) {
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.event === "start") {
+          console.log(`[ws] Stream started: ${data.start.streamSid}`);
+        }
+        if (data.event === "media") {
+          // Binary audio payload from Twilio (mulaw/8000)
+          // Here we would run VAD and send to STT
+        }
+      } catch (e) {
+        console.error("[ws] Failed to parse message:", e);
+      }
+    },
+    async close(ws) {
+      console.log("[ws] Stream closed");
+    }
+  }
 });
 
 console.log(`Nova Voice Server running on port ${PORT}`);

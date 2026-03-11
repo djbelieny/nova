@@ -203,10 +203,12 @@ export async function getMemoryContext(
     const goals = db.getActiveGoals(userId);
 
     const parts: string[] = [];
+    const idsToUpdate: string[] = [];
 
     if (facts?.length) {
       // Cap at 50 facts to prevent unbounded growth
       const capped = facts.slice(0, 50);
+      capped.forEach((f: any) => idsToUpdate.push(f.id));
       const suffix = facts.length > 50
         ? `\n[...${facts.length - 50} more facts truncated...]`
         : "";
@@ -217,6 +219,7 @@ export async function getMemoryContext(
     }
 
     if (goals?.length) {
+      goals.forEach((g: any) => idsToUpdate.push(g.id));
       parts.push(
         "GOALS:\n" +
           goals
@@ -228,6 +231,10 @@ export async function getMemoryContext(
             })
             .join("\n")
       );
+    }
+
+    if (idsToUpdate.length > 0) {
+      db.updateMultipleMemoryAccessTimes(idsToUpdate);
     }
 
     return parts.join("\n\n");

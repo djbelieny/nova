@@ -23,7 +23,7 @@
 import type { Database } from "./db.ts";
 import { stat } from "fs/promises";
 import type { ExecutionPlan } from "./patterns.ts";
-import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents } from "./agent-router.ts";
+import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents, queryToolRegistry, getToolInstructions } from "./agent-router.ts";
 import { emit } from "./events.ts";
 
 type ModelTier = "haiku" | "sonnet" | "opus";
@@ -54,7 +54,7 @@ export interface SubtaskResult {
   artifacts: Artifact[];
 }
 
-export type ProgressCallback = (index: number, status: "started" | "completed" | "failed") => void;
+export type ProgressCallback = (index: number, status: "started" | "completed" | "failed" | "healing") => void;
 
 /**
  * Determine if a subtask description implies it should produce artifacts.
@@ -541,12 +541,14 @@ export async function executePhase(
       break;
     }
 
-    // Execute ready subtasks in parallel
+        // Execute ready subtasks in parallel
     const batchResults = await Promise.all(
       ready.map(async (idx) => {
         const subtask = plan.subtasks[idx];
         const agentSlug = subtask.agent || "general";
+        const reviewAgentSlug = subtask.reviewAgent;
 
+        try {
         if (db && subtaskIds[idx]) {
           db.updateTask(subtaskIds[idx]!, { status: "in_progress" });
         }
@@ -567,92 +569,162 @@ export async function executePhase(
           ? (depContext ? depContext + artifactContext : artifactContext)
           : depContext;
 
-        // Build the prompt — specialist agent or generic
         const basePrompt = _buildPrompt(
           user,
           `${fullDepContext ? `Context from prior steps:\n${fullDepContext}\n\n` : ""}Task: ${subtask.description}`,
         );
 
-        const prompt = buildAgentPrompt(
-          agentSlug,
-          subtask.description,
-          basePrompt,
-          fullDepContext || undefined,
-          phase,
-          workspaceDir,
-          user?.timezone
-        );
+        let attempts = 0;
+        const maxAttempts = 3;
+        let lastResult = "";
+        let lastArtifacts: Artifact[] = [];
+        let criticism = "";
+        let dynamicTools = "";
 
-        emit({ type: "agent.dispatched", level: "info", agentSlug, data: { message: `Executing subtask ${idx} via ${agentSlug} [${phase}]: ${subtask.description.substring(0, 50)}`, description: subtask.description, phase, subtaskIndex: idx, module: "planner" } });
-        onProgress?.(idx, "started");
+        while (attempts < maxAttempts) {
+          attempts++;
+          const isRetry = attempts > 1;
+          
+          const prompt = buildAgentPrompt(
+            agentSlug,
+            subtask.description,
+            basePrompt + (criticism ? `\n\nYOUR PREVIOUS ATTEMPT FAILED. CRITICISM:\n${criticism}\n\nFix these issues and try again.` : "") + (dynamicTools ? `\n\nDYNAMICALLY LOADED TOOLS:\n${dynamicTools}` : ""),
+            fullDepContext || undefined,
+            phase,
+            workspaceDir,
+            undefined,
+            undefined,
+            user?.timezone
+          );
 
-        try {
-          const routingHint = `${agentSlug} ${subtask.description}`;
-          let result = await _callClaude(prompt, undefined, user?.id, routingHint);
+          emit({ type: "agent.dispatched", level: "info", agentSlug, data: { message: `Executing subtask ${idx} via ${agentSlug} [${phase}] (attempt ${attempts}/${maxAttempts}): ${subtask.description.substring(0, 50)}`, description: subtask.description, phase, subtaskIndex: idx, module: "planner", attempt: attempts } });
+          if (attempts === 1) onProgress?.(idx, "started");
+          else onProgress?.(idx, "healing");
 
-          // Extract artifacts from the result
-          let artifacts = extractArtifacts(result, idx);
+          try {
+            const routingHint = `${agentSlug} ${subtask.description}`;
+            // Increase temperature slightly on retries to encourage different output
+            // Note: _callClaude doesn't currently accept temperature, but we can append a hint
+            const retryHint = isRetry ? "\n\n(Retry: be creative and avoid previous mistakes)" : "";
+            
+            let result = await _callClaude(prompt + retryHint, isRetry ? "sonnet" : undefined, user?.id, routingHint);
 
-          // Artifact validation: if the description implies deliverables but none were tagged, retry once
-          if (phase === "prepare" && artifacts.length === 0 && shouldExpectArtifacts(subtask.description)) {
-            emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) expected artifacts but produced none — retrying with explicit instruction`, subtaskIndex: idx, module: "planner" } });
-            const retryPrompt = prompt + `\n\nCRITICAL: Your previous attempt produced no [ARTIFACT:] tags. You MUST tag every deliverable you create:\n- Images: [ARTIFACT: image | /path/to/file.png]\n- Copy/text: [ARTIFACT: copy | "the text content"]\n- Files: [ARTIFACT: file | /path/to/file]\n- Data: [ARTIFACT: data | key finding]\nDo NOT describe what you would do — actually do it and tag the outputs.`;
-            result = await _callClaude(retryPrompt, undefined, user?.id, routingHint);
-            artifacts = extractArtifacts(result, idx);
-            if (artifacts.length === 0) {
-              emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx} still produced no artifacts after retry`, subtaskIndex: idx, module: "planner" } });
+            // DYNAMIC TOOL DISCOVERY
+            if (result.includes("[REQUEST_TOOL:")) {
+              const toolDescription = result.match(/\[REQUEST_TOOL:\s*(.+?)\]/)?.[1];
+              if (toolDescription) {
+                emit({ type: "agent.progress", level: "info", agentSlug, data: { message: `Subtask ${idx}: Agent requested tool for "${toolDescription.substring(0, 50)}"...`, subtaskIndex: idx, module: "planner" } });
+                const toolMatch = queryToolRegistry(toolDescription);
+                if (toolMatch) {
+                  const instructions = getToolInstructions(toolMatch.name);
+                  if (instructions) {
+                    emit({ type: "agent.progress", level: "info", agentSlug, data: { message: `Subtask ${idx}: Dynamically loading tool "${toolMatch.name}"`, tool: toolMatch.name, subtaskIndex: idx, module: "planner" } });
+                    dynamicTools += `\n- ${toolMatch.name}: ${instructions}`;
+                    criticism = `You have been granted access to the tool: ${toolMatch.name}. Use it to complete the task.`;
+                    continue; // Retry with new tool
+                  }
+                }
+                emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx}: No matching tool found for "${toolDescription.substring(0, 50)}"`, subtaskIndex: idx, module: "planner" } });
+                criticism = `No tool found matching your request for "${toolDescription}". Try to complete the task with your existing tools or explain why it is impossible.`;
+                continue; // Retry with rejection
+              }
             }
-          }
 
-          // Verify file artifacts exist on disk
-          if (artifacts.length > 0) {
-            const verification = await verifyAndRegisterArtifacts(
-              subtaskIds[idx],
-              user.id,
+            // Extract artifacts from the result
+            let artifacts = extractArtifacts(result, idx);
+
+            // Artifact validation
+            if (phase === "prepare" && artifacts.length === 0 && shouldExpectArtifacts(subtask.description)) {
+              emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) expected artifacts but produced none — triggering self-healing`, subtaskIndex: idx, module: "planner" } });
+              criticism = "You failed to produce any [ARTIFACT:] tags. You MUST tag every deliverable you create (images, copy, files, data). Do NOT just describe it.";
+              continue; // Retry
+            }
+
+            // Verify file artifacts exist on disk
+            if (artifacts.length > 0) {
+              const verification = await verifyAndRegisterArtifacts(subtaskIds[idx], user.id, artifacts, db);
+              if (verification.missing.length > 0) {
+                const warning = `File(s) not found on disk: ${verification.missing.join(", ")}`;
+                emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx}: ${warning}`, subtaskIndex: idx, module: "planner" } });
+                criticism = `The following files you claimed to create were not found: ${verification.missing.join(", ")}. Ensure you actually write the files to the workspace.`;
+                continue; // Retry
+              }
+            }
+
+            // PEER REVIEW
+            if (reviewAgentSlug) {
+              emit({ type: "agent.progress", level: "info", agentSlug: reviewAgentSlug, data: { message: `Peer reviewing subtask ${idx} output via ${reviewAgentSlug}...`, subtaskIndex: idx, module: "planner" } });
+              
+              const reviewPrompt = `You are the ${reviewAgentSlug} reviewing work done by the ${agentSlug}.
+              
+ORIGINAL TASK: ${subtask.description}
+AGENT OUTPUT:
+${result}
+
+Critically evaluate this output. Does it fully satisfy the task? Is it accurate?
+If it is good, respond with ONLY "[APPROVED]".
+If it has issues, respond with "[REJECTED: reason for rejection]".`;
+
+              const reviewResult = await _callClaude(reviewPrompt, "haiku", user?.id, `review ${reviewAgentSlug}`);
+              
+              if (reviewResult.includes("[REJECTED:")) {
+                const reason = reviewResult.match(/\[REJECTED:\s*(.+?)\]/)?.[1] || "Rejected by reviewer";
+                emit({ type: "agent.progress", level: "warn", agentSlug: reviewAgentSlug, data: { message: `Subtask ${idx} REJECTED by ${reviewAgentSlug}: ${reason}`, subtaskIndex: idx, module: "planner" } });
+                criticism = `Your output was REJECTED by the ${reviewAgentSlug} for the following reason: ${reason}`;
+                continue; // Retry
+              } else {
+                emit({ type: "agent.progress", level: "info", agentSlug: reviewAgentSlug, data: { message: `Subtask ${idx} APPROVED by ${reviewAgentSlug}`, subtaskIndex: idx, module: "planner" } });
+              }
+            }
+
+            // Success!
+            if (db && subtaskIds[idx]) {
+              db.updateTask(subtaskIds[idx]!, { status: "completed", result: result.substring(0, 500) });
+            }
+            onProgress?.(idx, "completed");
+
+            return {
+              index: idx,
+              description: subtask.description,
+              agent: subtask.agent,
+              result,
+              success: true,
               artifacts,
-              db,
-            );
-            if (verification.missing.length > 0) {
-              const warning = `\nWARNING: ${verification.missing.length} file(s) not found on disk: ${verification.missing.join(", ")}`;
-              result += warning;
-              emit({ type: "agent.progress", level: "warn", agentSlug, data: { message: `Subtask ${idx}: ${warning.trim()}`, subtaskIndex: idx, module: "planner" } });
-            }
+            };
+
+          } catch (error) {
+            emit({ type: "agent.progress", level: "error", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) error on attempt ${attempts}: ${error}`, subtaskIndex: idx, module: "planner" } });
+            criticism = `Your last attempt threw an error: ${error}`;
+            if (attempts >= maxAttempts) throw error;
           }
-
-          if (db && subtaskIds[idx]) {
-            db.updateTask(subtaskIds[idx]!, { status: "completed", result: result.substring(0, 500) });
-          }
-
-          onProgress?.(idx, "completed");
-
-          return {
-            index: idx,
-            description: subtask.description,
-            agent: subtask.agent,
-            result,
-            success: true,
-            artifacts,
-          };
-        } catch (error) {
-          emit({ type: "agent.completed", level: "error", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) error: ${error}`, success: false, subtaskIndex: idx, module: "planner" } });
-
-          if (db && subtaskIds[idx]) {
-            db.updateTask(subtaskIds[idx]!, { status: "blocked", result: String(error) });
-          }
-
-          onProgress?.(idx, "failed");
-
-          return {
-            index: idx,
-            description: subtask.description,
-            agent: subtask.agent,
-            result: `Error: ${error}`,
-            success: false,
-            artifacts: [],
-          };
         }
-      })
-    );
+
+        // If we get here, we exhausted retries
+        throw new Error(`Subtask ${idx} failed after ${maxAttempts} attempts. Last error: ${criticism}`);
+
+      } catch (finalError) {
+        const subtask = plan.subtasks[idx];
+        const agentSlug = subtask.agent || "general";
+        
+        emit({ type: "agent.completed", level: "error", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) final failure: ${finalError}`, success: false, subtaskIndex: idx, module: "planner" } });
+
+        if (db && subtaskIds[idx]) {
+          db.updateTask(subtaskIds[idx]!, { status: "blocked", result: String(finalError) });
+        }
+
+        onProgress?.(idx, "failed");
+
+        return {
+          index: idx,
+          description: subtask.description,
+          agent: subtask.agent,
+          result: `Final Error: ${finalError}`,
+          success: false,
+          artifacts: [],
+        };
+      }
+    })
+  );
 
     for (const r of batchResults) {
       results.push(r);

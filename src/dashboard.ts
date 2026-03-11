@@ -9,11 +9,13 @@
  */
 
 import "dotenv/config";
-import { readFile, readdir, stat } from "fs/promises";
-import { join, dirname } from "path";
+import { readFile, readdir, stat, writeFile, mkdir, unlink } from "fs/promises";
+import { join, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { getDb, type Database } from "./db.ts";
-import { createSSEStream, getActiveAgents, getSSEConnectionCount, initEventBus } from "./events.ts";
+import { createSSEStream, getActiveAgents, getSSEConnectionCount, initEventBus, emit } from "./events.ts";
+import { orchestrate, type WebContext } from "./orchestrator.ts";
+import { transcribe } from "./transcribe.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -800,6 +802,151 @@ async function getAgentTasks(userId?: string): Promise<unknown> {
   }
 }
 
+async function getApprovals(userId?: string): Promise<unknown> {
+  try {
+    const data = supabase.getPendingApprovals(userId || "");
+    return { approvals: data || [] };
+  } catch (e: any) {
+    return { approvals: [], error: e.message };
+  }
+}
+
+async function resolveApproval(id: string, action: string, feedback?: string): Promise<unknown> {
+  try {
+    const statusMap: any = { approve: "approved", cancel: "cancelled", revise: "revised" };
+    const status = statusMap[action];
+    if (!status) throw new Error("Invalid action");
+    
+    supabase.updateApprovalStatus(id, status, feedback || null);
+    
+    // Note: The actual execution of approved tasks is handled by the orchestrator polling
+    // or by the bot process if it receives an event.
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+async function getAllMemory(userId?: string): Promise<unknown> {
+  try {
+    // getMemoryForDashboard returns 100 recent entries across all types
+    const data = supabase.getMemoryForDashboard({ userId });
+    return { memory: data || [] };
+  } catch (e: any) {
+    return { memory: [], error: e.message };
+  }
+}
+
+async function deleteMemory(id: string): Promise<unknown> {
+  try {
+    supabase.deleteMemoryEntries([id]);
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+async function updateMemory(id: string, updates: any): Promise<unknown> {
+  try {
+    // We need a generic updateMemory method in Database class
+    supabase.updateMemory(id, updates);
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+async function getLlmTraces(userId?: string, limit = 50): Promise<unknown> {
+  try {
+    let sql = `SELECT * FROM llm_traces`;
+    const params: any[] = [];
+    if (userId) {
+      sql += ` WHERE user_id = ?`;
+      params.push(userId);
+    }
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(limit);
+    const rows = supabase.raw.query(sql).all(...params);
+    return { traces: rows || [] };
+  } catch (e: any) {
+    return { traces: [], error: e.message };
+  }
+}
+
+async function handleChat(req: Request): Promise<Response> {
+  try {
+    const body = await req.json();
+    const { text, userId, attachments } = body;
+    if (!text && (!attachments || !attachments.length)) throw new Error("Empty message");
+
+    const user = supabase.getUserById(userId);
+    if (!user) throw new Error("User not found");
+
+    // Build WebContext for orchestrator
+    const ctx: WebContext = {
+      userId: user.id,
+      chatId: `web-${user.id}`,
+      reply: async (replyText: string, options?: any) => {
+        // Send reply back via event bus so UI can see it live
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        emit({ type: "chat.reply", level: "info", data: { messageId, text: replyText, userId: user.id, options }, userId: user.id });
+        return { message_id: messageId };
+      }
+    };
+
+    // Inject attachments if any (would need coordination with how orchestrator handles them)
+    if (attachments && attachments.length > 0) {
+      (ctx as any)._webAttachments = attachments;
+    }
+
+    // Call orchestrator (async)
+    orchestrate(ctx as any, text, user, supabase);
+
+    return jsonResponse({ success: true });
+  } catch (e: any) {
+    return jsonResponse({ success: false, error: e.message }, 400);
+  }
+}
+
+async function handleUpload(req: Request): Promise<Response> {
+  try {
+    const formData = await req.formData();
+    const file = formData.get("file") as File;
+    const userId = formData.get("userId") as string;
+    if (!file || !userId) throw new Error("Missing file or userId");
+
+    const uploadsDir = join(NOVA_DIR, "uploads");
+    await mkdir(uploadsDir, { recursive: true });
+
+    const fileName = `${Date.now()}-${basename(file.name)}`;
+    const filePath = join(uploadsDir, fileName);
+    await writeFile(filePath, Buffer.from(await file.arrayBuffer()));
+
+    return jsonResponse({ success: true, fileName, filePath, originalName: file.name });
+  } catch (e: any) {
+    return jsonResponse({ success: false, error: e.message }, 400);
+  }
+}
+
+async function handleTranscribe(req: Request): Promise<Response> {
+  try {
+    const formData = await req.formData();
+    const audioFile = formData.get("audio") as File;
+    if (!audioFile) throw new Error("Missing audio file");
+
+    const tempPath = join(NOVA_DIR, "temp", `voice-${Date.now()}.webm`);
+    await mkdir(join(NOVA_DIR, "temp"), { recursive: true });
+    await writeFile(tempPath, Buffer.from(await audioFile.arrayBuffer()));
+
+    const text = await transcribe(tempPath);
+    await unlink(tempPath).catch(() => {});
+
+    return jsonResponse({ success: true, text });
+  } catch (e: any) {
+    return jsonResponse({ success: false, error: e.message }, 400);
+  }
+}
+
 // ============================================================
 // EXECUTIVE & AGENT CATALOG HANDLERS
 // ============================================================
@@ -983,6 +1130,8 @@ function renderDashboard(): string {
   @keyframes orbit-pulse { 0%,100% { opacity: 0.15; } 50% { opacity: 0.3; } }
   @keyframes particle-move { 0% { offset-distance: 0%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
   @keyframes flash-node { 0% { r: 20; opacity: 0.8; } 100% { r: 35; opacity: 0; } }
+  @keyframes halo-pulse { 0% { opacity: 0.7; } 50% { opacity: 0.3; } 100% { opacity: 0.7; } }
+  @keyframes halo-expand { 0% { r: 18; opacity: 0.6; } 100% { r: 32; opacity: 0; } }
   @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
   .blink { animation: blink 1.5s infinite; }
 
@@ -1338,6 +1487,42 @@ function renderDashboard(): string {
   }
   select:focus, input[type="text"]:focus { outline: none; border-color: var(--indigo); }
 
+  .chat-bubble {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    position: relative;
+    word-break: break-word;
+  }
+  .chat-bubble.user {
+    align-self: flex-end;
+    background: var(--indigo);
+    color: #fff;
+    border-bottom-right-radius: 2px;
+  }
+  .chat-bubble.assistant {
+    align-self: flex-start;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    color: var(--text);
+    border-bottom-left-radius: 2px;
+  }
+  .chat-attachment {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .chat-attachment button {
+    background: none; border: none; color: var(--error); cursor: pointer; padding: 0 2px;
+  }
+
   /* Responsive */
   @media (max-width: 1100px) {
     .main-layout { grid-template-columns: 1fr; }
@@ -1391,7 +1576,14 @@ function renderDashboard(): string {
       <div class="stat-row">Today: $<span class="stat-val" id="stat-cost">0.00</span></div>
     </div>
     <div class="orbital-container">
-      <svg id="orbital-svg" class="orbital-svg" viewBox="0 0 800 800"></svg>
+      <svg id="orbital-svg" class="orbital-svg" viewBox="0 0 800 800">
+        <defs>
+          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="blur"/>
+            <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+      </svg>
     </div>
   </div>
 
@@ -1427,20 +1619,40 @@ function renderDashboard(): string {
 <!-- BOTTOM DOCK -->
 <div class="bottom-dock collapsed" id="bottom-dock">
   <div class="dock-tabs">
-    <button class="dock-tab active" data-panel="messages-dock">Messages</button>
+    <button class="dock-tab active" data-panel="chat-dock">Chat</button>
+    <button class="dock-tab" data-panel="messages-dock">History</button>
     <button class="dock-tab" data-panel="agent-tasks-dock">Agent Tasks</button>
     <button class="dock-tab" data-panel="costs-dock">Costs</button>
+    <button class="dock-tab" data-panel="approvals-dock">Approvals</button>
     <button class="dock-tab" data-panel="memory-dock">Memory</button>
+    <button class="dock-tab" data-panel="traces-dock">Traces</button>
     <button class="dock-tab" data-panel="logs-dock">Logs</button>
     <button class="dock-tab" data-panel="resources-dock">Resources</button>
     <button class="dock-tab" data-panel="skills-dock">Skills</button>
     <button class="dock-toggle" id="dock-toggle">&#9650;</button>
   </div>
   <div class="dock-content">
-    <div class="dock-panel active" id="messages-dock"></div>
+    <div class="dock-panel active" id="chat-dock">
+      <div id="chat-messages" style="height: calc(45vh - 120px); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="color: var(--text-dim); text-align: center; margin-top: 20px;">Select a user to start chatting</div>
+      </div>
+      <div id="chat-input-container" style="border-top: 1px solid var(--glass-border); padding: 10px; display: flex; align-items: flex-end; gap: 8px;">
+        <div style="flex: 1; position: relative;">
+          <textarea id="chat-input" placeholder="Type a message or paste an image..." style="width: 100%; background: var(--glass); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13px; resize: none; min-height: 40px; max-height: 150px; outline: none;"></textarea>
+          <div id="chat-attachments" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;"></div>
+        </div>
+        <button id="chat-upload-btn" class="event-filter-btn" title="Upload File" style="padding: 8px;"><u style="text-decoration: none;">📎</u></button>
+        <button id="chat-voice-btn" class="event-filter-btn" title="Record Voice" style="padding: 8px;"><u style="text-decoration: none;">🎙️</u></button>
+        <button id="chat-send-btn" class="event-filter-btn" style="background: var(--indigo); color: #fff; padding: 8px 16px; border-color: var(--indigo);">Send</button>
+      </div>
+      <input type="file" id="chat-file-input" style="display: none;" multiple>
+    </div>
+    <div class="dock-panel" id="messages-dock"></div>
     <div class="dock-panel" id="agent-tasks-dock"></div>
     <div class="dock-panel" id="costs-dock"></div>
+    <div class="dock-panel" id="approvals-dock"></div>
     <div class="dock-panel" id="memory-dock"></div>
+    <div class="dock-panel" id="traces-dock"></div>
     <div class="dock-panel" id="logs-dock"></div>
     <div class="dock-panel" id="resources-dock"></div>
     <div class="dock-panel" id="skills-dock"></div>
@@ -1483,7 +1695,7 @@ function drawOrbital() {
   const cx = 400, cy = 400;
   const innerR = 130, outerR = 290;
 
-  let html = '';
+  let html = '<defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>';
   // Background rings
   html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+innerR+'" class="orbital-ring" style="animation:orbit-pulse 4s infinite"/>';
   html += '<circle cx="'+cx+'" cy="'+cy+'" r="'+outerR+'" class="orbital-ring" style="animation:orbit-pulse 4s infinite 2s"/>';
@@ -1695,16 +1907,97 @@ function addEvent(ev) {
   flashOrbitalNode(ev);
 }
 
+// Track which nodes have active halos so we can manage them
+const activeHalos = new Map(); // key -> timeout
+
 function flashOrbitalNode(ev) {
-  const type = ev.type || '';
+  const type = ev.type || ev.event || '';
   const slug = ev.agentSlug || ev.data?.agentSlug || '';
-  if (!slug) return;
-  const node = document.querySelector('[data-slug="'+slug+'"]');
-  if (node) {
-    node.style.opacity = '1';
-    node.style.transition = 'opacity 0.1s';
-    setTimeout(() => { node.style.opacity = ''; node.style.transition = ''; }, 1500);
+  const execRole = ev.execRole || ev.data?.execRole || '';
+
+  // Try agent match
+  if (slug) {
+    const node = document.querySelector('[data-slug="'+slug+'"]');
+    if (node) addHaloToNode(node, slug, hashColor(slug));
   }
+
+  // Try exec match
+  if (execRole) {
+    const node = document.querySelector('[data-role="'+execRole+'"]');
+    if (node) addHaloToNode(node, 'exec-'+execRole, EXEC_COLORS[execRole] || '#888');
+  }
+
+  // Board events light up all execs
+  if (type.startsWith('board.')) {
+    document.querySelectorAll('[data-type="exec"]').forEach(function(node) {
+      const role = node.getAttribute('data-role');
+      addHaloToNode(node, 'exec-'+role, EXEC_COLORS[role] || '#888');
+    });
+  }
+}
+
+function addHaloToNode(node, key, color) {
+  // Find the main circle in this node
+  const circles = node.querySelectorAll('circle');
+  const mainCircle = circles[circles.length - 1]; // last circle is the filled one
+  if (!mainCircle) return;
+  const cx = mainCircle.getAttribute('cx');
+  const cy = mainCircle.getAttribute('cy');
+
+  // Remove existing halo for this key
+  const existingId = 'halo-' + key.replace(/[^a-z0-9]/gi, '-');
+  const existing = document.getElementById(existingId);
+  if (existing) existing.remove();
+
+  // Create halo group
+  const svgNS = 'http://www.w3.org/2000/svg';
+  const g = document.createElementNS(svgNS, 'g');
+  g.id = existingId;
+
+  // Outer expanding ring (one-shot)
+  const expandRing = document.createElementNS(svgNS, 'circle');
+  expandRing.setAttribute('cx', cx);
+  expandRing.setAttribute('cy', cy);
+  expandRing.setAttribute('r', '18');
+  expandRing.setAttribute('fill', 'none');
+  expandRing.setAttribute('stroke', color);
+  expandRing.setAttribute('stroke-width', '2');
+  expandRing.setAttribute('opacity', '0.6');
+  expandRing.style.animation = 'halo-expand 1s ease-out forwards';
+
+  // Steady glow ring (persists while active)
+  const glowRing = document.createElementNS(svgNS, 'circle');
+  glowRing.setAttribute('cx', cx);
+  glowRing.setAttribute('cy', cy);
+  glowRing.setAttribute('r', '22');
+  glowRing.setAttribute('fill', 'none');
+  glowRing.setAttribute('stroke', color);
+  glowRing.setAttribute('stroke-width', '1.5');
+  glowRing.setAttribute('filter', 'url(#glow)');
+  glowRing.style.animation = 'halo-pulse 2s ease-in-out infinite';
+
+  g.appendChild(expandRing);
+  g.appendChild(glowRing);
+
+  // Insert halo before the node so it renders behind
+  node.parentNode.insertBefore(g, node);
+
+  // Boost node opacity while active
+  node.style.opacity = '1';
+  node.style.transition = 'opacity 0.2s';
+
+  // Clear previous timeout for this key
+  if (activeHalos.has(key)) clearTimeout(activeHalos.get(key));
+
+  // Remove halo after 8 seconds of inactivity
+  const timeout = setTimeout(function() {
+    const el = document.getElementById(existingId);
+    if (el) { el.style.transition = 'opacity 0.5s'; el.style.opacity = '0'; setTimeout(function(){ el.remove(); }, 500); }
+    node.style.opacity = '';
+    node.style.transition = '';
+    activeHalos.delete(key);
+  }, 8000);
+  activeHalos.set(key, timeout);
 }
 
 // Pin detection
@@ -1767,7 +2060,7 @@ async function loadActivityPoll() {
 const dock = $('bottom-dock');
 const dockToggle = $('dock-toggle');
 let dockExpanded = false;
-let activeDockPanel = 'messages-dock';
+let activeDockPanel = 'chat-dock';
 let dockPanelsLoaded = {};
 
 dockToggle.addEventListener('click', function(e) {
@@ -1801,10 +2094,13 @@ document.querySelectorAll('.dock-tab').forEach(tab => {
 function loadDockPanel(panel) {
   dockPanelsLoaded[panel] = true;
   switch(panel) {
+    case 'chat-dock': loadChat(); break;
     case 'messages-dock': loadMessages(); break;
     case 'agent-tasks-dock': loadAgentTasks(); break;
     case 'costs-dock': loadCosts(); break;
+    case 'approvals-dock': loadApprovals(); break;
     case 'memory-dock': loadMemory(); break;
+    case 'traces-dock': loadTraces(); break;
     case 'logs-dock': loadLogs(); break;
     case 'resources-dock': loadResources(); break;
     case 'skills-dock': loadSkills(); break;
@@ -1812,6 +2108,166 @@ function loadDockPanel(panel) {
 }
 
 // ==== DOCK PANEL LOADERS ====
+
+// Chat
+let chatAttachments = [];
+
+function renderChatMessage(m) {
+  const container = $('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'chat-bubble ' + m.role;
+  div.innerHTML = esc(m.content).replace(/\\n/g, '<br>');
+  if (m.messageId) div.id = m.messageId;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+async function loadChat() {
+  if (!selectedUserId) {
+    $('chat-messages').innerHTML = '<div style="color: var(--text-dim); text-align: center; margin-top: 20px;">Select a user to start chatting</div>';
+    return;
+  }
+  try {
+    const r = await fetch(BASE + '/api/messages?limit=20' + userParam());
+    const d = await r.json();
+    $('chat-messages').innerHTML = '';
+    if (!d.messages.length) {
+      $('chat-messages').innerHTML = '<div style="color: var(--text-dim); text-align: center; margin-top: 20px;">No messages yet. Say hi!</div>';
+    } else {
+      d.messages.reverse().forEach(renderChatMessage);
+    }
+  } catch(e) { $('chat-messages').innerHTML = '<div style="color:var(--error)">Error loading chat</div>'; }
+}
+
+async function sendChatMessage() {
+  const input = $('chat-input');
+  const text = input.value.trim();
+  if (!text && !chatAttachments.length) return;
+  if (!selectedUserId) { alert('Select a user first'); return; }
+
+  const msg = { role: 'user', content: text, userId: selectedUserId, attachments: chatAttachments };
+  renderChatMessage(msg);
+  input.value = '';
+  input.style.height = '40px';
+  chatAttachments = [];
+  renderAttachments();
+
+  try {
+    const r = await fetch(BASE + '/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(msg)
+    });
+    const d = await r.json();
+    if (!d.success) alert('Error: ' + d.error);
+  } catch(e) { alert('Error sending message'); }
+}
+
+function renderAttachments() {
+  const container = $('chat-attachments');
+  container.innerHTML = chatAttachments.map((a, i) => 
+    '<div class="chat-attachment"><span>' + esc(a.originalName) + '</span><button onclick="removeAttachment('+i+')">×</button></div>'
+  ).join('');
+}
+
+function removeAttachment(i) {
+  chatAttachments.splice(i, 1);
+  renderAttachments();
+}
+
+async function uploadFile(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('userId', selectedUserId);
+  try {
+    const r = await fetch(BASE + '/api/upload', { method: 'POST', body: formData });
+    const d = await r.json();
+    if (d.success) {
+      chatAttachments.push(d);
+      renderAttachments();
+    }
+  } catch(e) { alert('Upload failed'); }
+}
+
+// Event Listeners for Chat
+$('chat-send-btn').addEventListener('click', sendChatMessage);
+$('chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendChatMessage();
+  }
+});
+
+// Auto-resize textarea
+$('chat-input').addEventListener('input', function() {
+  this.style.height = '40px';
+  this.style.height = (this.scrollHeight) + 'px';
+});
+
+// Paste handling
+$('chat-input').addEventListener('paste', async (e) => {
+  const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile();
+      uploadFile(file);
+    }
+  }
+});
+
+// Upload button
+$('chat-upload-btn').addEventListener('click', () => $('chat-file-input').click());
+$('chat-file-input').addEventListener('change', (e) => {
+  for (const file of e.target.files) uploadFile(file);
+});
+
+// Voice recording
+let mediaRecorder;
+let audioChunks = [];
+$('chat-voice-btn').addEventListener('click', async function() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    this.style.color = '';
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+    mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      const formData = new FormData();
+      formData.append('audio', audioBlob);
+      $('chat-input').placeholder = 'Transcribing...';
+      try {
+        const r = await fetch(BASE + '/api/transcribe', { method: 'POST', body: formData });
+        const d = await r.json();
+        if (d.success) {
+          $('chat-input').value += ' ' + d.text;
+          $('chat-input').dispatchEvent(new Event('input'));
+        }
+      } catch(e) {}
+      $('chat-input').placeholder = 'Type a message...';
+    };
+    mediaRecorder.start();
+    this.style.color = 'var(--error)';
+  } catch(e) { alert('Microphone access denied'); }
+});
+
+// Listen for live updates via SSE polling
+// We need to update loadActivityPoll to handle chat events
+const originalAddEvent = addEvent;
+addEvent = function(ev) {
+  originalAddEvent(ev);
+  if (ev.type === 'chat.reply' && ev.userId === selectedUserId) {
+    renderChatMessage({ role: 'assistant', content: ev.data.text, messageId: ev.data.messageId });
+  }
+  if (ev.type === 'chat.update' && ev.userId === selectedUserId) {
+    const el = $(ev.data.messageId);
+    if (el) el.innerHTML = esc(ev.data.text).replace(/\\n/g, '<br>');
+  }
+};
 
 // Messages
 async function loadMessages() {
@@ -1974,6 +2430,41 @@ async function loadCosts() {
   } catch(e) { $('costs-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
 }
 
+// Approvals
+async function loadApprovals() {
+  try {
+    const r = await fetch(BASE + '/api/approvals' + userParam());
+    const d = await r.json();
+    if (!d.approvals.length) { $('approvals-dock').innerHTML = '<div style="color:var(--text-dim)">No pending approvals</div>'; return; }
+    let html = '<table class="data-table"><tr><th>Task</th><th>Workflow</th><th>Actions</th></tr>';
+    for (const a of d.approvals) {
+      html += '<tr><td>' + esc((a.original_text||'').substring(0,100)) + '</td>'
+        + '<td>' + esc(a.workflow_type || 'generic') + '</td>'
+        + '<td><button class="event-filter-btn" style="color:var(--success)" onclick="resolveApp(\\''+a.id+'\\', \\'approve\\')">Approve</button> '
+        + '<button class="event-filter-btn" style="color:var(--warning)" onclick="resolveApp(\\''+a.id+'\\', \\'revise\\')">Revise</button> '
+        + '<button class="event-filter-btn" style="color:var(--error)" onclick="resolveApp(\\''+a.id+'\\', \\'cancel\\')">Cancel</button></td></tr>';
+    }
+    html += '</table>';
+    $('approvals-dock').innerHTML = html;
+  } catch(e) { $('approvals-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
+}
+
+async function resolveApp(id, action) {
+  let feedback = '';
+  if (action === 'revise') feedback = prompt('Enter your revision feedback:');
+  if (action === 'revise' && !feedback) return;
+  try {
+    const r = await fetch(BASE + '/api/approvals/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, action, feedback })
+    });
+    const d = await r.json();
+    if (d.success) loadApprovals();
+    else alert('Error: ' + d.error);
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
 // Memory
 let memoryType = 'all';
 async function loadMemory() {
@@ -1987,16 +2478,49 @@ async function loadMemory() {
     html += '</div>';
     if (!d.memory.length) { html += '<div style="color:var(--text-dim)">No entries</div>'; }
     else {
+      html += '<table class="data-table"><tr><th>Type</th><th>Content</th><th>Weight</th><th>Actions</th></tr>';
       for (const m of d.memory) {
-        html += '<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12px">'
-          + '<span class="mem-type '+m.type+'">'+esc(m.type)+'</span>'
-          + '<span style="color:var(--text-dim);font-size:10px">'+timeAgo(m.created_at)+'</span>'
-          + (m.deadline ? '<span style="color:var(--warning);font-size:10px;margin-left:6px">'+new Date(m.deadline).toLocaleDateString()+'</span>' : '')
-          + '<div style="margin-top:2px;color:var(--text-secondary)">'+esc((m.content||'').substring(0,200))+'</div></div>';
+        html += '<tr><td><span class="mem-type '+m.type+'">'+esc(m.type)+'</span></td>'
+          + '<td style="color:var(--text-secondary)">' + esc(m.content) + '</td>'
+          + '<td style="color:var(--text-dim)">' + (m.weight || 1.0).toFixed(1) + '</td>'
+          + '<td><button class="event-filter-btn" onclick="deleteMem(\\''+m.id+'\\')">Del</button></td></tr>';
       }
+      html += '</table>';
     }
     $('memory-dock').innerHTML = html;
   } catch(e) { $('memory-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
+}
+
+async function deleteMem(id) {
+  if (!confirm('Delete this memory?')) return;
+  try {
+    const r = await fetch(BASE + '/api/memory/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+    const d = await r.json();
+    if (d.success) loadMemory();
+  } catch(e) { alert('Error'); }
+}
+
+// Traces
+async function loadTraces() {
+  try {
+    const r = await fetch(BASE + '/api/traces' + userParam());
+    const d = await r.json();
+    if (!d.traces.length) { $('traces-dock').innerHTML = '<div style="color:var(--text-dim)">No traces</div>'; return; }
+    let html = '<table class="data-table"><tr><th>Time</th><th>Provider</th><th>Model</th><th>Prompt</th><th>Response</th></tr>';
+    for (const t of d.traces) {
+      html += '<tr><td style="white-space:nowrap;font-size:10px">' + timeAgo(t.created_at) + '</td>'
+        + '<td style="color:var(--indigo)">' + esc(t.provider) + '</td>'
+        + '<td style="color:var(--teal);font-size:10px">' + esc(t.model) + '</td>'
+        + '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)">' + esc(t.prompt) + '</td>'
+        + '<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary)">' + esc(t.response) + '</td></tr>';
+    }
+    html += '</table>';
+    $('traces-dock').innerHTML = html;
+  } catch(e) { $('traces-dock').innerHTML = '<div style="color:var(--error)">Error</div>'; }
 }
 
 // Logs
@@ -2089,6 +2613,7 @@ async function loadUsers() {
 $('user-selector').addEventListener('change', function() {
   selectedUserId = this.value;
   loadMetrics(); loadCosts();
+  if (dockPanelsLoaded['chat-dock']) loadChat();
   if (dockPanelsLoaded['messages-dock']) loadMessages();
   if (dockPanelsLoaded['agent-tasks-dock']) loadAgentTasks();
   if (dockPanelsLoaded['memory-dock']) loadMemory();
@@ -2102,12 +2627,14 @@ loadStatus();
 loadActiveAgents();
 loadMetrics();
 loadCosts();
+loadChat(); // Load chat by default for the first user if any
 
 // ==== INTERVALS ====
 setInterval(loadStatus, 10000);
 setInterval(loadActiveAgents, 5000);
 setInterval(loadMetrics, 30000);
 setInterval(loadCosts, 30000);
+setInterval(() => { if(dockPanelsLoaded['chat-dock']) loadChat(); }, 30000); // Background refresh for history
 setInterval(() => { if(dockPanelsLoaded['messages-dock']) loadMessages(); }, 15000);
 setInterval(() => { if(dockPanelsLoaded['agent-tasks-dock']) loadAgentTasks(); }, 15000);
 setInterval(() => { if(dockPanelsLoaded['memory-dock']) loadMemory(); }, 30000);
@@ -2196,6 +2723,32 @@ const server = Bun.serve({
     if (path === "/api/resources") return jsonResponse(await getResources());
     if (path === "/api/voice") return jsonResponse(await getVoice(userId));
     if (path === "/api/skills") return jsonResponse(await getSkills());
+
+    // Approvals
+    if (path === "/api/approvals") return jsonResponse(await getApprovals(userId));
+    if (path === "/api/approvals/resolve" && req.method === "POST") {
+      const body = await req.json();
+      return jsonResponse(await resolveApproval(body.id, body.action, body.feedback));
+    }
+
+    // Memory Management
+    if (path === "/api/memory/all") return jsonResponse(await getAllMemory(userId));
+    if (path === "/api/memory/delete" && req.method === "POST") {
+      const body = await req.json();
+      return jsonResponse(await deleteMemory(body.id));
+    }
+    if (path === "/api/memory/update" && req.method === "POST") {
+      const body = await req.json();
+      return jsonResponse(await updateMemory(body.id, body.updates));
+    }
+
+    // LLM Traces
+    if (path === "/api/traces") return jsonResponse(await getLlmTraces(userId));
+
+    // Chat UI
+    if (path === "/api/chat" && req.method === "POST") return handleChat(req);
+    if (path === "/api/upload" && req.method === "POST") return handleUpload(req);
+    if (path === "/api/transcribe" && req.method === "POST") return handleTranscribe(req);
 
     // Activity feed — recent events from logs table
     if (path === "/api/activity") {

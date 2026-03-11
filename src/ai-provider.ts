@@ -17,6 +17,8 @@ export interface AIProviderCallOpts {
   maxTurns?: number;
   cwd?: string;
   outputFormat?: "json" | "text";
+  userId?: string;
+  traceId?: string;
 }
 
 export interface AIProviderResult {

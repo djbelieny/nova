@@ -48,6 +48,15 @@ import {
 } from "./memory.ts";
 import { emit } from "./events.ts";
 
+export interface WebContext {
+  userId: string;
+  chatId: string | number;
+  reply: (text: string, options?: any) => Promise<any>;
+  api?: any;
+}
+
+export type OrchestratorContext = Context | WebContext;
+
 type ModelTier = "haiku" | "sonnet" | "opus";
 
 // Injected dependencies from relay.ts
@@ -97,7 +106,7 @@ export function initOrchestrator(deps: {
 
 export interface PendingApproval {
   id: string;
-  ctx: Context;
+  ctx: OrchestratorContext;
   chatId: number | string;  // stored for response delivery (survives ctx staleness)
   user: any;
   supabase: Database | null;
@@ -532,7 +541,7 @@ export async function handleApproval(
  * Uses stored context from the revision session to skip already-complete work.
  */
 async function handleRevision(
-  ctx: Context,
+  ctx: OrchestratorContext,
   feedback: string,
   user: any,
   supabase: Database | null,
@@ -969,7 +978,7 @@ Return ONLY one word: simple, routed, or complex`;
 // ============================================================
 
 export function orchestrate(
-  ctx: Context,
+  ctx: OrchestratorContext,
   text: string,
   user: any,
   supabase: Database | null
@@ -983,7 +992,7 @@ export function orchestrate(
   if (revSession) {
     revisionSessions.delete(revSession.sessionId);
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Revision session for ${user.name}: "${text.substring(0, 50)}"`, classification: "revision" } });
-    _runTask(ctx, `Revision: ${text.substring(0, 40)}`, async () => {
+    _runTask(ctx as Context, `Revision: ${text.substring(0, 40)}`, async () => {
       await handleRevision(ctx, text, user, supabase, revSession);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
@@ -997,7 +1006,7 @@ export function orchestrate(
   // This runs inside _runTask since it's async
   if (supabase) {
     // Quick sync check failed, try async Supabase recovery
-    _runTask(ctx, `Check revision: ${text.substring(0, 30)}`, async () => {
+    _runTask(ctx as Context, `Check revision: ${text.substring(0, 30)}`, async () => {
       const recoveredSession = await getRevisionSessionAsync(user.id);
       if (recoveredSession) {
         revisionSessions.delete(recoveredSession.sessionId);
@@ -1030,7 +1039,7 @@ export function orchestrate(
  * Main orchestration logic — split out so revision recovery can fall through to it.
  */
 function orchestrateMain(
-  ctx: Context,
+  ctx: OrchestratorContext,
   text: string,
   user: any,
   supabase: Database | null,
@@ -1047,7 +1056,7 @@ function orchestrateMain(
   const socialReq = detectSocialMediaRequest(text);
   if (socialReq) {
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Social media workflow: "${socialReq.topic}" → ${socialReq.platforms.join(", ")}`, classification: "social-media" } });
-    _runTask(ctx, text.substring(0, 50), async () => {
+    _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildSocialMediaPlan(socialReq.topic, socialReq.platforms);
       await routeComplex(ctx, text, user, supabase, plan, "social-media", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
@@ -1065,7 +1074,7 @@ function orchestrateMain(
   const emailReq = detectEmailCampaignRequest(text);
   if (emailReq) {
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Email campaign workflow: "${emailReq.topic}"`, classification: "email-campaign" } });
-    _runTask(ctx, text.substring(0, 50), async () => {
+    _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildEmailCampaignPlan(emailReq.topic, emailReq.audience);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
@@ -1079,7 +1088,7 @@ function orchestrateMain(
   const blogReq = detectBlogPostRequest(text);
   if (blogReq) {
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Blog post workflow: "${blogReq.topic}"`, classification: "blog-post" } });
-    _runTask(ctx, text.substring(0, 50), async () => {
+    _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildBlogPostPlan(blogReq.topic);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
@@ -1093,7 +1102,7 @@ function orchestrateMain(
   const presReq = detectPresentationRequest(text);
   if (presReq) {
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Presentation workflow: "${presReq.topic}"`, classification: "presentation" } });
-    _runTask(ctx, text.substring(0, 50), async () => {
+    _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildPresentationPlan(presReq.topic);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
@@ -1107,7 +1116,7 @@ function orchestrateMain(
   const adReq = detectAdCampaignRequest(text);
   if (adReq) {
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Ad campaign workflow: "${adReq.topic}" → ${adReq.platforms.join(", ")}`, classification: "ad-campaign" } });
-    _runTask(ctx, text.substring(0, 50), async () => {
+    _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildAdCampaignPlan(adReq.topic, adReq.platforms);
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
@@ -1119,7 +1128,7 @@ function orchestrateMain(
   }
 
   // Step 2: Check pattern cache, then classify if needed
-  _runTask(ctx, text.substring(0, 50), async () => {
+  _runTask(ctx as Context, text.substring(0, 50), async () => {
     // Check for cached pattern first
     const pattern = await findPattern(supabase, text, user.id);
     if (pattern) {
@@ -1178,12 +1187,12 @@ function orchestrateMain(
 // ============================================================
 
 function routeSimple(
-  ctx: Context,
+  ctx: OrchestratorContext,
   text: string,
   user: any,
   supabase: Database | null
 ): void {
-  _runTask(ctx, text.substring(0, 50), async () => {
+  _runTask(ctx as Context, text.substring(0, 50), async () => {
     const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
       getRelevantContext(supabase, text, user.id),
       getMemoryContext(supabase, user.id),
@@ -1303,19 +1312,21 @@ async function deliverWorkspaceFiles(
 // ============================================================
 
 async function routeComplex(
-  ctx: Context,
+  ctx: OrchestratorContext,
   text: string,
   user: any,
   supabase: Database | null,
   cachedPlan?: ExecutionPlan,
   workflowType?: "social-media" | "generic",
-  requestId?: string
+  requestId?: string,
+  existingTaskId?: string,
+  existingWorkspaceDir?: string
 ): Promise<void> {
   const startTime = Date.now();
   const autoApprove = detectAutoApprove(text);
 
   try {
-    const chatId = ctx.chat?.id;
+    const chatId = "chat" in ctx ? ctx.chat?.id : (ctx as WebContext).chatId;
 
     // Create parent task first — we use its ID for the workspace directory
     let parentTaskId: string | undefined;
@@ -1345,7 +1356,7 @@ async function routeComplex(
 
       // Send progress checklist for auto-approve/no-execute path
       const autoChecklistMsg = await sendProgressChecklist(ctx, plan);
-      const autoStatuses = new Map<number, "pending" | "started" | "completed" | "failed">();
+      const autoStatuses = new Map<number, "pending" | "started" | "completed" | "failed" | "healing">();
       plan.subtasks.forEach((_s, i) => autoStatuses.set(i, "pending"));
       let autoLastEdit = 0;
       let autoEditPending = false;
@@ -1365,17 +1376,23 @@ async function routeComplex(
         autoLastEdit = now;
         try {
           if (autoChecklistMsg) {
-            await ctx.api.editMessageText(
-              ctx.chat!.id,
-              autoChecklistMsg.message_id,
-              buildChecklistText(plan, autoStatuses)
-            );
+            const text = buildChecklistText(plan, autoStatuses);
+            if ("api" in ctx) {
+              await ctx.api.editMessageText(
+                ctx.chat!.id,
+                autoChecklistMsg.message_id,
+                text
+              );
+            } else {
+              // Web: update via event bus
+              emit({ type: "chat.update", level: "info", data: { messageId: autoChecklistMsg.message_id, text, requestId } });
+            }
           }
         } catch {}
       };
 
       const autoOnProgress: ProgressCallback = (index, status) => {
-        autoStatuses.set(index, status === "started" ? "started" : status === "completed" ? "completed" : "failed");
+        autoStatuses.set(index, status);
         autoUpdateChecklist();
       };
 
@@ -1392,7 +1409,11 @@ async function routeComplex(
           await autoUpdateChecklist();
           const elapsed = Math.round((Date.now() - startTime) / 1000);
           const finalText = buildChecklistText(plan, autoStatuses) + `\n\nDone (${elapsed}s)`;
-          await ctx.api.editMessageText(ctx.chat!.id, autoChecklistMsg.message_id, finalText).catch(() => {});
+          if ("api" in ctx) {
+            await ctx.api.editMessageText(ctx.chat!.id, autoChecklistMsg.message_id, finalText).catch(() => {});
+          } else {
+            emit({ type: "chat.update", level: "info", data: { messageId: autoChecklistMsg.message_id, text: finalText, requestId } });
+          }
         }
       } catch {}
 
@@ -1424,7 +1445,7 @@ async function routeComplex(
     const checklistMsg = await sendProgressChecklist(ctx, plan);
 
     // Build debounced progress callback for live checklist updates
-    const subtaskStatuses = new Map<number, "pending" | "started" | "completed" | "failed">();
+    const subtaskStatuses = new Map<number, "pending" | "started" | "completed" | "failed" | "healing">();
     plan.subtasks.forEach((_s, i) => subtaskStatuses.set(i, "pending"));
     let lastChecklistEdit = 0;
     let checklistEditPending = false;
@@ -1446,14 +1467,18 @@ async function routeComplex(
       const text = buildChecklistText(plan, subtaskStatuses);
       try {
         if (checklistMsg) {
-          await ctx.api.editMessageText(ctx.chat!.id, checklistMsg.message_id, text);
+          if ("api" in ctx) {
+            await ctx.api.editMessageText(ctx.chat!.id, checklistMsg.message_id, text);
+          } else {
+            // Web: update via event bus
+            emit({ type: "chat.update", level: "info", data: { messageId: checklistMsg.message_id, text, requestId } });
+          }
         }
       } catch {}
     };
 
     const onProgress: ProgressCallback = (index, status) => {
-      const statusMap = { started: "started", completed: "completed", failed: "failed" } as const;
-      subtaskStatuses.set(index, statusMap[status]);
+      subtaskStatuses.set(index, status);
       updateChecklist();
     };
 
@@ -1468,7 +1493,11 @@ async function routeComplex(
         await updateChecklist();
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         const finalText = buildChecklistText(plan, subtaskStatuses) + `\n\nDone (${elapsed}s)`;
-        await ctx.api.editMessageText(ctx.chat!.id, checklistMsg.message_id, finalText).catch(() => {});
+        if ("api" in ctx) {
+          await ctx.api.editMessageText(ctx.chat!.id, checklistMsg.message_id, finalText).catch(() => {});
+        } else {
+          emit({ type: "chat.update", level: "info", data: { messageId: checklistMsg.message_id, text: finalText, requestId } });
+        }
       }
     } catch {}
 
@@ -1720,15 +1749,16 @@ export async function recoverPendingApprovals(
 
 function buildChecklistText(
   plan: ExecutionPlan,
-  statuses: Map<number, "pending" | "started" | "completed" | "failed">
+  statuses: Map<number, "pending" | "started" | "completed" | "failed" | "healing">
 ): string {
   const lines = plan.subtasks.map((s, i) => {
     const status = statuses.get(i) || "pending";
     const emoji =
-      status === "completed" ? "\u2705" :  // checkmark
-      status === "failed" ? "\u274C" :      // X
-      status === "started" ? "\u23F3" :     // hourglass
-      "\u25AA\uFE0F";                       // small black square
+      status === "completed" ? "✅" :
+      status === "failed" ? "❌" :
+      status === "healing" ? "🩹" :
+      status === "started" ? "⏳" :
+      "▪️";
     return `${emoji} ${s.description}`;
   });
   return `Working on your task...\n\n${lines.join("\n")}`;
@@ -1740,7 +1770,7 @@ async function sendProgressChecklist(
 ): Promise<{ message_id: number } | null> {
   if (plan.subtasks.length <= 1) return null; // no checklist for single-subtask plans
   try {
-    const statuses = new Map<number, "pending" | "started" | "completed" | "failed">();
+    const statuses = new Map<number, "pending" | "started" | "completed" | "failed" | "healing">();
     plan.subtasks.forEach((_s, i) => statuses.set(i, "pending"));
     const text = buildChecklistText(plan, statuses);
     const msg = await ctx.reply(text);

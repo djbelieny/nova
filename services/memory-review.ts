@@ -55,6 +55,8 @@ interface MemoryEntry {
   type: string;
   content: string;
   created_at: string;
+  last_accessed_at: string;
+  weight: number;
   user_id: string;
   scope: string;
 }
@@ -67,7 +69,7 @@ interface UserInfo {
 
 function getAllFacts(db: Database): MemoryEntry[] {
   try {
-    return db.getMemoryFiltered({ type: "fact" }) || [];
+    return db.getMemoryFiltered({ type: "fact", limit: 1000 }) || [];
   } catch (error) {
     console.error("Failed to fetch facts:", error);
     return [];
@@ -78,7 +80,7 @@ function getCompletedGoals(db: Database): MemoryEntry[] {
   // Get completed goals older than 30 days — safe to archive
   try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const all = db.getMemoryFiltered({ type: "completed_goal" }) || [];
+    const all = db.getMemoryFiltered({ type: "completed_goal", limit: 1000 }) || [];
     return all.filter((g: any) => g.completed_at && g.completed_at < thirtyDaysAgo);
   } catch (error) {
     console.error("Failed to fetch completed goals:", error);
@@ -97,6 +99,101 @@ function deleteMemoryEntries(db: Database, ids: string[]): number {
     return ids.length;
   } catch (error) {
     console.error("Delete error:", error);
+    return 0;
+  }
+}
+
+// ============================================================
+// CONSOLIDATION & DECAY
+// ============================================================
+
+async function decayMemoryWeights(db: Database, facts: MemoryEntry[]): Promise<number> {
+  const now = Date.now();
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+  let updated = 0;
+
+  for (const f of facts) {
+    const lastAccessed = new Date(f.last_accessed_at).getTime();
+    if (now - lastAccessed > THIRTY_DAYS_MS) {
+      const newWeight = Math.max(0.1, f.weight - 0.1);
+      if (newWeight !== f.weight) {
+        db.updateMemoryWeight(f.id, newWeight);
+        updated++;
+      }
+    }
+  }
+  return updated;
+}
+
+async function consolidateMemories(db: Database, facts: MemoryEntry[]): Promise<number> {
+  // Only consolidate memories with low weight (< 0.5) that are old (> 60 days)
+  const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  
+  const candidates = facts.filter(f => 
+    f.weight < 0.5 && 
+    (now - new Date(f.created_at).getTime()) > SIXTY_DAYS_MS
+  );
+
+  if (candidates.length < 5) return 0; // Not enough to consolidate
+
+  console.log(`Analyzing ${candidates.length} low-weight memories for consolidation...`);
+
+  const prompt = `You are an AI memory manager. Your task is to group related but low-importance memories and summarize them into high-level, permanent facts.
+
+Here are some old, infrequently accessed memories:
+${candidates.map((c, i) => `${i + 1}. [${c.id}] ${c.content}`).join("\n")}
+
+Identify groups of 3 or more memories that are related to the same topic (e.g., "travel preferences", "project X details", "meeting notes").
+For each group, write a single concise summary fact that captures the essence of those memories.
+
+Respond ONLY with a JSON array of objects, each representing a consolidated summary and the IDs of the original memories:
+[
+  {
+    "summary": "User prefers flying Delta and staying in Marriott hotels for business travel.",
+    "original_ids": ["uuid1", "uuid2", "uuid3"]
+  }
+]
+
+If no meaningful consolidation can be done, return: []`;
+
+  try {
+    const result = await getDefaultProvider().call({
+      prompt,
+      model: "sonnet", // Use Sonnet for better reasoning in consolidation
+      maxTurns: 1,
+      outputFormat: "text",
+    });
+
+    const match = result.text.match(/\[[\s\S]*\]/);
+    if (!match) return 0;
+    const consolidations = JSON.parse(match[0]);
+
+    let totalConsolidated = 0;
+    for (const c of consolidations) {
+      if (c.original_ids.length >= 3) {
+        // Find the user_id from one of the originals
+        const sample = candidates.find(f => f.id === c.original_ids[0]);
+        if (!sample) continue;
+
+        // Insert new consolidated fact
+        db.insertMemory({
+          type: "fact",
+          content: `[Consolidated Memory]: ${c.summary}`,
+          user_id: sample.user_id,
+          scope: sample.scope,
+          weight: 0.8, // New summaries start with higher weight
+        });
+
+        // Delete originals
+        db.deleteMemoryEntries(c.original_ids);
+        totalConsolidated += c.original_ids.length;
+        console.log(`Consolidated ${c.original_ids.length} memories into: "${c.summary}"`);
+      }
+    }
+    return totalConsolidated;
+  } catch (error) {
+    console.error("Consolidation error:", error);
     return 0;
   }
 }
@@ -240,9 +337,24 @@ async function main() {
     }
   }
 
-  // Step 4: Report
-  const remaining = facts.length - totalDeleted;
-  console.log(`\nMemory review complete: ${totalDeleted} removed, ${remaining} remaining`);
+  // Step 4: Decay memory weights based on access time
+  const decayedCount = await decayMemoryWeights(db, facts);
+  if (decayedCount > 0) {
+    report.push(`Memory weights decayed: ${decayedCount}`);
+    console.log(`Decayed weight for ${decayedCount} inactive memories`);
+  }
+
+  // Step 5: Consolidate old low-weight memories
+  const consolidatedCount = await consolidateMemories(db, facts);
+  if (consolidatedCount > 0) {
+    totalDeleted += consolidatedCount;
+    report.push(`Memories consolidated: ${consolidatedCount}`);
+    console.log(`Consolidated ${consolidatedCount} low-weight memories`);
+  }
+
+  // Step 6: Report
+  const remaining = facts.length - totalDeleted + (consolidatedCount > 0 ? 1 : 0);
+  console.log(`\nMemory review complete: ${totalDeleted} removed/consolidated, ${remaining} remaining`);
 
   if (totalDeleted > 0) {
     // Notify admin
