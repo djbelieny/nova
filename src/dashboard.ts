@@ -14,8 +14,10 @@ import { join, dirname, basename } from "path";
 import { fileURLToPath } from "url";
 import { getDb, type Database } from "./db.ts";
 import { createSSEStream, getActiveAgents, getSSEConnectionCount, initEventBus, emit } from "./events.ts";
-import { orchestrate, type WebContext } from "./orchestrator.ts";
+import { orchestrate, initOrchestrator, type WebContext } from "./orchestrator.ts";
 import { transcribe } from "./transcribe.ts";
+import { ClaudeProvider } from "./providers/claude.ts";
+import { registerProvider, getProvider } from "./ai-provider.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -30,6 +32,48 @@ const startTime = Date.now();
 
 // Initialize event bus so SSE listeners are registered
 initEventBus({ db: supabase });
+
+// Initialize AI provider and orchestrator for dashboard chat
+const claudeProvider = new ClaudeProvider();
+registerProvider(claudeProvider);
+
+async function dashboardCallAI(prompt: string, model?: any, userId?: string): Promise<string> {
+  const provider = getProvider("claude");
+  if (!provider) throw new Error("No AI provider available");
+  const result = await provider.call(prompt, { tier: model || "standard" });
+  return result.text;
+}
+
+function dashboardBuildPrompt(user: any, userMessage: string): string {
+  const now = new Date();
+  const timeStr = now.toLocaleString("en-US", {
+    timeZone: user.timezone || "UTC",
+    weekday: "long", year: "numeric", month: "long", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+
+  return `You are Nova, a multi-agent AI assistant. Current time: ${timeStr}.
+
+## User Message
+${userMessage}`;
+}
+
+initOrchestrator({
+  callClaude: dashboardCallAI,
+  buildPrompt: dashboardBuildPrompt,
+  runTask: async (_ctx, _desc, buildTask) => {
+    const task = await buildTask();
+    return dashboardCallAI(task.prompt, task.model);
+  },
+  saveMessage: async (role, content, userId) => {
+    supabase.saveMessage({ role, content, user_id: userId, channel: "web" });
+  },
+  sendResponseWithVoice: async (_ctx, _response) => { /* no-op for web */ },
+  sendTelegramFile: async () => { /* no-op for web */ },
+  sendMessageToChat: async () => { /* no-op for web */ },
+  novaDir: NOVA_DIR,
+  supabase,
+});
 
 // ============================================================
 // AUTH — cookie-based session login
