@@ -603,22 +603,22 @@ async function main() {
     try {
       const sessions = await comms.getPendingSessions();
       for (const session of sessions) {
-        const prompt = buildPrompt(execDef, session.topic, {
+        const prompt = buildPrompt(execDef, session.question, {
           agentCatalog,
-          decisionHistory: session.context,
+          decisionHistory: session.consensus ?? session.decision_rationale ?? undefined,
         });
         const contribution = await callAI(prompt, { tier: "standard" });
         await comms.submitContribution(session.id, contribution);
 
         // Notify the exec about the board session
         if (execChatId) {
-          const notice = `<b>Board Session:</b> ${session.topic}\n\n<i>Contribution submitted.</i>`;
+          const notice = `<b>Board Session:</b> ${session.question}\n\n<i>Contribution submitted.</i>`;
           try {
             await bot.api.sendMessage(execChatId, notice, { parse_mode: "HTML" });
           } catch {
             await bot.api.sendMessage(
               execChatId,
-              `Board Session: ${session.topic}\nContribution submitted.`
+              `Board Session: ${session.question}\nContribution submitted.`
             );
           }
         }
@@ -637,21 +637,21 @@ async function main() {
       try {
         const delegations = await comms.pollDelegations();
         for (const delegation of delegations) {
-          const prompt = buildPrompt(execDef, delegation.task, {
+          const prompt = buildPrompt(execDef, delegation.task_description, {
             agentCatalog,
-            decisionHistory: delegation.context,
+            decisionHistory: undefined,
           });
           const plan = await callAI(prompt, { tier: "standard" });
           await comms.submitDelegationPlan(delegation.id, plan);
 
           if (execChatId) {
-            const notice = `<b>Delegation:</b> ${delegation.task}\n\n<i>Plan submitted.</i>`;
+            const notice = `<b>Delegation:</b> ${delegation.task_description}\n\n<i>Plan submitted.</i>`;
             try {
               await bot.api.sendMessage(execChatId, notice, { parse_mode: "HTML" });
             } catch {
               await bot.api.sendMessage(
                 execChatId,
-                `Delegation: ${delegation.task}\nPlan submitted.`
+                `Delegation: ${delegation.task_description}\nPlan submitted.`
               );
             }
           }
