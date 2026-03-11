@@ -61,14 +61,44 @@ ${userMessage}`;
 initOrchestrator({
   callClaude: dashboardCallAI,
   buildPrompt: dashboardBuildPrompt,
-  runTask: async (_ctx, _desc, buildTask) => {
-    const task = await buildTask();
-    return dashboardCallAI(task.prompt, task.model);
+  runTask: (ctx, desc, buildTask, opts) => {
+    // Mirror relay.ts runTask: build → call AI → postProcess → reply
+    (async () => {
+      try {
+        emit({ type: "agent.start", level: "info", userId: opts?.userId, data: { description: desc } });
+
+        const { prompt, model, hint } = await buildTask();
+
+        // Sentinel prompts from orchestrator (e.g. __NOT_REVISION__) skip AI call
+        const isSentinel = prompt.startsWith("__") && prompt.endsWith("__");
+        const rawResponse = isSentinel ? prompt : await dashboardCallAI(prompt, model, opts?.userId);
+
+        const response = opts?.postProcess ? await opts.postProcess(rawResponse) : rawResponse;
+
+        // Orchestrator handled internally (e.g. chained to orchestrateMain)
+        if (response === "__SKIP__") return;
+
+        // Save and send the response
+        if (opts?.userId) {
+          supabase.saveMessage({ role: "assistant", content: response, user_id: opts.userId, channel: "web" });
+        }
+        await (ctx as any).reply(response);
+
+        emit({ type: "agent.end", level: "info", userId: opts?.userId, data: { description: desc } });
+      } catch (e: any) {
+        console.error(`[dashboard] runTask error (${desc}):`, e.message);
+        emit({ type: "agent.error", level: "error", userId: opts?.userId, data: { description: desc, error: e.message } });
+        try { await (ctx as any).reply(`Error: ${e.message}`); } catch {}
+      }
+    })();
   },
   saveMessage: async (role, content, userId) => {
     supabase.saveMessage({ role, content, user_id: userId, channel: "web" });
   },
-  sendResponseWithVoice: async (_ctx, _response) => { /* no-op for web */ },
+  sendResponseWithVoice: async (ctx, response) => {
+    // Web uses ctx.reply which emits chat.reply SSE events
+    await (ctx as any).reply(response);
+  },
   sendTelegramFile: async () => { /* no-op for web */ },
   sendMessageToChat: async () => { /* no-op for web */ },
   novaDir: NOVA_DIR,
@@ -944,7 +974,8 @@ async function handleChat(req: Request): Promise<Response> {
       (ctx as any)._webAttachments = attachments;
     }
 
-    // Call orchestrator (async)
+    // Save user message and call orchestrator (async — response comes via SSE)
+    supabase.saveMessage({ role: "user", content: messageText, user_id: userId, channel: "web" });
     orchestrate(ctx as any, messageText, user, supabase);
 
     return jsonResponse({ success: true });
