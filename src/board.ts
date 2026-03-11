@@ -115,6 +115,7 @@ async function monitorSession(
   chatId: string | number,
 ): Promise<void> {
   const startTime = Date.now();
+  const reportedRoles = new Set<string>();
 
   // Phase 1: Wait for all non-critic contributions
   while (Date.now() - startTime < PHASE1_TIMEOUT) {
@@ -123,6 +124,17 @@ async function monitorSession(
       (c) => c.role !== CRITIC_ROLE && !c.is_critique,
     );
     const contributingRoles = new Set(nonCriticContributions.map((c) => c.role));
+
+    // Show new contributions as they arrive
+    for (const c of nonCriticContributions) {
+      if (!reportedRoles.has(c.role)) {
+        reportedRoles.add(c.role);
+        const summary = c.contribution.length > 300
+          ? c.contribution.slice(0, 300) + "..."
+          : c.contribution;
+        await _sendMessage(chatId, `[${c.role.toUpperCase()}] ${summary}`);
+      }
+    }
 
     // Check if all non-critic roles contributed
     const allNonCriticDone = NON_CRITIC_ROLES.every((r) => contributingRoles.has(r));
@@ -141,17 +153,25 @@ async function monitorSession(
 
   // Transition to critique phase
   await _comms.updateSession(sessionId, { status: "critiquing" });
+  await _sendMessage(chatId, "All executives contributed. Critic reviewing...");
 
   // Phase 2: Wait for critic
   const criticStart = Date.now();
   while (Date.now() - criticStart < PHASE2_TIMEOUT) {
     const contributions = await _comms.getContributions(sessionId);
     const critique = contributions.find((c) => c.is_critique);
-    if (critique) break;
+    if (critique) {
+      const summary = critique.contribution.length > 300
+        ? critique.contribution.slice(0, 300) + "..."
+        : critique.contribution;
+      await _sendMessage(chatId, `[CRITIC] ${summary}`);
+      break;
+    }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL));
   }
 
   // Phase 3: Synthesize
+  await _sendMessage(chatId, "Synthesizing board recommendations...");
   await _comms.updateSession(sessionId, { status: "synthesizing" });
   await synthesizeAndPresent(sessionId, userId, chatId);
 }
@@ -215,11 +235,28 @@ Format as JSON array: [{ "title": "...", "description": "...", "supporters": ["c
 
 Return ONLY the JSON array, no other text.`;
 
-  const raw = await _callAI(prompt, "premium", "board-synthesis");
+  let raw: string;
+  try {
+    raw = await _callAI(prompt, "premium", "board-synthesis");
+  } catch (err) {
+    emit({ type: "error", level: "error", data: { message: `Synthesis AI call failed (premium): ${err}`, module: "board", sessionId } });
+    // Retry with standard tier
+    try {
+      raw = await _callAI(prompt, "standard", "board-synthesis-retry");
+    } catch (err2) {
+      emit({ type: "error", level: "error", data: { message: `Synthesis AI call failed (standard): ${err2}`, module: "board", sessionId } });
+      await _sendMessage(chatId, "Board meeting completed but AI synthesis failed. The executive contributions are shown above.");
+      await _comms.updateSession(sessionId, { status: "failed" });
+      activeSessions.delete(sessionId);
+      return;
+    }
+  }
+
   const options = parseOptions(raw);
 
   if (options.length === 0) {
-    await _sendMessage(chatId, "Board meeting completed but synthesis failed. Raw analysis available in session log.");
+    emit({ type: "error", level: "error", data: { message: `Synthesis JSON parse failed. Raw: ${raw.slice(0, 500)}`, module: "board", sessionId } });
+    await _sendMessage(chatId, "Board meeting completed but synthesis parsing failed. The executive contributions are shown above.");
     await _comms.updateSession(sessionId, { status: "failed" });
     activeSessions.delete(sessionId);
     return;
