@@ -600,10 +600,11 @@ async function main() {
   }, 3000);
 
   // Board session poller — contribute to board discussions
+  // COO delegates only and doesn't participate in board analysis.
   // Stagger poll start per role so execs don't all spawn AI processes simultaneously.
-  // Each role gets a different delay offset (0-50s) to spread load across time.
+  const BOARD_CONTRIBUTING_ROLES = new Set(["ceo", "cfo", "cmo", "cto", "research", "critic"]);
   const BOARD_ROLE_DELAY: Record<string, number> = {
-    research: 0, ceo: 10_000, cfo: 20_000, cmo: 30_000, cto: 40_000, critic: 50_000, coo: 0,
+    research: 0, ceo: 10_000, cfo: 20_000, cmo: 30_000, cto: 40_000, critic: 50_000,
   };
   const boardSessionsInProgress = new Set<string>();
   const boardPollTick = async () => {
@@ -655,13 +656,15 @@ async function main() {
       emit({ type: "error", level: "error", execRole: role, data: { message: "Board session poll error", module: "exec-node", error: String(err) } });
     }
   };
-  // Staggered start, then poll every 15s
-  const roleDelay = BOARD_ROLE_DELAY[role] ?? 0;
+  // Staggered start, then poll every 15s (only for contributing roles)
   let boardPollInterval: ReturnType<typeof setInterval> | null = null;
-  setTimeout(() => {
-    boardPollTick();
-    boardPollInterval = setInterval(boardPollTick, 15_000);
-  }, roleDelay);
+  if (BOARD_CONTRIBUTING_ROLES.has(role)) {
+    const roleDelay = BOARD_ROLE_DELAY[role] ?? 0;
+    setTimeout(() => {
+      boardPollTick();
+      boardPollInterval = setInterval(boardPollTick, 15_000);
+    }, roleDelay);
+  }
 
   // Delegation poller (COO only)
   let delegationPollInterval: ReturnType<typeof setInterval> | null = null;
