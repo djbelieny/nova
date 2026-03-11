@@ -920,8 +920,9 @@ async function getLlmTraces(userId?: string, limit = 50): Promise<unknown> {
 async function handleChat(req: Request): Promise<Response> {
   try {
     const body = await req.json();
-    const { text, userId, attachments } = body;
-    if (!text && (!attachments || !attachments.length)) throw new Error("Empty message");
+    const { text, content, userId, attachments } = body;
+    const messageText = text || content;  // frontend sends "content", accept both
+    if (!messageText && (!attachments || !attachments.length)) throw new Error("Empty message");
 
     const user = supabase.getUserById(userId);
     if (!user) throw new Error("User not found");
@@ -944,7 +945,7 @@ async function handleChat(req: Request): Promise<Response> {
     }
 
     // Call orchestrator (async)
-    orchestrate(ctx as any, text, user, supabase);
+    orchestrate(ctx as any, messageText, user, supabase);
 
     return jsonResponse({ success: true });
   } catch (e: any) {
