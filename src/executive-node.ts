@@ -600,35 +600,56 @@ async function main() {
   }, 3000);
 
   // Board session poller — contribute to board discussions
+  const boardSessionsInProgress = new Set<string>();
   const boardPollInterval = setInterval(async () => {
     if (!running) return;
     try {
       const sessions = await comms.getPendingSessions();
       for (const session of sessions) {
-        const prompt = buildPrompt(execDef, session.question, {
-          agentCatalog,
-          decisionHistory: session.consensus ?? session.decision_rationale ?? undefined,
-        });
-        const contribution = await callAI(prompt, { tier: "standard" });
-        await comms.submitContribution(session.id, contribution);
+        // Skip sessions already being processed (prevents duplicate claude spawns)
+        if (boardSessionsInProgress.has(session.id)) continue;
+        boardSessionsInProgress.add(session.id);
 
-        // Notify the exec about the board session
-        if (execChatId) {
-          const notice = `<b>Board Session:</b> ${session.question}\n\n<i>Contribution submitted.</i>`;
-          try {
-            await bot.api.sendMessage(execChatId, notice, { parse_mode: "HTML" });
-          } catch {
-            await bot.api.sendMessage(
-              execChatId,
-              `Board Session: ${session.question}\nContribution submitted.`
-            );
+        // Also check if we already contributed (e.g. from a previous restart)
+        try {
+          const existing = await comms.getContributions(session.id);
+          if (existing.some(c => c.role === role)) {
+            // Already contributed — skip
+            continue;
           }
-        }
+        } catch {}
+
+        // Process contribution async but don't block the poller
+        (async () => {
+          try {
+            const prompt = buildPrompt(execDef, session.question, {
+              agentCatalog,
+              decisionHistory: session.consensus ?? session.decision_rationale ?? undefined,
+            });
+            const contribution = await callAI(prompt, { tier: "standard" });
+            await comms.submitContribution(session.id, contribution);
+
+            // Notify the exec about the board session
+            if (execChatId) {
+              const notice = `<b>Board Session:</b> ${session.question}\n\n<i>Contribution submitted.</i>`;
+              try {
+                await bot.api.sendMessage(execChatId, notice, { parse_mode: "HTML" });
+              } catch {
+                await bot.api.sendMessage(
+                  execChatId,
+                  `Board Session: ${session.question}\nContribution submitted.`
+                );
+              }
+            }
+          } catch (err) {
+            emit({ type: "error", level: "error", execRole: role, data: { message: `Board contribution error for session ${session.id}`, module: "exec-node", error: String(err) } });
+          }
+        })();
       }
     } catch (err) {
       emit({ type: "error", level: "error", execRole: role, data: { message: "Board session poll error", module: "exec-node", error: String(err) } });
     }
-  }, 3000);
+  }, 10_000);  // 10s instead of 3s — reduces Supabase polling load
 
   // Delegation poller (COO only)
   let delegationPollInterval: ReturnType<typeof setInterval> | null = null;
