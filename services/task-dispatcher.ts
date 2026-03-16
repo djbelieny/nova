@@ -110,8 +110,7 @@ async function executeTask(
   // Determine which MCPs this task might need
   const instructionsLower = task.instructions.toLowerCase();
   const mcpServers: string[] = [];
-  if (instructionsLower.match(/email|gmail|inbox|send.*mail/)) mcpServers.push("google-workspace");
-  if (instructionsLower.match(/calendar|event|schedule|meeting/)) mcpServers.push("google-workspace");
+  // Google Workspace is handled via gws CLI (not MCP), injected into agent prompts by buildGwsInstructions()
   if (instructionsLower.match(/notion|task|page|database/)) mcpServers.push("notion");
   if (instructionsLower.match(/search|web|find.*online|look.*up/)) mcpServers.push("tavily");
   // Dedupe

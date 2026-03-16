@@ -8,27 +8,11 @@
         "OPENAPI_MCP_HEADERS": "${NOTION_MCP_HEADERS}"
       }
     },
-    "google-workspace": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@presto-ai/google-workspace-mcp/bin/cli.js"],
-      "env": {
-        "GEMINI_CLI_WORKSPACE_FORCE_FILE_STORAGE": "true"
-      }
-    },
     "playwright": {
       "type": "stdio",
       "command": "node",
       "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@playwright/mcp/cli.js"],
       "env": {}
-    },
-    "cloudflare": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@cloudflare/mcp-server-cloudflare/dist/index.js", "run", "${CLOUDFLARE_ACCOUNT_ID}"],
-      "env": {
-        "CLOUDFLARE_API_TOKEN": "${CLOUDFLARE_API_TOKEN}"
-      }
     },
     "zoom": {
       "type": "stdio",
@@ -55,15 +39,6 @@
       "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@chykalophia/clickup-mcp-server/dist/index.js"],
       "env": {
         "CLICKUP_API_TOKEN": "${CLICKUP_API_TOKEN}"
-      }
-    },
-    "gohighlevel": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/Users/djbelieny/.nvm/versions/node/v23.11.1/lib/node_modules/@drausal/gohighlevel-mcp/build/index.js"],
-      "env": {
-        "BEARER_TOKEN_BEARERAUTH": "${GHL_BEARER_TOKEN}",
-        "BEARER_TOKEN_BEARER": "${GHL_BEARER_TOKEN}"
       }
     },
     "firecrawl": {

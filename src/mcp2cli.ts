@@ -1,7 +1,7 @@
 /**
  * mcp2cli Utility Module
  *
- * Converts MCP server configs from .mcp.json format into mcp2cli CLI commands.
+ * Converts MCP server configs from .mcp.nova.json format into mcp2cli CLI commands.
  * This lets agents call MCP tools via Bash on-demand instead of loading all
  * 400+ tool schemas into context via --mcp-config (96-99% token savings).
  *
@@ -181,12 +181,85 @@ export function generateMcp2cliCommands(
  */
 export function loadProjectMcpConfig(projectRoot: string): Record<string, McpServerConfig> {
   try {
-    const raw = readFileSync(`${projectRoot}/.mcp.json`, "utf-8");
+    const raw = readFileSync(`${projectRoot}/.mcp.nova.json`, "utf-8");
     const config = JSON.parse(raw);
     return config.mcpServers || {};
   } catch {
     return {};
   }
+}
+
+// ============================================================
+// GWS CLI INSTRUCTIONS
+// ============================================================
+
+export interface GwsAccount {
+  label: "personal" | "work";
+  credentialsFile: string;
+  configDir: string;
+  email?: string;
+}
+
+/**
+ * Build prompt instructions teaching an agent how to use the gws CLI for Google Workspace.
+ * Takes an array of connected Google accounts and returns a formatted text block.
+ */
+export function buildGwsInstructions(accounts: GwsAccount[]): string {
+  if (accounts.length === 0) return "";
+
+  const lines: string[] = [
+    "GWS (Google Workspace CLI) — Available via Bash:",
+    "",
+    "SYNTAX: gws <service> <resource> <method> [flags]",
+    "SERVICES: drive, gmail, calendar, sheets, docs, slides, tasks, people, chat, forms",
+    "FLAGS: --params '<JSON>' (query params), --json '<JSON>' (request body), --format json|table|csv",
+    "",
+    "ACCOUNTS:",
+  ];
+
+  for (const acct of accounts) {
+    const envPrefix = [
+      `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="${acct.credentialsFile}"`,
+      `GOOGLE_WORKSPACE_CLI_CONFIG_DIR="${acct.configDir}"`,
+    ].join(" ");
+    const emailNote = acct.email ? ` (${acct.email})` : "";
+
+    lines.push(`  # Google ${acct.label}${emailNote}:`);
+    lines.push(`  ${envPrefix} gws <command>`);
+    lines.push("");
+  }
+
+  const primary = accounts[0];
+  const ex = [
+    `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="${primary.credentialsFile}"`,
+    `GOOGLE_WORKSPACE_CLI_CONFIG_DIR="${primary.configDir}"`,
+  ].join(" ");
+
+  lines.push("EXAMPLES:");
+  lines.push(`  # List recent emails`);
+  lines.push(`  ${ex} gws gmail users messages list --params '{"userId":"me","maxResults":10}'`);
+  lines.push(`  # Read an email`);
+  lines.push(`  ${ex} gws gmail users messages get --params '{"userId":"me","id":"MSG_ID"}'`);
+  lines.push(`  # Send email (base64-encoded RFC 2822)`);
+  lines.push(`  ${ex} gws gmail users messages send --params '{"userId":"me"}' --json '{"raw":"BASE64"}'`);
+  lines.push(`  # List calendar events`);
+  lines.push(`  ${ex} gws calendar events list --params '{"calendarId":"primary","maxResults":10}'`);
+  lines.push(`  # Create calendar event`);
+  lines.push(`  ${ex} gws calendar events insert --params '{"calendarId":"primary"}' --json '{"summary":"Meeting","start":{"dateTime":"..."},"end":{"dateTime":"..."}}'`);
+  lines.push(`  # List Drive files`);
+  lines.push(`  ${ex} gws drive files list --params '{"pageSize":10}'`);
+  lines.push(`  # Read spreadsheet`);
+  lines.push(`  ${ex} gws sheets spreadsheets.values get --params '{"spreadsheetId":"ID","range":"Sheet1!A1:D10"}'`);
+  lines.push("");
+  lines.push("TIPS:");
+  lines.push("- gws handles token refresh automatically");
+  lines.push("- Use --page-all for paginated results");
+  if (accounts.length > 1) {
+    lines.push("- Choose the right account based on context (work email → work, personal → personal)");
+    lines.push("- If ambiguous, default to personal account");
+  }
+
+  return lines.join("\n");
 }
 
 // ============================================================

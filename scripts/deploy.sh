@@ -18,6 +18,12 @@ if ! command -v mcp2cli &>/dev/null; then
   npm install -g mcp2cli
 fi
 
+# Ensure gws CLI is available (replaces @presto-ai/google-workspace-mcp)
+if ! command -v gws &>/dev/null; then
+  echo "Installing gws CLI globally..."
+  npm install -g @anthropic-ai/gws
+fi
+
 # Migrate from Supabase if credentials are set and shared.db doesn't exist yet
 if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_ANON_KEY:-}" ] && [ ! -f /opt/nova/data/shared.db ]; then
   echo "Running Supabase → SQLite migration..."

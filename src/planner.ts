@@ -592,8 +592,9 @@ export async function executePhase(
             fullDepContext || undefined,
             phase,
             workspaceDir,
-            undefined,
-            undefined,
+            undefined, // useMcp2cli
+            undefined, // userMcpConfig
+            user?.id,  // userId for gws CLI instructions
             user?.timezone
           );
 

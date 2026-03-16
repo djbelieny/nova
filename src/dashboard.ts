@@ -709,7 +709,7 @@ async function getSkills(): Promise<unknown> {
   // MCP integrations
   const mcpIntegrations: { name: string; type: string }[] = [];
   try {
-    const mcpConfig = JSON.parse(await readFile(join(PROJECT_ROOT, ".mcp.json"), "utf-8"));
+    const mcpConfig = JSON.parse(await readFile(join(PROJECT_ROOT, ".mcp.nova.json"), "utf-8"));
     for (const [name] of Object.entries(mcpConfig.mcpServers || {})) {
       mcpIntegrations.push({ name, type: "mcp" });
     }

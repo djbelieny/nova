@@ -148,7 +148,7 @@ export class GeminiProvider implements AIProvider {
   }
 
   /**
-   * Convert .mcp.json format to Gemini's settings.json and write to temp dir.
+   * Convert .mcp.nova.json format to Gemini's settings.json and write to temp dir.
    * Returns the temp dir path to use as cwd.
    */
   private async prepareMcpConfig(mcpConfigPath: string): Promise<string> {
