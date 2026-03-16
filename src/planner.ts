@@ -590,7 +590,10 @@ export async function executePhase(
             basePrompt + (criticism ? `\n\nYOUR PREVIOUS ATTEMPT FAILED. CRITICISM:\n${criticism}\n\nFix these issues and try again.` : "") + (dynamicTools ? `\n\nDYNAMICALLY LOADED TOOLS:\n${dynamicTools}` : ""),
             fullDepContext || undefined,
             phase,
-            workspaceDir
+            workspaceDir,
+            undefined, // useMcp2cli
+            undefined, // userMcpConfig
+            user?.id   // userId for gws CLI instructions
           );
 
           emit({ type: "agent.dispatched", level: "info", agentSlug, data: { message: `Executing subtask ${idx} via ${agentSlug} [${phase}] (attempt ${attempts}/${maxAttempts}): ${subtask.description.substring(0, 50)}`, description: subtask.description, phase, subtaskIndex: idx, module: "planner", attempt: attempts } });

@@ -10,7 +10,7 @@
  * - ClickUp (clickup) — API-key based, no OAuth
  *
  * Global MCP servers (cloudflare, square, playwright) are inherited from
- * the project-level .mcp.json and included in every user's config.
+ * the project-level .mcp.nova.json and included in every user's config.
  */
 
 import { readFile, writeFile, mkdir } from "fs/promises";
@@ -257,7 +257,7 @@ export type ApiKeyProvider = (typeof API_KEY_PROVIDERS)[number];
 
 export type Provider = (typeof PER_USER_PROVIDERS)[number];
 
-// Global servers that every user inherits (read from project .mcp.json)
+// Global servers that every user inherits (read from project .mcp.nova.json)
 const GLOBAL_SERVERS = ["cloudflare", "square", "playwright", "tavily", "firecrawl", "exa", "browserbase"];
 
 export interface IntegrationStatus {
@@ -279,7 +279,7 @@ export function getUserMcpConfigPath(userId: string): string {
   return join(getUserDir(userId), "mcp.json");
 }
 
-function getGoogleMcpHome(userId: string, label: "personal" | "work"): string {
+export function getGoogleGwsDir(userId: string, label: "personal" | "work"): string {
   return join(getUserDir(userId), `google-${label}`);
 }
 
@@ -509,24 +509,22 @@ export async function handleOAuthCallback(
           }
         } catch {}
 
-        // Set up Google Workspace MCP home directory for this user
+        // Set up gws credentials directory for this user
         const label = provider === "google-personal" ? "personal" : "work";
-        const mcpHome = getGoogleMcpHome(userId, label);
-        await mkdir(mcpHome, { recursive: true });
+        const gwsDir = getGoogleGwsDir(userId, label);
+        await mkdir(gwsDir, { recursive: true });
+        // Also create the gws cache dir for isolated token caches
+        await mkdir(join(gwsDir, ".gws-cache"), { recursive: true });
 
-        // Write credentials in the format @presto-ai/google-workspace-mcp expects
+        // Write credentials in gws authorized_user format
         await writeFile(
-          join(mcpHome, "credentials.json"),
+          join(gwsDir, "credentials.json"),
           JSON.stringify({
-            installed: {
-              client_id: clientId,
-              client_secret: clientSecret,
-            },
+            type: "authorized_user",
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: tokens.refresh_token,
           })
-        );
-        await writeFile(
-          join(mcpHome, "token.json"),
-          JSON.stringify(tokens)
         );
         break;
       }
@@ -1059,7 +1057,7 @@ export async function regenerateMcpConfig(
   // Read global MCP config
   let globalConfig: any = { mcpServers: {} };
   try {
-    const raw = await readFile(join(PROJECT_ROOT, ".mcp.json"), "utf-8");
+    const raw = await readFile(join(PROJECT_ROOT, ".mcp.nova.json"), "utf-8");
     globalConfig = JSON.parse(raw);
   } catch {}
 
@@ -1079,17 +1077,9 @@ export async function regenerateMcpConfig(
       switch (integration.provider) {
         case "google-personal":
         case "google-work": {
-          const label = integration.provider === "google-personal" ? "personal" : "work";
-          const mcpHome = getGoogleMcpHome(userId, label);
-          const googleCmd = mcpCommand("@presto-ai/google-workspace-mcp");
-          mcpServers[`google-${label}`] = {
-            type: "stdio",
-            command: googleCmd.command,
-            args: googleCmd.args,
-            env: {
-              GOOGLE_WORKSPACE_MCP_HOME: mcpHome,
-            },
-          };
+          // Google Workspace is handled via gws CLI (not MCP server).
+          // Credentials are in getGoogleGwsDir(userId, label)/credentials.json
+          // and injected into agent prompts by buildGwsInstructions().
           break;
         }
 

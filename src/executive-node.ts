@@ -212,7 +212,7 @@ async function initExecMcpConfig(execRole: string): Promise<void> {
 
   // Fallback: generate a filtered MCP config file with only the exec's servers
   try {
-    const globalMcpPath = join(PROJECT_ROOT, ".mcp.json");
+    const globalMcpPath = join(PROJECT_ROOT, ".mcp.nova.json");
     if (!existsSync(globalMcpPath)) return;
 
     const raw = await readFile(globalMcpPath, "utf-8");

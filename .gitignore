@@ -54,6 +54,7 @@ OPTIMIZATION_PLAN.md
 IDEAS.md
 CHANGELOG.md
 .mcp.json
+.mcp.nova.json
 
 # IDE
 .idea/
