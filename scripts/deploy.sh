@@ -21,7 +21,7 @@ fi
 # Ensure gws CLI is available (replaces @presto-ai/google-workspace-mcp)
 if ! command -v gws &>/dev/null; then
   echo "Installing gws CLI globally..."
-  npm install -g @anthropic-ai/gws
+  npm install -g @googleworkspace/cli
 fi
 
 # Migrate from Supabase if credentials are set and shared.db doesn't exist yet
