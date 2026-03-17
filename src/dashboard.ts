@@ -368,11 +368,13 @@ async function handleLogin(req: Request): Promise<Response> {
   if (username === DASHBOARD_USER && password === DASHBOARD_PASS) {
     const sessionId = generateSessionId();
     sessions.set(sessionId, { user: username, expiresAt: Date.now() + SESSION_TTL_MS });
+    const isSecure = req.url.startsWith("https") || req.headers.get("x-forwarded-proto") === "https";
+    const securePart = isSecure ? "; Secure" : "";
     return new Response(null, {
       status: 302,
       headers: {
         Location: `${DASHBOARD_BASE}/`,
-        "Set-Cookie": `nova_session=${sessionId}; Path=${COOKIE_PATH}; HttpOnly; SameSite=Strict; Max-Age=86400; Secure`,
+        "Set-Cookie": `nova_session=${sessionId}; Path=${COOKIE_PATH}; HttpOnly; SameSite=Strict; Max-Age=86400${securePart}`,
       },
     });
   }
@@ -2914,7 +2916,11 @@ const server = Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
-    const path = url.pathname;
+    // Strip DASHBOARD_BASE prefix so route matching works regardless of reverse proxy path
+    const rawPath = url.pathname;
+    const path = DASHBOARD_BASE && rawPath.startsWith(DASHBOARD_BASE)
+      ? rawPath.slice(DASHBOARD_BASE.length) || "/"
+      : rawPath;
 
     // Health check (no auth required)
     if (path === "/health") {
