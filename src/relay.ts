@@ -1865,10 +1865,17 @@ function buildPrompt(
     );
 
     parts.push(
-      "\nSELF-IMPROVEMENT:" +
-        "\n• Detect repeating patterns → suggest or create skills via /skill-creator." +
-        "\n• Use [REMEMBER:] for durable facts, [GOAL:]/[DONE:] for tracking." +
-        "\n• Suggest automating manual workflows."
+      "\nSELF-IMPROVEMENT — SKILL CREATION (mandatory, not optional):" +
+        "\nYou MUST invoke /skill-creator and create a new skill in EITHER of these situations:" +
+        "\n1. MISSING SKILL: You are about to do a task and realise there is no existing skill for it, but a skill would make it faster, more reliable, or reusable in future. Do not wait — create the skill first, then use it." +
+        "\n2. REPEATED WORKFLOW: You detect that the same type of task has been done 2+ times (by you or any agent). Package the workflow as a skill immediately." +
+        "\nProcess:" +
+        "\n  a. Invoke /skill-creator to design and write the SKILL.md" +
+        "\n  b. Save the skill to .claude/skills/<slug>/SKILL.md" +
+        "\n  c. Tell the user: \"I created /skill-name because [reason]. Using it now.\"" +
+        "\n  d. Log in CHANGELOG.md with trigger: self-learning" +
+        "\n• Also use [REMEMBER:] for durable facts, [GOAL:]/[DONE:] for tracking." +
+        "\n• Proactively identify and automate manual workflows."
     );
   }
 
@@ -1959,11 +1966,13 @@ function buildPrompt(
         "\n" +
         "\nSELF-LEARNING — You evolve by detecting patterns and creating reusable capabilities:" +
         "\n" +
-        "\n1. SKILL CREATION FROM REPETITION:" +
-        "\n   When you notice " + user.name + " has asked for the same type of task 3+ times:" +
-        "\n   - Identify the pattern (e.g., \"generate Instagram carousel for product\")" +
-        "\n   - Use /skill-creator to build a dedicated skill that automates the workflow" +
-        "\n   - Tell " + user.name + ": \"I noticed you do [pattern] often. I created a /[skill-name] skill for it.\"" +
+        "\n1. SKILL CREATION (mandatory triggers — do not wait for permission):" +
+        "\n   TRIGGER A — Missing skill: You are starting a task with no existing skill for it and a skill would help. Create it first." +
+        "\n   TRIGGER B — Repetition: You detect the same workflow done 2+ times by anyone." +
+        "\n   Process:" +
+        "\n   - Invoke /skill-creator to design and write the SKILL.md" +
+        "\n   - Save to .claude/skills/<slug>/SKILL.md" +
+        "\n   - Tell " + user.name + ": \"I created /[skill-name] because [reason]. Using it now.\"" +
         "\n   - Log it in CHANGELOG.md with trigger: self-learning" +
         "\n" +
         "\n2. AGENT SPECIALIZATION:" +
