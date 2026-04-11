@@ -209,14 +209,14 @@ async function initExecMcpConfig(execRole: string): Promise<void> {
     return;
   }
 
-  // Check mcp2cli availability first
-  _execUseMcp2cli = process.env.MCP2CLI_ENABLED !== "false" && (await isMcp2cliAvailable());
+  // Always use mcp2cli unless explicitly disabled (deploy.sh guarantees the binary is installed).
+  _execUseMcp2cli = process.env.MCP2CLI_ENABLED !== "false";
   if (_execUseMcp2cli) {
-    emit({ type: "exec.message", level: "info", execRole: execRole, data: { message: `mcp2cli available — ${execRole} will use Bash-based tool access for: ${servers.join(", ")}`, module: "exec-node" } });
-    return; // No need for MCP config file — tools accessed via mcp2cli
+    emit({ type: "exec.message", level: "info", execRole: execRole, data: { message: `${execRole} using mcp2cli for: ${servers.join(", ")}`, module: "exec-node" } });
+    return; // No --mcp-config needed — tools accessed via Bash on-demand
   }
 
-  // Fallback: generate a filtered MCP config file with only the exec's servers
+  // Fallback (MCP2CLI_ENABLED=false only): generate a filtered MCP config file
   try {
     const globalMcpPath = join(PROJECT_ROOT, ".mcp.nova.json");
     if (!existsSync(globalMcpPath)) return;

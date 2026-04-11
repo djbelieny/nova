@@ -28,7 +28,6 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
-import { isMcp2cliAvailable } from "./mcp2cli.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
 import {
   ChannelRegistry,
@@ -794,8 +793,10 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
     const sandboxedHints = ["classify", "summarize", "approval-summary"];
     const sandboxed = hint ? sandboxedHints.includes(hint) : false;
 
-    // mcp2cli: skip --mcp-config when mcp2cli is enabled (tools accessed via Bash)
-    const mcp2cliEnabled = process.env.MCP2CLI_ENABLED !== "false" && (await isMcp2cliAvailable());
+    // mcp2cli: always use CLI-based tool access unless explicitly disabled.
+    // Agents call mcp2cli via Bash on-demand — no --mcp-config schema injection needed.
+    // Set MCP2CLI_ENABLED=false only as a local dev fallback if mcp2cli isn't installed.
+    const mcp2cliEnabled = process.env.MCP2CLI_ENABLED !== "false";
     const useMcp2cli = mcp2cliEnabled && !noMcp && !sandboxed && !!mcpConfigPath;
 
     const traceId = crypto.randomUUID();
@@ -2584,7 +2585,8 @@ function startAgentDelegationPoller(comms: any): void {
             ].join("\n");
 
             const prompt = buildAgentPrompt(agentSlug, taskDesc, baseContext, undefined, "prepare");
-            const result = await callAI(prompt, "standard", agentSlug);
+            // Pass user_id so callAI loads the right MCP config + mcp2cli instructions
+            const result = await callAI(prompt, "standard", delegation.user_id, agentSlug);
 
             const artifactsFn = (text: string) => {
               const found: Array<{ type: string; value: string }> = [];
