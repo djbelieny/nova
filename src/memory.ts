@@ -21,6 +21,100 @@ function escapeIlike(text: string): string {
 }
 
 /**
+ * Compress content before storing in memory.
+ * Rule-based (zero AI cost, zero latency) — strips filler, normalises to terse
+ * declarative form, and cuts at a sentence boundary instead of mid-word.
+ *
+ * This runs at WRITE TIME so everything in the DB is already compact.
+ * The model then receives clean, dense context rather than verbose verbatim text.
+ */
+export function compressForStorage(text: string, type: "fact" | "goal"): string {
+  let s = text
+    .trim()
+    .replace(/\s+/g, " ") // collapse whitespace
+
+    // ── strip leading filler phrases ──
+    .replace(/^(please\s+)?(remember(\s+that)?|note(\s+that)?|keep\s+in\s+mind(\s+that)?|fyi[,:]?\s*|just\s+so\s+you\s+know[,:]?\s*)/i, "")
+    .replace(/^(btw|by\s+the\s+way)[,:]?\s*/i, "")
+    .replace(/^(also[,:]?\s*)/i, "")
+    .trim() // remove any leading space left by filler strip
+
+    // ── "my <field> is [called] <value>" → "<Field>: <value>" ──
+    .replace(
+      /^my (name|company|business|brand|job|role|title|email|phone|website|product|service|industry|location|city|country|timezone|language) (is|are)(\s+called|\s+known\s+as)?\s+/i,
+      (_, noun) => `${noun.charAt(0).toUpperCase() + noun.slice(1)}: `
+    )
+    // ── "the <field> is" → "<Field>:" ──
+    .replace(
+      /^the (client|contact|customer|user|company|business)\s+(name\s+)?(is|are)\s+/i,
+      (_, noun) => `${noun.charAt(0).toUpperCase() + noun.slice(1)}: `
+    )
+
+    // ── goal-specific: strip intent opener ──
+    .replace(/^(goal:|objective:|my\s+goal\s+is\s+(to\s+)?|i\s+(want|need|aim|plan|hope)\s+to\s+|i'?m\s+(trying|working|planning)\s+to\s+|i\s+would\s+like\s+to\s+)/i, "")
+
+    // ── fact-specific: strip "I am/I'm <verb>-ing" starters ──
+    .replace(/^i\s+(am|was|have\s+been)\s+/i, "")
+    .trim();
+
+  // ── smart sentence-boundary cap — never cut mid-sentence ──
+  const MAX = type === "goal" ? 100 : 150;
+  if (s.length > MAX) {
+    // Look for a sentence end (.!?) within a small window past MAX
+    const window = s.slice(0, MAX + 30);
+    const ends = [window.lastIndexOf(".", MAX), window.lastIndexOf("!", MAX), window.lastIndexOf("?", MAX)];
+    const sentenceEnd = Math.max(...ends);
+
+    if (sentenceEnd > MAX / 2) {
+      s = s.slice(0, sentenceEnd + 1).trim();
+    } else {
+      // No sentence boundary — cut at last comma or space within MAX
+      const breakAt = Math.max(window.lastIndexOf(",", MAX), window.lastIndexOf(" ", MAX));
+      s = s.slice(0, breakAt > MAX / 2 ? breakAt : MAX).trim();
+    }
+  }
+
+  // Capitalise first letter
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Detect a loose category from a fact string.
+ * Used to group facts in context rather than dumping a flat list.
+ */
+function detectFactCategory(fact: string): string {
+  const f = fact.toLowerCase();
+  if (/\b(name|call(ed)?|known as|nickname)\b/.test(f)) return "identity";
+  if (/\b(company|business|brand|startup|agency|firm|org|organisation|organization|industry|sector)\b/.test(f)) return "business";
+  if (/\b(email|phone|address|location|city|country|timezone|website|url|domain)\b/.test(f)) return "contact";
+  if (/\b(prefer|like|love|hate|dislike|avoid|always|never|style|tone|format|language)\b/.test(f)) return "preferences";
+  if (/\b(client|customer|partner|vendor|supplier|contact|team|colleague|employee|staff)\b/.test(f)) return "people";
+  if (/\b(product|service|offer|price|pricing|plan|tier|feature|tool|software|platform)\b/.test(f)) return "product";
+  if (/\b(revenue|mrr|arr|profit|budget|spend|cost|sales|deal|pipeline)\b/.test(f)) return "finance";
+  return "general";
+}
+
+/**
+ * Collapse a list of older messages into a compact digest line.
+ * Extracts the first meaningful clause from each message, deduplicates,
+ * and joins with " | ". No AI involved.
+ */
+function digestMessages(messages: any[], timezone: string): string {
+  const phrases: string[] = [];
+  for (const m of messages) {
+    const content = (m.content || "").trim();
+    if (!content) continue;
+    // Take first sentence or first 60 chars, whichever is shorter
+    const firstSentence = content.split(/[.!?\n]/)[0].trim();
+    const snippet = firstSentence.slice(0, 60);
+    if (snippet.length > 8) phrases.push(snippet);
+  }
+  // Deduplicate near-identical phrases
+  const unique = phrases.filter((p, i) => !phrases.slice(0, i).some(q => q.slice(0, 20) === p.slice(0, 20)));
+  return unique.slice(0, 6).join(" | ");
+}
+
+/**
  * Parse Claude's response for memory intent tags.
  * Saves facts/goals to Supabase and returns the cleaned response.
  */
@@ -34,11 +128,11 @@ export async function processMemoryIntents(
 
   let clean = response;
 
-  // [REMEMBER: fact to store] — with duplicate detection
+  // [REMEMBER: fact to store] — compress before storing, with duplicate detection
   for (const match of response.matchAll(/\[REMEMBER:\s*(.+?)\]/gi)) {
-    const fact = match[1];
-    // Check for existing similar fact
-    const existing = db.findMemoryByContent(userId, "fact", fact.substring(0, 100));
+    const fact = compressForStorage(match[1], "fact");
+    // Check for existing similar fact using the compressed version
+    const existing = db.findMemoryByContent(userId, "fact", fact.substring(0, 80));
 
     if (!existing) {
       const emb = await generateEmbedding(fact);
@@ -55,10 +149,11 @@ export async function processMemoryIntents(
 
   // [SHARE: fact to share with team]
   for (const match of response.matchAll(/\[SHARE:\s*(.+?)\]/gi)) {
-    const emb = await generateEmbedding(match[1]);
+    const compressed = compressForStorage(match[1], "fact");
+    const emb = await generateEmbedding(compressed);
     db.insertMemory({
       type: "fact",
-      content: match[1],
+      content: compressed,
       user_id: userId,
       scope: "shared",
       embedding: emb || undefined,
@@ -70,10 +165,11 @@ export async function processMemoryIntents(
   for (const match of response.matchAll(
     /\[GOAL:\s*(.+?)(?:\s*\|\s*DEADLINE:\s*(.+?))?\]/gi
   )) {
-    const emb = await generateEmbedding(match[1]);
+    const compressed = compressForStorage(match[1], "goal");
+    const emb = await generateEmbedding(compressed);
     db.insertMemory({
       type: "goal",
-      content: match[1],
+      content: compressed,
       deadline: match[2] || undefined,
       user_id: userId,
       embedding: emb || undefined,
@@ -235,37 +331,49 @@ export async function getMemoryContext(
     const idsToUpdate: string[] = [];
 
     if (facts?.length) {
-      // Cap at 50 facts to prevent unbounded growth
+      // Cap at 50 most-recently-accessed facts
       const capped = facts.slice(0, 50);
       capped.forEach((f: any) => idsToUpdate.push(f.id));
-      const suffix = facts.length > 50
-        ? `\n[...${facts.length - 50} more facts truncated...]`
-        : "";
-      parts.push(
-        "FACTS:\n" +
-          capped.map((f: any) => `- ${f.content}`).join("\n") + suffix
-      );
+
+      // Group by category so the model parses context faster and
+      // similar facts cluster together (better retrieval, fewer tokens wasted on headers)
+      const groups: Record<string, string[]> = {};
+      for (const f of capped) {
+        const cat = detectFactCategory(f.content);
+        (groups[cat] ??= []).push(f.content);
+      }
+
+      // Emit as a compact, grouped block — no separate FACTS header per group
+      const ORDER = ["identity", "business", "product", "finance", "contact", "preferences", "people", "general"];
+      const factLines: string[] = [];
+      for (const cat of ORDER) {
+        if (!groups[cat]?.length) continue;
+        // For identity/contact/preferences, inline them on one row per group
+        if (["identity", "contact"].includes(cat) && groups[cat].length <= 4) {
+          factLines.push(groups[cat].join(" | "));
+        } else {
+          for (const fact of groups[cat]) factLines.push(fact);
+        }
+      }
+      if (facts.length > 50) factLines.push(`+${facts.length - 50} more`);
+      parts.push("FACTS:\n" + factLines.map(l => `- ${l}`).join("\n"));
     }
 
     if (goals?.length) {
-      // Cap at 15 goals and 120 chars per goal to keep context bounded
       const cappedGoals = goals.slice(0, 15);
       cappedGoals.forEach((g: any) => idsToUpdate.push(g.id));
-      const goalSuffix = goals.length > 15
-        ? `\n[...${goals.length - 15} more goals not shown]`
-        : "";
-      parts.push(
-        "GOALS:\n" +
-          cappedGoals
-            .map((g: any) => {
-              const deadline = g.deadline
-                ? ` (by ${new Date(g.deadline).toLocaleDateString()})`
-                : "";
-              const content = g.content.length > 120 ? g.content.slice(0, 120) + "…" : g.content;
-              return `- ${content}${deadline}`;
-            })
-            .join("\n") + goalSuffix
-      );
+      const goalLines = cappedGoals.map((g: any) => {
+        const deadline = g.deadline
+          ? ` → ${new Date(g.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+          : "";
+        // Content stored compressed; still guard against pre-existing verbose entries
+        const content = g.content.length > 120
+          ? g.content.slice(0, g.content.lastIndexOf(" ", 115) || 115).trim()
+          : g.content;
+        return `- ${content}${deadline}`;
+      });
+      if (goals.length > 15) goalLines.push(`- +${goals.length - 15} more goals`);
+      parts.push("GOALS:\n" + goalLines.join("\n"));
     }
 
     if (idsToUpdate.length > 0) {
@@ -322,14 +430,31 @@ export async function getRecentHistory(
 
   try {
     const data = db.getRecentMessages(userId, count);
-
     if (!data?.length) return "";
 
     // Data comes DESC from DB, reverse to chronological
     const messages = [...data].reverse();
 
-    const MAX_MSG_CHARS = 500; // cap individual messages to prevent long pastes dominating history
-    const lines = messages.map((m: any) => {
+    // ── Strategy: keep the last 4 turns verbatim (immediate context) ──
+    // Older turns are collapsed into a single digest line.
+    // This gives the model what it needs for the current exchange without
+    // flooding the prompt with history it doesn't need word-for-word.
+
+    const VERBATIM_COUNT = 4;
+    const older = messages.slice(0, -VERBATIM_COUNT);
+    const recent = messages.slice(-VERBATIM_COUNT);
+
+    const lines: string[] = [];
+
+    // Digest line for older messages
+    if (older.length > 0) {
+      const digest = digestMessages(older, "America/New_York");
+      if (digest) lines.push(`Earlier: ${digest}`);
+    }
+
+    // Verbatim recent messages — cap each at 400 chars at a sentence boundary
+    const MAX_VERBATIM_CHARS = 400;
+    for (const m of recent) {
       const ts = new Date(m.created_at).toLocaleString("en-US", {
         timeZone: "America/New_York",
         month: "short",
@@ -338,16 +463,17 @@ export async function getRecentHistory(
         minute: "2-digit",
         hour12: true,
       });
-      const content = (m.content || "").length > MAX_MSG_CHARS
-        ? m.content.slice(0, MAX_MSG_CHARS) + "…"
-        : m.content;
-      return `[${ts} ${m.role}]: ${content}`;
-    });
-
-    // Secondary char limit — drop oldest messages if total exceeds 8,000 chars
-    const MAX_HISTORY_CHARS = 8_000;
-    while (lines.length > 1 && lines.join("\n").length > MAX_HISTORY_CHARS) {
-      lines.shift();
+      let content = (m.content || "").trim();
+      if (content.length > MAX_VERBATIM_CHARS) {
+        // Cut at last sentence boundary within the window
+        const window = content.slice(0, MAX_VERBATIM_CHARS + 20);
+        const ends = [window.lastIndexOf(".", MAX_VERBATIM_CHARS), window.lastIndexOf("!", MAX_VERBATIM_CHARS), window.lastIndexOf("?", MAX_VERBATIM_CHARS)];
+        const sentEnd = Math.max(...ends);
+        content = sentEnd > MAX_VERBATIM_CHARS / 2
+          ? content.slice(0, sentEnd + 1).trim()
+          : content.slice(0, MAX_VERBATIM_CHARS).trim();
+      }
+      lines.push(`[${ts} ${m.role}]: ${content}`);
     }
 
     return "RECENT CONVERSATION:\n" + lines.join("\n");
@@ -380,15 +506,21 @@ export async function getRelevantContext(
       return "";
     }
 
-    // Cap each result to 500 chars to prevent a single long message from dominating
-    const MAX_RESULT_CHARS = 500;
+    // Summarise each result to its first complete sentence or 200 chars.
+    // Semantic search already found the most relevant messages — we only need
+    // their key point, not the full text.
+    const MAX_RELEVANT_CHARS = 200;
     return (
-      "RELEVANT PAST MESSAGES:\n" +
+      "RELEVANT PAST:\n" +
       data
         .map((m: any) => {
-          const content = m.content.length > MAX_RESULT_CHARS
-            ? m.content.slice(0, MAX_RESULT_CHARS) + "..."
-            : m.content;
+          let content = (m.content || "").trim();
+          if (content.length > MAX_RELEVANT_CHARS) {
+            const firstSentence = content.split(/[.!?\n]/)[0].trim();
+            content = firstSentence.length >= 20 && firstSentence.length <= MAX_RELEVANT_CHARS
+              ? firstSentence + "."
+              : content.slice(0, content.lastIndexOf(" ", MAX_RELEVANT_CHARS) || MAX_RELEVANT_CHARS).trim();
+          }
           return `[${m.role}]: ${content}`;
         })
         .join("\n")
