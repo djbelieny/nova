@@ -63,7 +63,7 @@ import { formatBudgetSummary, getBudgetSummary, requestSpend } from "./budget.ts
 import { getReputationContext, getWeeklyReputationReport, recordTaskOutcome } from "./reputation.ts";
 import { listProjects, getProjectBrief, createProject } from "./projects.ts";
 import { initCallProcessor, processCallTranscript } from "../services/call-processor.ts";
-import { startZoomPoller, runZoomPollNow } from "../services/zoom-transcript-poller.ts";
+import { startZoomPoller, runZoomPollNow, searchZoomRecordings, processRecordingById, type ZoomMeeting } from "../services/zoom-transcript-poller.ts";
 
 // Executive board (optional — only active if SUPABASE_URL is configured)
 let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
@@ -517,6 +517,23 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
   // Board meeting dismiss
   if (buttonData.startsWith("board_dismiss:") && boardModule) {
     await reply("Board meeting dismissed.");
+    return;
+  }
+
+  // Zoom recording selection (zoom_pick:<uuid>:<userId>)
+  if (buttonData.startsWith("zoom_pick:")) {
+    const parts = buttonData.split(":");
+    const uuid = parts[1];
+    const targetUserId = parts[2];
+    const meeting = zoomSearchCache.get(uuid);
+    if (!meeting) {
+      await reply("Recording not found in cache — try /zoom search again.");
+      return;
+    }
+    if (editOriginal) await editOriginal(`Processing: ${meeting.topic}...`);
+    processRecordingById(targetUserId, meeting).catch((err: Error) =>
+      reply(`Failed to process recording: ${err.message}`)
+    );
     return;
   }
 
@@ -2526,13 +2543,40 @@ ${diskLine}${dataLine}
       } catch (e: any) {
         await ctx.reply(`Zoom poll failed: ${e.message}`);
       }
+    } else if (sub === "search") {
+      const query = args.slice(1).join(" ").trim();
+      if (!query) {
+        await ctx.reply("Usage: /zoom search <keywords>\nExample: /zoom search client proposal");
+        return true;
+      }
+      await ctx.reply(`Searching Zoom recordings for "<b>${query}</b>"...`, { parse_mode: "HTML" });
+      try {
+        const matches = await searchZoomRecordings(query);
+        if (!matches.length) {
+          await ctx.reply(`No recordings found matching "<b>${query}</b>" in the last 30 days.`, { parse_mode: "HTML" });
+          return true;
+        }
+        const { InlineKeyboard } = await import("grammy");
+        const keyboard = new InlineKeyboard();
+        const lines: string[] = [`Found <b>${matches.length}</b> recording(s) matching "<b>${query}</b>":\n`];
+        matches.forEach((m, i) => {
+          const date = new Date(m.start_time).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+          lines.push(`${i + 1}. ${m.topic} — ${date} (${m.duration}m)`);
+          zoomSearchCache.set(m.uuid, m);
+          keyboard.text(`${i + 1}. ${m.topic.slice(0, 28)} (${date})`, `zoom_pick:${m.uuid}:${user.id}`).row();
+        });
+        await ctx.reply(lines.join("\n"), { reply_markup: keyboard, parse_mode: "HTML" });
+      } catch (e: any) {
+        await ctx.reply(`Search failed: ${e.message}`);
+      }
     } else if (sub === "skip") {
       const current = process.env.ZOOM_SKIP_TOPICS || "game over,shift";
       await ctx.reply(`Current skip keywords: <code>${current}</code>\n\nTo add keywords, set <code>ZOOM_SKIP_TOPICS</code> in .env (comma-separated).`, { parse_mode: "HTML" });
     } else {
       await ctx.reply(
         "<b>/zoom commands:</b>\n" +
-        "/zoom poll — run transcript poll immediately\n" +
+        "/zoom search &lt;keywords&gt; — find and ingest a recording\n" +
+        "/zoom poll — run hourly poll immediately\n" +
         "/zoom skip — show skip keywords",
         { parse_mode: "HTML" }
       );
@@ -3023,6 +3067,10 @@ if (supabase) {
 // ============================================================
 // NEW AUTONOMOUS SERVICES
 // ============================================================
+
+// In-memory cache of Zoom search results for inline button callbacks
+// uuid → ZoomMeeting (bounded: max 5 per search, overwritten on next search)
+const zoomSearchCache = new Map<string, ZoomMeeting>();
 
 // Helper: send an alert to a user through their preferred channel
 async function sendUserAlert(userId: string, message: string): Promise<void> {

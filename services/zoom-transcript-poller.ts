@@ -34,6 +34,20 @@ const SKIP_KEYWORDS = RAW_SKIP.split(",").map((k) => k.trim().toLowerCase()).fil
 const ZOOM_API = "https://api.zoom.us/v2";
 
 // ============================================================
+// Public types
+// ============================================================
+
+export interface ZoomMeeting {
+  uuid: string;
+  id: number;
+  topic: string;
+  start_time: string;
+  duration: number;
+  participants: string[];
+  transcriptDownloadUrl: string;
+}
+
+// ============================================================
 // Module state
 // ============================================================
 
@@ -320,6 +334,97 @@ async function runPoll(): Promise<void> {
       });
     }
   }
+}
+
+// ============================================================
+// Search + manual ingest (public API)
+// ============================================================
+
+/**
+ * Search Zoom cloud recordings by topic keyword.
+ * Returns up to 5 matches that have a completed transcript file.
+ */
+export async function searchZoomRecordings(
+  query: string,
+  daysBack = 30
+): Promise<ZoomMeeting[]> {
+  if (!process.env.ZOOM_ACCOUNT_ID) return [];
+
+  const token = await getZoomToken();
+  const from = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .split("T")[0];
+  const to = new Date().toISOString().split("T")[0];
+
+  const url = `${ZOOM_API}/users/me/recordings?from=${from}&to=${to}&page_size=100`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Zoom search failed: ${res.status}`);
+
+  const data = await res.json() as { meetings?: any[] };
+  const lower = query.toLowerCase();
+
+  const matches: ZoomMeeting[] = [];
+  for (const m of data.meetings || []) {
+    if (matches.length >= 5) break;
+    if (!m.topic?.toLowerCase().includes(lower)) continue;
+
+    const transcriptFile = (m.recording_files || []).find(
+      (f: any) => f.file_type === "TRANSCRIPT" && f.status === "completed"
+    );
+    if (!transcriptFile) continue;
+
+    matches.push({
+      uuid: m.uuid || String(m.id),
+      id: m.id,
+      topic: m.topic || "Zoom Call",
+      start_time: m.start_time || new Date().toISOString(),
+      duration: m.duration || 0,
+      participants: (m.participants || []).map((p: any) => p.name || p.email).filter(Boolean).slice(0, 10),
+      transcriptDownloadUrl: transcriptFile.download_url,
+    });
+  }
+
+  return matches;
+}
+
+/**
+ * Download and process a specific Zoom recording into Nova's pipeline.
+ * Safe to call multiple times — skips if already processed.
+ */
+export async function processRecordingById(
+  userId: string,
+  meeting: ZoomMeeting
+): Promise<void> {
+  const processed = getProcessedIds(userId);
+  if (processed.has(meeting.uuid)) {
+    console.log(`[zoom-poller] Already processed: "${meeting.topic}" (${meeting.uuid})`);
+    return;
+  }
+
+  const token = await getZoomToken();
+  const vtt = await downloadTranscript(token, meeting.transcriptDownloadUrl);
+  const plainText = stripVTT(vtt);
+
+  if (!plainText.trim()) {
+    console.log(`[zoom-poller] Empty transcript for "${meeting.topic}" — skipped`);
+    markProcessed(userId, [meeting.uuid]);
+    return;
+  }
+
+  emit({
+    type: "system.health",
+    level: "info",
+    userId,
+    data: { message: `Manual ingest: "${meeting.topic}"`, uuid: meeting.uuid, module: "zoom-poller" },
+  });
+
+  await processCallTranscript(userId, plainText, {
+    title: meeting.topic,
+    participants: meeting.participants,
+    duration_minutes: meeting.duration || undefined,
+  });
+
+  markProcessed(userId, [meeting.uuid]);
 }
 
 // ============================================================
