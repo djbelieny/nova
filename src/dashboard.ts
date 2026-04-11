@@ -388,7 +388,7 @@ function loginPage(error?: string, returnTo?: string): Response {
 </body>
 </html>`;
   return new Response(html, {
-    status: 401,
+    status: 200,
     headers: { "Content-Type": "text/html" },
   });
 }
