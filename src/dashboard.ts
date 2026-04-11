@@ -1206,6 +1206,59 @@ async function getActiveDelegations(): Promise<unknown> {
   }
 }
 
+async function getKanbanData(userId?: string): Promise<unknown> {
+  const columns: Record<string, any[]> = {
+    pending: [],
+    in_progress: [],
+    completed: [],
+    blocked: [],
+  };
+  try {
+    const tasksResult = await getAgentTasks(userId) as any;
+    for (const t of tasksResult.tasks || []) {
+      let col = t.status || "pending";
+      if (col === "done") col = "completed";
+      if (col === "cancelled" || col === "failed") col = "blocked";
+      if (!columns[col]) col = "pending";
+      columns[col].push({
+        id: t.id,
+        source: "task",
+        agent: t.agent || "general",
+        description: t.description || "",
+        status: t.status || "pending",
+        result: t.result || null,
+        created_at: t.created_at,
+        updated_at: t.updated_at,
+      });
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const delegResult = await getActiveDelegations() as any;
+    for (const row of delegResult.delegations || []) {
+      let meta: any = {};
+      try { meta = typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata || {}); } catch { /**/ }
+      const rawStatus: string = meta.status || "pending";
+      let col = rawStatus;
+      if (col === "done") col = "completed";
+      if (col === "failed" || col === "cancelled") col = "blocked";
+      if (!columns[col]) col = "pending";
+      columns[col].push({
+        id: row.id,
+        source: "delegation",
+        agent: meta.agentSlug || meta.assigned_agent || "exec",
+        description: meta.message || meta.task_description || row.message || "",
+        status: rawStatus,
+        result: meta.result || null,
+        created_at: row.created_at,
+        updated_at: row.created_at,
+      });
+    }
+  } catch { /* ignore */ }
+
+  return { columns };
+}
+
 // ============================================================
 // OBSERVABILITY HANDLERS
 // ============================================================
@@ -1239,6 +1292,432 @@ async function getCostBreakdown(period: string, groupBy: string): Promise<any[]>
   return supabase.shared.db.query(
     `SELECT ${groupCol} as group_key, COUNT(*) as calls, SUM(cost_usd) as total_cost, SUM(input_tokens) as total_input, SUM(output_tokens) as total_output FROM cost_tracking WHERE created_at > datetime('now', ?) GROUP BY ${groupCol} ORDER BY total_cost DESC`
   ).all(offset) as any[];
+}
+
+// ============================================================
+// KANBAN PAGE
+// ============================================================
+
+function renderKanban(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Nova — Kanban Board</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #06060b;
+    --surface: rgba(255,255,255,0.04);
+    --glass: rgba(255,255,255,0.055);
+    --glass-border: rgba(255,255,255,0.10);
+    --glass-hover: rgba(255,255,255,0.08);
+    --indigo: #6366f1;
+    --violet: #8b5cf6;
+    --teal: #06b6d4;
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --error: #ef4444;
+    --text: rgba(255,255,255,0.92);
+    --text-secondary: rgba(255,255,255,0.6);
+    --text-dim: rgba(255,255,255,0.3);
+    --col-pending: #6b7280;
+    --col-inprogress: #6366f1;
+    --col-completed: #22c55e;
+    --col-blocked: #ef4444;
+  }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  @keyframes pulse-dot { 0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
+  @keyframes fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes card-move { from { opacity: 0; transform: scale(0.96) translateY(-4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+
+  /* HEADER */
+  .kb-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--glass-border);
+    background: var(--glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    flex-shrink: 0;
+    z-index: 100;
+  }
+  .kb-logo {
+    display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--text);
+  }
+  .kb-logo-badge {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, var(--indigo), var(--violet));
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; font-weight: 700; color: #fff;
+  }
+  .kb-title { font-size: 1rem; font-weight: 700; }
+  .kb-subtitle { font-size: 0.6rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 2px; }
+  .kb-back {
+    text-decoration: none; color: var(--text-dim); font-size: 11px;
+    padding: 5px 10px; border: 1px solid var(--glass-border); border-radius: 6px;
+    transition: color 0.2s, border-color 0.2s;
+    white-space: nowrap;
+  }
+  .kb-back:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+  .kb-header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+  .kb-live { display: flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 11px; }
+  .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--success); animation: pulse-dot 2s infinite; }
+  .kb-refresh {
+    background: none; border: 1px solid var(--glass-border); color: var(--text-dim);
+    cursor: pointer; font-size: 14px; padding: 4px 8px; border-radius: 6px;
+    transition: color 0.2s, border-color 0.2s; line-height: 1;
+  }
+  .kb-refresh:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+
+  /* BOARD */
+  .kb-board {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    padding: 16px;
+    overflow-y: auto;
+    align-items: start;
+  }
+
+  /* COLUMN */
+  .kb-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .kb-col-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .kb-col-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .kb-col-name { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; flex: 1; }
+  .kb-col-count {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+    background: rgba(255,255,255,0.07); color: var(--text-secondary);
+  }
+  .kb-col-cards { display: flex; flex-direction: column; gap: 8px; }
+  .kb-empty {
+    padding: 20px 12px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 11px;
+    border: 1px dashed rgba(255,255,255,0.07);
+    border-radius: 10px;
+  }
+
+  /* CARD */
+  .kb-card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    padding: 12px;
+    cursor: default;
+    transition: border-color 0.2s, background 0.2s, transform 0.15s;
+    animation: card-move 0.25s ease;
+  }
+  .kb-card:hover {
+    background: var(--glass-hover);
+    border-color: rgba(255,255,255,0.18);
+    transform: translateY(-1px);
+  }
+  .kb-card-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .kb-agent-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .kb-agent-name { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
+  .kb-source-pill {
+    margin-left: auto; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+    padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
+    background: rgba(255,255,255,0.06); color: var(--text-dim);
+  }
+  .kb-card-desc {
+    font-size: 12px; line-height: 1.5; color: var(--text);
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  .kb-card-desc.expanded { -webkit-line-clamp: unset; }
+  .kb-card-result {
+    margin-top: 6px;
+    font-size: 11px; color: var(--text-dim); line-height: 1.4;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-style: italic;
+  }
+  .kb-card-footer { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+  .kb-status-pill {
+    font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
+    padding: 2px 8px; border-radius: 10px; text-transform: uppercase;
+  }
+  .kb-time { margin-left: auto; font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+
+  /* status colors for pills */
+  .status-pending    { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.2); }
+  .status-in_progress{ background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.25); }
+  .status-completed  { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.2); }
+  .status-done       { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.2); }
+  .status-blocked    { background: rgba(239,68,68,0.12); color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
+  .status-failed     { background: rgba(239,68,68,0.12); color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
+  .status-cancelled  { background: rgba(107,114,128,0.1); color: #6b7280; border: 1px solid rgba(107,114,128,0.15); }
+
+  /* MOBILE: horizontal scroll */
+  @media (max-width: 767px) {
+    .kb-board {
+      display: flex;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      gap: 10px;
+      padding: 12px;
+      height: calc(100vh - 52px);
+      align-items: stretch;
+    }
+    .kb-col {
+      min-width: 85vw;
+      max-width: 85vw;
+      scroll-snap-align: start;
+      flex-shrink: 0;
+      overflow-y: auto;
+      height: 100%;
+    }
+    .kb-col-header { position: sticky; top: 0; z-index: 5; }
+    .kb-col-cards { padding-bottom: 24px; }
+    .kb-board::-webkit-scrollbar { display: none; }
+  }
+  @media (min-width: 768px) and (max-width: 1199px) {
+    .kb-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* Loading state */
+  .kb-loading { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-dim); font-size: 12px; gap: 8px; }
+  .kb-spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.1); border-top-color: var(--indigo); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Scroll hint on mobile */
+  .kb-scroll-hint {
+    display: none;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 10px;
+    padding: 4px 0 8px;
+    letter-spacing: 0.5px;
+  }
+  @media (max-width: 767px) { .kb-scroll-hint { display: block; } }
+</style>
+</head>
+<body>
+
+<div class="kb-header">
+  <a class="kb-logo" href="/">
+    <div class="kb-logo-badge">N</div>
+    <div><div class="kb-title">Nova</div><div class="kb-subtitle">Kanban</div></div>
+  </a>
+  <a class="kb-back" href="/">← Dashboard</a>
+  <div class="kb-header-right">
+    <div class="kb-live"><span class="live-dot" id="kb-sse-dot" style="background:var(--col-blocked)"></span><span id="kb-sse-label">Connecting…</span></div>
+    <button class="kb-refresh" id="kb-refresh-btn" title="Refresh">↻</button>
+  </div>
+</div>
+
+<div class="kb-scroll-hint">← swipe between columns →</div>
+
+<div id="kb-board" class="kb-board">
+  <div class="kb-loading"><div class="kb-spinner"></div> Loading…</div>
+</div>
+
+<script>
+(function() {
+  const COLS = [
+    { key: 'pending',    label: 'Pending',     color: '#6b7280' },
+    { key: 'in_progress',label: 'In Progress', color: '#6366f1' },
+    { key: 'completed',  label: 'Completed',   color: '#22c55e' },
+    { key: 'blocked',    label: 'Blocked',     color: '#ef4444' },
+  ];
+
+  const AGENT_COLORS = {
+    ceo:'#f59e0b', cfo:'#22c55e', cmo:'#ec4899', cto:'#06b6d4',
+    coo:'#8b5cf6', research:'#3b82f6', critic:'#ef4444',
+    helios:'#f59e0b', pixel:'#ec4899', kai:'#3b82f6', orion:'#22c55e',
+    morpheus:'#8b5cf6', architect:'#06b6d4', athena:'#f59e0b',
+    digit:'#3b82f6', echo:'#22c55e', flux:'#6366f1', quill:'#a78bfa',
+    lex:'#64748b', helia:'#ec4899', bridge:'#06b6d4', oracle:'#f59e0b',
+    cipher:'#8b5cf6', rift:'#ef4444', joule:'#22c55e', nexus:'#3b82f6',
+    aura:'#ec4899', zen:'#4ade80', tesseract:'#06b6d4', magnus:'#f59e0b',
+    cyra:'#6366f1',
+  };
+
+  function agentColor(slug) {
+    return AGENT_COLORS[slug && slug.toLowerCase()] || '#6b7280';
+  }
+
+  function relativeTime(ts) {
+    if (!ts) return '';
+    const diff = Date.now() - new Date(ts).getTime();
+    const s = Math.floor(diff / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s/60) + 'm ago';
+    if (s < 86400) return Math.floor(s/3600) + 'h ago';
+    return Math.floor(s/86400) + 'd ago';
+  }
+
+  function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function renderCard(card) {
+    const ac = agentColor(card.agent);
+    const statusClass = 'status-' + (card.status || 'pending').replace(/[^a-z_]/g, '_');
+    const hasResult = card.result && card.result.trim();
+    return \`<div class="kb-card" data-id="\${escHtml(card.id)}" data-source="\${escHtml(card.source)}">
+      <div class="kb-card-top">
+        <span class="kb-agent-dot" style="background:\${ac}"></span>
+        <span class="kb-agent-name" style="color:\${ac}">\${escHtml(card.agent)}</span>
+        <span class="kb-source-pill">\${escHtml(card.source)}</span>
+      </div>
+      <div class="kb-card-desc">\${escHtml(card.description)}</div>
+      \${hasResult ? \`<div class="kb-card-result">\${escHtml(card.result.slice(0, 200))}\${card.result.length > 200 ? '…' : ''}</div>\` : ''}
+      <div class="kb-card-footer">
+        <span class="kb-status-pill \${statusClass}">\${escHtml(card.status || 'pending')}</span>
+        <span class="kb-time">\${relativeTime(card.updated_at || card.created_at)}</span>
+      </div>
+    </div>\`;
+  }
+
+  function renderBoard(data) {
+    const board = document.getElementById('kb-board');
+    if (!data || !data.columns) {
+      board.innerHTML = '<div class="kb-loading">No data</div>';
+      return;
+    }
+    board.innerHTML = COLS.map(col => {
+      const cards = data.columns[col.key] || [];
+      const cardHtml = cards.length
+        ? cards.map(renderCard).join('')
+        : '<div class="kb-empty">No tasks</div>';
+      return \`<div class="kb-col" id="col-\${col.key}">
+        <div class="kb-col-header">
+          <span class="kb-col-dot" style="background:\${col.color}"></span>
+          <span class="kb-col-name">\${col.label}</span>
+          <span class="kb-col-count">\${cards.length}</span>
+        </div>
+        <div class="kb-col-cards" id="cards-\${col.key}">\${cardHtml}</div>
+      </div>\`;
+    }).join('');
+  }
+
+  function updateColumn(key, cards) {
+    const el = document.getElementById('cards-' + key);
+    if (!el) return;
+    const count = document.querySelector('#col-' + key + ' .kb-col-count');
+    if (count) count.textContent = cards.length;
+    el.innerHTML = cards.length
+      ? cards.map(renderCard).join('')
+      : '<div class="kb-empty">No tasks</div>';
+  }
+
+  let _lastData = null;
+
+  async function loadKanban() {
+    try {
+      const res = await fetch('/api/kanban');
+      const data = await res.json();
+      _lastData = data;
+      renderBoard(data);
+    } catch(e) {
+      document.getElementById('kb-board').innerHTML = '<div class="kb-loading">Failed to load — ' + e.message + '</div>';
+    }
+  }
+
+  async function refreshFromApi() {
+    try {
+      const res = await fetch('/api/kanban');
+      const data = await res.json();
+      if (!data.columns) return;
+      _lastData = data;
+      // Diff-update each column
+      for (const col of ['pending','in_progress','completed','blocked']) {
+        updateColumn(col, data.columns[col] || []);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // SSE for live updates
+  const RELOAD_EVENTS = new Set(['agent.dispatched','agent.completed','agent.progress','task.created','task.status','task.completed','exec.delegation']);
+  let sseReloadTimer = null;
+  function scheduleReload() {
+    if (sseReloadTimer) clearTimeout(sseReloadTimer);
+    sseReloadTimer = setTimeout(refreshFromApi, 800);
+  }
+
+  function connectSSE() {
+    const dot = document.getElementById('kb-sse-dot');
+    const label = document.getElementById('kb-sse-label');
+    const es = new EventSource('/api/activity/stream');
+    es.onopen = () => {
+      dot.style.background = 'var(--col-completed)';
+      label.textContent = 'Live';
+    };
+    es.onerror = () => {
+      dot.style.background = 'var(--col-blocked)';
+      label.textContent = 'Disconnected';
+      setTimeout(connectSSE, 5000);
+      es.close();
+    };
+    es.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        if (RELOAD_EVENTS.has(event.type)) scheduleReload();
+      } catch { /* ignore */ }
+    };
+  }
+
+  // Expand/collapse card description on tap
+  document.addEventListener('click', function(e) {
+    const card = e.target.closest('.kb-card');
+    if (!card) return;
+    const desc = card.querySelector('.kb-card-desc');
+    if (desc) desc.classList.toggle('expanded');
+  });
+
+  document.getElementById('kb-refresh-btn').addEventListener('click', refreshFromApi);
+
+  // Periodic fallback refresh every 30s
+  setInterval(refreshFromApi, 30000);
+
+  loadKanban();
+  connectSSE();
+})();
+</script>
+</body>
+</html>`;
 }
 
 // ============================================================
@@ -1699,7 +2178,8 @@ function renderDashboard(): string {
     <span>Up: <span id="header-uptime">--</span></span>
     <span class="sse-badge" id="sse-badge">SSE</span>
   </div>
-  <div class="header-controls">
+  <div class="header-controls" style="display:flex;align-items:center;gap:10px;">
+    <a href="/kanban" style="text-decoration:none;color:var(--text-dim);font-size:11px;padding:5px 10px;border:1px solid var(--glass-border);border-radius:6px;transition:color 0.2s,border-color 0.2s;white-space:nowrap;" onmouseover="this.style.color='var(--text)';this.style.borderColor='rgba(255,255,255,0.2)'" onmouseout="this.style.color='var(--text-dim)';this.style.borderColor='var(--glass-border)'">⬛ Kanban</a>
     <select id="user-selector"><option value="">All Users</option></select>
   </div>
 </div>
@@ -3009,6 +3489,16 @@ const server = Bun.serve({
       });
     }
 
+    // Kanban board page
+    if (path === "/kanban") {
+      return new Response(renderKanban(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
+        },
+      });
+    }
+
     // API routes
     const userId = url.searchParams.get("user_id") || undefined;
 
@@ -3032,6 +3522,7 @@ const server = Bun.serve({
     if (path === "/api/costs") return jsonResponse(await getCosts(userId));
     if (path === "/api/usage-by-user") return jsonResponse(await getUsageByUser());
     if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks(userId));
+    if (path === "/api/kanban") return jsonResponse(await getKanbanData(userId));
     if (path === "/api/resources") return jsonResponse(await getResources());
     if (path === "/api/voice") return jsonResponse(await getVoice(userId));
     if (path === "/api/skills") return jsonResponse(await getSkills());
