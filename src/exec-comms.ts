@@ -268,6 +268,16 @@ export class ExecComms {
     );
   }
 
+  /** Poll pending delegations assigned to specific agent slugs (for relay-side execution). */
+  async pollAgentDelegations(agentSlugs: string[]): Promise<Delegation[]> {
+    if (agentSlugs.length === 0) return [];
+    const slugList = agentSlugs.join(",");
+    return this.query<Delegation>(
+      "delegations",
+      `status=eq.pending&assigned_agent=in.(${slugList})&order=created_at.asc&limit=5`,
+    );
+  }
+
   // --- decisions ---
 
   async recordDecision(decision: Decision): Promise<string> {

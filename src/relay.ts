@@ -27,7 +27,7 @@ import {
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling, recoverPendingApprovals } from "./orchestrator.ts";
-import { loadAgents } from "./agent-router.ts";
+import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
 import { isMcp2cliAvailable } from "./mcp2cli.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
 import {
@@ -2541,6 +2541,80 @@ initOrchestrator({
 });
 
 // ============================================================
+// AGENT DELEGATION POLLER — executes COO-dispatched agent tasks
+// ============================================================
+
+/**
+ * Polls Supabase for delegations the COO has assigned to specialist agents
+ * and executes them here on the relay node where all MCP tools are available.
+ * Results are written back to the delegations table so the COO's monitor can see them.
+ */
+function startAgentDelegationPoller(comms: any): void {
+  const POLL_MS = 15_000;
+  const _active = new Set<string>();
+
+  const poll = async () => {
+    try {
+      const agentSlugs = getAllAgents().map((a: any) => a.slug);
+      if (agentSlugs.length === 0) return;
+
+      const delegations = await comms.pollAgentDelegations(agentSlugs);
+
+      for (const delegation of delegations) {
+        if (_active.has(delegation.id)) continue;
+        _active.add(delegation.id);
+
+        (async () => {
+          try {
+            await comms.claimDelegation(delegation.id);
+
+            const agentSlug = delegation.assigned_agent!;
+            // Strip parent tag from description for cleaner agent prompt
+            const taskDesc = delegation.task_description
+              .replace(/^\[ParentDelegation:[^\]]+\]\s*/, "")
+              .trim();
+
+            const baseContext = [
+              `You are executing a delegated task assigned by the COO.`,
+              ``,
+              `Task: ${taskDesc}`,
+              ``,
+              `Complete this task thoroughly. Produce concrete deliverables, not descriptions.`,
+              `Tag any output files or generated content as: [ARTIFACT: type | value]`,
+            ].join("\n");
+
+            const prompt = buildAgentPrompt(agentSlug, taskDesc, baseContext, undefined, "prepare");
+            const result = await callAI(prompt, "standard", agentSlug);
+
+            const artifactsFn = (text: string) => {
+              const found: Array<{ type: string; value: string }> = [];
+              const re = /\[ARTIFACT:\s*([^|]+?)\s*\|\s*(.+?)\s*\]/g;
+              let m: RegExpExecArray | null;
+              while ((m = re.exec(text)) !== null) found.push({ type: m[1].trim(), value: m[2].trim() });
+              return found;
+            };
+
+            await comms.completeDelegation(delegation.id, result, artifactsFn(result));
+            console.log(`[agent-dispatcher] Completed delegation ${delegation.id} (${agentSlug})`);
+          } catch (err) {
+            await comms.failDelegation(delegation.id, String(err));
+            console.error(`[agent-dispatcher] Failed delegation ${delegation.id}:`, err);
+          } finally {
+            _active.delete(delegation.id);
+          }
+        })();
+      }
+    } catch (err) {
+      console.error("[agent-dispatcher] Poll error:", err);
+    }
+    setTimeout(poll, POLL_MS);
+  };
+
+  setTimeout(poll, 5_000);
+  console.log("[agent-dispatcher] Started — polling for agent delegations every 15s");
+}
+
+// ============================================================
 // EXECUTIVE BOARD (optional — requires Supabase)
 // ============================================================
 
@@ -2587,6 +2661,11 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
     boardModule = { conveneBoard, handleBoardDecision };
     await novaComms.registerNode(process.env.NODE_HOST);
     startBoardPoller();
+
+    // Agent delegation poller — picks up delegations the COO dispatched to specialist agents
+    // and executes them here on the relay node where MCP tools are fully available.
+    startAgentDelegationPoller(novaComms);
+
     console.log("[board] Executive board system initialized");
   } catch (err) {
     console.warn("[board] Executive board not available:", (err as Error).message);
