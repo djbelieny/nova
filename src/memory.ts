@@ -248,17 +248,23 @@ export async function getMemoryContext(
     }
 
     if (goals?.length) {
-      goals.forEach((g: any) => idsToUpdate.push(g.id));
+      // Cap at 15 goals and 120 chars per goal to keep context bounded
+      const cappedGoals = goals.slice(0, 15);
+      cappedGoals.forEach((g: any) => idsToUpdate.push(g.id));
+      const goalSuffix = goals.length > 15
+        ? `\n[...${goals.length - 15} more goals not shown]`
+        : "";
       parts.push(
         "GOALS:\n" +
-          goals
+          cappedGoals
             .map((g: any) => {
               const deadline = g.deadline
                 ? ` (by ${new Date(g.deadline).toLocaleDateString()})`
                 : "";
-              return `- ${g.content}${deadline}`;
+              const content = g.content.length > 120 ? g.content.slice(0, 120) + "…" : g.content;
+              return `- ${content}${deadline}`;
             })
-            .join("\n")
+            .join("\n") + goalSuffix
       );
     }
 
@@ -287,13 +293,13 @@ export async function getTaskContext(
 
     if (!data?.length) return "";
 
-    // Cap at 20 tasks to prevent unbounded growth
-    const tasks = data.slice(0, 20);
+    // Cap at 15 tasks, 100 chars per description
+    const tasks = data.slice(0, 15);
     const lines = tasks.map(
-      (t: any) => `- [${t.agent}] ${t.description} (${t.status})`
+      (t: any) => `- [${t.agent}] ${(t.description || "").slice(0, 100)} (${t.status})`
     );
-    if (data.length > 20) {
-      lines.push(`[...${data.length - 20} more tasks truncated...]`);
+    if (data.length > 15) {
+      lines.push(`[...${data.length - 15} more tasks]`);
     }
 
     return "ACTIVE TASKS:\n" + lines.join("\n");
@@ -322,6 +328,7 @@ export async function getRecentHistory(
     // Data comes DESC from DB, reverse to chronological
     const messages = [...data].reverse();
 
+    const MAX_MSG_CHARS = 500; // cap individual messages to prevent long pastes dominating history
     const lines = messages.map((m: any) => {
       const ts = new Date(m.created_at).toLocaleString("en-US", {
         timeZone: "America/New_York",
@@ -331,7 +338,10 @@ export async function getRecentHistory(
         minute: "2-digit",
         hour12: true,
       });
-      return `[${ts} ${m.role}]: ${m.content}`;
+      const content = (m.content || "").length > MAX_MSG_CHARS
+        ? m.content.slice(0, MAX_MSG_CHARS) + "…"
+        : m.content;
+      return `[${ts} ${m.role}]: ${content}`;
     });
 
     // Secondary char limit — drop oldest messages if total exceeds 8,000 chars

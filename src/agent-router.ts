@@ -1003,18 +1003,15 @@ export function buildAgentPrompt(
   }
 
   parts.push(
-    "IMPORTANT EXECUTION RULES:",
-    "- Actually execute actions using the tools listed above. Do not just outline steps.",
-    "- Generate real images using /image-gen when visuals are needed.",
-    "- Create real files using /docx, /xlsx, /pptx when documents are needed.",
-    "- Use MCP tools to interact with real APIs (Meta Ads, Google, Notion, etc.).",
-    "- Send deliverables to the user via /telegram-file-sender.",
-    "- If a tool fails, report the error clearly — do NOT pretend it succeeded.",
-    "- If you encounter EACCES/EPERM, report it — do NOT silently skip the step.",
-    "- After creating files, run ls or stat to VERIFY they exist before reporting success.",
-    "- NEVER fabricate file paths or claim files were created without verification.",
-    "- For interactive/blocking commands (SSH, dev servers, debuggers, REPLs), use term-cli to run them in background tmux sessions instead of blocking Bash.",
-    "- If you lack a tool required to complete this task, you may request access to one by outputting ONLY: [REQUEST_TOOL: description of what you need to do]. Do NOT output anything else if you request a tool.",
+    "EXECUTION RULES:",
+    "- Execute actions with tools. Do not just outline steps — actually run them.",
+    "- Use /image-gen for images, /docx /xlsx /pptx for documents, /telegram-file-sender for delivery.",
+    "- If a tool fails, report the exact error — do NOT pretend it succeeded or silently skip.",
+    "- After creating files: run ls/stat to VERIFY existence before reporting success.",
+    "- NEVER fabricate file paths, URLs, API responses, or data not returned by a real tool call.",
+    "- NEVER claim work is done without verification. State what you did and what the tool returned.",
+    "- For blocking/interactive commands (SSH, dev servers, REPLs): use term-cli in tmux instead.",
+    "- Missing a required tool? Output ONLY: [REQUEST_TOOL: what you need]. Nothing else.",
     ""
   );
 

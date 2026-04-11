@@ -457,65 +457,23 @@ export async function decompose(
 ): Promise<ExecutionPlan> {
   const catalog = getAgentCatalog();
 
-  const prompt = `You are a task decomposition engine. Break the following complex request into 2-5 subtasks.
+  const prompt = `Task decomposition engine. Break request into 2-5 subtasks.
+Output ONLY valid JSON (no markdown): {"subtasks":[{"description":"...","agent":"slug","dependsOn":[],"phase":"prepare"}]}
 
-Return ONLY valid JSON in this exact format (no markdown, no explanation):
-{"subtasks":[{"description":"...","agent":"agent_slug","dependsOn":[],"phase":"prepare"}]}
+${catalog || 'Agents: "general"'}
 
-${catalog || 'Agent types: "general" (default)'}
+Agent routing: pixel=social posts | helios=paid ads | kai=long-form writing | orion=email | digit=analytics | athena=strategy | magnus=SEO | cyra=website-CRO | architect=web-dev | general=research/search
+phase: "prepare"=safe reversible work | "execute"=API creates/sends/publishes/spends money. Default prepare if unsure.
+dependsOn: 0-indexed positions. Parallel tasks → empty arrays.
 
-AGENT DISAMBIGUATION — when choosing agents:
-- "pixel" = social media posting, scheduling, image creation for social → USE for Instagram/FB/LinkedIn/TikTok posts
-- "helios" = paid advertising (Google/Meta/LinkedIn Ads) → USE for ad campaigns with budgets, NOT organic social posts
-- "kai" = long-form writing (blogs, articles, brand copy, narratives) → NOT for short social captions
-- "orion" = email marketing (campaigns, sequences, newsletters) → NOT for general writing
-- "athena" = business strategy, market analysis, decision-making → USE for strategic analysis, NOT data dashboards
-- "digit" = data analytics, dashboards, KPIs, reporting → USE for numbers/metrics, NOT strategy
-- "magnus" = SEO (keywords, rankings, technical SEO) → NOT for general web analysis
-- "cyra" = website UX/CRO audits → NOT for SEO keyword research
-- "general" = web search, research, simple tasks that don't match any specialist
-
-Rules:
-- dependsOn is an array of 0-indexed subtask positions that must complete first.
-- If subtasks are independent, use empty dependsOn arrays so they run in parallel.
-- Match each subtask to the BEST specialist agent from the list above.
-- Use "general" ONLY for research/web-search tasks or when no specialist fits.
-- Each description must be 1-2 sentences max, specific enough for the agent to execute without clarification.
-
-Each subtask MUST have a "phase" field:
-- "prepare": research, create content, generate images, write copy, analyze, design — safe, reversible work
-- "execute": create campaigns via API, send emails, publish posts, make calls, spend money — consequential, hard to reverse
-
-Rule: Any subtask that calls an external API to CREATE, SEND, PUBLISH, or SPEND must be "execute".
-If unsure, default to "prepare" — it's safer to ask for approval than to act without it.
-
-EXAMPLES of correct decompositions:
-
-Request: "Write a blog post about remote work trends and publish it"
-{"subtasks":[
-  {"description":"Research current remote work trends, statistics, and expert opinions using web search. Find 5+ data points and recent articles.","agent":"general","dependsOn":[],"phase":"prepare"},
-  {"description":"Write a 1500-word blog post about remote work trends using the research. Include an engaging hook, data-backed arguments, and actionable takeaways.","agent":"kai","dependsOn":[0],"phase":"prepare"},
-  {"description":"Publish the blog post to GHL blog using the create-blog-post tool with the finalized content.","agent":"kai","dependsOn":[1],"phase":"execute"}
-]}
-
-Request: "Analyze our Square sales data and create a performance report"
-{"subtasks":[
-  {"description":"Pull sales data from Square for the last 30 days across all locations. Calculate revenue, transaction count, average order value, and top products.","agent":"digit","dependsOn":[],"phase":"prepare"},
-  {"description":"Create an Excel performance report with charts showing revenue trends, product breakdown, and location comparison. Send via Telegram.","agent":"digit","dependsOn":[0],"phase":"prepare"}
-]}
-
-Request: "Create a Facebook ad campaign for our new product"
-{"subtasks":[
-  {"description":"Research the product's target audience, competitor ads, and best-performing ad formats using web search and the competitive ads extractor.","agent":"general","dependsOn":[],"phase":"prepare"},
-  {"description":"Write 3 ad copy variations with different hooks and CTAs. Design the campaign structure: campaign objective, ad sets by audience segment, and budget allocation.","agent":"helios","dependsOn":[0],"phase":"prepare"},
-  {"description":"Generate 3 ad creative images in different styles matching the ad copy variations.","agent":"helios","dependsOn":[1],"phase":"prepare"},
-  {"description":"Create the campaign in GHL with the finalized ad copy, creatives, and audience targeting.","agent":"helios","dependsOn":[2],"phase":"execute"}
-]}
+EX: "blog post + publish" → [research(general,prepare,[]), write(kai,prepare,[0]), publish(kai,execute,[1])]
+EX: "FB ad campaign" → [research(general,prepare,[]), copy+structure(helios,prepare,[0]), creatives(helios,prepare,[1]), create-in-GHL(helios,execute,[2])]
+EX: "sales report" → [pull-Square-data(digit,prepare,[]), build-Excel-report(digit,prepare,[0])]
 
 User: ${user.name}
 Request: ${text}`;
 
-  const raw = await _callClaude(prompt, "sonnet");
+  const raw = await _callClaude(prompt, "haiku");
 
   try {
     const jsonMatch = raw.match(/\{[\s\S]*\}/);

@@ -1796,7 +1796,13 @@ function buildPrompt(
   parts.push(`Current time: ${timeStr}`);
 
   // ── TIER 1 (minimal): identity + history only ──
-  if (user.profile_text) parts.push(`\nProfile:\n${user.profile_text}`);
+  // Cap profile_text to 2000 chars — large profiles waste tokens on every call
+  if (user.profile_text) {
+    const profileText = user.profile_text.length > 2000
+      ? user.profile_text.slice(0, 2000) + "\n[...profile truncated]"
+      : user.profile_text;
+    parts.push(`\nProfile:\n${profileText}`);
+  }
   if (tRecentHistory) parts.push(`\n${tRecentHistory}`);
 
   if (needs.tier === 1) {
@@ -1897,15 +1903,18 @@ function buildPrompt(
       "\n• Handle multiple requests in parallel." +
       "\n" +
       "\nHONESTY PROTOCOL:" +
-      "\n• NEVER report work as complete unless you verified output exists (check files with ls/stat)." +
+      "\n• NEVER report work as complete unless you verified output exists (ls/stat confirms)." +
       "\n• If a tool call fails, tell the user immediately — do not pretend it succeeded." +
       "\n• If a task is partially complete, say exactly what succeeded and what failed." +
-      "\n• When building projects: run ls on the output directory before saying \"it's ready.\"" +
-      "\n• NEVER fabricate file paths, line counts, or build results." +
+      "\n• NEVER fabricate: file paths, line counts, build results, URLs, API responses, or data." +
+      "\n• NEVER invent facts not in your context — say \"I don't have that info\" instead." +
+      "\n• NEVER claim to remember something unless it appears in the FACTS or GOALS sections above." +
+      "\n• NEVER describe what a tool would do — actually run it and report the real output." +
+      "\n• When building projects: ls the output directory before saying it's ready." +
       "\n" +
       "\nPERMISSIONS:" +
-      "\n• If you encounter EACCES/EPERM, ask: \"I need permission to [action]. Can you grant access or suggest another path?\"" +
-      "\n• Before creating directories outside the workspace, tell the user where and ask for confirmation." +
+      "\n• If you encounter EACCES/EPERM, ask: \"I need permission to [action]. Can you grant access?\"" +
+      "\n• Before creating directories outside the workspace, confirm with the user first." +
       "\n• Never silently skip steps due to permission errors."
   );
 

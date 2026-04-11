@@ -257,28 +257,31 @@ async function gatherHeartbeatContext(
 // HEARTBEAT PROMPT (minimal for cost)
 // ============================================================
 
+// Max chars for the checklist section — prevents large HEARTBEAT.md from blowing up tokens
+const CHECKLIST_MAX_CHARS = 2500;
+
 function buildHeartbeatPrompt(user: HeartbeatUser, ctx: HeartbeatContext): string {
-  return `You are ${user.name}'s AI assistant. A periodic heartbeat just fired.
+  // Cap checklist to prevent runaway token cost when HEARTBEAT.md grows large
+  const checklist = ctx.checklist.length > CHECKLIST_MAX_CHARS
+    ? ctx.checklist.slice(0, CHECKLIST_MAX_CHARS) + `\n[...truncated at ${CHECKLIST_MAX_CHARS} chars]`
+    : ctx.checklist;
 
-CHECKLIST (from HEARTBEAT.md):
-${ctx.checklist}
+  // Cap goals to 300 chars to keep context tight
+  const goals = ctx.activeGoals.length > 300
+    ? ctx.activeGoals.slice(0, 300) + "..."
+    : ctx.activeGoals;
 
-CONTEXT:
-- Current time: ${ctx.currentTime} (${ctx.timezone})
-- Last user message: ${ctx.lastInteractionAt} (${ctx.hoursSinceLastInteraction}h ago)
-- Active goals: ${ctx.activeGoals}
-- Due soon: ${ctx.upcomingTasks}
-- Check-ins today: ${ctx.checkinsToday}/${MAX_DAILY_CHECKINS}
+  return `You are ${user.name}'s AI assistant. A periodic heartbeat fired.
 
-RECENT CONVERSATION (use these timestamps as ground truth):
+CHECKLIST:
+${checklist}
+
+CONTEXT: time=${ctx.currentTime} (${ctx.timezone}) | last_msg=${ctx.lastInteractionAt} (${ctx.hoursSinceLastInteraction}h ago) | goals=${goals} | due=${ctx.upcomingTasks} | checkins_today=${ctx.checkinsToday}/${MAX_DAILY_CHECKINS}
+
+RECENT (ground truth for timing):
 ${ctx.recentSnippets}
 
-RULES:
-1. If nothing in the checklist needs attention right now, reply exactly: HEARTBEAT_OK
-2. If something does need attention, reply with a brief, helpful message (2-3 sentences max).
-3. Do NOT use tools. This is a quick triage — no email/calendar checks.
-4. Be genuinely useful, not annoying. Only alert for real reasons.
-5. IMPORTANT: Use the RECENT CONVERSATION timestamps above to determine when you last interacted — do NOT rely solely on the "Last user message" field.
+RULES: 1) Nothing needs action → reply HEARTBEAT_OK exactly. 2) Something needs action → 2-3 sentence message only. 3) No tools, no API calls. 4) Only alert for real, specific reasons. 5) Use RECENT timestamps for recency, not the last_msg field.
 
 RESPOND:`;
 }
