@@ -1883,15 +1883,11 @@ function renderDashboard(): string {
     min-height: 0;
   }
 
-  /* Nova graph panel */
+  /* Nova graph panel — NO display property here (ID selector would override .dock-panel display:none) */
   #nova-dock {
-    position: relative;
+    padding: 0;
     overflow: hidden;
     background: radial-gradient(ellipse at center, rgba(99,102,241,0.03) 0%, transparent 70%);
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: stretch;
   }
   .orbital-container {
     flex: 1; width: 100%;
@@ -2000,14 +1996,14 @@ function renderDashboard(): string {
   .dock-tab:hover { color: var(--text-secondary); }
   .dock-tab.active { color: var(--indigo); background: rgba(99,102,241,0.1); }
   .dock-content {
-    flex: 1; overflow-y: auto; padding: 12px; min-height: 0;
+    flex: 1; overflow: hidden; min-height: 0; position: relative;
   }
-  .dock-content::-webkit-scrollbar { width: 4px; }
-  .dock-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
-  /* Panel reusable styles */
-  .dock-panel { display: none; height: 100%; }
+  /* Panel reusable styles — panels handle their own scroll and padding */
+  .dock-panel { display: none; height: 100%; overflow-y: auto; padding: 12px; box-sizing: border-box; }
   .dock-panel.active { display: flex; flex-direction: column; }
+  .dock-panel::-webkit-scrollbar { width: 4px; }
+  .dock-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
   /* Tables in dock */
   .data-table { width: 100%; font-size: 12px; border-collapse: collapse; }
@@ -2213,7 +2209,7 @@ function renderDashboard(): string {
     <!-- Tab content -->
     <div class="dock-content" id="center-content">
       <!-- Nova graph panel -->
-      <div class="dock-panel active" id="nova-dock" style="padding:0">
+      <div class="dock-panel active" id="nova-dock">
         <div class="center-stats">
           <div class="nova-label">NOVA</div>
           <div class="stat-row">Agents: <span class="stat-val" id="stat-agents">24</span></div>
