@@ -25,6 +25,12 @@ export type WebhookDispatchFn = (
   metadata?: Record<string, any>
 ) => Promise<string | null>;
 
+export type CallTranscriptFn = (
+  userId: string,
+  transcript: string,
+  meta: { title?: string; participants?: string[]; duration_minutes?: number }
+) => Promise<void>;
+
 /**
  * Render a Handlebars-style template string with values from a nested object.
  * Supports dot notation: {{contact.name}}, {{event.type}}, etc.
@@ -72,13 +78,48 @@ export function generateWebhookSecret(): string {
 export function startWebhookServer(
   port: number,
   db: Database,
-  dispatch: WebhookDispatchFn
+  dispatch: WebhookDispatchFn,
+  processCallTranscript?: CallTranscriptFn
 ): void {
   Bun.serve({
     port,
     async fetch(req) {
       const url = new URL(req.url);
       const pathParts = url.pathname.split("/").filter(Boolean);
+
+      // POST /webhooks/call-transcript/:userId — call recording ingestion
+      if (req.method === "POST" && pathParts[0] === "webhooks" && pathParts[1] === "call-transcript" && pathParts[2]) {
+        const userId = pathParts[2];
+
+        // Bearer token auth
+        const secret = process.env.CALL_WEBHOOK_SECRET;
+        if (secret && req.headers.get("authorization") !== `Bearer ${secret}`) {
+          return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+
+        let body: Record<string, any> = {};
+        try {
+          body = await req.json();
+        } catch {
+          return new Response(JSON.stringify({ error: "invalid JSON" }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }
+
+        const transcript = String(body.transcript || "").trim();
+        if (!transcript) {
+          return new Response(JSON.stringify({ error: "transcript is required" }), { status: 400, headers: { "Content-Type": "application/json" } });
+        }
+
+        if (processCallTranscript) {
+          processCallTranscript(userId, transcript, {
+            title: body.title ? String(body.title) : undefined,
+            participants: Array.isArray(body.participants) ? body.participants.map(String) : undefined,
+            duration_minutes: body.duration_minutes ? Number(body.duration_minutes) : undefined,
+          }).catch(err => console.error("[call-processor] Pipeline error:", (err as Error).message));
+        }
+
+        emit({ type: "webhook.triggered", level: "info", userId, data: { message: `Call transcript received: "${body.title || "untitled"}"`, module: "call-processor" } });
+        return new Response(JSON.stringify({ status: "accepted" }), { status: 202, headers: { "Content-Type": "application/json" } });
+      }
 
       // POST /webhook/:userId/:webhookId
       if (req.method === "POST" && pathParts[0] === "webhook" && pathParts.length >= 3) {

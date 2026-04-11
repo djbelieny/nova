@@ -62,6 +62,8 @@ import { startWebhookServer, generateWebhookSecret } from "./webhook-server.ts";
 import { formatBudgetSummary, getBudgetSummary, requestSpend } from "./budget.ts";
 import { getReputationContext, getWeeklyReputationReport, recordTaskOutcome } from "./reputation.ts";
 import { listProjects, getProjectBrief, createProject } from "./projects.ts";
+import { initCallProcessor, processCallTranscript } from "../services/call-processor.ts";
+import { startZoomPoller, runZoomPollNow } from "../services/zoom-transcript-poller.ts";
 
 // Executive board (optional — only active if SUPABASE_URL is configured)
 let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
@@ -2513,6 +2515,31 @@ ${diskLine}${dataLine}
     return true;
   }
 
+  // /zoom — Zoom transcript poller controls
+  if (command === "/zoom") {
+    const sub = args[0]?.toLowerCase();
+    if (sub === "poll") {
+      await ctx.reply("Running Zoom transcript poll now...");
+      try {
+        await runZoomPollNow();
+        await ctx.reply("Zoom poll complete.");
+      } catch (e: any) {
+        await ctx.reply(`Zoom poll failed: ${e.message}`);
+      }
+    } else if (sub === "skip") {
+      const current = process.env.ZOOM_SKIP_TOPICS || "game over,shift";
+      await ctx.reply(`Current skip keywords: <code>${current}</code>\n\nTo add keywords, set <code>ZOOM_SKIP_TOPICS</code> in .env (comma-separated).`, { parse_mode: "HTML" });
+    } else {
+      await ctx.reply(
+        "<b>/zoom commands:</b>\n" +
+        "/zoom poll — run transcript poll immediately\n" +
+        "/zoom skip — show skip keywords",
+        { parse_mode: "HTML" }
+      );
+    }
+    return true;
+  }
+
   // /reputation — show agent performance report
   if (command === "/reputation") {
     try {
@@ -2808,6 +2835,12 @@ registerProvider(codexProvider);
 // before being stored. Short content skips the AI call entirely.
 initMemorySummarizer(async (prompt: string) => callAI(prompt, "haiku"));
 
+// Wire call transcript processor (haiku for extraction, sonnet for Notion + task execution)
+initCallProcessor({
+  callAI: (prompt, tier, userId, hint) => callAI(prompt, tier as any, userId, hint),
+  sendAlert: sendUserAlert,
+});
+
 // ============================================================
 // ORCHESTRATOR INIT
 // ============================================================
@@ -3065,8 +3098,12 @@ startWebhookServer(
   async (userId, agentSlug, taskDescription, _metadata) => {
     return dispatchAutonomousTask(userId, agentSlug, taskDescription, "webhook");
   },
+  (userId, transcript, meta) => processCallTranscript(userId, transcript, meta),
 );
 console.log(`[webhook] Ingestion server on port ${WEBHOOK_PORT}`);
+
+// Start hourly Zoom transcript poller (no-op if ZOOM_ACCOUNT_ID not set)
+startZoomPoller();
 
 // ============================================================
 // START
