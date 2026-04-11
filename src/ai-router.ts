@@ -171,26 +171,54 @@ export function parseProviderPrefix(text: string): { provider: string; message: 
 }
 
 /**
- * Analyze an image file using Gemini vision (Flash — fast and cheap).
- * Returns a text description of the image content.
- * Falls back gracefully if Gemini is unavailable or the CLI doesn't support image input.
+ * Analyze an image file using the Gemini REST API (gemini-2.0-flash — fast and cheap).
+ * Uses inline base64 multimodal input — bypasses the CLI which doesn't support image files.
  */
 export async function analyzeImage(imagePath: string, question?: string): Promise<string> {
-  const gemini = getProvider("gemini");
-  if (!gemini) {
-    return "[Image analysis unavailable — Gemini not configured]";
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return "[Image analysis unavailable — GEMINI_API_KEY not set]";
   }
 
-  // The gemini CLI does not currently support direct image file input via flags.
-  // We pass the path in the prompt and note this is a stub for future wiring.
-  const q = question || "Describe what you see in this image in detail. If it's a screenshot, describe the interface, content, and any notable elements.";
+  const q = question || "Describe what you see in this image in detail. If it's a screenshot, describe the UI, content, key text, and any notable elements.";
+
   try {
-    const result = await gemini.call({
-      prompt: `${q}\n\nImage path: ${imagePath}\n\n(Note: analyze the image at the path above.)`,
-      model: gemini.mapModelTier("fast"),
-      outputFormat: "text",
-    });
-    return result.text;
+    const { readFileSync } = await import("fs");
+    const imageBytes = readFileSync(imagePath);
+    const base64Data = imageBytes.toString("base64");
+
+    const ext = imagePath.toLowerCase().split(".").pop();
+    const mimeType =
+      ext === "jpg" || ext === "jpeg" ? "image/jpeg" :
+      ext === "webp" ? "image/webp" :
+      ext === "gif" ? "image/gif" :
+      "image/png";
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: q },
+              { inlineData: { mimeType, data: base64Data } },
+            ],
+          }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const err = await response.text();
+      return `[Image analysis failed: HTTP ${response.status} — ${err.slice(0, 200)}]`;
+    }
+
+    const json = await response.json() as any;
+    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    return text.trim() || "[Image analysis returned empty response]";
   } catch (err) {
     return `[Image analysis failed: ${err}]`;
   }
