@@ -16,6 +16,9 @@ export interface IncomingMessage {
   image?: { buffer: Buffer; caption?: string; filePath?: string };
   document?: { buffer: Buffer; filename: string; caption?: string; filePath?: string };
   replyToMessageId?: string;
+  isGroup?: boolean;        // true if message came from a group/channel
+  groupId?: string;         // group chat ID (same as channelChatId for groups)
+  isMentioned?: boolean;    // true if Nova was @mentioned in the message
 }
 
 export interface OutgoingMessage {

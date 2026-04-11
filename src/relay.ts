@@ -56,6 +56,12 @@ import {
 } from "./channels/telegram.ts";
 import { getDecisionContext } from "./memory.ts";
 import { emit, initEventBus, startStallDetection, shutdownEventBus } from "./events.ts";
+import { initGoalEngine, start as startGoalEngine, runOnce as runGoalEngineOnce } from "../services/goal-engine.ts";
+import { initPredictiveScheduler, start as startPredictiveScheduler } from "../services/predictive-scheduler.ts";
+import { startWebhookServer, generateWebhookSecret } from "./webhook-server.ts";
+import { formatBudgetSummary, getBudgetSummary, requestSpend } from "./budget.ts";
+import { getReputationContext, getWeeklyReputationReport, recordTaskOutcome } from "./reputation.ts";
+import { listProjects, getProjectBrief, createProject } from "./projects.ts";
 
 // Executive board (optional — only active if SUPABASE_URL is configured)
 let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
@@ -354,6 +360,22 @@ if (telegramAdapter) {
   telegramAdapter.use(async (ctx, next) => {
     const telegramId = ctx.from?.id.toString();
     if (!telegramId) return;
+
+    const chatType = (ctx.chat as any)?.type;
+    const isGroup = chatType === "group" || chatType === "supergroup" || chatType === "channel";
+
+    if (isGroup) {
+      // In groups: resolve the bot owner (admin) as the user context.
+      // The group message will be filtered by the group message handler below.
+      const admins = supabase.getUsersByRole("admin");
+      const admin = admins?.[0];
+      if (!admin) return; // No admin configured, skip group messages
+      (ctx as any).novaUser = admin;
+      (ctx as any).isGroupMessage = true;
+      (ctx as any).groupSenderTelegramId = telegramId;
+      await next();
+      return;
+    }
 
     const user = await resolveUser(telegramId, "telegram");
     if (!user) {
@@ -1103,6 +1125,55 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // ============================================================
+// GROUP MESSAGE FILTER
+// In group chats (Telegram / Slack), Nova only responds when:
+//   1. Directly @mentioned by name
+//   2. Message directly relates to an active goal or task Nova is tracking
+// DMs always process normally.
+// ============================================================
+
+/**
+ * Determine if Nova should respond to a group message.
+ * Returns true if it should respond, false to silently ignore.
+ */
+async function shouldRespondToGroupMessage(msg: IncomingMessage, user: NovaUser, text: string): Promise<boolean> {
+  // Always respond if @mentioned
+  if (msg.isMentioned) return true;
+
+  // Check if text contains the bot name / "nova" keyword (case-insensitive)
+  if (/\bnova\b/i.test(text)) return true;
+
+  // Check for reply to Nova's own message (always respond in threads)
+  if (msg.replyToMessageId) return true;
+
+  // Check if message relates to active goals or tasks
+  // Use a quick keyword overlap check against active goals/tasks
+  try {
+    const activeGoals = supabase.getGoalsNeedingReview(user.id, 9999);
+    const activeTasks = supabase.getActiveTasks(user.id);
+
+    const relevantContent = [
+      ...activeGoals.map((g: any) => g.content),
+      ...activeTasks.map((t: any) => t.description),
+    ].join(" ").toLowerCase();
+
+    if (relevantContent.length === 0) return false;
+
+    // Simple keyword overlap: tokenize message and check against active work context
+    const msgWords = text.toLowerCase().split(/\W+/).filter(w => w.length > 3);
+    const contextWords = new Set(relevantContent.split(/\W+/).filter(w => w.length > 3));
+    const overlap = msgWords.filter(w => contextWords.has(w)).length;
+
+    // At least 2 meaningful word overlaps to be considered relevant
+    if (overlap >= 2) return true;
+  } catch {
+    // Non-critical: if check fails, default to not responding in groups
+  }
+
+  return false;
+}
+
+// ============================================================
 // INPUT SANITIZATION (prompt injection defense)
 // ============================================================
 
@@ -1164,6 +1235,16 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
   }
 
   if (!user) return;
+
+  // ============================================================
+  // GROUP MESSAGE FILTER
+  // Groups: only respond if @mentioned OR message relates to active goals/tasks
+  // DMs: always process normally
+  // ============================================================
+  if (msg.isGroup && msg.text) {
+    const shouldRespond = await shouldRespondToGroupMessage(msg, user, msg.text);
+    if (!shouldRespond) return; // silently ignore
+  }
 
   // Ensure per-user workspace directory exists (lazy creation on first message)
   mkdir(getUserWorkspaceDir(user.id), { recursive: true }).catch(() => {});
@@ -2259,6 +2340,181 @@ ${diskLine}${dataLine}
     return true;
   }
 
+  // /budget — show spend summary or set rules
+  if (command === "/budget") {
+    const sub = parts[1]?.toLowerCase();
+    if (!sub || sub === "summary") {
+      try {
+        const summary = getBudgetSummary(supabase, user.id);
+        await ctx.reply(formatBudgetSummary(summary), { parse_mode: "HTML" });
+      } catch (e: any) {
+        await ctx.reply(`Budget summary error: ${e.message}`);
+      }
+    } else if (sub === "set" && parts.length >= 5) {
+      // /budget set <agent|global> <category|any> <daily_limit> [monthly_limit]
+      const agentSlug = parts[2] === "global" ? null : parts[2];
+      const category = parts[3] === "any" ? null : parts[3];
+      const dailyLimit = parseFloat(parts[4]);
+      const monthlyLimit = parts[5] ? parseFloat(parts[5]) : null;
+      if (isNaN(dailyLimit)) {
+        await ctx.reply("Usage: /budget set <agent|global> <category|any> <daily_limit_usd> [monthly_limit_usd]");
+      } else {
+        try {
+          supabase.upsertBudgetRule({
+            user_id: user.id,
+            agent_slug: agentSlug,
+            category: category,
+            daily_limit: dailyLimit,
+            monthly_limit: monthlyLimit,
+            auto_approve_under: dailyLimit * 0.1,
+          });
+          const label = `${agentSlug || "global"}/${category || "any"}`;
+          await ctx.reply(`✓ Budget rule set for ${label}: $${dailyLimit}/day${monthlyLimit ? `, $${monthlyLimit}/mo` : ""}`);
+        } catch (e: any) {
+          await ctx.reply(`Error setting budget rule: ${e.message}`);
+        }
+      }
+    } else {
+      await ctx.reply("Usage:\n/budget summary\n/budget set <agent|global> <category|any> <daily_limit_usd> [monthly_limit_usd]");
+    }
+    return true;
+  }
+
+  // /goals — trigger a goal engine review now
+  if (command === "/goals") {
+    const sub = parts[1]?.toLowerCase();
+    if (sub === "check") {
+      await ctx.reply("Running goal engine review...");
+      try {
+        await runGoalEngineOnce();
+        await ctx.reply("Goal review complete. Check active tasks for any dispatched work.");
+      } catch (e: any) {
+        await ctx.reply(`Goal review error: ${e.message}`);
+      }
+    } else {
+      // Show current goals
+      try {
+        const goals = supabase.getGoals ? supabase.getGoals(user.id) : [];
+        if (!goals || goals.length === 0) {
+          await ctx.reply("No active goals. Set goals with: [GOAL: your goal text | DEADLINE: YYYY-MM-DD]");
+        } else {
+          const lines = goals.map((g: any) => {
+            const notes = JSON.parse(g.progress_notes || "[]");
+            const lastNote = notes.length > 0 ? notes[notes.length - 1]?.note : "";
+            return `• ${g.content.slice(0, 80)}${g.deadline ? ` (by ${g.deadline})` : ""}${lastNote ? `\n  ↳ ${lastNote.slice(0, 60)}` : ""}`;
+          }).join("\n");
+          await ctx.reply(`<b>Active Goals</b>\n\n${lines}\n\n/goals check — trigger review now`, { parse_mode: "HTML" });
+        }
+      } catch (e: any) {
+        await ctx.reply(`Error fetching goals: ${e.message}`);
+      }
+    }
+    return true;
+  }
+
+  // /project — manage named projects
+  if (command === "/project") {
+    const sub = parts[1]?.toLowerCase();
+    if (!sub || sub === "list") {
+      try {
+        const list = listProjects(supabase, user.id);
+        await ctx.reply(list);
+      } catch (e: any) {
+        await ctx.reply(`Error listing projects: ${e.message}`);
+      }
+    } else if (sub === "view" && parts[2]) {
+      const projectName = parts.slice(2).join(" ");
+      try {
+        const brief = getProjectBrief(supabase, user.id, projectName);
+        await ctx.reply(brief, { parse_mode: "HTML" });
+      } catch (e: any) {
+        await ctx.reply(`Error: ${e.message}`);
+      }
+    } else if (sub === "new" && parts[2]) {
+      const name = parts.slice(2).join(" ");
+      try {
+        const projectId = createProject(supabase, user.id, name);
+        await ctx.reply(`✓ Project created: ${name} (ID: ${projectId.slice(0, 8)})\n\nAgents can now log artifacts and decisions to this project.`);
+      } catch (e: any) {
+        await ctx.reply(`Error creating project: ${e.message}`);
+      }
+    } else {
+      await ctx.reply("Usage:\n/project list\n/project view <name>\n/project new <name>");
+    }
+    return true;
+  }
+
+  // /webhook — manage webhook triggers
+  if (command === "/webhook") {
+    const sub = parts[1]?.toLowerCase();
+    if (!sub || sub === "list") {
+      try {
+        const triggers = supabase.listWebhookTriggers ? supabase.listWebhookTriggers(user.id) : [];
+        if (!triggers || triggers.length === 0) {
+          await ctx.reply("No webhook triggers configured.\n\nCreate one:\n/webhook create <id> <agent> \"<task template>\"");
+        } else {
+          const lines = triggers.map((t: any) =>
+            `• <b>${t.webhook_id}</b> → ${t.agent_slug}\n  ${t.task_template.slice(0, 60)}`
+          ).join("\n\n");
+          await ctx.reply(`<b>Webhook Triggers</b>\n\n${lines}`, { parse_mode: "HTML" });
+        }
+      } catch (e: any) {
+        await ctx.reply(`Error listing webhooks: ${e.message}`);
+      }
+    } else if (sub === "create" && parts.length >= 4) {
+      // /webhook create <webhook_id> <agent_slug> <task_template>
+      const webhookId = parts[2];
+      const agentSlug = parts[3];
+      const taskTemplate = parts.slice(4).join(" ");
+      if (!taskTemplate) {
+        await ctx.reply('Usage: /webhook create <id> <agent> "<task template with {{field}} placeholders>"');
+      } else {
+        try {
+          const secret = generateWebhookSecret();
+          supabase.upsertWebhookTrigger({
+            user_id: user.id,
+            name: webhookId,
+            source: "external",
+            secret,
+            pipeline: JSON.stringify({ agentSlug, taskTemplate }),
+          });
+          const baseUrl = process.env.WEBHOOK_BASE_URL || `https://nova.07labs.com`;
+          await ctx.reply(
+            `✓ Webhook created\n\n` +
+            `<b>URL:</b> ${baseUrl}/webhook/${user.id}/${webhookId}\n` +
+            `<b>Secret:</b> <code>${secret}</code>\n\n` +
+            `Send POST with JSON body + header:\n<code>X-Nova-Signature: sha256=&lt;hmac&gt;</code>`,
+            { parse_mode: "HTML" }
+          );
+        } catch (e: any) {
+          await ctx.reply(`Error creating webhook: ${e.message}`);
+        }
+      }
+    } else if (sub === "delete" && parts[2]) {
+      const webhookId = parts[2];
+      try {
+        supabase.deleteWebhookTrigger(user.id, webhookId);
+        await ctx.reply(`✓ Webhook ${webhookId} deleted.`);
+      } catch (e: any) {
+        await ctx.reply(`Error deleting webhook: ${e.message}`);
+      }
+    } else {
+      await ctx.reply("Usage:\n/webhook list\n/webhook create <id> <agent> \"<template>\"\n/webhook delete <id>");
+    }
+    return true;
+  }
+
+  // /reputation — show agent performance report
+  if (command === "/reputation") {
+    try {
+      const report = getWeeklyReputationReport(supabase);
+      await ctx.reply(report, { parse_mode: "HTML" });
+    } catch (e: any) {
+      await ctx.reply(`Error fetching reputation data: ${e.message}`);
+    }
+    return true;
+  }
+
   // Not an admin command — fall through to normal handling
   return false;
 }
@@ -2716,6 +2972,87 @@ if (supabase) {
     },
   });
 }
+
+// ============================================================
+// NEW AUTONOMOUS SERVICES
+// ============================================================
+
+// Helper: send an alert to a user through their preferred channel
+async function sendUserAlert(userId: string, message: string): Promise<void> {
+  try {
+    const user = supabase.getUserById(userId);
+    if (!user) return;
+    const adapter = channels.getTelegram() || channels.getAll()[0];
+    if (!adapter) return;
+    const chatId = user.telegram_id || user.channelChatId;
+    if (!chatId) return;
+    await adapter.send(String(chatId), { text: message });
+  } catch {}
+}
+
+// Helper: dispatch a task autonomously (inserts to DB + returns taskId)
+async function dispatchAutonomousTask(
+  userId: string,
+  agentSlug: string,
+  taskDescription: string,
+  createdBy = "nova",
+): Promise<string | null> {
+  try {
+    const taskId = supabase.insertTask({
+      agent: agentSlug,
+      description: taskDescription,
+      status: "pending",
+      user_id: userId,
+      created_by: createdBy,
+    });
+    emit({
+      type: "agent.dispatched",
+      level: "info",
+      userId,
+      agentSlug,
+      data: { message: `Autonomous task dispatched: ${taskDescription.slice(0, 80)}`, taskId, module: "relay" },
+    });
+    return taskId;
+  } catch (err) {
+    emit({ type: "error", level: "warn", data: { message: `dispatchAutonomousTask failed: ${err}`, module: "relay" } });
+    return null;
+  }
+}
+
+// Wrap callAI for service injection (simple 2-arg form services expect)
+const callAIForServices = async (prompt: string, tier?: string, _hint?: string): Promise<string> => {
+  return callAI(prompt, (tier as any) || "fast");
+};
+
+// Initialize and start Goal Engine
+initGoalEngine({
+  callAI: callAIForServices,
+  sendAlert: sendUserAlert,
+  dispatchTask: dispatchAutonomousTask,
+});
+startGoalEngine().catch((err) =>
+  emit({ type: "error", level: "error", data: { message: `Goal engine start failed: ${err}`, module: "goal-engine" } })
+);
+
+// Initialize and start Predictive Scheduler
+initPredictiveScheduler({
+  callAI: callAIForServices,
+  dispatchTask: dispatchAutonomousTask,
+});
+startPredictiveScheduler().catch((err) =>
+  emit({ type: "error", level: "error", data: { message: `Predictive scheduler start failed: ${err}`, module: "predictive-scheduler" } })
+);
+
+// Start webhook ingestion server on port 3036
+const WEBHOOK_PORT = parseInt(process.env.NOVA_WEBHOOK_PORT || "3036");
+startWebhookServer(
+  WEBHOOK_PORT,
+  supabase,
+  async (userId, agentSlug, taskDescription, _metadata) => {
+    return dispatchAutonomousTask(userId, agentSlug, taskDescription, "webhook");
+  },
+);
+console.log(`[webhook] Ingestion server on port ${WEBHOOK_PORT}`);
 
 // ============================================================
 // START

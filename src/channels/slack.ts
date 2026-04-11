@@ -65,6 +65,12 @@ export class SlackAdapter implements ChannelAdapter {
       const channelId = msg.channel || "";
       const threadTs = msg.thread_ts || msg.ts;
 
+      // Detect if this is a channel (group) or DM
+      // Slack channel IDs: C = public channel, G = private channel/group, D = DM
+      const isGroup = channelId.startsWith("C") || channelId.startsWith("G");
+      // Check for @mention in text
+      const isMentioned = /nova|<@/i.test(msg.text || "");
+
       const incoming: IncomingMessage = {
         channelType: "slack",
         channelMessageId: msg.ts || "",
@@ -72,6 +78,9 @@ export class SlackAdapter implements ChannelAdapter {
         userId: "", // resolved by relay.ts
         platformUserId: slackUserId,
         text: msg.text || "",
+        isGroup,
+        groupId: isGroup ? channelId : undefined,
+        isMentioned,
       };
 
       const platformCtx = this.createPlatformContext(channelId, threadTs);
@@ -99,6 +108,9 @@ export class SlackAdapter implements ChannelAdapter {
         userId: "",
         platformUserId: slackUserId,
         text,
+        isGroup: true,
+        groupId: channelId,
+        isMentioned: true, // app_mention always means mentioned
       };
 
       const platformCtx = this.createPlatformContext(channelId, threadTs);

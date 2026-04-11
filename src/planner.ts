@@ -76,6 +76,74 @@ function shouldExpectArtifacts(description: string): boolean {
 }
 
 /**
+ * Parse [CONFIDENCE: 0.XX] tag from agent output.
+ * Returns null if no tag found.
+ */
+export function parseConfidenceScore(text: string): number | null {
+  const match = text.match(/\[CONFIDENCE:\s*([\d.]+)\s*\]/i);
+  if (!match) return null;
+  const score = parseFloat(match[1]);
+  if (isNaN(score)) return null;
+  return Math.min(1.0, Math.max(0.0, score));
+}
+
+/**
+ * Strip [CONFIDENCE: ...] tags from agent output before delivery.
+ */
+export function stripConfidenceTag(text: string): string {
+  return text.replace(/\[CONFIDENCE:\s*[\d.]+\s*\]/gi, "").trim();
+}
+
+/**
+ * Parse [SPEND: category | $amount | description] tags from agent output.
+ */
+export function parseSpendRequests(text: string): Array<{ category: string; amount: number; description: string }> {
+  const requests: Array<{ category: string; amount: number; description: string }> = [];
+  const pattern = /\[SPEND:\s*([^|]+?)\s*\|\s*\$?([\d.]+)\s*\|\s*(.+?)\s*\]/g;
+  for (const match of text.matchAll(pattern)) {
+    const amount = parseFloat(match[2]);
+    if (!isNaN(amount) && amount > 0) {
+      requests.push({
+        category: match[1].trim().toLowerCase(),
+        amount,
+        description: match[3].trim(),
+      });
+    }
+  }
+  return requests;
+}
+
+/**
+ * Strip [SPEND: ...] tags from agent output before delivery.
+ */
+export function stripSpendTags(text: string): string {
+  return text.replace(/\[SPEND:[^\]]+\]/gi, "").trim();
+}
+
+/**
+ * Parse [PROJECT_ARTIFACT: name | ref] and [PROJECT_DECISION: text] tags.
+ */
+export function parseProjectTags(text: string): {
+  artifacts: Array<{ name: string; ref: string }>;
+  decisions: string[];
+} {
+  const artifacts: Array<{ name: string; ref: string }> = [];
+  const decisions: string[] = [];
+
+  const artifactPattern = /\[PROJECT_ARTIFACT:\s*([^|]+?)\s*\|\s*(.+?)\s*\]/g;
+  for (const match of text.matchAll(artifactPattern)) {
+    artifacts.push({ name: match[1].trim(), ref: match[2].trim() });
+  }
+
+  const decisionPattern = /\[PROJECT_DECISION:\s*(.+?)\s*\]/g;
+  for (const match of text.matchAll(decisionPattern)) {
+    decisions.push(match[1].trim());
+  }
+
+  return { artifacts, decisions };
+}
+
+/**
  * Parse [ARTIFACT: type | value] tags from agent output.
  */
 export function extractArtifacts(text: string, sourceIndex: number): Artifact[] {
@@ -631,8 +699,22 @@ export async function executePhase(
           );
 
           emit({ type: "agent.dispatched", level: "info", agentSlug, data: { message: `Executing subtask ${idx} via ${agentSlug} [${phase}] (attempt ${attempts}/${maxAttempts}): ${subtask.description.substring(0, 50)}`, description: subtask.description, phase, subtaskIndex: idx, module: "planner", attempt: attempts } });
-          if (attempts === 1) onProgress?.(idx, "started");
-          else onProgress?.(idx, "healing");
+          if (attempts === 1) {
+            onProgress?.(idx, "started");
+            emit({
+              type: "agent.start",
+              level: "info",
+              agentSlug,
+              agentDisplayName: agentSlug.charAt(0).toUpperCase() + agentSlug.slice(1),
+              stepMessage: subtask.description.slice(0, 80),
+              data: {
+                message: `${agentSlug.charAt(0).toUpperCase() + agentSlug.slice(1)} starting: ${subtask.description.slice(0, 80)}`,
+                subtaskIndex: idx,
+                phase,
+                module: "planner",
+              },
+            });
+          } else onProgress?.(idx, "healing");
 
           try {
             const routingHint = `${agentSlug} ${subtask.description}`;
@@ -710,13 +792,43 @@ If it has issues, respond with "[REJECTED: reason for rejection]".`;
               }
             }
 
+            // Extract confidence score and strip tags before delivery
+            const confidenceScore = parseConfidenceScore(result);
+            result = stripConfidenceTag(result);
+
+            // Strip spend tags from user-visible output
+            result = stripSpendTags(result);
+
             // Success!
             if (db && subtaskIds[idx]) {
-              db.updateTask(subtaskIds[idx]!, { status: "completed", result: result.substring(0, 500) });
+              db.updateTask(subtaskIds[idx]!, {
+                status: "completed",
+                result: result.substring(0, 500),
+                ...(confidenceScore !== null ? { confidence_score: confidenceScore } : {}),
+              });
             }
-            onProgress?.(idx, "completed");
 
-            return {
+            // Record reputation outcome
+            if (db) {
+              try { db.recordAgentOutcome(agentSlug, { success: true, confidenceScore: confidenceScore ?? undefined }); } catch {}
+            }
+
+            onProgress?.(idx, "completed");
+            emit({
+              type: "agent.finish",
+              level: "info",
+              agentSlug,
+              agentDisplayName: agentSlug.charAt(0).toUpperCase() + agentSlug.slice(1),
+              data: {
+                message: `${agentSlug} finished subtask ${idx}`,
+                subtaskIndex: idx,
+                success: true,
+                confidenceScore,
+                module: "planner",
+              },
+            });
+
+            const subtaskResult: SubtaskResult = {
               index: idx,
               description: subtask.description,
               agent: subtask.agent,
@@ -724,6 +836,8 @@ If it has issues, respond with "[REJECTED: reason for rejection]".`;
               success: true,
               artifacts,
             };
+            (subtaskResult as any).confidenceScore = confidenceScore;
+            return subtaskResult;
 
           } catch (error) {
             emit({ type: "agent.progress", level: "error", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) error on attempt ${attempts}: ${error}`, subtaskIndex: idx, module: "planner" } });
@@ -740,9 +854,15 @@ If it has issues, respond with "[REJECTED: reason for rejection]".`;
         const agentSlug = subtask.agent || "general";
         
         emit({ type: "agent.completed", level: "error", agentSlug, data: { message: `Subtask ${idx} (${agentSlug}) final failure: ${finalError}`, success: false, subtaskIndex: idx, module: "planner" } });
+        emit({ type: "agent.finish", level: "warn", agentSlug, data: { message: `${agentSlug} failed subtask ${idx}`, subtaskIndex: idx, success: false, module: "planner" } });
 
         if (db && subtaskIds[idx]) {
           db.updateTask(subtaskIds[idx]!, { status: "blocked", result: String(finalError) });
+        }
+
+        // Record reputation outcome for failure
+        if (db) {
+          try { db.recordAgentOutcome(agentSlug, { success: false }); } catch {}
         }
 
         onProgress?.(idx, "failed");

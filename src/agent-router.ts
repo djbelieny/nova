@@ -1032,5 +1032,15 @@ export function buildAgentPrompt(
 
   parts.push(`Task: ${taskDescription}`);
 
+  // Confidence scoring — always appended last so agent can't override it
+  parts.push(
+    "",
+    "CONFIDENCE REQUIREMENT:",
+    "At the very end of your response, include a confidence score tag: [CONFIDENCE: 0.XX]",
+    "Score 0.0 = highly uncertain (speculative, missing info, complex unknowns), 1.0 = highly certain (clear task, all tools available, verifiable outcome).",
+    "Be honest — this score determines whether your output requires human review.",
+    "Example: [CONFIDENCE: 0.85]",
+  );
+
   return parts.join("\n");
 }

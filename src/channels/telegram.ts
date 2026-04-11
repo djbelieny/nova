@@ -91,6 +91,16 @@ export class TelegramAdapter implements ChannelAdapter {
       const user = (ctx as any).novaUser;
       if (!user) return;
 
+      const chatType = ctx.chat.type;
+      const isGroup = chatType === "group" || chatType === "supergroup" || chatType === "channel";
+
+      // Detect @mention — check entities for mention of this bot
+      const botUsername = (ctx.me as any)?.username;
+      const text = ctx.message.text || "";
+      const isMentioned = botUsername
+        ? text.toLowerCase().includes(`@${botUsername.toLowerCase()}`)
+        : (ctx.message.entities || []).some((e: any) => e.type === "mention");
+
       const msg: IncomingMessage = {
         channelType: "telegram",
         channelMessageId: ctx.message.message_id.toString(),
@@ -99,6 +109,9 @@ export class TelegramAdapter implements ChannelAdapter {
         platformUserId: ctx.from?.id?.toString() || "",
         text: ctx.message.text,
         replyToMessageId: ctx.message.reply_to_message?.message_id?.toString(),
+        isGroup,
+        groupId: isGroup ? ctx.chat.id.toString() : undefined,
+        isMentioned,
       };
 
       // Attach platform context for orchestrator compat

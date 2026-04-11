@@ -22,6 +22,11 @@ export type NovaEventType =
   | "agent.dispatched"
   | "agent.progress"
   | "agent.completed"
+  | "agent.start"
+  | "agent.step"
+  | "agent.finish"
+  | "pipeline.start"
+  | "pipeline.finish"
   | "task.created"
   | "task.status"
   | "task.completed"
@@ -34,6 +39,10 @@ export type NovaEventType =
   | "board.contribution"
   | "board.decision"
   | "cost.tracked"
+  | "agent.message"
+  | "budget.spend"
+  | "goal.reviewed"
+  | "webhook.triggered"
   | "error"
   | "system.health";
 
@@ -46,6 +55,8 @@ export interface NovaEvent {
   userId?: string;
   agentSlug?: string;
   execRole?: string;
+  agentDisplayName?: string;
+  stepMessage?: string;
   data: Record<string, any>;
   level: EventLevel;
 }
@@ -147,6 +158,11 @@ const EVENT_TO_MODULE: Record<string, string> = {
   "agent.dispatched": "planner",
   "agent.progress": "planner",
   "agent.completed": "planner",
+  "agent.start": "planner",
+  "agent.step": "planner",
+  "agent.finish": "planner",
+  "pipeline.start": "orchestrator",
+  "pipeline.finish": "orchestrator",
   "task.created": "orchestrator",
   "task.status": "orchestrator",
   "task.completed": "orchestrator",
@@ -159,6 +175,10 @@ const EVENT_TO_MODULE: Record<string, string> = {
   "board.contribution": "board",
   "board.decision": "board",
   "cost.tracked": "cost",
+  "agent.message": "agent-inbox",
+  "budget.spend": "budget",
+  "goal.reviewed": "goal-engine",
+  "webhook.triggered": "webhook",
   "error": "error",
   "system.health": "health",
 };

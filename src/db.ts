@@ -368,6 +368,39 @@ class SharedDatabase {
 
     // Per-user job role (e.g. "developer", "account_manager", "designer")
     try { this.db.run(`ALTER TABLE users ADD COLUMN job_role TEXT DEFAULT 'general'`); } catch {}
+
+    // Webhook triggers (shared — cross-user definitions)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS webhook_triggers (
+        id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id             TEXT NOT NULL,
+        name                TEXT NOT NULL,
+        source              TEXT NOT NULL,
+        secret              TEXT NOT NULL,
+        pipeline            TEXT NOT NULL,
+        enabled             INTEGER DEFAULT 1,
+        created_at          TEXT DEFAULT (datetime('now')),
+        last_triggered_at   TEXT,
+        trigger_count       INTEGER DEFAULT 0,
+        UNIQUE(user_id, name)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_webhook_triggers_user ON webhook_triggers(user_id)`);
+
+    // Agent reputation (global, shared across users)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS agent_reputation (
+        id              TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        agent_slug      TEXT NOT NULL UNIQUE,
+        total_tasks     INTEGER DEFAULT 0,
+        success_count   INTEGER DEFAULT 0,
+        fail_count      INTEGER DEFAULT 0,
+        revision_count  INTEGER DEFAULT 0,
+        avg_confidence  REAL DEFAULT 0.0,
+        last_task_at    TEXT,
+        updated_at      TEXT DEFAULT (datetime('now'))
+      )
+    `);
   }
 
   close(): void {
@@ -636,6 +669,122 @@ class UserDatabase {
       )
     `);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_ium_to_user ON inter_user_messages(to_user_id, delivered)`);
+
+    // Agent-to-agent inbox
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS agent_messages (
+        id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at  TEXT DEFAULT (datetime('now')),
+        from_agent  TEXT NOT NULL,
+        to_agent    TEXT NOT NULL,
+        thread_id   TEXT NOT NULL,
+        user_id     TEXT NOT NULL,
+        subject     TEXT,
+        body        TEXT NOT NULL,
+        reply_to    TEXT REFERENCES agent_messages(id),
+        status      TEXT DEFAULT 'unread' CHECK (status IN ('unread','read','replied')),
+        reply_body  TEXT
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_agent_messages_to ON agent_messages(to_agent, status)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_agent_messages_thread ON agent_messages(thread_id)`);
+
+    // Budget ledger
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS budget_ledger (
+        id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at   TEXT DEFAULT (datetime('now')),
+        user_id      TEXT NOT NULL,
+        agent_slug   TEXT NOT NULL,
+        category     TEXT NOT NULL,
+        description  TEXT,
+        amount_usd   REAL NOT NULL,
+        approved_by  TEXT NOT NULL DEFAULT 'auto' CHECK (approved_by IN ('auto','user','cfo')),
+        status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','flagged')),
+        task_id      TEXT REFERENCES agent_tasks(id),
+        metadata     TEXT DEFAULT '{}'
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_budget_ledger_user ON budget_ledger(user_id, agent_slug, created_at)`);
+
+    // Budget rules
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS budget_rules (
+        id                 TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id            TEXT NOT NULL,
+        agent_slug         TEXT,
+        category           TEXT,
+        per_action_limit   REAL NOT NULL DEFAULT 100.0,
+        daily_limit        REAL,
+        monthly_limit      REAL,
+        auto_approve_under REAL DEFAULT 10.0,
+        created_at         TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, agent_slug, category)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_budget_rules_user ON budget_rules(user_id)`);
+
+    // Projects
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at   TEXT DEFAULT (datetime('now')),
+        updated_at   TEXT DEFAULT (datetime('now')),
+        user_id      TEXT NOT NULL,
+        name         TEXT NOT NULL,
+        description  TEXT,
+        phase        TEXT DEFAULT 'discovery' CHECK (phase IN ('discovery','planning','execution','review','complete','paused')),
+        owner_agents TEXT DEFAULT '[]',
+        decisions    TEXT DEFAULT '[]',
+        artifacts    TEXT DEFAULT '[]',
+        next_actions TEXT DEFAULT '[]',
+        metadata     TEXT DEFAULT '{}',
+        archived     INTEGER DEFAULT 0
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id, archived)`);
+
+    // Calendar rules for predictive scheduling
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS calendar_rules (
+        id                    TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id               TEXT NOT NULL,
+        name                  TEXT NOT NULL,
+        event_keywords        TEXT NOT NULL DEFAULT '[]',
+        trigger_hours_before  INTEGER DEFAULT 2,
+        pipeline_template     TEXT NOT NULL,
+        enabled               INTEGER DEFAULT 1,
+        created_at            TEXT DEFAULT (datetime('now'))
+      )
+    `);
+
+    // Queued prep tasks (predictive scheduler)
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS queued_prep_tasks (
+        id                  TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id             TEXT NOT NULL,
+        calendar_event_id   TEXT NOT NULL,
+        event_title         TEXT NOT NULL,
+        event_start_at      TEXT NOT NULL,
+        rule_id             TEXT REFERENCES calendar_rules(id),
+        task_id             TEXT REFERENCES agent_tasks(id),
+        status              TEXT DEFAULT 'pending' CHECK (status IN ('pending','running','done','skipped')),
+        created_at          TEXT DEFAULT (datetime('now'))
+      )
+    `);
+    this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_prep_unique ON queued_prep_tasks(user_id, calendar_event_id, rule_id)`);
+
+    // Memory extensions for goal engine
+    try { this.db.run(`ALTER TABLE memory ADD COLUMN last_reviewed_at TEXT`); } catch {}
+    try { this.db.run(`ALTER TABLE memory ADD COLUMN progress_notes TEXT DEFAULT '[]'`); } catch {}
+
+    // Agent tasks extensions for confidence + reputation
+    try { this.db.run(`ALTER TABLE agent_tasks ADD COLUMN confidence_score REAL`); } catch {}
+    try { this.db.run(`ALTER TABLE agent_tasks ADD COLUMN revised INTEGER DEFAULT 0`); } catch {}
+    try { this.db.run(`ALTER TABLE agent_tasks ADD COLUMN created_by TEXT DEFAULT 'user'`); } catch {}
+
+    // Cost tracking extension for confidence
+    try { this.db.run(`ALTER TABLE cost_tracking ADD COLUMN confidence_score REAL`); } catch {}
   }
 
   close(): void {
@@ -1439,12 +1588,13 @@ export class Database {
     user_id: string;
     parent_task_id?: string | null;
     request_id?: string | null;
+    created_by?: string;
   }): string {
     const id = uuid();
     const udb = this.getUserDb(data.user_id);
     udb.db.run(`
-      INSERT INTO agent_tasks (id, agent, description, status, user_id, parent_task_id, request_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agent_tasks (id, agent, description, status, user_id, parent_task_id, request_id, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
       data.agent,
@@ -1453,6 +1603,7 @@ export class Database {
       data.user_id,
       data.parent_task_id || null,
       data.request_id || null,
+      data.created_by || "user",
     ]);
     return id;
   }
@@ -2497,6 +2648,478 @@ export class Database {
     legacy.close();
     renameSync(LEGACY_DB_PATH, LEGACY_DB_PATH + ".migrated");
     console.log("[db] Migration complete. Legacy nova.db renamed to nova.db.migrated");
+  }
+
+  // ============================================================
+  // Agent Messages / Inbox (→ user DB)
+  // ============================================================
+
+  insertAgentMessage(data: {
+    from_agent: string;
+    to_agent: string;
+    thread_id: string;
+    user_id: string;
+    subject?: string | null;
+    body: string;
+    reply_to?: string | null;
+  }): string {
+    const udb = this.getUserDb(data.user_id);
+    const id = uuid();
+    udb.db.run(`
+      INSERT INTO agent_messages (id, from_agent, to_agent, thread_id, user_id, subject, body, reply_to)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, data.from_agent, data.to_agent, data.thread_id, data.user_id, data.subject || null, data.body, data.reply_to || null]);
+    return id;
+  }
+
+  getAgentInbox(agentSlug: string, threadId: string, userId: string): any[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
+      SELECT * FROM agent_messages
+      WHERE to_agent = ? AND thread_id = ? AND user_id = ?
+      ORDER BY created_at ASC
+    `).all(agentSlug, threadId, userId) as any[];
+  }
+
+  getAgentMessageById(messageId: string): any | null {
+    for (const uid of this.getAllUserIds()) {
+      const udb = this.getUserDb(uid);
+      const row = udb.db.query(`SELECT * FROM agent_messages WHERE id = ? LIMIT 1`).get(messageId) as any;
+      if (row) return row;
+    }
+    return null;
+  }
+
+  markAgentMessageReplied(messageId: string, replyBody: string): void {
+    this.runOnAllUserDbs(db => db.run(
+      `UPDATE agent_messages SET status = 'replied', reply_body = ? WHERE id = ?`,
+      [replyBody, messageId]
+    ));
+  }
+
+  // ============================================================
+  // Budget (→ user DB)
+  // ============================================================
+
+  insertBudgetEntry(data: {
+    user_id: string;
+    agent_slug: string;
+    category: string;
+    description?: string;
+    amount_usd: number;
+    approved_by?: string;
+    status?: string;
+    task_id?: string | null;
+    metadata?: Record<string, any>;
+  }): string {
+    const udb = this.getUserDb(data.user_id);
+    const id = uuid();
+    udb.db.run(`
+      INSERT INTO budget_ledger (id, user_id, agent_slug, category, description, amount_usd, approved_by, status, task_id, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, data.user_id, data.agent_slug, data.category, data.description || null,
+        data.amount_usd, data.approved_by || 'auto', data.status || 'pending',
+        data.task_id || null, JSON.stringify(data.metadata || {})]);
+    return id;
+  }
+
+  approveBudgetEntry(id: string): void {
+    this.runOnAllUserDbs(db => db.run(
+      `UPDATE budget_ledger SET status = 'approved', approved_by = 'user' WHERE id = ?`, [id]
+    ));
+  }
+
+  rejectBudgetEntry(id: string, reason?: string): void {
+    const meta = reason ? JSON.stringify({ rejection_reason: reason }) : '{}';
+    this.runOnAllUserDbs(db => db.run(
+      `UPDATE budget_ledger SET status = 'rejected', metadata = json_patch(metadata, ?) WHERE id = ?`,
+      [meta, id]
+    ));
+  }
+
+  getBudgetEntries(userId: string, opts: { since?: string; agentSlug?: string; status?: string } = {}): any[] {
+    const udb = this.getUserDb(userId);
+    const conditions = ['user_id = ?'];
+    const params: any[] = [userId];
+    if (opts.since) { conditions.push('created_at >= ?'); params.push(opts.since); }
+    if (opts.agentSlug) { conditions.push('agent_slug = ?'); params.push(opts.agentSlug); }
+    if (opts.status) { conditions.push('status = ?'); params.push(opts.status); }
+    return udb.db.query(
+      `SELECT * FROM budget_ledger WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC`
+    ).all(...params) as any[];
+  }
+
+  getBudgetRules(userId: string): any[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`SELECT * FROM budget_rules WHERE user_id = ? ORDER BY agent_slug, category`).all(userId) as any[];
+  }
+
+  upsertBudgetRule(data: {
+    user_id: string;
+    agent_slug?: string | null;
+    category?: string | null;
+    per_action_limit?: number;
+    daily_limit?: number | null;
+    monthly_limit?: number | null;
+    auto_approve_under?: number;
+  }): void {
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
+      INSERT INTO budget_rules (id, user_id, agent_slug, category, per_action_limit, daily_limit, monthly_limit, auto_approve_under)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, agent_slug, category) DO UPDATE SET
+        per_action_limit = excluded.per_action_limit,
+        daily_limit = excluded.daily_limit,
+        monthly_limit = excluded.monthly_limit,
+        auto_approve_under = excluded.auto_approve_under
+    `, [uuid(), data.user_id, data.agent_slug || null, data.category || null,
+        data.per_action_limit ?? 100.0, data.daily_limit ?? null,
+        data.monthly_limit ?? null, data.auto_approve_under ?? 10.0]);
+  }
+
+  getDailyBudgetSpend(userId: string, agentSlug?: string): number {
+    const udb = this.getUserDb(userId);
+    const conditions = ["user_id = ?", "status = 'approved'", "created_at >= datetime('now', 'start of day')"];
+    const params: any[] = [userId];
+    if (agentSlug) { conditions.push('agent_slug = ?'); params.push(agentSlug); }
+    const row = udb.db.query(
+      `SELECT COALESCE(SUM(amount_usd), 0) as total FROM budget_ledger WHERE ${conditions.join(' AND ')}`
+    ).get(...params) as any;
+    return row?.total || 0;
+  }
+
+  getMonthlyBudgetSpend(userId: string): number {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`
+      SELECT COALESCE(SUM(amount_usd), 0) as total FROM budget_ledger
+      WHERE user_id = ? AND status = 'approved' AND created_at >= datetime('now', 'start of month')
+    `).get(userId) as any;
+    return row?.total || 0;
+  }
+
+  // ============================================================
+  // Webhook Triggers (→ shared.db)
+  // ============================================================
+
+  getWebhookTrigger(userId: string, webhookId: string): any | null {
+    // Look up by name first (friendly webhook URL), then by id
+    const byName = this.shared.db.query(
+      `SELECT * FROM webhook_triggers WHERE user_id = ? AND name = ? AND enabled = 1 LIMIT 1`
+    ).get(userId, webhookId) as any;
+    if (byName) return byName;
+    return this.shared.db.query(
+      `SELECT * FROM webhook_triggers WHERE id = ? AND user_id = ? AND enabled = 1 LIMIT 1`
+    ).get(webhookId, userId) as any;
+  }
+
+  deleteWebhookTrigger(userId: string, name: string): void {
+    this.shared.db.run(
+      `DELETE FROM webhook_triggers WHERE user_id = ? AND name = ?`,
+      [userId, name]
+    );
+  }
+
+  getWebhookTriggerByName(userId: string, name: string): any | null {
+    return this.shared.db.query(
+      `SELECT * FROM webhook_triggers WHERE user_id = ? AND name = ? LIMIT 1`
+    ).get(userId, name) as any;
+  }
+
+  listWebhookTriggers(userId: string): any[] {
+    return this.shared.db.query(
+      `SELECT * FROM webhook_triggers WHERE user_id = ? ORDER BY name`
+    ).all(userId) as any[];
+  }
+
+  upsertWebhookTrigger(data: {
+    user_id: string;
+    name: string;
+    source: string;
+    secret: string;
+    pipeline: string;
+    enabled?: number;
+  }): string {
+    const existing = this.getWebhookTriggerByName(data.user_id, data.name);
+    if (existing) {
+      this.shared.db.run(`
+        UPDATE webhook_triggers SET source = ?, secret = ?, pipeline = ?, enabled = ? WHERE id = ?
+      `, [data.source, data.secret, data.pipeline, data.enabled ?? 1, existing.id]);
+      return existing.id;
+    }
+    const id = uuid();
+    this.shared.db.run(`
+      INSERT INTO webhook_triggers (id, user_id, name, source, secret, pipeline, enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [id, data.user_id, data.name, data.source, data.secret, data.pipeline, data.enabled ?? 1]);
+    return id;
+  }
+
+  recordWebhookFire(webhookId: string): void {
+    this.shared.db.run(`
+      UPDATE webhook_triggers SET last_triggered_at = datetime('now'), trigger_count = trigger_count + 1 WHERE id = ?
+    `, [webhookId]);
+  }
+
+  insertWebhookLog(data: {
+    webhook_id: string;
+    user_id: string;
+    source?: string;
+    payload?: string;
+    pipeline_triggered?: string;
+    task_id?: string | null;
+    status?: string;
+  }): void {
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
+      CREATE TABLE IF NOT EXISTS webhook_logs (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        webhook_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        source TEXT,
+        payload TEXT,
+        pipeline_triggered TEXT,
+        task_id TEXT,
+        status TEXT DEFAULT 'ok'
+      )
+    `);
+    udb.db.run(`
+      INSERT INTO webhook_logs (id, webhook_id, user_id, source, payload, pipeline_triggered, task_id, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [uuid(), data.webhook_id, data.user_id, data.source || null,
+        data.payload || null, data.pipeline_triggered || null,
+        data.task_id || null, data.status || 'ok']);
+  }
+
+  // ============================================================
+  // Agent Reputation (→ shared.db)
+  // ============================================================
+
+  recordAgentOutcome(agentSlug: string, outcome: { success: boolean; revised?: boolean; confidenceScore?: number }): void {
+    this.shared.db.run(`
+      INSERT INTO agent_reputation (id, agent_slug, total_tasks, success_count, fail_count, revision_count, avg_confidence, last_task_at, updated_at)
+      VALUES (?, ?, 1, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      ON CONFLICT(agent_slug) DO UPDATE SET
+        total_tasks = total_tasks + 1,
+        success_count = success_count + ?,
+        fail_count = fail_count + ?,
+        revision_count = revision_count + ?,
+        avg_confidence = CASE WHEN ? IS NOT NULL THEN (avg_confidence * total_tasks + ?) / (total_tasks + 1) ELSE avg_confidence END,
+        last_task_at = datetime('now'),
+        updated_at = datetime('now')
+    `, [
+      uuid(), agentSlug,
+      outcome.success ? 1 : 0, outcome.success ? 0 : 1,
+      outcome.revised ? 1 : 0, outcome.confidenceScore ?? null,
+      outcome.success ? 1 : 0, outcome.success ? 0 : 1,
+      outcome.revised ? 1 : 0,
+      outcome.confidenceScore ?? null, outcome.confidenceScore ?? 0,
+    ]);
+  }
+
+  getAgentReputation(agentSlug: string): any | null {
+    return this.shared.db.query(
+      `SELECT * FROM agent_reputation WHERE agent_slug = ? LIMIT 1`
+    ).get(agentSlug) as any;
+  }
+
+  getAllAgentReputations(): any[] {
+    return this.shared.db.query(
+      `SELECT * FROM agent_reputation ORDER BY (CAST(success_count AS REAL)/NULLIF(total_tasks,0)) DESC`
+    ).all() as any[];
+  }
+
+  // ============================================================
+  // Projects (→ user DB)
+  // ============================================================
+
+  insertProject(data: {
+    user_id: string;
+    name: string;
+    description?: string;
+    phase?: string;
+    owner_agents?: string[];
+  }): string {
+    const udb = this.getUserDb(data.user_id);
+    const id = uuid();
+    udb.db.run(`
+      INSERT INTO projects (id, user_id, name, description, phase, owner_agents)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [id, data.user_id, data.name, data.description || null,
+        data.phase || 'discovery', JSON.stringify(data.owner_agents || [])]);
+    return id;
+  }
+
+  getProjects(userId: string, includeArchived = false): any[] {
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(`
+      SELECT * FROM projects WHERE user_id = ? ${includeArchived ? '' : 'AND archived = 0'}
+      ORDER BY updated_at DESC
+    `).all(userId) as any[];
+    return rows.map(r => ({
+      ...r,
+      owner_agents: JSON.parse(r.owner_agents || '[]'),
+      decisions: JSON.parse(r.decisions || '[]'),
+      artifacts: JSON.parse(r.artifacts || '[]'),
+      next_actions: JSON.parse(r.next_actions || '[]'),
+      metadata: JSON.parse(r.metadata || '{}'),
+    }));
+  }
+
+  getProjectByName(userId: string, name: string): any | null {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`
+      SELECT * FROM projects WHERE user_id = ? AND name LIKE ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1
+    `).get(userId, `%${name}%`) as any;
+    if (!row) return null;
+    return {
+      ...row,
+      owner_agents: JSON.parse(row.owner_agents || '[]'),
+      decisions: JSON.parse(row.decisions || '[]'),
+      artifacts: JSON.parse(row.artifacts || '[]'),
+      next_actions: JSON.parse(row.next_actions || '[]'),
+      metadata: JSON.parse(row.metadata || '{}'),
+    };
+  }
+
+  getProjectById(userId: string, projectId: string): any | null {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`SELECT * FROM projects WHERE id = ? AND user_id = ? LIMIT 1`).get(projectId, userId) as any;
+    if (!row) return null;
+    return {
+      ...row,
+      owner_agents: JSON.parse(row.owner_agents || '[]'),
+      decisions: JSON.parse(row.decisions || '[]'),
+      artifacts: JSON.parse(row.artifacts || '[]'),
+      next_actions: JSON.parse(row.next_actions || '[]'),
+      metadata: JSON.parse(row.metadata || '{}'),
+    };
+  }
+
+  updateProject(projectId: string, userId: string, updates: Record<string, any>): void {
+    const udb = this.getUserDb(userId);
+    const setClauses: string[] = ['updated_at = datetime(\'now\')'];
+    const values: any[] = [];
+    for (const [key, val] of Object.entries(updates)) {
+      setClauses.push(`${key} = ?`);
+      values.push(typeof val === 'object' ? JSON.stringify(val) : val);
+    }
+    values.push(projectId, userId);
+    udb.db.run(`UPDATE projects SET ${setClauses.join(', ')} WHERE id = ? AND user_id = ?`, values);
+  }
+
+  appendProjectDecision(projectId: string, userId: string, decision: { date: string; decision: string; agent?: string }): void {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`SELECT decisions FROM projects WHERE id = ? AND user_id = ?`).get(projectId, userId) as any;
+    if (!row) return;
+    const decisions = JSON.parse(row.decisions || '[]');
+    decisions.push(decision);
+    udb.db.run(`UPDATE projects SET decisions = ?, updated_at = datetime('now') WHERE id = ?`, [JSON.stringify(decisions), projectId]);
+  }
+
+  appendProjectArtifact(projectId: string, userId: string, artifact: { name: string; ref: string; date: string }): void {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`SELECT artifacts FROM projects WHERE id = ? AND user_id = ?`).get(projectId, userId) as any;
+    if (!row) return;
+    const artifacts = JSON.parse(row.artifacts || '[]');
+    artifacts.push(artifact);
+    udb.db.run(`UPDATE projects SET artifacts = ?, updated_at = datetime('now') WHERE id = ?`, [JSON.stringify(artifacts), projectId]);
+  }
+
+  // ============================================================
+  // Calendar Rules (→ user DB)
+  // ============================================================
+
+  getCalendarRules(userId: string): any[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
+      SELECT * FROM calendar_rules WHERE user_id = ? AND enabled = 1 ORDER BY name
+    `).all(userId) as any[];
+  }
+
+  upsertCalendarRule(data: {
+    user_id: string;
+    name: string;
+    event_keywords: string[];
+    trigger_hours_before: number;
+    pipeline_template: string;
+    enabled?: number;
+  }): void {
+    const udb = this.getUserDb(data.user_id);
+    udb.db.run(`
+      INSERT INTO calendar_rules (id, user_id, name, event_keywords, trigger_hours_before, pipeline_template, enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT DO UPDATE SET
+        event_keywords = excluded.event_keywords,
+        trigger_hours_before = excluded.trigger_hours_before,
+        pipeline_template = excluded.pipeline_template,
+        enabled = excluded.enabled
+    `, [uuid(), data.user_id, data.name, JSON.stringify(data.event_keywords),
+        data.trigger_hours_before, data.pipeline_template, data.enabled ?? 1]);
+  }
+
+  upsertQueuedPrepTask(data: {
+    user_id: string;
+    calendar_event_id: string;
+    event_title: string;
+    event_start_at: string;
+    rule_id?: string | null;
+    task_id?: string | null;
+    status?: string;
+  }): boolean {
+    const udb = this.getUserDb(data.user_id);
+    try {
+      udb.db.run(`
+        INSERT INTO queued_prep_tasks (id, user_id, calendar_event_id, event_title, event_start_at, rule_id, task_id, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [uuid(), data.user_id, data.calendar_event_id, data.event_title,
+          data.event_start_at, data.rule_id || null, data.task_id || null, data.status || 'pending']);
+      return true; // new entry
+    } catch {
+      return false; // duplicate (unique constraint)
+    }
+  }
+
+  getActiveQueuedPrepTasks(userId: string): any[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
+      SELECT * FROM queued_prep_tasks WHERE user_id = ? AND status IN ('pending','running')
+      ORDER BY event_start_at ASC
+    `).all(userId) as any[];
+  }
+
+  // ============================================================
+  // Memory Goal Extensions
+  // ============================================================
+
+  getGoalsNeedingReview(userId: string, staleAfterMinutes = 360): any[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
+      SELECT * FROM memory
+      WHERE user_id = ? AND type = 'goal' AND completed_at IS NULL
+        AND (last_reviewed_at IS NULL OR last_reviewed_at < datetime('now', ?))
+      ORDER BY priority DESC, created_at ASC
+      LIMIT 20
+    `).all(userId, `-${staleAfterMinutes} minutes`) as any[];
+  }
+
+  getGoals(userId: string): any[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`
+      SELECT * FROM memory
+      WHERE user_id = ? AND type = 'goal' AND completed_at IS NULL
+      ORDER BY priority DESC, created_at ASC
+    `).all(userId) as any[];
+  }
+
+  updateGoalProgress(memoryId: string, userId: string, note: string, taskId?: string): void {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`SELECT progress_notes FROM memory WHERE id = ?`).get(memoryId) as any;
+    const notes = JSON.parse(row?.progress_notes || '[]');
+    notes.push({ date: new Date().toISOString(), note: note.slice(0, 200), task_id: taskId || null });
+    udb.db.run(`
+      UPDATE memory SET last_reviewed_at = datetime('now'), progress_notes = ? WHERE id = ?
+    `, [JSON.stringify(notes.slice(-20)), memoryId]); // keep last 20
   }
 }
 
