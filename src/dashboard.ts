@@ -1875,28 +1875,35 @@ function renderDashboard(): string {
   .exec-stat { font-size: 10px; color: var(--text-dim); }
   .exec-stat-val { font-weight: 600; }
 
-  /* === CENTER STAGE — ORBITAL VIZ === */
+  /* === CENTER STAGE — TABBED WORKSPACE === */
   .center-stage {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  /* Nova graph panel */
+  #nova-dock {
     position: relative;
     overflow: hidden;
     background: radial-gradient(ellipse at center, rgba(99,102,241,0.03) 0%, transparent 70%);
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: stretch;
   }
   .orbital-container {
-    width: 100%; height: 100%;
+    flex: 1; width: 100%;
     position: relative;
+    min-height: 0;
   }
   #orbital-canvas {
     width: 100%; height: 100%;
     display: block;
     cursor: grab;
   }
-  #orbital-canvas:active {
-    cursor: grabbing;
-  }
+  #orbital-canvas:active { cursor: grabbing; }
 
   /* Center stats overlay */
   .center-stats {
@@ -1972,48 +1979,35 @@ function renderDashboard(): string {
   .active-agent-name { color: var(--teal); font-weight: 600; flex: 1; }
   .active-agent-time { color: var(--text-dim); font-size: 10px; }
 
-  /* === BOTTOM DOCK === */
-  .bottom-dock {
-    border-top: 1px solid var(--glass-border);
-    background: rgba(6,6,11,0.95);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    flex-shrink: 0;
-    z-index: 50;
-    transition: height 0.3s ease;
-    display: flex;
-    flex-direction: column;
-  }
-  .bottom-dock.collapsed { height: 36px; overflow: hidden; }
-  .bottom-dock.expanded { height: 45vh; }
+  /* === CENTER TABS (moved from bottom dock) === */
   .dock-tabs {
     display: flex; align-items: center; gap: 2px;
     padding: 0 12px; height: 36px; flex-shrink: 0;
     border-bottom: 1px solid var(--glass-border);
-    cursor: pointer;
+    border-top: 1px solid var(--glass-border);
+    background: rgba(6,6,11,0.9);
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none;
   }
+  .dock-tabs::-webkit-scrollbar { display: none; }
   .dock-tab {
     padding: 6px 14px; font-size: 10px; text-transform: uppercase;
     letter-spacing: 0.8px; color: var(--text-dim);
     background: none; border: none; cursor: pointer;
     font-family: inherit; font-weight: 600; border-radius: 6px 6px 0 0;
-    transition: color 0.2s, background 0.2s;
+    transition: color 0.2s, background 0.2s; white-space: nowrap; flex-shrink: 0;
   }
   .dock-tab:hover { color: var(--text-secondary); }
   .dock-tab.active { color: var(--indigo); background: rgba(99,102,241,0.1); }
-  .dock-toggle {
-    margin-left: auto; background: none; border: none; color: var(--text-dim);
-    cursor: pointer; font-size: 14px; padding: 4px 8px;
-  }
   .dock-content {
-    flex: 1; overflow-y: auto; padding: 12px;
+    flex: 1; overflow-y: auto; padding: 12px; min-height: 0;
   }
   .dock-content::-webkit-scrollbar { width: 4px; }
   .dock-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
-  /* Dock panel reusable styles */
-  .dock-panel { display: none; }
-  .dock-panel.active { display: block; }
+  /* Panel reusable styles */
+  .dock-panel { display: none; height: 100%; }
+  .dock-panel.active { display: flex; flex-direction: column; }
 
   /* Tables in dock */
   .data-table { width: 100%; font-size: 12px; border-collapse: collapse; }
@@ -2159,7 +2153,6 @@ function renderDashboard(): string {
   @media (max-width: 1100px) {
     .main-layout { grid-template-columns: 1fr; }
     .sidebar-left, .sidebar-right { display: none; }
-    .bottom-dock.expanded { height: 60vh; }
   }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
@@ -2201,16 +2194,62 @@ function renderDashboard(): string {
     </div>
   </div>
 
-  <!-- CENTER: ORBITAL VISUALIZATION -->
+  <!-- CENTER: TABBED WORKSPACE -->
   <div class="center-stage">
-    <div class="center-stats">
-      <div class="nova-label">NOVA</div>
-      <div class="stat-row">Agents: <span class="stat-val" id="stat-agents">24</span></div>
-      <div class="stat-row">Active: <span class="stat-val" id="stat-active">0</span></div>
-      <div class="stat-row">Today: $<span class="stat-val" id="stat-cost">0.00</span></div>
+    <!-- Tab bar -->
+    <div class="dock-tabs" id="center-dock-tabs">
+      <button class="dock-tab active" data-panel="nova-dock">Nova</button>
+      <button class="dock-tab" data-panel="chat-dock">Chat</button>
+      <button class="dock-tab" data-panel="messages-dock">History</button>
+      <button class="dock-tab" data-panel="agent-tasks-dock">Agent Tasks</button>
+      <button class="dock-tab" data-panel="costs-dock">Costs</button>
+      <button class="dock-tab" data-panel="approvals-dock">Approvals</button>
+      <button class="dock-tab" data-panel="memory-dock">Memory</button>
+      <button class="dock-tab" data-panel="traces-dock">Traces</button>
+      <button class="dock-tab" data-panel="logs-dock">Logs</button>
+      <button class="dock-tab" data-panel="resources-dock">Resources</button>
+      <button class="dock-tab" data-panel="skills-dock">Skills</button>
     </div>
-    <div class="orbital-container" id="orbital-container">
-      <canvas id="orbital-canvas"></canvas>
+    <!-- Tab content -->
+    <div class="dock-content" id="center-content">
+      <!-- Nova graph panel -->
+      <div class="dock-panel active" id="nova-dock" style="padding:0">
+        <div class="center-stats">
+          <div class="nova-label">NOVA</div>
+          <div class="stat-row">Agents: <span class="stat-val" id="stat-agents">24</span></div>
+          <div class="stat-row">Active: <span class="stat-val" id="stat-active">0</span></div>
+          <div class="stat-row">Today: $<span class="stat-val" id="stat-cost">0.00</span></div>
+        </div>
+        <div class="orbital-container" id="orbital-container">
+          <canvas id="orbital-canvas"></canvas>
+        </div>
+      </div>
+      <!-- Chat panel -->
+      <div class="dock-panel" id="chat-dock">
+        <div id="chat-messages" style="flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0;">
+          <div style="color:var(--text-dim);text-align:center;margin-top:20px;">Select a user to start chatting</div>
+        </div>
+        <div id="chat-input-container" style="border-top:1px solid var(--glass-border);padding:10px;display:flex;align-items:flex-end;gap:8px;flex-shrink:0;">
+          <div style="flex:1;position:relative;">
+            <textarea id="chat-input" placeholder="Type a message or paste an image..." style="width:100%;background:var(--glass);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);padding:8px 12px;font-family:inherit;font-size:13px;resize:none;min-height:40px;max-height:150px;outline:none;"></textarea>
+            <div id="chat-attachments" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;"></div>
+          </div>
+          <button id="chat-upload-btn" class="event-filter-btn" title="Upload File" style="padding:8px;"><u style="text-decoration:none;">📎</u></button>
+          <button id="chat-voice-btn" class="event-filter-btn" title="Record Voice" style="padding:8px;"><u style="text-decoration:none;">🎙️</u></button>
+          <button id="chat-send-btn" class="event-filter-btn" style="background:var(--indigo);color:#fff;padding:8px 16px;border-color:var(--indigo);">Send</button>
+        </div>
+        <input type="file" id="chat-file-input" style="display:none;" multiple>
+      </div>
+      <!-- Other panels (lazy-loaded) -->
+      <div class="dock-panel" id="messages-dock"></div>
+      <div class="dock-panel" id="agent-tasks-dock"></div>
+      <div class="dock-panel" id="costs-dock"></div>
+      <div class="dock-panel" id="approvals-dock"></div>
+      <div class="dock-panel" id="memory-dock"></div>
+      <div class="dock-panel" id="traces-dock"></div>
+      <div class="dock-panel" id="logs-dock"></div>
+      <div class="dock-panel" id="resources-dock"></div>
+      <div class="dock-panel" id="skills-dock"></div>
     </div>
   </div>
 
@@ -2243,48 +2282,6 @@ function renderDashboard(): string {
 
 </div>
 
-<!-- BOTTOM DOCK -->
-<div class="bottom-dock collapsed" id="bottom-dock">
-  <div class="dock-tabs">
-    <button class="dock-tab active" data-panel="chat-dock">Chat</button>
-    <button class="dock-tab" data-panel="messages-dock">History</button>
-    <button class="dock-tab" data-panel="agent-tasks-dock">Agent Tasks</button>
-    <button class="dock-tab" data-panel="costs-dock">Costs</button>
-    <button class="dock-tab" data-panel="approvals-dock">Approvals</button>
-    <button class="dock-tab" data-panel="memory-dock">Memory</button>
-    <button class="dock-tab" data-panel="traces-dock">Traces</button>
-    <button class="dock-tab" data-panel="logs-dock">Logs</button>
-    <button class="dock-tab" data-panel="resources-dock">Resources</button>
-    <button class="dock-tab" data-panel="skills-dock">Skills</button>
-    <button class="dock-toggle" id="dock-toggle">&#9650;</button>
-  </div>
-  <div class="dock-content">
-    <div class="dock-panel active" id="chat-dock">
-      <div id="chat-messages" style="height: calc(45vh - 120px); overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px;">
-        <div style="color: var(--text-dim); text-align: center; margin-top: 20px;">Select a user to start chatting</div>
-      </div>
-      <div id="chat-input-container" style="border-top: 1px solid var(--glass-border); padding: 10px; display: flex; align-items: flex-end; gap: 8px;">
-        <div style="flex: 1; position: relative;">
-          <textarea id="chat-input" placeholder="Type a message or paste an image..." style="width: 100%; background: var(--glass); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13px; resize: none; min-height: 40px; max-height: 150px; outline: none;"></textarea>
-          <div id="chat-attachments" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;"></div>
-        </div>
-        <button id="chat-upload-btn" class="event-filter-btn" title="Upload File" style="padding: 8px;"><u style="text-decoration: none;">📎</u></button>
-        <button id="chat-voice-btn" class="event-filter-btn" title="Record Voice" style="padding: 8px;"><u style="text-decoration: none;">🎙️</u></button>
-        <button id="chat-send-btn" class="event-filter-btn" style="background: var(--indigo); color: #fff; padding: 8px 16px; border-color: var(--indigo);">Send</button>
-      </div>
-      <input type="file" id="chat-file-input" style="display: none;" multiple>
-    </div>
-    <div class="dock-panel" id="messages-dock"></div>
-    <div class="dock-panel" id="agent-tasks-dock"></div>
-    <div class="dock-panel" id="costs-dock"></div>
-    <div class="dock-panel" id="approvals-dock"></div>
-    <div class="dock-panel" id="memory-dock"></div>
-    <div class="dock-panel" id="traces-dock"></div>
-    <div class="dock-panel" id="logs-dock"></div>
-    <div class="dock-panel" id="resources-dock"></div>
-    <div class="dock-panel" id="skills-dock"></div>
-  </div>
-</div>
 
 <script>
 const BASE = '${DASHBOARD_BASE}';
@@ -2844,21 +2841,9 @@ async function loadActivityPoll() {
   setInterval(loadActivityPoll, 3000);
 })();
 
-// ==== BOTTOM DOCK ====
-const dock = $('bottom-dock');
-const dockToggle = $('dock-toggle');
-let dockExpanded = false;
-let activeDockPanel = 'chat-dock';
-let dockPanelsLoaded = {};
-
-dockToggle.addEventListener('click', function(e) {
-  e.stopPropagation();
-  dockExpanded = !dockExpanded;
-  dock.classList.toggle('collapsed', !dockExpanded);
-  dock.classList.toggle('expanded', dockExpanded);
-  dockToggle.innerHTML = dockExpanded ? '&#9660;' : '&#9650;';
-  if (dockExpanded && !dockPanelsLoaded[activeDockPanel]) loadDockPanel(activeDockPanel);
-});
+// ==== CENTER TABS ====
+let activeDockPanel = 'nova-dock';
+let dockPanelsLoaded = { 'nova-dock': true };
 
 document.querySelectorAll('.dock-tab').forEach(tab => {
   tab.addEventListener('click', function() {
@@ -2869,19 +2854,23 @@ document.querySelectorAll('.dock-tab').forEach(tab => {
     this.classList.add('active');
     $(panel).classList.add('active');
     activeDockPanel = panel;
-    if (!dockExpanded) {
-      dockExpanded = true;
-      dock.classList.remove('collapsed');
-      dock.classList.add('expanded');
-      dockToggle.innerHTML = '&#9660;';
-    }
     if (!dockPanelsLoaded[panel]) loadDockPanel(panel);
+    // Resize orbital canvas when returning to Nova tab
+    if (panel === 'nova-dock' && renderer3d) {
+      const container = $('orbital-container');
+      if (container) {
+        renderer3d.setSize(container.clientWidth, container.clientHeight);
+        if (camera3d) camera3d.aspect = container.clientWidth / container.clientHeight;
+        if (camera3d) camera3d.updateProjectionMatrix();
+      }
+    }
   });
 });
 
 function loadDockPanel(panel) {
   dockPanelsLoaded[panel] = true;
   switch(panel) {
+    case 'nova-dock': /* 3D orbital is always live */ break;
     case 'chat-dock': loadChat(); break;
     case 'messages-dock': loadMessages(); break;
     case 'agent-tasks-dock': loadAgentTasks(); break;
