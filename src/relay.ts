@@ -1865,11 +1865,19 @@ function buildPrompt(
     );
 
     parts.push(
-      "\nSELF-IMPROVEMENT — SKILL CREATION (mandatory, not optional):" +
-        "\nYou MUST invoke /skill-creator and create a new skill in EITHER of these situations:" +
-        "\n1. MISSING SKILL: You are about to do a task and realise there is no existing skill for it, but a skill would make it faster, more reliable, or reusable in future. Do not wait — create the skill first, then use it." +
-        "\n2. REPEATED WORKFLOW: You detect that the same type of task has been done 2+ times (by you or any agent). Package the workflow as a skill immediately." +
-        "\nProcess:" +
+      "\nSELF-IMPROVEMENT — SKILL CREATION:" +
+        "\nCreate a new skill (via /skill-creator) ONLY when ALL of the following are true:" +
+        "\n  ✓ The task is complex, multi-step, or requires specific external tools/APIs/templates" +
+        "\n  ✓ A skill would meaningfully reduce time or errors on future runs" +
+        "\n  ✓ The workflow is not trivially answerable by reasoning alone" +
+        "\nAND one of these triggers applies:" +
+        "\n  TRIGGER A — You are about to do a task with no existing skill for it AND it clears the bar above." +
+        "\n  TRIGGER B — The same non-trivial workflow has been done 2+ times." +
+        "\nDO NOT create skills for:" +
+        "\n  ✗ Simple Q&A, summaries, rewrites, translations, calculations — Claude handles these natively" +
+        "\n  ✗ One-off or highly specific requests unlikely to recur" +
+        "\n  ✗ Anything a single direct prompt to Haiku/Sonnet handles cleanly in one shot" +
+        "\nProcess (when threshold is met):" +
         "\n  a. Invoke /skill-creator to design and write the SKILL.md" +
         "\n  b. Save the skill to .claude/skills/<slug>/SKILL.md" +
         "\n  c. Tell the user: \"I created /skill-name because [reason]. Using it now.\"" +
@@ -1966,9 +1974,11 @@ function buildPrompt(
         "\n" +
         "\nSELF-LEARNING — You evolve by detecting patterns and creating reusable capabilities:" +
         "\n" +
-        "\n1. SKILL CREATION (mandatory triggers — do not wait for permission):" +
-        "\n   TRIGGER A — Missing skill: You are starting a task with no existing skill for it and a skill would help. Create it first." +
-        "\n   TRIGGER B — Repetition: You detect the same workflow done 2+ times by anyone." +
+        "\n1. SKILL CREATION — create only when the task clears this bar:" +
+        "\n   REQUIRED: complex/multi-step, involves external tools/APIs/templates, not trivially answerable by reasoning alone." +
+        "\n   DO NOT create skills for: summaries, rewrites, Q&A, translations, calculations, one-off requests." +
+        "\n   TRIGGER A — Starting a task with no skill for it AND it clears the bar above." +
+        "\n   TRIGGER B — Same non-trivial workflow done 2+ times." +
         "\n   Process:" +
         "\n   - Invoke /skill-creator to design and write the SKILL.md" +
         "\n   - Save to .claude/skills/<slug>/SKILL.md" +
