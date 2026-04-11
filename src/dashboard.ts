@@ -145,7 +145,7 @@ if (!DASHBOARD_PASS) {
   console.error("[dashboard] DASHBOARD_PASS is not set — dashboard login is disabled for security. Set DASHBOARD_PASS in .env to enable it.");
 }
 const DASHBOARD_BASE = process.env.DASHBOARD_BASE ?? "/dashboard";
-const COOKIE_PATH = DASHBOARD_BASE || "/";
+const COOKIE_PATH = "/"; // Always root path so cookie works across /dashboard, /kanban, etc.
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // In-memory session store (survives for container lifetime)
@@ -1541,11 +1541,11 @@ function renderKanban(): string {
 <body>
 
 <div class="kb-header">
-  <a class="kb-logo" href="/">
+  <a class="kb-logo" href="${DASHBOARD_BASE}/">
     <div class="kb-logo-badge">N</div>
     <div><div class="kb-title">Nova</div><div class="kb-subtitle">Kanban</div></div>
   </a>
-  <a class="kb-back" href="/">← Dashboard</a>
+  <a class="kb-back" href="${DASHBOARD_BASE}/">← Dashboard</a>
   <div class="kb-header-right">
     <div class="kb-live"><span class="live-dot" id="kb-sse-dot" style="background:var(--col-blocked)"></span><span id="kb-sse-label">Connecting…</span></div>
     <button class="kb-refresh" id="kb-refresh-btn" title="Refresh">↻</button>
@@ -1560,6 +1560,7 @@ function renderKanban(): string {
 
 <script>
 (function() {
+  const BASE = '${DASHBOARD_BASE}';
   const COLS = [
     { key: 'pending',    label: 'Pending',     color: '#6b7280' },
     { key: 'in_progress',label: 'In Progress', color: '#6366f1' },
@@ -1652,7 +1653,7 @@ function renderKanban(): string {
 
   async function loadKanban() {
     try {
-      const res = await fetch('/api/kanban');
+      const res = await fetch(BASE + '/api/kanban');
       const data = await res.json();
       _lastData = data;
       renderBoard(data);
@@ -1663,7 +1664,7 @@ function renderKanban(): string {
 
   async function refreshFromApi() {
     try {
-      const res = await fetch('/api/kanban');
+      const res = await fetch(BASE + '/api/kanban');
       const data = await res.json();
       if (!data.columns) return;
       _lastData = data;
@@ -1685,7 +1686,7 @@ function renderKanban(): string {
   function connectSSE() {
     const dot = document.getElementById('kb-sse-dot');
     const label = document.getElementById('kb-sse-label');
-    const es = new EventSource('/api/activity/stream');
+    const es = new EventSource(BASE + '/api/activity/stream');
     es.onopen = () => {
       dot.style.background = 'var(--col-completed)';
       label.textContent = 'Live';
