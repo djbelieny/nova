@@ -273,8 +273,9 @@ function noPasswordWarningPage(): Response {
   return new Response(html, { status: 403, headers: { "Content-Type": "text/html" } });
 }
 
-function loginPage(error?: string): Response {
+function loginPage(error?: string, returnTo?: string): Response {
   const errorHtml = error ? `<div class="error">${error}</div>` : "";
+  const returnField = returnTo && returnTo !== "/" ? `<input type="hidden" name="returnTo" value="${returnTo.replace(/"/g, "&quot;")}">` : "";
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -376,6 +377,7 @@ function loginPage(error?: string): Response {
     <div class="login-logo"><div class="login-logo-badge">N</div><div class="login-logo-text">Nova</div></div>
     ${errorHtml}
     <form method="POST" action="${DASHBOARD_BASE}/login">
+      ${returnField}
       <label>USERNAME</label>
       <input type="text" name="username" autocomplete="username" required autofocus>
       <label>PASSWORD</label>
@@ -417,10 +419,13 @@ async function handleLogin(req: Request): Promise<Response> {
     sessions.set(sessionId, { user: username, expiresAt: Date.now() + SESSION_TTL_MS });
     const isSecure = req.url.startsWith("https") || req.headers.get("x-forwarded-proto") === "https";
     const securePart = isSecure ? "; Secure" : "";
+    // Redirect to originally requested page if provided, otherwise dashboard root
+    const rawReturnTo = params.get("returnTo") || "";
+    const safePath = rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//") ? rawReturnTo : "/";
     return new Response(null, {
       status: 302,
       headers: {
-        Location: `${DASHBOARD_BASE}/`,
+        Location: `${DASHBOARD_BASE}${safePath === "/" ? "/" : safePath}`,
         "Set-Cookie": `nova_session=${sessionId}; Path=${COOKIE_PATH}; HttpOnly; SameSite=Strict; Max-Age=86400${securePart}`,
       },
     });
@@ -3453,7 +3458,7 @@ const server = Bun.serve({
       return noPasswordWarningPage();
     }
     if (!authResult) {
-      return loginPage();
+      return loginPage(undefined, path);
     }
 
     // Rate limit API requests
