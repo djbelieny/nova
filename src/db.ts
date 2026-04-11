@@ -1700,12 +1700,13 @@ export class Database {
   getConnectedIntegrations(userId: string): any[] {
     const udb = this.getUserDb(userId);
     const rows = udb.db.query(`
-      SELECT provider, status, credentials FROM user_integrations
+      SELECT provider, status, credentials, metadata FROM user_integrations
       WHERE user_id = ? AND status = 'connected'
     `).all(userId) as any[];
     return rows.map((r) => ({
       ...r,
-      credentials: decryptCredentials(r.credentials),
+      credentials: parseJson(decryptCredentials(r.credentials), {}),
+      metadata: parseJson(r.metadata, {}),
     }));
   }
 

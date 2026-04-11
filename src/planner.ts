@@ -626,7 +626,8 @@ export async function executePhase(
             workspaceDir,
             undefined, // useMcp2cli
             undefined, // userMcpConfig
-            user?.id   // userId for gws CLI instructions
+            user?.id,  // userId for gws CLI instructions
+            user?.timezone
           );
 
           emit({ type: "agent.dispatched", level: "info", agentSlug, data: { message: `Executing subtask ${idx} via ${agentSlug} [${phase}] (attempt ${attempts}/${maxAttempts}): ${subtask.description.substring(0, 50)}`, description: subtask.description, phase, subtaskIndex: idx, module: "planner", attempt: attempts } });
