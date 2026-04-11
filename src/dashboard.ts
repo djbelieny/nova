@@ -760,7 +760,7 @@ async function getSkills(): Promise<unknown> {
   try {
     const mcpConfig = JSON.parse(await readFile(join(PROJECT_ROOT, ".mcp.nova.json"), "utf-8"));
     for (const [name] of Object.entries(mcpConfig.mcpServers || {})) {
-      mcpIntegrations.push({ name, type: "mcp" });
+      mcpIntegrations.push({ name, type: "cli" });
     }
   } catch {}
 
@@ -3344,7 +3344,7 @@ async function loadSkills() {
     const d = await r.json();
     let html = '';
     if (d.mcp && d.mcp.length) {
-      html += '<div style="color:var(--warning);font-size:10px;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">MCP Integrations</div>';
+      html += '<div style="color:var(--warning);font-size:10px;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">CLI Integrations (via mcp2cli)</div>';
       html += '<table class="data-table"><tr><th>Name</th><th>Type</th></tr>';
       for (const m of d.mcp) html += '<tr><td style="color:var(--teal)">'+esc(m.name)+'</td><td>'+esc(m.type)+'</td></tr>';
       html += '</table>';
