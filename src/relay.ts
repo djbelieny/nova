@@ -54,7 +54,7 @@ import {
   parseButtons,
   cleanResponseForUser,
 } from "./channels/telegram.ts";
-import { getDecisionContext } from "./memory.ts";
+import { getDecisionContext, initMemorySummarizer } from "./memory.ts";
 import { emit, initEventBus, startStallDetection, shutdownEventBus } from "./events.ts";
 import { initGoalEngine, start as startGoalEngine, runOnce as runGoalEngineOnce } from "../services/goal-engine.ts";
 import { initPredictiveScheduler, start as startPredictiveScheduler } from "../services/predictive-scheduler.ts";
@@ -2802,6 +2802,11 @@ registerProvider(codexProvider);
     console.log(`  ${available ? "+" : "-"} AI Provider: ${p.name} ${available ? "(available)" : "(not installed)"}`);
   }
 })();
+
+// ── Memory summarizer ──
+// Wire haiku into the memory module so long facts/goals are AI-summarized
+// before being stored. Short content skips the AI call entirely.
+initMemorySummarizer(async (prompt: string) => callAI(prompt, "haiku"));
 
 // ============================================================
 // ORCHESTRATOR INIT

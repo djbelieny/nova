@@ -20,6 +20,20 @@ function escapeIlike(text: string): string {
   return text.replace(/[%_\\]/g, (c) => `\\${c}`);
 }
 
+// ── AI summarizer (optional — injected from relay.ts at startup) ──
+// When available, long facts/goals are summarized with haiku before storage.
+// Falls back to rule-based compression when not available.
+type SummarizeAI = (prompt: string) => Promise<string>;
+let _summarizeAI: SummarizeAI | null = null;
+
+/**
+ * Wire in an AI caller for write-time summarization.
+ * Call once from relay.ts after providers are registered.
+ */
+export function initMemorySummarizer(callAI: SummarizeAI): void {
+  _summarizeAI = callAI;
+}
+
 /**
  * Compress content before storing in memory.
  * Rule-based (zero AI cost, zero latency) — strips filler, normalises to terse
@@ -95,9 +109,47 @@ function detectFactCategory(fact: string): string {
 }
 
 /**
+ * Summarize content for storage using haiku when content is long enough
+ * to benefit from AI compression. Falls back to compressForStorage (rule-based)
+ * if the AI caller is not available or the content is already short.
+ *
+ * AI is invoked only when content exceeds the threshold after rule-based
+ * compression — so short facts never incur an AI call.
+ */
+async function summarizeForStorage(raw: string, type: "fact" | "goal"): Promise<string> {
+  // Always run rule-based pass first — it's free and often sufficient
+  const ruleCompressed = compressForStorage(raw, type);
+
+  const THRESHOLD = type === "goal" ? 80 : 120;
+
+  // If already short, done — no AI needed
+  if (ruleCompressed.length <= THRESHOLD) return ruleCompressed;
+
+  // No AI available — return rule-based result
+  if (!_summarizeAI) return ruleCompressed;
+
+  try {
+    const instruction = type === "goal"
+      ? `Summarize this goal into one concise sentence under 80 characters. Preserve: core objective, any numbers/metrics, any deadline. Remove filler words. Output ONLY the summary, nothing else:\n${raw}`
+      : `Summarize this fact into one concise sentence under 120 characters. Preserve: all names, numbers, dates, relationships, and key details. Remove filler words. Output ONLY the summary, nothing else:\n${raw}`;
+
+    const result = (await _summarizeAI(instruction)).trim();
+
+    // Sanity checks — reject AI output that looks wrong
+    if (result.length < 5 || result.length > 300) return ruleCompressed;
+    if (result.includes("\n")) return ruleCompressed; // should be single line
+    // Strip any accidental quotes the model may wrap around output
+    const clean = result.replace(/^["']|["']$/g, "").trim();
+    return clean || ruleCompressed;
+  } catch {
+    return ruleCompressed;
+  }
+}
+
+/**
  * Collapse a list of older messages into a compact digest line.
  * Extracts the first meaningful clause from each message, deduplicates,
- * and joins with " | ". No AI involved.
+ * and joins with " | ". No AI involved — read-time must stay fast.
  */
 function digestMessages(messages: any[], timezone: string): string {
   const phrases: string[] = [];
@@ -128,10 +180,10 @@ export async function processMemoryIntents(
 
   let clean = response;
 
-  // [REMEMBER: fact to store] — compress before storing, with duplicate detection
+  // [REMEMBER: fact to store] — summarize before storing, with duplicate detection
   for (const match of response.matchAll(/\[REMEMBER:\s*(.+?)\]/gi)) {
-    const fact = compressForStorage(match[1], "fact");
-    // Check for existing similar fact using the compressed version
+    const fact = await summarizeForStorage(match[1], "fact");
+    // Check for existing similar fact using the summarized version
     const existing = db.findMemoryByContent(userId, "fact", fact.substring(0, 80));
 
     if (!existing) {
@@ -149,11 +201,11 @@ export async function processMemoryIntents(
 
   // [SHARE: fact to share with team]
   for (const match of response.matchAll(/\[SHARE:\s*(.+?)\]/gi)) {
-    const compressed = compressForStorage(match[1], "fact");
-    const emb = await generateEmbedding(compressed);
+    const summarized = await summarizeForStorage(match[1], "fact");
+    const emb = await generateEmbedding(summarized);
     db.insertMemory({
       type: "fact",
-      content: compressed,
+      content: summarized,
       user_id: userId,
       scope: "shared",
       embedding: emb || undefined,
@@ -165,11 +217,11 @@ export async function processMemoryIntents(
   for (const match of response.matchAll(
     /\[GOAL:\s*(.+?)(?:\s*\|\s*DEADLINE:\s*(.+?))?\]/gi
   )) {
-    const compressed = compressForStorage(match[1], "goal");
-    const emb = await generateEmbedding(compressed);
+    const summarized = await summarizeForStorage(match[1], "goal");
+    const emb = await generateEmbedding(summarized);
     db.insertMemory({
       type: "goal",
-      content: compressed,
+      content: summarized,
       deadline: match[2] || undefined,
       user_id: userId,
       embedding: emb || undefined,
@@ -362,16 +414,16 @@ export async function getMemoryContext(
     if (goals?.length) {
       const cappedGoals = goals.slice(0, 15);
       cappedGoals.forEach((g: any) => idsToUpdate.push(g.id));
-      const goalLines = cappedGoals.map((g: any) => {
+      // Summarize any verbose legacy goals on the fly (won't re-summarize already-short entries)
+      const goalLines = await Promise.all(cappedGoals.map(async (g: any) => {
         const deadline = g.deadline
           ? ` → ${new Date(g.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
           : "";
-        // Content stored compressed; still guard against pre-existing verbose entries
         const content = g.content.length > 120
-          ? g.content.slice(0, g.content.lastIndexOf(" ", 115) || 115).trim()
+          ? await summarizeForStorage(g.content, "goal")
           : g.content;
         return `- ${content}${deadline}`;
-      });
+      }));
       if (goals.length > 15) goalLines.push(`- +${goals.length - 15} more goals`);
       parts.push("GOALS:\n" + goalLines.join("\n"));
     }
