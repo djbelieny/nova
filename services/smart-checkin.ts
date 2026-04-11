@@ -37,6 +37,7 @@ interface ProactiveUser {
   name: string;
   timezone: string;
   preferences: Record<string, any>;
+  job_role?: string;
 }
 
 // ============================================================
@@ -95,9 +96,16 @@ function getCheckinsToday(db: Database, userId: string): number {
 function getAllProactiveUsers(db: Database): ProactiveUser[] {
   const users = db.getAllActiveUsers();
 
-  return users.filter(
-    (u: any) => u.preferences?.proactive_checkin !== false
-  );
+  return users
+    .filter((u: any) => u.preferences?.proactive_checkin !== false)
+    .map((u: any) => ({
+      id: u.id,
+      telegram_id: u.telegram_id,
+      name: u.name,
+      timezone: u.timezone,
+      preferences: u.preferences,
+      job_role: u.job_role || "general",
+    }));
 }
 
 // ============================================================
@@ -304,7 +312,18 @@ async function askToDecide(
   const timeContext =
     hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
 
-  const prompt = `Decide if you should check in with ${user.name} right now.
+  const roleCheckinHints: Record<string, string> = {
+    developer: "Ask about: build failures, blocked PRs, deployment status, or tech debt piling up.",
+    account_manager: "Ask about: client at risk, follow-up overdue, or pipeline opportunity.",
+    designer: "Ask about: feedback needed, handoff ready, or review scheduled.",
+    marketer: "Ask about: campaign going live, content deadline, or performance anomaly.",
+    founder: "Ask about: revenue impact, team blocker, or strategic decision needed.",
+    general: "Ask about: approaching deadlines, blocked tasks, or key decisions needed.",
+  };
+  const role = user.job_role || "general";
+  const roleHint = roleCheckinHints[role] || roleCheckinHints.general;
+
+  const prompt = `Decide if you should check in with ${user.name} (${role}) right now.
 
 Time: ${timeStr} (${timeContext})
 ${activity}
@@ -323,7 +342,7 @@ Recent messages:
 ${recentActivity}
 ${integrationContext ? `\nExternal tasks & projects:\n${integrationContext}` : ""}
 
-Rules: Only check in for concrete reasons (deadlines, urgent tasks, upcoming events, or silence 4h+ during work hours). Urgent/security issues override the daily limit. For non-urgent items, keep check-ins spaced at least 2 hours apart. Be brief, reference real context. Include relevant upcoming schedule items or recent changes when they add value.
+Rules: Only check in for concrete reasons (deadlines, urgent tasks, upcoming events, or silence 4h+ during work hours). Urgent/security issues override the daily limit. For non-urgent items, keep check-ins spaced at least 2 hours apart. Be brief, reference real context. Include relevant upcoming schedule items or recent changes when they add value. ${roleHint}
 
 RESPOND:
 DECISION: YES or NO

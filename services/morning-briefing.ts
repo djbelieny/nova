@@ -29,6 +29,7 @@ interface BriefingUser {
   name: string;
   timezone: string;
   preferences: Record<string, any>;
+  job_role?: string;
 }
 
 // ============================================================
@@ -64,9 +65,16 @@ async function sendTelegram(chatId: string, message: string): Promise<boolean> {
 function getAllBriefingUsers(db: Database): BriefingUser[] {
   const users = db.getAllActiveUsers();
 
-  return users.filter(
-    (u: any) => u.preferences?.morning_briefing !== false
-  );
+  return users
+    .filter((u: any) => u.preferences?.morning_briefing !== false)
+    .map((u: any) => ({
+      id: u.id,
+      telegram_id: u.telegram_id,
+      name: u.name,
+      timezone: u.timezone,
+      preferences: u.preferences,
+      job_role: u.job_role || "general",
+    }));
 }
 
 // ============================================================
@@ -148,12 +156,23 @@ async function generateBriefing(user: BriefingUser, dbContext: string): Promise<
   // Fetch real integration data
   const integrationContext = await getIntegrationContext();
 
-  const prompt = `Morning briefing for ${user.name}, ${dateStr}.
+  const roleGuidance: Record<string, string> = {
+    developer: "Focus on: PRs to review, technical debt, deployments, build health, unblocked tasks.",
+    account_manager: "Focus on: client status, pipeline follow-ups, CRM actions, renewals due soon.",
+    designer: "Focus on: design feedback pending, assets needed, upcoming reviews, handoffs.",
+    marketer: "Focus on: campaign performance, content deadlines, ad spend pacing, audience growth.",
+    founder: "Focus on: revenue metrics, team blockers, investor follow-ups, strategic priorities.",
+    general: "Focus on: most urgent goals, blocked tasks, key decisions needed.",
+  };
+  const role = user.job_role || "general";
+  const roleHint = roleGuidance[role] || roleGuidance.general;
+
+  const prompt = `Morning briefing for ${user.name} (${role}), ${dateStr}.
 
 ${dbContext ? dbContext + "\n" : ""}${integrationContext ? integrationContext + "\n" : ""}Build a concise Telegram Markdown briefing:
 - Greeting + date
 - Tasks: open tasks from ClickUp/Notion + active goals (use real data above)
-- Focus: 1-2 sentence priority suggestion based on what's most urgent
+- Focus: 1-2 sentence priority suggestion based on what's most urgent — ${roleHint}
 
 ${!integrationContext ? "Note: No external task data available today — focus on goals and general priorities." : ""}
 Skip sections with no data silently. Bullet points, be brief. Keep it under 300 words.`;

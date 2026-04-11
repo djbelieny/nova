@@ -1261,6 +1261,62 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
         );
         return;
       }
+
+      // /settings access @username <level> — cross-user assistant access
+      if (settingsParts[1] === "access") {
+        const targetArg = settingsParts[2]; // e.g. "@alice"
+        const level = settingsParts[3]?.toLowerCase(); // tasks-only | tasks+goals | full-summary | none
+        const validLevels = ["none", "tasks-only", "tasks+goals", "full-summary"];
+
+        if (!targetArg || !level) {
+          await ctx.reply(
+            "Usage: /settings access @username <level>\n\n" +
+            "Levels:\n" +
+            "• tasks-only — they can see your active tasks\n" +
+            "• tasks+goals — they can see your tasks and goals\n" +
+            "• full-summary — they can see your recent activity and tasks\n" +
+            "• none — revoke access"
+          );
+          return;
+        }
+
+        if (!validLevels.includes(level)) {
+          await ctx.reply(`Invalid level. Choose: ${validLevels.join(", ")}`);
+          return;
+        }
+
+        const targetName = targetArg.startsWith("@") ? targetArg.slice(1) : targetArg;
+        const allUsers = supabase.getAllActiveUsers();
+        const target = allUsers.find(
+          (u: any) => u.name?.toLowerCase() === targetName.toLowerCase() ||
+                      u.telegram_id === targetName
+        );
+
+        if (!target) {
+          await ctx.reply(`User @${targetName} not found.`);
+          return;
+        }
+
+        supabase.setAccessGrant(user.id, target.id, level);
+        if (level === "none") {
+          await ctx.reply(`Access revoked — @${target.name} can no longer see your context.`);
+        } else {
+          await ctx.reply(`Access granted — @${target.name} can now see your context at level: ${level}.`);
+        }
+        return;
+      }
+
+      // /settings role <job_role> — set your job role for tailored briefings
+      if (settingsParts[1] === "role") {
+        const jobRole = settingsParts.slice(2).join("_").toLowerCase().replace(/\s+/g, "_");
+        if (!jobRole) {
+          await ctx.reply("Usage: /settings role <role>\nExamples: developer, account_manager, designer, marketer, founder");
+          return;
+        }
+        supabase.setJobRole(user.id, jobRole);
+        await ctx.reply(`Role set to: ${jobRole}. Morning briefings and check-ins will be tailored to your role.`);
+        return;
+      }
     }
 
     // Handle admin commands (Telegram only — uses ctx.reply for rich formatting)
@@ -1685,6 +1741,42 @@ function buildPrompt(
   }
 
   if (tRelevantContext) parts.push(`\n${tRelevantContext}`);
+
+  // Cross-user access grants — inject context from users who granted access to this user
+  try {
+    const grants = supabase.getGrantedUsers(user.id);
+    for (const grant of grants) {
+      const grantor = supabase.getUserById(grant.grantor_user_id);
+      if (!grantor) continue;
+      const grantorLines: string[] = [`Shared context from ${grantor.name} (access: ${grant.level}):`];
+
+      if (grant.level === "tasks-only" || grant.level === "tasks+goals" || grant.level === "full-summary") {
+        const tasks = supabase.getActiveTasks(grant.grantor_user_id);
+        if (tasks.length > 0) {
+          grantorLines.push(`  Tasks: ${tasks.slice(0, 5).map((t: any) => t.description || t.content).join("; ")}`);
+        }
+      }
+      if (grant.level === "tasks+goals" || grant.level === "full-summary") {
+        const goals = supabase.getActiveGoals(grant.grantor_user_id);
+        if (goals.length > 0) {
+          grantorLines.push(`  Goals: ${goals.slice(0, 3).map((g: any) => g.content).join("; ")}`);
+        }
+      }
+      if (grant.level === "full-summary") {
+        const recent = supabase.getRecentMessages(grant.grantor_user_id, 5);
+        if (recent.length > 0) {
+          const summary = recent.slice(0, 5)
+            .map((m: any) => `[${m.role}]: ${m.content.substring(0, 80)}`)
+            .join(" | ");
+          grantorLines.push(`  Recent: ${summary}`);
+        }
+      }
+
+      if (grantorLines.length > 1) {
+        parts.push(`\n${grantorLines.join("\n")}`);
+      }
+    }
+  } catch { /* ignore if grants unavailable */ }
 
   // Compact memory tags (always included at tier 2+)
   parts.push(

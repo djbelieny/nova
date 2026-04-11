@@ -351,6 +351,23 @@ class SharedDatabase {
         PRIMARY KEY (service, key)
       )
     `);
+
+    // Cross-user access grants
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS user_access_grants (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        grantor_user_id TEXT NOT NULL,
+        grantee_user_id TEXT NOT NULL,
+        level TEXT NOT NULL CHECK(level IN ('none','tasks-only','tasks+goals','full-summary')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(grantor_user_id, grantee_user_id)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_grants_grantee ON user_access_grants(grantee_user_id)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_grants_grantor ON user_access_grants(grantor_user_id)`);
+
+    // Per-user job role (e.g. "developer", "account_manager", "designer")
+    try { this.db.run(`ALTER TABLE users ADD COLUMN job_role TEXT DEFAULT 'general'`); } catch {}
   }
 
   close(): void {
@@ -961,6 +978,58 @@ export class Database {
   markMessageDelivered(userId: string, messageId: string): void {
     const udb = this.getUserDb(userId);
     udb.db.run(`UPDATE inter_user_messages SET delivered = 1 WHERE id = ?`, [messageId]);
+  }
+
+  // ============================================================
+  // Cross-User Access Grants
+  // ============================================================
+
+  /** Get the access level that grantorId has given to granteeId (null = no grant). */
+  getAccessGrant(grantorId: string, granteeId: string): string | null {
+    const row = this.shared.db.query(
+      `SELECT level FROM user_access_grants WHERE grantor_user_id = ? AND grantee_user_id = ? LIMIT 1`
+    ).get(grantorId, granteeId) as any;
+    return row?.level ?? null;
+  }
+
+  /** Set or update the access level that grantorId gives to granteeId. Level 'none' removes the grant. */
+  setAccessGrant(grantorId: string, granteeId: string, level: string): void {
+    if (level === "none") {
+      this.shared.db.run(
+        `DELETE FROM user_access_grants WHERE grantor_user_id = ? AND grantee_user_id = ?`,
+        [grantorId, granteeId]
+      );
+    } else {
+      this.shared.db.run(
+        `INSERT INTO user_access_grants (grantor_user_id, grantee_user_id, level)
+         VALUES (?, ?, ?)
+         ON CONFLICT(grantor_user_id, grantee_user_id) DO UPDATE SET level = excluded.level`,
+        [grantorId, granteeId, level]
+      );
+    }
+  }
+
+  /** Get all users who have granted granteeId access (and the level). */
+  getGrantedUsers(granteeId: string): Array<{ grantor_user_id: string; level: string }> {
+    return this.shared.db.query(
+      `SELECT grantor_user_id, level FROM user_access_grants WHERE grantee_user_id = ?`
+    ).all(granteeId) as any[];
+  }
+
+  /** Set job role for a user (e.g. "developer", "account_manager", "designer"). */
+  setJobRole(userId: string, jobRole: string): void {
+    this.shared.db.run(
+      `UPDATE users SET job_role = ?, updated_at = datetime('now') WHERE id = ?`,
+      [jobRole, userId]
+    );
+  }
+
+  /** Get job role for a user. */
+  getJobRole(userId: string): string {
+    const row = this.shared.db.query(
+      `SELECT job_role FROM users WHERE id = ? LIMIT 1`
+    ).get(userId) as any;
+    return row?.job_role || "general";
   }
 
   // ============================================================
