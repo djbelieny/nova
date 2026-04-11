@@ -9,7 +9,7 @@
  */
 
 import { getDb, type Database } from "../src/db.ts";
-import { registerProvider, getDefaultProvider, setDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
 import { GroqProvider } from "../src/providers/groq.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { searchTavily, getClickUpTasks, getNotionTasks } from "../src/service-integrations.ts";
@@ -19,7 +19,6 @@ import { dirname, join } from "path";
 
 registerProvider(new GroqProvider());
 registerProvider(new ClaudeProvider());
-if (process.env.GROQ_API_KEY) setDefaultProvider("groq");
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
@@ -193,8 +192,10 @@ Be specific — not "target small businesses" but "target e-commerce brands with
 Format as Markdown with clear headers for each opportunity.`;
 
   try {
-    const result = await getDefaultProvider().call({
+    const claude = getProvider("claude") ?? getDefaultProvider();
+    const result = await claude.call({
       prompt,
+      model: claude.mapModelTier("fast"),
       outputFormat: "text",
     });
     return result.text;

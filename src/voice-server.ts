@@ -133,6 +133,32 @@ function verifyTwilioSignature(url: string, params: Record<string, string>, sign
   }
 }
 
+// ============================================================
+// WEBSOCKET AUTH — short-lived HMAC tokens for /voice/media-stream
+// ============================================================
+
+const WS_SECRET = process.env.NOVA_WS_SECRET || process.env.TWILIO_AUTH_TOKEN || "";
+
+function generateWsToken(callSid: string): string {
+  const payload = `${callSid}:${Math.floor(Date.now() / 30000)}`; // 30s window
+  return createHmac("sha256", WS_SECRET).update(payload).digest("hex").slice(0, 32);
+}
+
+function verifyWsToken(callSid: string, token: string): boolean {
+  if (!WS_SECRET) return true; // Disabled if no secret configured (warn logged at startup)
+  // Check current window and previous window (tolerates clock skew)
+  for (const window of [0, -1]) {
+    const payload = `${callSid}:${Math.floor(Date.now() / 30000) + window}`;
+    const expected = createHmac("sha256", WS_SECRET).update(payload).digest("hex").slice(0, 32);
+    try {
+      const expBuf = Buffer.from(expected, "hex");
+      const tokBuf = Buffer.from(token.padEnd(32, "0"), "hex");
+      if (token.length === 32 && timingSafeEqual(expBuf, tokBuf)) return true;
+    } catch { }
+  }
+  return false;
+}
+
 // Audio file access tokens — short-lived HMAC tokens so only Twilio can fetch audio
 const AUDIO_TOKEN_SECRET = process.env.AUDIO_TOKEN_SECRET || crypto.randomUUID();
 
@@ -223,7 +249,10 @@ interface CallState {
 const activeCalls = new Map<string, CallState>();
 
 // Owner detection
-const OWNER_PHONE = process.env.USER_PHONE || "+18636047056";
+const OWNER_PHONE = process.env.USER_PHONE;
+if (!OWNER_PHONE) {
+  throw new Error("USER_PHONE env var is required — set it in .env");
+}
 function isOwnerPhone(phone: string): boolean {
   return phone === OWNER_PHONE;
 }
@@ -617,6 +646,20 @@ ${transcript}`;
   }
 }
 
+// Patterns that must never appear in autonomous self-edit output.
+// If found, execution is blocked and secondary human approval is required.
+const DANGEROUS_PATTERNS = [
+  /git push.*(?:origin\s+)?(?:main|master|production)/i,
+  /git push.*-f/i,
+  /systemctl\s+(?:restart|stop|start)/i,
+  /launchctl\s+(?:load|unload)/i,
+  /pm2\s+(?:restart|delete|stop)/i,
+];
+
+function hasDangerousCommands(text: string): boolean {
+  return DANGEROUS_PATTERNS.some(p => p.test(text));
+}
+
 async function executeTask(task: ExtractedTask, userName: string): Promise<string> {
   const isSelfEditTask = /(?:fix|bug|code|source|change|update|modify|improve|edit).*(?:your|nova|yourself|codebase)/i.test(task.task)
     || /(?:your|nova).*(?:fix|bug|code|source|change|update|modify|improve|edit)/i.test(task.task);
@@ -626,29 +669,26 @@ async function executeTask(task: ExtractedTask, userName: string): Promise<strin
     selfEditInstructions = `
 
 SELF-EDIT WORKFLOW:
-Your source code is at ${PROJECT_ROOT}. Follow this git workflow:
+Your source code is at ${PROJECT_ROOT}. Follow this exact workflow — no deviations:
 0. Ensure clean state:
    a. Stash uncommitted changes: \`git -C ${PROJECT_ROOT} stash --include-untracked\` (only if dirty)
-   b. Pull latest: \`git -C ${PROJECT_ROOT} checkout production && git -C ${PROJECT_ROOT} pull origin production\`
-   c. Pull main: \`git -C ${PROJECT_ROOT} checkout main && git -C ${PROJECT_ROOT} pull origin main\`
-1. Branch from production: \`git -C ${PROJECT_ROOT} checkout -b self-edit/<short-slug> production\`
+   b. Sync main: \`git -C ${PROJECT_ROOT} checkout main && git -C ${PROJECT_ROOT} pull origin main\`
+1. Create a branch: \`git -C ${PROJECT_ROOT} checkout -b self-edit/$(date +%s)\`
 2. Read the relevant file(s)
 3. Make the change
 4. Log in CHANGELOG.md
 5. PRE-COMMIT VALIDATION: run \`bun build --no-bundle <changed-files>\` to catch syntax errors before committing. Fix any errors.
 6. Commit: \`git -C ${PROJECT_ROOT} add -A && git -C ${PROJECT_ROOT} commit -m "self-edit: <description>"\`
-7. TWO-TIER CHECK: if ANY changed file is core (relay.ts, orchestrator.ts, planner.ts, voice-server.ts, agent-router.ts), send diff to ${userName} and WAIT for approval. Agent/skill files auto-merge.
-8. Merge to main: \`git -C ${PROJECT_ROOT} checkout main && git -C ${PROJECT_ROOT} merge self-edit/<short-slug> && git -C ${PROJECT_ROOT} push origin main\`
-9. Merge to production: \`git -C ${PROJECT_ROOT} checkout production && git -C ${PROJECT_ROOT} merge main && git -C ${PROJECT_ROOT} push origin production\`
-10. Install deps: \`bun install --cwd ${PROJECT_ROOT}\`
-11. Restart ALL services (platform-aware):
-    macOS: launchctl unload/load for com.nova.{core,voice-server,dashboard,miniapp}
-    Linux: sudo systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
-12. CRASH WATCHDOG: wait 30s, verify all services running. If crashed → auto-revert, restart, alert ${userName}.
-13. CANARY WINDOW: keep self-edit branch for 10 minutes before deleting.
-14. Tell ${userName} what changed, confirm services healthy.
+7. Push the branch: \`git -C ${PROJECT_ROOT} push origin self-edit/$(date +%s)\` (use the same timestamp slug from step 1)
+8. Open a PR: \`gh pr create --title "self-edit: <description>" --body "Triggered by voice request from ${userName}: ${task.task.substring(0, 200)}"\`
+9. Tell ${userName} the PR URL and what changed. Human review and merge is required before the change goes live.
 
-SAFETY: Never modify .env or credentials. Always validate syntax with \`bun build --no-bundle\` before committing. Log every change in CHANGELOG.md. For core files, send diff and wait for approval. After restart, verify health for 30s.`;
+CRITICAL SAFETY RULES:
+- NEVER push directly to main, master, or production branches.
+- NEVER run \`systemctl restart\`, \`launchctl load/unload\`, or \`pm2 restart\` — services restart only after a human merges and deploys the PR.
+- NEVER modify .env or credentials files.
+- Always validate syntax with \`bun build --no-bundle\` before committing.
+- Log every change in CHANGELOG.md.`;
   }
 
   const prompt = `You are Nova, ${userName}'s AI assistant. ${userName} asked you to do the following during a phone call. Now execute it using your available tools.
@@ -658,7 +698,19 @@ ${task.urgent ? "PRIORITY: URGENT — handle this immediately and thoroughly." :
 
 Execute the task and return a brief summary of what you did and the result. Be concise — this will be sent as a notification to ${userName}.`;
 
-  return await callAI(prompt);
+  const result = await callAI(prompt);
+
+  // Safety gate: if the AI result contains dangerous deployment commands, block it
+  // and request secondary approval via Telegram before proceeding.
+  if (isSelfEditTask && hasDangerousCommands(result)) {
+    console.warn(`[voice] Self-edit result contains dangerous commands — blocking and requesting secondary approval`);
+    const userTelegramId = TELEGRAM_USER_ID;
+    const safetyMessage = `⚠️ Self-edit task blocked — result contained a direct push-to-production or service restart command.\n\nTask: ${task.task}\n\nReview and approve manually:\n\n${result.substring(0, 800)}${result.length > 800 ? "..." : ""}`;
+    await sendTelegramNotification(safetyMessage, userTelegramId);
+    return `Self-edit task completed but blocked at the safety gate — a push-to-production or restart command was detected. ${userName} has been notified on Telegram to review and approve manually.`;
+  }
+
+  return result;
 }
 
 async function processPostCallTasks(callSid: string, state: CallState): Promise<void> {
@@ -936,10 +988,12 @@ async function handlePin(body: string): Promise<Response> {
 async function handleStreamRequest(body: string): Promise<Response> {
   const params = parseFormBody(body);
   const callSid = params.CallSid || "unknown";
-  
+
   // Convert http:// or https:// to ws:// or wss:// for the stream URL
-  const wsUrl = VOICE_SERVER_URL.replace(/^http/, "ws") + "/voice/media-stream";
-  
+  const wsBase = VOICE_SERVER_URL.replace(/^http/, "ws") + "/voice/media-stream";
+  const wsToken = generateWsToken(callSid);
+  const wsUrl = `${wsBase}?token=${wsToken}&sid=${encodeURIComponent(callSid)}`;
+
   return twiml(`
     <Say voice="Polly.Joanna">Connecting to Nova's live stream. This is a beta feature for real-time conversation.</Say>
     <Connect>
@@ -1127,6 +1181,12 @@ const server = Bun.serve({
 
     // Upgrade to WebSocket for Media Streams
     if (path === "/voice/media-stream") {
+      const wsToken = url.searchParams.get("token") || "";
+      const wsSid = url.searchParams.get("sid") || "";
+      if (!verifyWsToken(wsSid, wsToken)) {
+        console.warn("[voice] Rejected WebSocket upgrade: invalid or missing token");
+        return new Response("Forbidden", { status: 403 });
+      }
       if (server.upgrade(req)) return;
     }
 
@@ -1161,7 +1221,11 @@ const server = Bun.serve({
         const params = parseFormBody(body);
         const requestUrl = `${VOICE_SERVER_URL}${path}`;
 
-        if (TWILIO_AUTH_TOKEN && !verifyTwilioSignature(requestUrl, params, signature)) {
+        if (!TWILIO_AUTH_TOKEN) {
+          console.warn("[voice] TWILIO_AUTH_TOKEN not set — rejecting webhook (set it to enable Twilio webhooks)");
+          return new Response("Forbidden", { status: 403 });
+        }
+        if (!verifyTwilioSignature(requestUrl, params, signature)) {
           console.warn(`Rejected request to ${path}: invalid Twilio signature`);
           return new Response("Forbidden", { status: 403 });
         }
@@ -1201,6 +1265,14 @@ const server = Bun.serve({
     }
   }
 });
+
+// Startup security warnings
+if (!process.env.TWILIO_AUTH_TOKEN) {
+  console.warn("[voice] WARNING: TWILIO_AUTH_TOKEN not set. All Twilio webhook requests will be rejected.");
+}
+if (!process.env.NOVA_WS_SECRET && !process.env.TWILIO_AUTH_TOKEN) {
+  console.warn("[voice] WARNING: Neither NOVA_WS_SECRET nor TWILIO_AUTH_TOKEN set — WebSocket endpoint is unauthenticated");
+}
 
 console.log(`Nova Voice Server running on port ${PORT}`);
 console.log(`Public URL: ${VOICE_SERVER_URL}`);

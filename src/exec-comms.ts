@@ -260,6 +260,14 @@ export class ExecComms {
     return rows[0] ?? null;
   }
 
+  async getDelegationsByProject(projectId: string): Promise<Delegation[]> {
+    // Delegations embed projectId in task_description as "[Project: <id>]"
+    return this.query<Delegation>(
+      "delegations",
+      `task_description=like.*[Project: ${projectId}]*&order=created_at.asc`,
+    );
+  }
+
   // --- decisions ---
 
   async recordDecision(decision: Decision): Promise<string> {

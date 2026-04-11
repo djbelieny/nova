@@ -88,6 +88,24 @@
       "env": {
         "API_KEY": "${STITCH_API_KEY}"
       }
+    },
+    "cloudflare": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cloudflare/mcp-server-cloudflare"],
+      "env": {
+        "CLOUDFLARE_API_TOKEN": "${CLOUDFLARE_API_TOKEN}",
+        "CLOUDFLARE_ACCOUNT_ID": "${CLOUDFLARE_ACCOUNT_ID}"
+      }
+    },
+    "gohighlevel": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "gohighlevel-mcp"],
+      "env": {
+        "GHL_API_KEY": "${GHL_API_KEY}",
+        "GHL_BASE_URL": "${GHL_BASE_URL}"
+      }
     }
   }
 }

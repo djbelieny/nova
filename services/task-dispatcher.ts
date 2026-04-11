@@ -10,7 +10,7 @@
  */
 
 import { getDb, type Database } from "../src/db.ts";
-import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
@@ -117,9 +117,10 @@ async function executeTask(
   const uniqueMcps = [...new Set(mcpServers)];
 
   try {
-    const result = await getDefaultProvider().call({
+    const claude = getProvider("claude") ?? getDefaultProvider();
+    const result = await claude.call({
       prompt,
-      model: "haiku",
+      model: claude.mapModelTier("fast"),
       maxTurns: 5,
       outputFormat: "text",
     });

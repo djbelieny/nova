@@ -19,7 +19,7 @@ const MODEL_MAP: Record<string, string> = {
 export class GroqProvider implements AIProvider {
   readonly name = "groq";
   readonly models = ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"];
-  readonly defaultModel = "llama-3.3-70b-versatile";
+  readonly defaultModel = "llama-3.1-8b-instant";
 
   mapModelTier(tier: ModelTier): string {
     return MODEL_MAP[tier] ?? this.defaultModel;

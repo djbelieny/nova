@@ -426,12 +426,34 @@ export async function recoverInProgressDelegations(): Promise<void> {
       emit({ type: "task.status", level: "info", data: { message: `Rebuilding tracking for project ${project.id}`, projectId: project.id, status: "recovering", module: "execution-engine" } });
       const tracked: TrackedDelegation[] = (project.work_items as WorkItem[]).map(
         (item, idx) => ({
-          delegationId: "", // Will be resolved below
+          delegationId: "",
           workItemIndex: idx,
           role: item.role,
           description: item.description,
         }),
       );
+
+      // Re-match existing delegations back to work items
+      try {
+        const existing = await _comms.getDelegationsByProject(project.id);
+        for (const del of existing) {
+          // Match by role tag embedded in task_description
+          const roleMatch = del.task_description.match(/\[Role:\s*([^\]]+)\]/);
+          if (!roleMatch) continue;
+          const delRole = roleMatch[1].trim().toLowerCase();
+
+          // Find the first unmatched tracked item with the same role
+          const entry = tracked.find(
+            (t) => !t.delegationId && t.role.toLowerCase() === delRole
+          );
+          if (entry) {
+            entry.delegationId = del.id;
+          }
+        }
+      } catch (err) {
+        emit({ type: "error", level: "warn", data: { message: `Could not recover delegations for project ${project.id}`, projectId: project.id, module: "execution-engine", error: String(err) } });
+      }
+
       _projectDelegations.set(project.id, tracked);
     }
   }

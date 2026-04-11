@@ -140,7 +140,10 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
 // ============================================================
 
 const DASHBOARD_USER = process.env.DASHBOARD_USER || "admin";
-const DASHBOARD_PASS = process.env.DASHBOARD_PASS || "";
+const DASHBOARD_PASS = process.env.DASHBOARD_PASS;
+if (!DASHBOARD_PASS) {
+  console.error("[dashboard] DASHBOARD_PASS is not set — dashboard login is disabled for security. Set DASHBOARD_PASS in .env to enable it.");
+}
 const DASHBOARD_BASE = process.env.DASHBOARD_BASE ?? "/dashboard";
 const COOKIE_PATH = DASHBOARD_BASE || "/";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -170,6 +173,32 @@ function getSessionIdFromRequest(req: Request): string | null {
   return match ? match[1] : null;
 }
 
+// Login brute-force protection — 5 attempts per 15 minutes per IP
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+function checkLoginRateLimit(ip: string): { allowed: boolean; retryAfterMs: number } {
+  const now = Date.now();
+  const record = loginAttempts.get(ip);
+
+  if (!record || now > record.resetAt) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return { allowed: true, retryAfterMs: 0 };
+  }
+
+  if (record.count >= LOGIN_MAX_ATTEMPTS) {
+    return { allowed: false, retryAfterMs: record.resetAt - now };
+  }
+
+  record.count++;
+  return { allowed: true, retryAfterMs: 0 };
+}
+
+function resetLoginRateLimit(ip: string): void {
+  loginAttempts.delete(ip);
+}
+
 // Periodic cleanup of expired sessions and rate limit buckets
 setInterval(() => {
   const now = Date.now();
@@ -178,6 +207,9 @@ setInterval(() => {
   }
   for (const [id, bucket] of rateLimitBuckets) {
     if (bucket.resetAt < now) rateLimitBuckets.delete(id);
+  }
+  for (const [ip, record] of loginAttempts.entries()) {
+    if (now > record.resetAt) loginAttempts.delete(ip);
   }
 }, 30 * 60 * 1000); // every 30 min
 
@@ -360,12 +392,27 @@ function loginPage(error?: string): Response {
 }
 
 async function handleLogin(req: Request): Promise<Response> {
+  if (!DASHBOARD_PASS) {
+    return new Response("Dashboard login not configured", { status: 503 });
+  }
+
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || "unknown";
+  const rateCheck = checkLoginRateLimit(ip);
+  if (!rateCheck.allowed) {
+    const retryAfterSec = Math.ceil(rateCheck.retryAfterMs / 1000);
+    return new Response("Too many login attempts. Try again later.", {
+      status: 429,
+      headers: { "Retry-After": String(retryAfterSec) },
+    });
+  }
+
   const body = await req.text();
   const params = new URLSearchParams(body);
   const username = params.get("username") || "";
   const password = params.get("password") || "";
 
   if (username === DASHBOARD_USER && password === DASHBOARD_PASS) {
+    resetLoginRateLimit(ip);
     const sessionId = generateSessionId();
     sessions.set(sessionId, { user: username, expiresAt: Date.now() + SESSION_TTL_MS });
     const isSecure = req.url.startsWith("https") || req.headers.get("x-forwarded-proto") === "https";

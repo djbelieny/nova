@@ -17,7 +17,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync, readFileSync } from "fs";
 import { execSync } from "child_process";
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import type { Database } from "./db.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
@@ -37,17 +37,21 @@ const USERS_DIR = join(NOVA_DIR, "users");
 // ============================================================
 
 function getOAuthHmacSecret(): string {
-  const secret = process.env.TELEGRAM_BOT_TOKEN;
-  if (!secret) {
-    throw new Error("TELEGRAM_BOT_TOKEN is required for OAuth HMAC signing — set it in .env");
+  const dedicated = process.env.OAUTH_HMAC_SECRET;
+  if (dedicated) return dedicated;
+  // Fallback to bot token for backwards compat — warn once
+  const fallback = process.env.TELEGRAM_BOT_TOKEN;
+  if (fallback) {
+    console.warn("[integrations] OAUTH_HMAC_SECRET not set — falling back to TELEGRAM_BOT_TOKEN. Set a dedicated OAUTH_HMAC_SECRET in .env for better security.");
+    return fallback;
   }
-  return secret;
+  throw new Error("OAUTH_HMAC_SECRET (or TELEGRAM_BOT_TOKEN as fallback) is required for OAuth state signing");
 }
 
 export function signOAuthState(payload: Record<string, any>): string {
   const json = JSON.stringify(payload);
   const b64 = Buffer.from(json).toString("base64");
-  const sig = createHmac("sha256", getOAuthHmacSecret()).update(b64).digest("hex").slice(0, 16);
+  const sig = createHmac("sha256", getOAuthHmacSecret()).update(b64).digest("hex");
   return encodeURIComponent(`${b64}.${sig}`);
 }
 
@@ -59,8 +63,10 @@ export function verifyOAuthState(stateParam: string): Record<string, any> | null
   const b64 = decoded.slice(0, dotIndex);
   const sig = decoded.slice(dotIndex + 1);
 
-  const expected = createHmac("sha256", getOAuthHmacSecret()).update(b64).digest("hex").slice(0, 16);
-  if (sig !== expected) return null;
+  const expectedHex = createHmac("sha256", getOAuthHmacSecret()).update(b64).digest("hex");
+  const sigBuf = Buffer.from(sig.padEnd(64, '0'), "hex");
+  const expBuf = Buffer.from(expectedHex, "hex");
+  if (sig.length !== expectedHex.length || !timingSafeEqual(sigBuf, expBuf)) return null;
 
   try {
     return JSON.parse(Buffer.from(b64, "base64").toString());
@@ -141,11 +147,13 @@ const MCP_ROUTING_MAP: Record<string, string[]> = {
   "square": ["square", "payment", "invoice", "pos", "transaction", "order"],
   "gohighlevel": ["ghl", "highlevel", "crm", "pipeline", "opportunity", "funnel", "contact", "social media", "post", "publish", "instagram", "facebook", "schedule post", "blog", "invoice", "sms", "workflow"],
   "clickup": ["clickup", "task", "project", "space", "list", "ticket", "todo", "sprint", "time track"],
-  "playwright": ["browse", "screenshot", "webpage", "scrape", "website", "click", "navigate"],
-  "tavily": ["search", "research", "web search", "find online", "look up", "crawl"],
-  "firecrawl": ["scrape", "crawl", "extract", "web content", "website data"],
-  "exa": ["search", "research", "find", "similar", "company research", "code search"],
-  "browserbase": ["browse", "browser", "screenshot", "automate", "web agent"],
+  "playwright": ["browse", "screenshot", "webpage", "website", "click", "navigate", "dom", "form", "local browser"],
+  "tavily": ["search", "news", "recent", "today", "web search", "find", "look up", "fact check"],
+  "firecrawl": ["scrape", "extract", "crawl", "full site", "structured data", "web content", "website data"],
+  "exa": ["company research", "semantic search", "similar", "find examples", "code context", "deep research", "source material"],
+  "browserbase": ["browse", "browser", "screenshot", "automate", "web agent", "cloud browser"],
+  "stitch": ["design system", "ui component", "screen", "wireframe", "ui screen", "screen variant"],
+  "magic": ["ui inspiration", "component inspiration", "design reference", "21st", "beautiful component"],
 };
 
 /** Agent slug → servers they commonly need */

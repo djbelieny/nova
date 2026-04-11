@@ -99,6 +99,37 @@ export function collectArtifacts(results: SubtaskResult[]): Artifact[] {
 }
 
 /**
+ * Enrich a list of artifacts by auto-analyzing screenshot/image artifacts with Gemini vision.
+ * Appends screenshot_analysis artifacts for any image/screenshot type found.
+ * Best-effort — never throws.
+ */
+export async function enrichArtifactsWithVision(artifacts: Artifact[]): Promise<Artifact[]> {
+  const enriched: Artifact[] = [...artifacts];
+  for (const artifact of artifacts) {
+    const typeL = artifact.type.toLowerCase();
+    if (typeL.includes("screenshot") || typeL.includes("image")) {
+      try {
+        const { analyzeImage } = await import("./ai-router.ts");
+        const analysis = await analyzeImage(
+          artifact.value,
+          "Describe this screenshot: what page/interface is shown, what's the key content, any errors or notable state?"
+        );
+        if (analysis && !analysis.startsWith("[Image analysis")) {
+          enriched.push({
+            type: "screenshot_analysis",
+            value: analysis.slice(0, 500),
+            source: artifact.source,
+          });
+        }
+      } catch {
+        // vision analysis is best-effort
+      }
+    }
+  }
+  return enriched;
+}
+
+/**
  * Verify artifacts exist on disk and register them in the task_artifacts table.
  * Returns the number of verified artifacts and appends warnings for missing ones.
  */
@@ -573,6 +604,8 @@ export async function executePhase(
           `${fullDepContext ? `Context from prior steps:\n${fullDepContext}\n\n` : ""}Task: ${subtask.description}`,
         );
 
+        try {
+
         let attempts = 0;
         const maxAttempts = 3;
         let lastResult = "";
@@ -748,7 +781,7 @@ export async function executeSubtasks(
   workspaceDir?: string
 ): Promise<SubtaskResult[]> {
   const prepareResults = await executePhase(plan, "prepare", user, db, parentTaskId, undefined, undefined, onProgress, workspaceDir);
-  const artifacts = collectArtifacts(prepareResults);
+  const artifacts = await enrichArtifactsWithVision(collectArtifacts(prepareResults));
 
   const hasExecute = plan.subtasks.some((s) => s.phase === "execute");
   if (!hasExecute) return prepareResults;

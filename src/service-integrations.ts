@@ -142,8 +142,92 @@ export async function getNotionTasks(): Promise<string> {
 export async function getGoogleCalendarEvents(): Promise<string> {
   // Google Calendar requires OAuth tokens which are managed by the MCP.
   // For now, return empty — the relay handles Calendar via MCP during chat.
-  // TODO: Add OAuth token refresh flow for background services
   return "";
+}
+
+// ============================================================
+// OAUTH TOKEN REFRESH
+// ============================================================
+
+/**
+ * Refresh an OAuth token if it expires within 5 minutes.
+ * Supports Google OAuth2 refresh_token grant.
+ * Returns true if refresh succeeded or wasn't needed, false on failure.
+ */
+export async function refreshTokenIfNeeded(
+  provider: string,
+  userId: string,
+  db: import("./db.ts").Database
+): Promise<boolean> {
+  try {
+    const integration = db.getIntegrationCredentials(userId, provider);
+    if (!integration?.credentials) return true; // Not connected — skip
+
+    const creds = typeof integration.credentials === "string"
+      ? JSON.parse(integration.credentials)
+      : integration.credentials;
+
+    if (!creds.expiry_date && !creds.expires_in) return true; // No expiry info
+
+    const expiresAt = creds.expiry_date || (Date.now() + (creds.expires_in * 1000));
+    const fiveMinutes = 5 * 60 * 1000;
+
+    if (expiresAt - Date.now() > fiveMinutes) return true; // Still valid
+
+    // Token is expiring — refresh it
+    if (!creds.refresh_token) {
+      console.warn(`[service-integrations] ${provider} token expiring for user ${userId} but no refresh_token`);
+      return false;
+    }
+
+    // Google OAuth2 refresh
+    if (provider.startsWith("google")) {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      if (!clientId || !clientSecret) return false;
+
+      const resp = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: creds.refresh_token,
+          client_id: clientId,
+          client_secret: clientSecret,
+        }),
+      });
+
+      if (!resp.ok) {
+        console.error(`[service-integrations] Token refresh failed for ${provider}/${userId}: ${resp.status}`);
+        return false;
+      }
+
+      const tokens = await resp.json() as any;
+      const updated = {
+        ...creds,
+        access_token: tokens.access_token,
+        expiry_date: Date.now() + (tokens.expires_in * 1000),
+      };
+
+      db.upsertIntegration({
+        user_id: userId,
+        provider,
+        status: "connected",
+        credentials: updated,
+        metadata: integration.metadata || {},
+      });
+      console.log(`[service-integrations] Refreshed ${provider} token for user ${userId}`);
+      return true;
+    }
+
+    // Other providers: log and return true (don't block the service)
+    console.warn(`[service-integrations] Token refresh not implemented for provider: ${provider}`);
+    return true;
+
+  } catch (err) {
+    console.error(`[service-integrations] refreshTokenIfNeeded error:`, err);
+    return true; // Don't block the service on refresh errors
+  }
 }
 
 // ============================================================

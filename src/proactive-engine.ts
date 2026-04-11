@@ -7,6 +7,8 @@
  */
 
 import type { ExecComms, Delegation, NodeStatus, Project } from "./exec-comms.ts";
+import { searchTavily } from "./service-integrations.ts";
+import { getDb } from "./db.ts";
 
 // ============================================================
 // Types
@@ -126,9 +128,22 @@ CONTENT: <your response>`;
         const delegations = await _comms.pollDelegations();
         const mine = delegations.filter((d: Delegation) => d.requesting_role === _role && d.status === "completed");
         for (const d of mine) {
-          console.log(`[proactive:${_role}] Delegation completed: ${d.task_description.slice(0, 80)}`);
-          // Results available in d.result and d.artifacts — role-specific handlers
-          // can pick these up on their next cycle
+          if (!d.result) continue;
+
+          // Parse [ARTIFACT: type | value] tags from result
+          const artifacts: Array<{ type: string; value: string }> = [];
+          const artifactRegex = /\[ARTIFACT:\s*([^|]+?)\s*\|\s*(.+?)\s*\]/g;
+          let m: RegExpExecArray | null;
+          while ((m = artifactRegex.exec(d.result)) !== null) {
+            artifacts.push({ type: m[1].trim(), value: m[2].trim() });
+          }
+
+          // Forward completion brief back to requesting role (this exec)
+          const summary = artifacts.length > 0
+            ? `Delegation complete: "${d.task_description.slice(0, 80)}"\n\nArtifacts:\n${artifacts.map(a => `- [${a.type}]: ${a.value}`).join("\n")}`
+            : `Delegation complete: "${d.task_description.slice(0, 80)}"\n\nResult: ${d.result.slice(0, 500)}`;
+
+          await _comms.sendBrief(_role, "Delegation Complete", summary);
         }
       },
     },
@@ -192,12 +207,28 @@ If everything looks fine, respond with: ALL_CLEAR`;
             const statuses = await _comms.getNodeStatuses();
             const activeNodes = statuses.filter((s: NodeStatus) => s.status === "online");
 
-            const prompt = `As CFO, review operational status of ${activeNodes.length} active nodes.
-Nodes: ${activeNodes.map((s: NodeStatus) => `${s.role} (${s.active_tasks} tasks)`).join(", ")}
+            let costSummary = "";
+            try {
+              const db = getDb();
+              const rows = db.getCostSummary24h();
+              if (rows?.length) {
+                costSummary = "AI spend last 24h:\n" + rows
+                  .map(r => `  ${r.provider}/${r.model}: $${r.total_cost.toFixed(4)} (${r.call_count} calls)`)
+                  .join("\n");
+              }
+            } catch { /* DB may not be accessible from exec node */ }
+
+            const prompt = `As CFO, review operational status and AI spend.
+
+Active nodes (${activeNodes.length}):
+${activeNodes.map((s: NodeStatus) => `- ${s.role}: ${s.active_tasks} active tasks`).join("\n") || "None"}
+
+${costSummary || "No spend data available for last 24h."}
 
 Identify any cost concerns:
+- Models or providers with unexpectedly high spend
 - Nodes with unusually high task counts
-- Potential inefficiencies in task distribution
+- Inefficiencies in provider usage (e.g. premium model used for simple tasks)
 
 If there are concerns, generate a brief to the CEO.
 Format: [BRIEF: ceo | <subject> | <content>]
@@ -312,6 +343,47 @@ Highlight any blockers or items needing human attention.`;
           },
         },
         {
+          name: "goal-pursuit",
+          source: "goals",
+          description: "Check active goals not touched in 24h and dispatch next-action delegations",
+          check: async () => true,
+          execute: async () => {
+            try {
+              const sharedDb = getDb();
+              const users = sharedDb.getAllActiveUsers();
+              for (const user of users) {
+                const goals = sharedDb.getActiveGoals(user.id);
+                if (!goals?.length) continue;
+
+                // Filter goals not progressed in 24h
+                const stale = goals.filter(g => {
+                  const lastTouched = new Date(g.updated_at || g.created_at).getTime();
+                  return Date.now() - lastTouched > 24 * 60 * 60 * 1000;
+                });
+
+                for (const goal of stale.slice(0, 2)) { // max 2 per cycle to avoid overload
+                  const prompt = `As COO, identify the single most actionable next step to advance this goal.
+Goal: ${goal.content}
+${goal.deadline ? `Deadline: ${goal.deadline}` : ""}
+Current date: ${new Date().toISOString().slice(0, 10)}
+
+Respond with ONE specific, executable task in 1-2 sentences. Be concrete and actionable.`;
+
+                  const nextAction = await _callAI(prompt, "fast");
+                  if (nextAction && nextAction.length > 10) {
+                    await _comms.requestDelegation(
+                      `[Goal: ${goal.content.slice(0, 60)}] ${nextAction}`,
+                      user.id,
+                    );
+                  }
+                }
+              }
+            } catch (err) {
+              console.error(`[proactive:coo] Goal pursuit error:`, err);
+            }
+          },
+        },
+        {
           name: "stalled-detection",
           source: "delegations",
           description: "Detect stalled delegations (in_progress > 1 hour) and escalate",
@@ -347,9 +419,18 @@ Highlight any blockers or items needing human attention.`;
           description: "Scan for industry trends and generate strategic briefs",
           check: async () => !await hasRunToday("trend-scan"),
           execute: async () => {
+            const [aiTrends, industryNews] = await Promise.all([
+              searchTavily("AI automation digital agency trends 2026", { maxResults: 5, topic: "news" }),
+              searchTavily("AI tools business digital transformation market signals", { maxResults: 5, topic: "news" }),
+            ]).catch(() => [[], []]);
+            const searchContext = [...aiTrends, ...industryNews]
+              .slice(0, 8)
+              .map(a => `- ${a.title}: ${a.content?.slice(0, 200)}`)
+              .join("\n");
+
             const prompt = `As the Research executive, identify 3-5 current trends in AI, digital marketing, and business automation that are relevant for a digital agency.
 
-For each trend, provide:
+${searchContext ? `Current market signals:\n${searchContext}\n\n` : ""}For each trend, provide:
 1. Trend name
 2. Why it matters (1-2 sentences)
 3. Suggested action
@@ -369,9 +450,18 @@ Format the output as a structured brief suitable for the CEO and CMO.`;
           description: "Identify potential leads from market signals and brief the CMO",
           check: async () => !await hasRunToday("lead-scan"),
           execute: async () => {
+            const [marketData, adoptionSignals] = await Promise.all([
+              searchTavily("businesses adopting AI automation 2026 hiring", { maxResults: 5, topic: "news" }),
+              searchTavily("companies undergoing digital transformation seeking AI help", { maxResults: 5, topic: "news" }),
+            ]).catch(() => [[], []]);
+            const searchContext = [...marketData, ...adoptionSignals]
+              .slice(0, 8)
+              .map(a => `- ${a.title}: ${a.content?.slice(0, 200)}`)
+              .join("\n");
+
             const prompt = `As the Research executive, analyze current market signals to identify potential lead opportunities for a digital agency.
 
-Consider:
+${searchContext ? `Current market signals:\n${searchContext}\n\n` : ""}Consider:
 - Industries undergoing digital transformation
 - Companies likely needing AI integration
 - Seasonal business needs

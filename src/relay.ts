@@ -77,11 +77,16 @@ const UPLOADS_DIR = join(NOVA_DIR, "uploads");
 
 // Persistent workspace directories
 const WORKSPACE_DIR = join(NOVA_DIR, "workspace");
+const SHARED_WORKSPACE_DIR = join(WORKSPACE_DIR, "shared");
 const WORKSPACE_PROJECTS = join(WORKSPACE_DIR, "projects");
 const WORKSPACE_DOCUMENTS = join(WORKSPACE_DIR, "documents");
 const WORKSPACE_IMAGES = join(WORKSPACE_DIR, "images");
 const WORKSPACE_MEDIA = join(WORKSPACE_DIR, "media");
 const WORKSPACE_TASKS = join(WORKSPACE_DIR, ".tasks");
+
+function getUserWorkspaceDir(userId: string): string {
+  return join(NOVA_DIR, "workspace", "users", userId);
+}
 
 // ============================================================
 // LOCK FILE (prevent multiple instances)
@@ -186,6 +191,7 @@ await mkdir(WORKSPACE_DOCUMENTS, { recursive: true });
 await mkdir(WORKSPACE_IMAGES, { recursive: true });
 await mkdir(WORKSPACE_MEDIA, { recursive: true });
 await mkdir(WORKSPACE_TASKS, { recursive: true });
+await mkdir(SHARED_WORKSPACE_DIR, { recursive: true });
 
 // ============================================================
 // STARTUP CONFIG VALIDATION
@@ -232,6 +238,7 @@ interface NovaUser {
   role: string;
   preferences: Record<string, any>;
   profile_text: string;
+  team_id?: string;
 }
 
 const USER_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -267,6 +274,7 @@ async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" 
       role: row.role,
       preferences: row.preferences || {},
       profile_text: row.profile_text || "",
+      team_id: row.team_id || undefined,
     };
 
     userCache.set(cacheKey, { user, cachedAt: Date.now() });
@@ -782,19 +790,24 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
     const noToolHints = ["heartbeat", "memory-review", "log-monitor"];
     const noMcp = hint ? noToolHints.includes(hint) : false;
 
+    // Sandboxed hints: pure text LLM calls (classification, summarization) — no bypass flags, no tools.
+    const sandboxedHints = ["classify", "summarize", "approval-summary"];
+    const sandboxed = hint ? sandboxedHints.includes(hint) : false;
+
     // mcp2cli: skip --mcp-config when mcp2cli is enabled (tools accessed via Bash)
     const mcp2cliEnabled = process.env.MCP2CLI_ENABLED !== "false" && (await isMcp2cliAvailable());
-    const useMcp2cli = mcp2cliEnabled && !noMcp && !!mcpConfigPath;
+    const useMcp2cli = mcp2cliEnabled && !noMcp && !sandboxed && !!mcpConfigPath;
 
     const traceId = crypto.randomUUID();
 
     const result: AIProviderResult = await provider.call({
       prompt,
       model: resolvedModel,
-      mcpConfigPath: useMcp2cli ? undefined : mcpConfigPath,
+      mcpConfigPath: useMcp2cli ? undefined : (sandboxed ? undefined : mcpConfigPath),
       useMcp2cli,
-      noMcp,
-      outputFormat: "json",
+      noMcp: noMcp || sandboxed,
+      sandboxed,
+      outputFormat: sandboxed ? "text" : "json",
       userId,
       traceId,
     });
@@ -1084,6 +1097,21 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // ============================================================
+// INPUT SANITIZATION (prompt injection defense)
+// ============================================================
+
+/** Strip intent tags from untrusted user input to prevent prompt injection.
+ *  Only applied to external channel messages — NOT to internal AI responses. */
+const INTENT_TAG_RE = /\[(?:TASK|REMEMBER|SHARE|GOAL|DONE|SCHEDULE|SCHEDULE_CANCEL|DELEGATE|BRIEF|DECISION|MESSAGE):[^\]]*\]/gi;
+
+function sanitizeUserInput(text: string): string {
+  return text
+    .replace(INTENT_TAG_RE, "")
+    .replace(/^(system|assistant|human)\s*:/gim, "")
+    .trim();
+}
+
+// ============================================================
 // MESSAGE HANDLERS (all channels via adapter pattern)
 // ============================================================
 
@@ -1131,6 +1159,9 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
 
   if (!user) return;
 
+  // Ensure per-user workspace directory exists (lazy creation on first message)
+  mkdir(getUserWorkspaceDir(user.id), { recursive: true }).catch(() => {});
+
   // Use the platform context for all subsequent operations
   const ctx = platformCtx || createGenericPlatformContext(msg.channelType === "telegram"
     ? channels.getTelegram()!
@@ -1140,7 +1171,7 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
 
   // --- TEXT MESSAGES ---
   if (msg.text) {
-    const text = msg.text;
+    const text = sanitizeUserInput(msg.text);
     (ctx as any).novaReplyTo = msg.channelMessageId;
     emit({
       type: "message.received",
@@ -1168,6 +1199,68 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
           : "Voice mode off. You can also toggle this in the Nova Mini App (Profile > Preferences)."
       );
       return;
+    }
+
+    // /settings autopilot — configure auto-approval rules
+    if (text.startsWith("/settings ")) {
+      const settingsParts = text.trim().split(/\s+/);
+      if (settingsParts[1] === "autopilot") {
+        const subCmd = settingsParts[2]?.toLowerCase();
+
+        if (subCmd === "list") {
+          const rules = supabase.getApprovalRules(user.id);
+          if (rules.length === 0) {
+            await ctx.reply("No autopilot rules set. All tasks require manual approval.");
+          } else {
+            const lines = rules.map((r: any) => {
+              const agents = r.agent_slugs?.length ? ` (agents: ${r.agent_slugs.join(", ")})` : "";
+              const limit = r.limit_usd != null ? ` up to $${r.limit_usd}` : "";
+              return `• ${r.category}: ${r.auto_approve ? `auto-approve${limit}` : "require approval"}${agents}`;
+            });
+            await ctx.reply(`Autopilot rules:\n${lines.join("\n")}`);
+          }
+          return;
+        }
+
+        if (subCmd === "off") {
+          supabase.setApprovalRules(user.id, []);
+          await ctx.reply("Autopilot off. All tasks will require manual approval.");
+          return;
+        }
+
+        // /settings autopilot <category> [limit_usd]
+        // e.g. /settings autopilot social_post
+        //      /settings autopilot ad_spend 50
+        const validCategories = ["social_post", "email", "ad_spend", "code_deploy", "seo", "research", "general", "*"];
+        if (subCmd && validCategories.includes(subCmd)) {
+          const limitUsd = settingsParts[3] ? parseFloat(settingsParts[3]) : undefined;
+          const rules = supabase.getApprovalRules(user.id);
+          const idx = rules.findIndex((r: any) => r.category === subCmd);
+          const newRule: any = {
+            category: subCmd,
+            auto_approve: true,
+            ...(limitUsd != null && !isNaN(limitUsd) ? { limit_usd: limitUsd } : {}),
+          };
+          if (idx >= 0) {
+            rules[idx] = newRule;
+          } else {
+            rules.push(newRule);
+          }
+          supabase.setApprovalRules(user.id, rules);
+          const limitLine = newRule.limit_usd != null ? ` (up to $${newRule.limit_usd})` : "";
+          await ctx.reply(`Autopilot on for category "${subCmd}"${limitLine}. Tasks in this category will be auto-approved.`);
+          return;
+        }
+
+        await ctx.reply(
+          "Usage:\n" +
+          "/settings autopilot list — show rules\n" +
+          "/settings autopilot off — disable all auto-approvals\n" +
+          "/settings autopilot <category> [limit_usd] — enable auto-approve\n\n" +
+          "Categories: social_post, email, ad_spend, code_deploy, seo, research, general, *"
+        );
+        return;
+      }
     }
 
     // Handle admin commands (Telegram only — uses ctx.reply for rich formatting)
@@ -1510,7 +1603,7 @@ function buildPrompt(
   recentHistory?: string,
   taskContext?: string,
   scheduleContext?: string,
-  options?: { ghlLocationId?: string; contactContext?: string }
+  options?: { ghlLocationId?: string; contactContext?: string; teamContext?: string }
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -1575,6 +1668,22 @@ function buildPrompt(
   if (tMemoryContext) parts.push(`\n${tMemoryContext}`);
   if (tTaskContext) parts.push(`\n${tTaskContext}`);
   if (tScheduleContext) parts.push(`\n${tScheduleContext}`);
+
+  // Team context injection
+  const teamContext = options?.teamContext;
+  if (teamContext) {
+    parts.push(`\n${teamContext}`);
+  } else if (user.team_id) {
+    try {
+      const teammates = supabase.getTeamRoster(user.team_id);
+      const others = teammates.filter(t => t.id !== user.id);
+      if (others.length > 0) {
+        const rosterLines = others.map(t => `- ${t.name} (${t.timezone})`).join("\n");
+        parts.push(`\nTEAM MEMBERS:\n${rosterLines}`);
+      }
+    } catch { /* ignore if team data unavailable */ }
+  }
+
   if (tRelevantContext) parts.push(`\n${tRelevantContext}`);
 
   // Compact memory tags (always included at tier 2+)
@@ -2347,8 +2456,19 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
   try {
     const { ExecComms } = await import("./exec-comms.ts");
     const { initBoard, conveneBoard, handleBoardDecision, startBoardPoller } = await import("./board.ts");
+    const { initExecutionEngine, createProjectFromDecision } = await import("./execution-engine.ts");
 
     const novaComms = new ExecComms("nova");
+
+    initExecutionEngine({
+      callAI: (prompt, tier?, hint?) => callAI(prompt, tier, hint),
+      comms: novaComms,
+      sendMessage: async (chatId, text) => {
+        const bot = telegramAdapter?.getBot();
+        if (!bot) return;
+        await bot.api.sendMessage(Number(chatId), text).catch(() => {});
+      },
+    });
 
     initBoard({
       callAI,
@@ -2363,6 +2483,12 @@ if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
         }).catch(async () => {
           await bot.api.sendMessage(Number(chatId), text, keyboard ? { reply_markup: keyboard } : {});
         });
+      },
+      onDecision: async (sessionId, decision, userId) => {
+        const projectId = await createProjectFromDecision(sessionId, decision, userId);
+        if (projectId) {
+          console.log(`[board] Project created: ${projectId} for decision: ${decision.slice(0, 60)}`);
+        }
       },
     });
 

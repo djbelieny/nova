@@ -19,6 +19,13 @@ export interface AIProviderCallOpts {
   outputFormat?: "json" | "text";
   userId?: string;
   traceId?: string;
+  /**
+   * When true: omit all bypass/permission flags so the process runs with
+   * default (restricted) permissions. Use for classification-only and
+   * summarization calls that need no tool access. Agent task execution
+   * should leave this unset (default false) to retain bypass flags.
+   */
+  sandboxed?: boolean;
 }
 
 export interface AIProviderResult {

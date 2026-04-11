@@ -20,6 +20,7 @@
 
 import { type Context, InlineKeyboard } from "grammy";
 import type { Database } from "./db.ts";
+import type { ApprovalRule } from "./db.ts";
 import { mkdir, readdir, rename, stat } from "fs/promises";
 import { join, extname } from "path";
 import type { ExecutionPlan } from "./patterns.ts";
@@ -35,6 +36,7 @@ import {
   executePhase,
   executeSubtasks,
   collectArtifacts,
+  enrichArtifactsWithVision,
   aggregate,
 } from "./planner.ts";
 import type { SubtaskResult, Artifact, ProgressCallback } from "./planner.ts";
@@ -868,6 +870,38 @@ function detectAutoApprove(text: string): boolean {
 }
 
 // ============================================================
+// BUDGET-GATED AUTONOMY — rule-based auto-approval
+// ============================================================
+
+function detectCategory(agentSlug: string, taskDescription: string): string {
+  const desc = taskDescription.toLowerCase();
+  const slug = agentSlug.toLowerCase();
+
+  if (["pixel", "kai"].includes(slug)) return "social_post";
+  if (slug === "helios") return "ad_spend";
+  if (slug === "orion") return "email";
+  if (["architect", "joule"].includes(slug)) return "code_deploy";
+  if (["magnus", "cyra"].includes(slug)) return "seo";
+  if (["athena", "oracle", "cipher"].includes(slug)) return "research";
+  if (desc.includes("email") || desc.includes("send message")) return "email";
+  if (desc.includes("publish") || desc.includes("post")) return "social_post";
+  if (desc.includes("deploy") || desc.includes("push")) return "code_deploy";
+  return "general";
+}
+
+function shouldAutoApproveByRules(rules: ApprovalRule[], agentSlug: string, taskDescription: string): boolean {
+  if (rules.length === 0) return false;
+  const category = detectCategory(agentSlug, taskDescription);
+
+  for (const rule of rules) {
+    if (rule.category !== category && rule.category !== "*") continue;
+    if (rule.agent_slugs?.length && !rule.agent_slugs.includes(agentSlug)) continue;
+    return rule.auto_approve === true;
+  }
+  return false;
+}
+
+// ============================================================
 // FAST HEURISTIC — catches ~80% of messages with zero extra cost
 // ============================================================
 
@@ -965,7 +999,7 @@ Message: "${text.substring(0, 300)}"
 
 Return ONLY one word: simple, routed, or complex`;
 
-  const result = await _callClaude(prompt, "sonnet");
+  const result = await _callClaude(prompt, "haiku", undefined, "classify");
   const lower = result.toLowerCase().trim();
 
   if (lower.includes("complex")) return { type: "complex" };
@@ -1348,8 +1382,24 @@ async function routeComplex(
 
     const hasExecutePhase = plan.subtasks.some((s) => s.phase === "execute");
 
+    // Check rule-based auto-approve (budget-gated autonomy)
+    let ruleAutoApprove = false;
+    if (hasExecutePhase && !autoApprove && supabase) {
+      const rules = supabase.getApprovalRules(user.id);
+      if (rules.length > 0) {
+        const executeTasks = plan.subtasks.filter((s) => s.phase === "execute");
+        ruleAutoApprove = executeTasks.length > 0 && executeTasks.every((task) =>
+          shouldAutoApproveByRules(rules, task.agent || "general", task.description)
+        );
+        if (ruleAutoApprove) {
+          console.log(`[orchestrator] Rule-based auto-approve triggered for user ${user.id}`);
+          emit({ type: "approval.resolved", level: "info", requestId, userId: user.id, data: { message: "Rule-based auto-approve — skipping approval gate", action: "rule-auto-approve" } });
+        }
+      }
+    }
+
     // If no execute subtasks or auto-approve: run everything straight through
-    if (!hasExecutePhase || autoApprove) {
+    if (!hasExecutePhase || autoApprove || ruleAutoApprove) {
       if (autoApprove && hasExecutePhase) {
         emit({ type: "approval.resolved", level: "info", requestId, userId: user.id, data: { message: "Auto-approve detected — running all phases", action: "auto-approve" } });
       }
@@ -1485,7 +1535,7 @@ async function routeComplex(
     // Phase 1: Run prepare subtasks
     console.log("[orchestrator] Phase 1: Running prepare subtasks");
     const prepareResults = await executePhase(plan, "prepare", user, supabase, parentTaskId, undefined, undefined, onProgress, workspaceDir);
-    const artifacts = collectArtifacts(prepareResults);
+    const artifacts = await enrichArtifactsWithVision(collectArtifacts(prepareResults));
 
     // Final checklist update with completion timestamp
     try {
@@ -1816,5 +1866,5 @@ Write a brief Telegram-friendly summary (2-4 paragraphs max) of what was prepare
 Highlight the key deliverables. Do NOT mention "agents" or "subtasks" — just describe what was done.
 End by noting that the next step requires their approval to execute.`;
 
-  return _callClaude(prompt, "sonnet");
+  return _callClaude(prompt, "haiku", undefined, "approval-summary");
 }

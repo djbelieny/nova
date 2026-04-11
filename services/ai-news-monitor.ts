@@ -9,14 +9,13 @@
  */
 
 import { getDb, type Database } from "../src/db.ts";
-import { registerProvider, getDefaultProvider, setDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
 import { GroqProvider } from "../src/providers/groq.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { searchTavily } from "../src/service-integrations.ts";
 
 registerProvider(new GroqProvider());
 registerProvider(new ClaudeProvider());
-if (process.env.GROQ_API_KEY) setDefaultProvider("groq");
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -151,8 +150,10 @@ Create a concise Telegram digest:
 - Keep it scannable — busy entrepreneur should get the gist in 30 seconds`;
 
   try {
-    const result = await getDefaultProvider().call({
+    const claude = getProvider("claude") ?? getDefaultProvider();
+    const result = await claude.call({
       prompt,
+      model: claude.mapModelTier("fast"),
       outputFormat: "text",
     });
     return result.text;

@@ -11,6 +11,9 @@ sudo -u nova git pull origin production
 echo "Installing dependencies..."
 bun install
 
+# Generate mcporter tool CLIs (non-blocking — deploy continues if mcporter isn't installed)
+bash /opt/nova/scripts/generate-tool-clis.sh || true
+
 # Ensure mcp2cli is available (exec nodes use it for on-demand MCP tool access
 # instead of spawning persistent MCP server processes)
 if ! command -v mcp2cli &>/dev/null; then
@@ -22,6 +25,16 @@ fi
 if ! command -v gws &>/dev/null; then
   echo "Installing gws CLI globally..."
   npm install -g @googleworkspace/cli
+fi
+
+# Ensure RTK is available (token-optimized CLI proxy for AI sessions)
+if ! command -v rtk &>/dev/null; then
+  echo "Installing RTK..."
+  curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
+  # Copy to shared location so all users (including nova) can access it
+  cp ~/.local/bin/rtk /usr/local/bin/rtk 2>/dev/null || true
+else
+  echo "RTK $(rtk --version 2>/dev/null) already installed"
 fi
 
 # Migrate from Supabase if credentials are set and shared.db doesn't exist yet

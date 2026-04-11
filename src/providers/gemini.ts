@@ -14,7 +14,7 @@
 import { spawn } from "bun";
 import { writeFile, mkdir, rm } from "fs/promises";
 import { join } from "path";
-import { readFileSync } from "fs";
+import { readFileSync, readdirSync, copyFileSync } from "fs";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier } from "../ai-provider.ts";
 
 export class GeminiProvider implements AIProvider {
@@ -52,8 +52,13 @@ export class GeminiProvider implements AIProvider {
       this.binaryPath,
       "-p", opts.prompt,
       "--output-format", outputFormat,
-      "--yolo", // Auto-approve all actions (equivalent to Claude's bypassPermissions)
     ];
+
+    // Only add --yolo for non-sandboxed calls (agent task execution).
+    // Sandboxed calls (classification, summarization) run with default permissions.
+    if (!opts.sandboxed) {
+      args.push("--yolo");
+    }
 
     if (opts.model) {
       args.push("-m", opts.model);
@@ -64,7 +69,9 @@ export class GeminiProvider implements AIProvider {
     // MCP config: Gemini reads from ~/.gemini/settings.json, not a CLI flag.
     // If mcpConfigPath is provided, write a temp settings.json in a temp HOME dir.
     // Skip MCP config when using mcp2cli — tools accessed via Bash commands instead.
-    let cwd = opts.cwd || "/tmp";
+    const novaWorkspace = `${process.env.HOME || "~"}/.nova/workspace`;
+    const userWorkspace = opts.userId ? `${novaWorkspace}/users/${opts.userId}` : novaWorkspace;
+    let cwd = opts.sandboxed ? userWorkspace : (opts.cwd || "/tmp");
     let homeOverride: string | undefined;
     if (opts.mcpConfigPath && !opts.useMcp2cli) {
       homeOverride = await this.prepareMcpConfig(opts.mcpConfigPath);
@@ -166,7 +173,26 @@ export class GeminiProvider implements AIProvider {
         settings.mcpServers = mcpConfig.mcpServers;
       }
 
+      // Merge hooks from the real ~/.gemini/settings.json (e.g. RTK hook)
+      const realHome = process.env.HOME || "/home/nova";
+      try {
+        const realSettings = JSON.parse(readFileSync(join(realHome, ".gemini", "settings.json"), "utf-8"));
+        if (realSettings.hooks) {
+          settings.hooks = realSettings.hooks;
+        }
+      } catch {}
+
       await writeFile(join(geminiDir, "settings.json"), JSON.stringify(settings, null, 2));
+
+      // Copy hook scripts so they're accessible from the temp HOME
+      try {
+        const hooksDir = join(realHome, ".gemini", "hooks");
+        const tmpHooksDir = join(geminiDir, "hooks");
+        await mkdir(tmpHooksDir, { recursive: true });
+        for (const f of readdirSync(hooksDir)) {
+          copyFileSync(join(hooksDir, f), join(tmpHooksDir, f));
+        }
+      } catch {}
     } catch (err) {
       console.warn(`[gemini] Failed to prepare MCP config: ${err}`);
     }

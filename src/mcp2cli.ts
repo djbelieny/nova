@@ -60,9 +60,13 @@ interface McpServerConfig {
  * Converts:
  *   { command: "node", args: ["/path/cli.mjs"], env: { KEY: "${VAR}" } }
  * To:
- *   mcp2cli --mcp-stdio "node /path/cli.mjs" --env 'KEY=resolved_value'
+ *   mcp2cli --mcp-stdio "node /path/cli.mjs" --env 'KEY=${VAR}'
  *
- * Environment variable placeholders like ${VAR} are resolved from process.env.
+ * SECURITY: Environment variable placeholders like ${VAR} are intentionally
+ * NOT resolved here. The placeholder name is kept in the command string so
+ * that actual secret values are never embedded in agent system prompts (which
+ * are sent to external LLM providers). mcp2cli inherits the process environment
+ * when spawned, so the MCP server receives the real values at runtime.
  */
 export function buildMcp2cliCommand(
   serverName: string,
@@ -76,13 +80,14 @@ export function buildMcp2cliCommand(
 
   const parts = ["mcp2cli", "--mcp-stdio", `"${stdioCmd}"`];
 
-  // Resolve env vars and add --env flags
+  // Pass env var NAMES (not values) as --env flags so the prompt never
+  // contains secret values. The spawned mcp2cli process inherits the real
+  // values from the current process environment.
   if (config.env) {
     for (const [key, value] of Object.entries(config.env)) {
-      const resolved = resolveEnvValue(value);
-      if (resolved) {
-        parts.push("--env", `'${key}=${resolved}'`);
-      }
+      // Keep ${VAR} placeholder as-is; strip only if value is already a literal
+      const envRef = isEnvPlaceholder(value) ? value : shellEscape(value);
+      parts.push("--env", `'${key}=${envRef}'`);
     }
   }
 
@@ -143,6 +148,8 @@ export function buildMcp2cliInstructions(
   lines.push("- Use --help on a tool to see its required and optional parameters.");
   lines.push("- For complex JSON values, use --stdin and pipe JSON input.");
   lines.push("- Tool calls are executed via Bash — wrap in Bash tool calls.");
+  lines.push("- Environment variables (e.g. ${NOTION_MCP_HEADERS}) are automatically");
+  lines.push("  inherited from the process — do not expand or log their values.");
 
   return lines.join("\n");
 }
@@ -267,11 +274,22 @@ export function buildGwsInstructions(accounts: GwsAccount[]): string {
 // ============================================================
 
 /**
+ * Returns true if the value is a ${VAR} environment variable placeholder.
+ * Used to decide whether to keep the placeholder as-is in command strings
+ * rather than resolving it to an actual secret value.
+ */
+function isEnvPlaceholder(value: string): boolean {
+  return /^\$\{(\w+)\}$/.test(value);
+}
+
+/**
  * Resolve a ${VAR} placeholder from process.env.
+ * Used internally when the actual value is needed for process spawning
+ * (NOT for building prompt strings — use isEnvPlaceholder there instead).
  * Returns the resolved value or the original string if no placeholder.
  * Returns empty string if the env var is not set.
  */
-function resolveEnvValue(value: string): string {
+export function resolveEnvValue(value: string): string {
   const match = value.match(/^\$\{(\w+)\}$/);
   if (match) {
     return process.env[match[1]] || "";

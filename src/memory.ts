@@ -186,6 +186,35 @@ export async function processMemoryIntents(
     clean = clean.replace(match[0], "");
   }
 
+  // [MESSAGE: @username | content] — inter-user messaging
+  const messageTagRegex = /\[MESSAGE:\s*@([^\s|]+)\s*\|\s*([^\]]+)\]/g;
+  let msgMatch: RegExpExecArray | null;
+  while ((msgMatch = messageTagRegex.exec(response)) !== null) {
+    const targetUsername = msgMatch[1].trim();
+    const messageContent = msgMatch[2].trim();
+
+    try {
+      const allUsers = db.getAllActiveUsers();
+      const target = allUsers.find((u: any) =>
+        u.name?.toLowerCase() === targetUsername.toLowerCase() ||
+        u.telegram_id === targetUsername
+      );
+
+      if (target) {
+        db.saveInterUserMessage({
+          from_user_id: userId,
+          to_user_id: target.id,
+          content: messageContent,
+        });
+      } else {
+        console.warn(`[memory] Inter-user message: user "@${targetUsername}" not found`);
+      }
+    } catch (err) {
+      console.error("[memory] Inter-user message failed:", err);
+    }
+    clean = clean.replace(msgMatch[0], "");
+  }
+
   return clean.trim();
 }
 

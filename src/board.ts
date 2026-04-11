@@ -43,15 +43,18 @@ interface BoardOption {
 let _callAI: (prompt: string, tier?: string, hint?: string) => Promise<string>;
 let _comms: ExecComms;
 let _sendMessage: (chatId: string | number, text: string, keyboard?: any) => Promise<void>;
+let _onDecision: ((sessionId: string, decision: string, userId: string) => Promise<void>) | null = null;
 
 export function initBoard(deps: {
   callAI: (prompt: string, tier?: string, hint?: string) => Promise<string>;
   comms: ExecComms;
   sendMessage: (chatId: string | number, text: string, keyboard?: any) => Promise<void>;
+  onDecision?: (sessionId: string, decision: string, userId: string) => Promise<void>;
 }): void {
   _callAI = deps.callAI;
   _comms = deps.comms;
   _sendMessage = deps.sendMessage;
+  _onDecision = deps.onDecision ?? null;
 }
 
 // ============================================================
@@ -445,6 +448,13 @@ Supporters: ${chosen.supporters.join(", ")}`;
   }
 
   await _sendMessage(targetChatId, confirmationMsg);
+
+  // Kick off autonomous project execution (non-blocking)
+  if (_onDecision) {
+    _onDecision(sessionId, chosen.title, userId).catch((err) =>
+      emit({ type: "error", level: "error", data: { message: "onDecision callback failed", module: "board", error: String(err) } })
+    );
+  }
 }
 
 // ============================================================

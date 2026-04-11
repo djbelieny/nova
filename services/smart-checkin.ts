@@ -13,22 +13,17 @@
 
 import { dirname, join } from "path";
 import { getDb, type Database } from "../src/db.ts";
-import { registerProvider, getDefaultProvider, setDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
 import { GroqProvider } from "../src/providers/groq.ts";
 import { getIntegrationContext } from "../src/service-integrations.ts";
 
-// Register AI providers — Groq preferred for background reliability
 registerProvider(new GroqProvider());
 registerProvider(new ClaudeProvider());
 registerProvider(new GeminiProvider());
 registerProvider(new CodexProvider());
-
-if (process.env.GROQ_API_KEY) {
-  setDefaultProvider("groq");
-}
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
@@ -336,8 +331,10 @@ MESSAGE: [message if YES, "none" if NO]
 REASON: [why]`;
 
   try {
-    const result = await getDefaultProvider().call({
+    const claude = getProvider("claude") ?? getDefaultProvider();
+    const result = await claude.call({
       prompt,
+      model: claude.mapModelTier("fast"),
       outputFormat: "text",
     });
 

@@ -51,9 +51,14 @@ export class CodexProvider implements AIProvider {
       this.binaryPath,
       "exec",
       opts.prompt,
-      "--dangerously-bypass-approvals-and-sandbox",
       "-o", tmpFile,
     ];
+
+    // Only add bypass flag for non-sandboxed calls (agent task execution).
+    // Sandboxed calls (classification, summarization) run with default permissions.
+    if (!opts.sandboxed) {
+      args.push("--dangerously-bypass-approvals-and-sandbox");
+    }
 
     if (outputFormat === "json") {
       args.push("--json");
@@ -63,8 +68,12 @@ export class CodexProvider implements AIProvider {
       args.push("-m", opts.model);
     }
 
-    if (opts.cwd) {
-      args.push("-C", opts.cwd);
+    // Scope cwd to user workspace for sandboxed calls; otherwise use caller-supplied cwd
+    const novaWorkspace = `${process.env.HOME || "~"}/.nova/workspace`;
+    const userWorkspace = opts.userId ? `${novaWorkspace}/users/${opts.userId}` : novaWorkspace;
+    const resolvedCwd = opts.sandboxed ? userWorkspace : opts.cwd;
+    if (resolvedCwd) {
+      args.push("-C", resolvedCwd);
     }
 
     const startTime = Date.now();

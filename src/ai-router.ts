@@ -169,3 +169,29 @@ export function parseProviderPrefix(text: string): { provider: string; message: 
   if (!match) return null;
   return { provider: match[1], message: match[2] };
 }
+
+/**
+ * Analyze an image file using Gemini vision (Flash — fast and cheap).
+ * Returns a text description of the image content.
+ * Falls back gracefully if Gemini is unavailable or the CLI doesn't support image input.
+ */
+export async function analyzeImage(imagePath: string, question?: string): Promise<string> {
+  const gemini = getProvider("gemini");
+  if (!gemini) {
+    return "[Image analysis unavailable — Gemini not configured]";
+  }
+
+  // The gemini CLI does not currently support direct image file input via flags.
+  // We pass the path in the prompt and note this is a stub for future wiring.
+  const q = question || "Describe what you see in this image in detail. If it's a screenshot, describe the interface, content, and any notable elements.";
+  try {
+    const result = await gemini.call({
+      prompt: `${q}\n\nImage path: ${imagePath}\n\n(Note: analyze the image at the path above.)`,
+      model: gemini.mapModelTier("fast"),
+      outputFormat: "text",
+    });
+    return result.text;
+  } catch (err) {
+    return `[Image analysis failed: ${err}]`;
+  }
+}

@@ -12,7 +12,7 @@
 
 import { readFile, writeFile, stat } from "fs/promises";
 import { dirname, join, basename } from "path";
-import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
@@ -224,8 +224,10 @@ NOTIFY: YES | NO
 `;
 
   try {
-    const result = await getDefaultProvider().call({
+    const claude = getProvider("claude") ?? getDefaultProvider();
+    const result = await claude.call({
       prompt,
+      model: claude.mapModelTier("fast"),
       outputFormat: "text",
       cwd: PROJECT_ROOT,
     });

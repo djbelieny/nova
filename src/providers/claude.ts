@@ -48,9 +48,14 @@ export class ClaudeProvider implements AIProvider {
       this.binaryPath,
       "-p", opts.prompt,
       "--output-format", outputFormat,
-      "--permission-mode", "bypassPermissions",
       "--max-turns", String(opts.maxTurns ?? process.env.MAX_CLAUDE_TURNS ?? 50),
     ];
+
+    // Only add bypass flag for non-sandboxed calls (agent task execution).
+    // Sandboxed calls (classification, summarization) run with default permissions.
+    if (!opts.sandboxed) {
+      args.push("--permission-mode", "bypassPermissions");
+    }
 
     if (opts.model) {
       args.push("--model", opts.model);
@@ -62,8 +67,17 @@ export class ClaudeProvider implements AIProvider {
       args.push("--mcp-config", opts.mcpConfigPath, "--strict-mcp-config");
     }
 
-    // When using mcp2cli, keep PROJECT_ROOT as cwd (agent needs file system access)
-    const cwd = opts.noMcp ? "/tmp" : (opts.cwd || PROJECT_ROOT);
+    // Determine working directory:
+    // - noMcp calls: /tmp (no filesystem access needed)
+    // - sandboxed calls: ~/.nova/workspace (or user-scoped subdir when userId known)
+    // - agent task calls: cwd passed by caller, fallback to PROJECT_ROOT for mcp2cli
+    const novaWorkspace = `${process.env.HOME || "~"}/.nova/workspace`;
+    const userWorkspace = opts.userId ? `${novaWorkspace}/users/${opts.userId}` : novaWorkspace;
+    const cwd = opts.noMcp
+      ? "/tmp"
+      : opts.sandboxed
+        ? userWorkspace
+        : (opts.cwd || PROJECT_ROOT);
     const startTime = Date.now();
 
     const proc = spawn(args, {

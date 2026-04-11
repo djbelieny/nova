@@ -17,6 +17,41 @@ import { Database as BunDatabase } from "bun:sqlite";
 import { join, dirname } from "path";
 import { mkdirSync, existsSync, readdirSync, renameSync } from "fs";
 import * as sqliteVec from "sqlite-vec";
+import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+
+// ============================================================
+// Credential Encryption (AES-256-GCM)
+// ============================================================
+
+if (!process.env.NOVA_ENCRYPTION_KEY) {
+  console.warn("[db] NOVA_ENCRYPTION_KEY not set — OAuth tokens stored unencrypted. Generate one with: openssl rand -hex 32");
+}
+
+const ENCRYPTION_KEY = process.env.NOVA_ENCRYPTION_KEY
+  ? Buffer.from(process.env.NOVA_ENCRYPTION_KEY, "hex")
+  : null;
+
+function encryptCredentials(plaintext: string): string {
+  if (!ENCRYPTION_KEY) return plaintext;
+  const iv = randomBytes(16);
+  const cipher = createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return `enc:${iv.toString("base64")}:${authTag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+function decryptCredentials(value: string): string {
+  if (!value.startsWith("enc:") || !ENCRYPTION_KEY) return value;
+  const parts = value.slice(4).split(":");
+  if (parts.length !== 3) return value;
+  const [ivB64, authTagB64, encB64] = parts;
+  const iv = Buffer.from(ivB64, "base64");
+  const authTag = Buffer.from(authTagB64, "base64");
+  const encrypted = Buffer.from(encB64, "base64");
+  const decipher = createDecipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+}
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const DATA_DIR = join(PROJECT_ROOT, "data");
@@ -27,6 +62,13 @@ const LEGACY_DB_PATH = join(DATA_DIR, "nova.db");
 // ============================================================
 // Types
 // ============================================================
+
+export interface ApprovalRule {
+  category: string;       // e.g. "social_post", "email", "ad_spend", "content", "research"
+  auto_approve: boolean;
+  limit_usd?: number;     // max spend per execution for auto-approve
+  agent_slugs?: string[]; // if set, only applies to these agents
+}
 
 export interface DbUser {
   id: string;
@@ -43,6 +85,7 @@ export interface DbUser {
   preferences: Record<string, any>;
   profile_text: string;
   active: number; // SQLite boolean
+  approval_rules: string | null;
 }
 
 export interface DbMessage {
@@ -197,7 +240,8 @@ class SharedDatabase {
         profile_text TEXT DEFAULT '',
         active INTEGER DEFAULT 1,
         ai_provider TEXT DEFAULT 'claude',
-        ai_config TEXT DEFAULT '{}'
+        ai_config TEXT DEFAULT '{}',
+        team_id TEXT
       )
     `);
     // Safe migration for existing databases
@@ -205,6 +249,8 @@ class SharedDatabase {
     try { this.db.run(`ALTER TABLE users ADD COLUMN ai_config TEXT DEFAULT '{}'`); } catch {}
     try { this.db.run(`ALTER TABLE users ADD COLUMN kapso_api_key TEXT`); } catch {}
     try { this.db.run(`ALTER TABLE users ADD COLUMN kapso_phone_number_id TEXT`); } catch {}
+    try { this.db.run(`ALTER TABLE users ADD COLUMN team_id TEXT`); } catch {}
+    try { this.db.run(`ALTER TABLE users ADD COLUMN approval_rules TEXT`); } catch {}
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_whatsapp_id ON users(whatsapp_id)`);
@@ -315,6 +361,14 @@ class SharedDatabase {
 // ============================================================
 // UserDatabase — per-user: messages, private memory, tasks, etc.
 // ============================================================
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function validateUserId(userId: string): void {
+  if (!UUID_RE.test(userId)) {
+    throw new Error(`Invalid userId: must be a UUID — got "${userId}"`);
+  }
+}
 
 class UserDatabase {
   readonly db: BunDatabase;
@@ -553,6 +607,18 @@ class UserDatabase {
       )
     `);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_wa_groups_user ON whatsapp_groups(user_id)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS inter_user_messages (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        from_user_id TEXT NOT NULL,
+        to_user_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        delivered INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_ium_to_user ON inter_user_messages(to_user_id, delivered)`);
   }
 
   close(): void {
@@ -591,6 +657,7 @@ export class Database {
   // ---- Internal helpers ----
 
   private getUserDb(userId: string): UserDatabase {
+    validateUserId(userId);
     let db = this.userDbs.get(userId);
     if (db) {
       // Move to end of map (most recently used)
@@ -699,12 +766,31 @@ export class Database {
     return row;
   }
 
+  // ---- Approval Rules ----
+
+  getApprovalRules(userId: string): ApprovalRule[] {
+    const user = this.getUserById(userId);
+    if (!user?.approval_rules) return [];
+    try {
+      return JSON.parse(user.approval_rules);
+    } catch {
+      return [];
+    }
+  }
+
+  setApprovalRules(userId: string, rules: ApprovalRule[]): void {
+    this.shared.db.run(
+      `UPDATE users SET approval_rules = ?, updated_at = datetime('now') WHERE id = ?`,
+      [JSON.stringify(rules), userId]
+    );
+  }
+
   // ---- Kapso (WhatsApp Cloud API) credentials ----
 
   setKapsoCredentials(userId: string, apiKey: string, phoneNumberId: string): void {
     this.shared.db.run(
       `UPDATE users SET kapso_api_key = ?, kapso_phone_number_id = ?, updated_at = datetime('now') WHERE id = ?`,
-      [apiKey, phoneNumberId, userId]
+      [encryptCredentials(apiKey), phoneNumberId, userId]
     );
   }
 
@@ -719,7 +805,11 @@ export class Database {
     const row = this.shared.db.query(
       `SELECT kapso_api_key, kapso_phone_number_id FROM users WHERE id = ? LIMIT 1`
     ).get(userId) as any;
-    return row || null;
+    if (!row) return null;
+    return {
+      kapso_api_key: row.kapso_api_key ? decryptCredentials(row.kapso_api_key) : null,
+      kapso_phone_number_id: row.kapso_phone_number_id,
+    };
   }
 
   getUserByKapsoPhoneNumberId(phoneNumberId: string): any | null {
@@ -827,6 +917,50 @@ export class Database {
       r.preferences = parseJson(r.preferences, {});
       return r;
     });
+  }
+
+  getTeamMembers(teamId: string): any[] {
+    const rows = this.shared.db.query(
+      `SELECT * FROM users WHERE team_id = ? AND active = 1`
+    ).all(teamId) as any[];
+    return rows.map((r) => {
+      r.preferences = parseJson(r.preferences, {});
+      return r;
+    });
+  }
+
+  getTeamRoster(teamId: string): Array<{ id: string; name: string; telegram_id: string; timezone: string }> {
+    return this.shared.db.query(
+      `SELECT id, name, telegram_id, timezone FROM users WHERE team_id = ? AND active = 1 ORDER BY name`
+    ).all(teamId) as any[];
+  }
+
+  getUsersByTeam(teamId: string): any[] {
+    return this.getTeamMembers(teamId);
+  }
+
+  // ============================================================
+  // Inter-user messaging (→ recipient's user DB)
+  // ============================================================
+
+  saveInterUserMessage(msg: { from_user_id: string; to_user_id: string; content: string }): void {
+    const udb = this.getUserDb(msg.to_user_id);
+    udb.db.run(
+      `INSERT INTO inter_user_messages (from_user_id, to_user_id, content) VALUES (?, ?, ?)`,
+      [msg.from_user_id, msg.to_user_id, msg.content]
+    );
+  }
+
+  getPendingMessages(userId: string): Array<{ id: string; from_user_id: string; content: string; created_at: string }> {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(
+      `SELECT id, from_user_id, content, created_at FROM inter_user_messages WHERE to_user_id = ? AND delivered = 0 ORDER BY created_at`
+    ).all(userId) as any[];
+  }
+
+  markMessageDelivered(userId: string, messageId: string): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(`UPDATE inter_user_messages SET delivered = 1 WHERE id = ?`, [messageId]);
   }
 
   // ============================================================
@@ -1475,7 +1609,7 @@ export class Database {
       data.user_id,
       data.provider,
       data.status,
-      JSON.stringify(data.credentials || {}),
+      encryptCredentials(JSON.stringify(data.credentials || {})),
       JSON.stringify(data.metadata || {}),
     ]);
   }
@@ -1489,17 +1623,21 @@ export class Database {
     `).get(userId, provider) as any;
     if (!row) return null;
     return {
-      credentials: parseJson(row.credentials, {}),
+      credentials: parseJson(decryptCredentials(row.credentials), {}),
       metadata: parseJson(row.metadata, {}),
     };
   }
 
   getConnectedIntegrations(userId: string): any[] {
     const udb = this.getUserDb(userId);
-    return udb.db.query(`
+    const rows = udb.db.query(`
       SELECT provider, status, credentials FROM user_integrations
       WHERE user_id = ? AND status = 'connected'
     `).all(userId) as any[];
+    return rows.map((r) => ({
+      ...r,
+      credentials: decryptCredentials(r.credentials),
+    }));
   }
 
   // ============================================================
@@ -1862,6 +2000,19 @@ export class Database {
     return this.shared.db.query(
       `SELECT provider, model, cost_usd, input_tokens, output_tokens, created_at, user_id FROM cost_tracking ${where} ORDER BY created_at ${order}`
     ).all(...params) as any[];
+  }
+
+  getCostSummary24h(): Array<{ provider: string; model: string; total_cost: number; call_count: number }> {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    return this.shared.db.query(`
+      SELECT provider, model,
+             SUM(cost_usd) as total_cost,
+             COUNT(*) as call_count
+      FROM cost_tracking
+      WHERE created_at > ?
+      GROUP BY provider, model
+      ORDER BY total_cost DESC
+    `).all(since) as any[];
   }
 
   getAgentTasksRecent(opts: { userId?: string; limit?: number }): any[] {

@@ -29,6 +29,12 @@ import { GeminiProvider } from "./providers/gemini.ts";
 import { CodexProvider } from "./providers/codex.ts";
 import { selectProvider } from "./ai-router.ts";
 import { handleExecMessage, initExecHandler } from "./executive-handler.ts";
+import { initCooPipeline, startCooPipeline } from "./coo-pipeline.ts";
+import {
+  initExecutionEngine,
+  startProjectMonitor,
+  recoverInProgressDelegations,
+} from "./execution-engine.ts";
 import {
   initGroupChat,
   handleGroupMessage,
@@ -666,43 +672,33 @@ async function main() {
     }, roleDelay);
   }
 
-  // Delegation poller (COO only)
-  let delegationPollInterval: ReturnType<typeof setInterval> | null = null;
-  let delegationErrorLastLogged = 0;
+  // COO-only: delegation pipeline + project execution engine
   if (role === "coo") {
-    delegationPollInterval = setInterval(async () => {
-      if (!running) return;
-      try {
-        const delegations = await comms.pollDelegations();
-        for (const delegation of delegations) {
-          const prompt = buildPrompt(execDef, delegation.task_description, {
-            agentCatalog,
-            decisionHistory: undefined,
-          });
-          const plan = await callAI(prompt, { tier: "standard" });
-          await comms.submitDelegationPlan(delegation.id, plan);
+    const cooCallAI = (prompt: string, tier?: string, hint?: string) =>
+      callAI(prompt, { tier: (tier as ModelTier) || "standard", hint });
 
-          if (execChatId) {
-            const notice = `<b>Delegation:</b> ${delegation.task_description}\n\n<i>Plan submitted.</i>`;
-            try {
-              await bot.api.sendMessage(execChatId, notice, { parse_mode: "HTML" });
-            } catch {
-              await bot.api.sendMessage(
-                execChatId,
-                `Delegation: ${delegation.task_description}\nPlan submitted.`
-              );
-            }
-          }
-        }
-      } catch (err) {
-        // Throttle: only log once per 60s to avoid spamming the dashboard
-        const now = Date.now();
-        if (!delegationErrorLastLogged || now - delegationErrorLastLogged > 60000) {
-          delegationErrorLastLogged = now;
-          emit({ type: "error", level: "warn", execRole: role, data: { message: "Delegation poll error (throttled)", module: "exec-node", error: String(err) } });
-        }
+    const cooSendMessage = async (chatId: string | number, text: string) => {
+      const target = chatId || execChatId;
+      if (!target) return;
+      try {
+        await bot.api.sendMessage(Number(target), text);
+      } catch {
+        // best-effort notification
       }
-    }, 3000);
+    };
+
+    initCooPipeline({ callAI: cooCallAI, comms, sendMessage: cooSendMessage });
+    startCooPipeline();
+
+    initExecutionEngine({ callAI: cooCallAI, comms, sendMessage: cooSendMessage });
+    startProjectMonitor();
+
+    // Recover any in-flight delegations from before restart
+    recoverInProgressDelegations().catch((err) =>
+      emit({ type: "error", level: "warn", execRole: role, data: { message: "Recovery failed", module: "exec-node", error: String(err) } })
+    );
+
+    emit({ type: "exec.delegation", level: "info", execRole: role, data: { message: "COO pipeline and execution engine started", module: "exec-node" } });
   }
 
   // Heartbeat — report liveness + refresh roster
@@ -726,7 +722,6 @@ async function main() {
 
     clearInterval(messagePollInterval);
     if (boardPollInterval) clearInterval(boardPollInterval);
-    if (delegationPollInterval) clearInterval(delegationPollInterval);
     clearInterval(heartbeatInterval);
 
     try {

@@ -12,7 +12,7 @@
 
 import "dotenv/config";
 import { getDb, type Database } from "../src/db.ts";
-import { registerProvider, getDefaultProvider } from "../src/ai-provider.ts";
+import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
@@ -158,9 +158,10 @@ Respond ONLY with a JSON array of objects, each representing a consolidated summ
 If no meaningful consolidation can be done, return: []`;
 
   try {
-    const result = await getDefaultProvider().call({
+    const claudeProvider = getProvider("claude") ?? getDefaultProvider();
+    const result = await claudeProvider.call({
       prompt,
-      model: "sonnet", // Use Sonnet for better reasoning in consolidation
+      model: claudeProvider.mapModelTier("standard"),
       maxTurns: 1,
       outputFormat: "text",
     });
