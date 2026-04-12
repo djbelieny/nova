@@ -1359,11 +1359,13 @@ async function routeComplex(
   const startTime = Date.now();
   const autoApprove = detectAutoApprove(text);
 
+  // Declared outside try so the catch block can reference it for cleanup
+  let parentTaskId: string | undefined;
+
   try {
     const chatId = "chat" in ctx ? ctx.chat?.id : (ctx as WebContext).chatId;
 
     // Create parent task first — we use its ID for the workspace directory
-    let parentTaskId: string | undefined;
     if (supabase) {
       parentTaskId = supabase.insertTask({
         agent: "orchestrator",
