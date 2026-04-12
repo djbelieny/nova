@@ -63,7 +63,7 @@ import { formatBudgetSummary, getBudgetSummary, requestSpend } from "./budget.ts
 import { getReputationContext, getWeeklyReputationReport, recordTaskOutcome } from "./reputation.ts";
 import { listProjects, getProjectBrief, createProject } from "./projects.ts";
 import { initCallProcessor, processCallTranscript } from "../services/call-processor.ts";
-import { startZoomPoller, runZoomPollNow, searchZoomRecordings, processRecordingById, type ZoomMeeting } from "../services/zoom-transcript-poller.ts";
+import { searchZoomRecordings, processRecordingById, type ZoomMeeting } from "../services/zoom-transcript-poller.ts";
 
 // Executive board (optional — only active if SUPABASE_URL is configured)
 let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
@@ -2532,18 +2532,10 @@ ${diskLine}${dataLine}
     return true;
   }
 
-  // /zoom — Zoom transcript poller controls
+  // /zoom — Zoom recording search and ingest
   if (command === "/zoom") {
     const sub = args[0]?.toLowerCase();
-    if (sub === "poll") {
-      await ctx.reply("Running Zoom transcript poll now...");
-      try {
-        await runZoomPollNow();
-        await ctx.reply("Zoom poll complete.");
-      } catch (e: any) {
-        await ctx.reply(`Zoom poll failed: ${e.message}`);
-      }
-    } else if (sub === "search") {
+    if (sub === "search") {
       const query = args.slice(1).join(" ").trim();
       if (!query) {
         await ctx.reply("Usage: /zoom search <keywords>\nExample: /zoom search client proposal");
@@ -2569,15 +2561,9 @@ ${diskLine}${dataLine}
       } catch (e: any) {
         await ctx.reply(`Search failed: ${e.message}`);
       }
-    } else if (sub === "skip") {
-      const current = process.env.ZOOM_SKIP_TOPICS || "game over,shift";
-      await ctx.reply(`Current skip keywords: <code>${current}</code>\n\nTo add keywords, set <code>ZOOM_SKIP_TOPICS</code> in .env (comma-separated).`, { parse_mode: "HTML" });
     } else {
       await ctx.reply(
-        "<b>/zoom commands:</b>\n" +
-        "/zoom search &lt;keywords&gt; — find and ingest a recording\n" +
-        "/zoom poll — run hourly poll immediately\n" +
-        "/zoom skip — show skip keywords",
+        "<b>/zoom search &lt;keywords&gt;</b> — find a recording and add it to Nova's brain\n\nExample: /zoom search client proposal",
         { parse_mode: "HTML" }
       );
     }
@@ -3149,9 +3135,6 @@ startWebhookServer(
   (userId, transcript, meta) => processCallTranscript(userId, transcript, meta),
 );
 console.log(`[webhook] Ingestion server on port ${WEBHOOK_PORT}`);
-
-// Start hourly Zoom transcript poller (no-op if ZOOM_ACCOUNT_ID not set)
-startZoomPoller();
 
 // ============================================================
 // START

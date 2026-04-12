@@ -1,15 +1,9 @@
 /**
- * Zoom Transcript Poller
+ * Zoom Recording Search + Manual Ingest
  *
- * Runs hourly. For each user who has Zoom configured, fetches cloud recordings
- * completed in the last ~70 minutes (overlap to avoid gaps), downloads the
- * VTT transcript, strips formatting, and feeds it through processCallTranscript.
- *
- * Skip logic: meetings whose topic matches ZOOM_SKIP_TOPICS (comma-separated,
- * case-insensitive) are silently ignored. Defaults: "game over,shift"
- *
- * State: processed recording UUIDs and last-poll timestamp are stored in
- * service_state (shared.db) so recordings are never processed twice.
+ * Provides /zoom search <query> — searches Zoom cloud recordings by title,
+ * returns up to 5 matches, and feeds the selected transcript through the
+ * call-processor pipeline (memory, Notion page, task execution, Telegram summary).
  *
  * Auth: Zoom server-to-server OAuth using ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID,
  * ZOOM_CLIENT_SECRET from .env — same credentials used by the Zoom MCP server.
@@ -18,18 +12,6 @@
 import { getDb, type Database } from "../src/db.ts";
 import { emit } from "../src/events.ts";
 import { processCallTranscript } from "./call-processor.ts";
-
-// ============================================================
-// Config
-// ============================================================
-
-const POLL_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-const LOOKBACK_MINUTES = 70; // slight overlap to avoid edge-of-hour gaps
-const MAX_RECORDINGS_PER_POLL = 20;
-
-// Topics to skip (classes, lectures, etc.) — comma-separated, case-insensitive
-const RAW_SKIP = process.env.ZOOM_SKIP_TOPICS || "game over,shift";
-const SKIP_KEYWORDS = RAW_SKIP.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean);
 
 const ZOOM_API = "https://api.zoom.us/v2";
 
@@ -106,36 +88,6 @@ async function getZoomToken(): Promise<string> {
 // Zoom API helpers
 // ============================================================
 
-async function listRecordingsSince(token: string, since: Date): Promise<any[]> {
-  // Zoom's recordings API uses date-range (day granularity), so we query today
-  // (and possibly yesterday if we're polling near midnight) then filter by time
-  const fromDate = new Date(since);
-  fromDate.setHours(0, 0, 0, 0);
-  const from = fromDate.toISOString().split("T")[0]; // YYYY-MM-DD
-  const to = new Date().toISOString().split("T")[0];
-
-  const url = `${ZOOM_API}/users/me/recordings?from=${from}&to=${to}&page_size=${MAX_RECORDINGS_PER_POLL}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Zoom recordings list failed: ${res.status} ${body.slice(0, 200)}`);
-  }
-
-  const data = await res.json() as { meetings?: any[] };
-  const meetings = data.meetings || [];
-
-  // Filter to only recordings that completed after `since`
-  return meetings.filter((m) => {
-    if (!m.start_time) return false;
-    const meetingEnd = new Date(m.start_time);
-    meetingEnd.setMinutes(meetingEnd.getMinutes() + (m.duration || 0));
-    return meetingEnd >= since;
-  });
-}
-
 async function downloadTranscript(token: string, downloadUrl: string): Promise<string> {
   // Zoom requires Bearer token for file downloads
   const res = await fetch(downloadUrl, {
@@ -187,15 +139,6 @@ function stripVTT(vtt: string): string {
 }
 
 // ============================================================
-// Skip logic
-// ============================================================
-
-function shouldSkipMeeting(topic: string): boolean {
-  const lower = topic.toLowerCase();
-  return SKIP_KEYWORDS.some((kw) => lower.includes(kw));
-}
-
-// ============================================================
 // State: processed recording IDs
 // ============================================================
 
@@ -222,117 +165,6 @@ function markProcessed(userId: string, ids: string[]): void {
     db().setServiceState(STATE_SERVICE, `processed_${userId}`, JSON.stringify(trimmed));
   } catch (err) {
     console.error("[zoom-poller] Failed to persist processed IDs:", (err as Error).message);
-  }
-}
-
-// ============================================================
-// Per-user poll
-// ============================================================
-
-async function pollForUser(userId: string, user: any): Promise<void> {
-  const token = await getZoomToken();
-  const since = new Date(Date.now() - LOOKBACK_MINUTES * 60 * 1000);
-  const meetings = await listRecordingsSince(token, since);
-
-  if (!meetings.length) return;
-
-  const processed = getProcessedIds(userId);
-  const newlyProcessed: string[] = [];
-
-  for (const meeting of meetings) {
-    const recordingId = meeting.uuid || String(meeting.id);
-
-    // Skip already-processed recordings
-    if (processed.has(recordingId)) continue;
-
-    const topic: string = meeting.topic || "Zoom Call";
-
-    // Skip classes/lectures
-    if (shouldSkipMeeting(topic)) {
-      console.log(`[zoom-poller] Skipped: "${topic}" (matched skip keyword)`);
-      newlyProcessed.push(recordingId); // mark so we don't check again
-      continue;
-    }
-
-    // Find the transcript file in recording_files
-    const transcriptFile = (meeting.recording_files || []).find(
-      (f: any) => f.file_type === "TRANSCRIPT" && f.status === "completed"
-    );
-
-    if (!transcriptFile) {
-      console.log(`[zoom-poller] No transcript for: "${topic}" — skipped`);
-      continue;
-    }
-
-    // Download and parse VTT
-    let plainText: string;
-    try {
-      const vtt = await downloadTranscript(token, transcriptFile.download_url);
-      plainText = stripVTT(vtt);
-    } catch (err) {
-      console.error(`[zoom-poller] Download failed for "${topic}":`, (err as Error).message);
-      continue;
-    }
-
-    if (!plainText.trim()) {
-      console.log(`[zoom-poller] Empty transcript for "${topic}" — skipped`);
-      newlyProcessed.push(recordingId);
-      continue;
-    }
-
-    // Parse participants
-    const participants: string[] = (meeting.participants || [])
-      .map((p: any) => p.name || p.email)
-      .filter(Boolean)
-      .slice(0, 10);
-
-    emit({
-      type: "system.health",
-      level: "info",
-      userId,
-      data: { message: `Processing Zoom transcript: "${topic}"`, recordingId, module: "zoom-poller" },
-    });
-
-    // Feed through the call processor pipeline
-    await processCallTranscript(userId, plainText, {
-      title: topic,
-      participants,
-      duration_minutes: meeting.duration || undefined,
-    });
-
-    newlyProcessed.push(recordingId);
-  }
-
-  if (newlyProcessed.length) {
-    markProcessed(userId, newlyProcessed);
-  }
-}
-
-// ============================================================
-// Main poll loop
-// ============================================================
-
-async function runPoll(): Promise<void> {
-  // Check that Zoom credentials are configured
-  if (!process.env.ZOOM_ACCOUNT_ID || !process.env.ZOOM_CLIENT_ID || !process.env.ZOOM_CLIENT_SECRET) {
-    return; // Silently skip — credentials not configured
-  }
-
-  const users = db().getAllActiveUsers();
-  if (!users?.length) return;
-
-  for (const user of users) {
-    try {
-      await pollForUser(user.id, user);
-    } catch (err) {
-      console.error(`[zoom-poller] Error for ${user.name}:`, (err as Error).message);
-      emit({
-        type: "error",
-        level: "warn",
-        userId: user.id,
-        data: { message: `Zoom poll failed: ${(err as Error).message}`, module: "zoom-poller" },
-      });
-    }
   }
 }
 
@@ -427,26 +259,3 @@ export async function processRecordingById(
   markProcessed(userId, [meeting.uuid]);
 }
 
-// ============================================================
-// Public API
-// ============================================================
-
-export function startZoomPoller(): void {
-  if (!process.env.ZOOM_ACCOUNT_ID) {
-    console.log("[zoom-poller] Disabled — ZOOM_ACCOUNT_ID not set");
-    return;
-  }
-
-  setInterval(() => {
-    runPoll().catch((err) =>
-      console.error("[zoom-poller] Unhandled error:", (err as Error).message)
-    );
-  }, POLL_INTERVAL_MS);
-
-  console.log(`[zoom-poller] Started — polling every ${POLL_INTERVAL_MS / 60000} min, skip: [${SKIP_KEYWORDS.join(", ")}]`);
-}
-
-/** Run one poll immediately (for testing / manual trigger). */
-export async function runZoomPollNow(): Promise<void> {
-  await runPoll();
-}
