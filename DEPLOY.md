@@ -2,7 +2,7 @@
 
 > Production server: `root@nova.07labs.com` (Ubuntu 24.04)
 > Project directory: `/opt/nova`
-> Domains: `nova.07labs.com` (voice/SMS), `dashboard.nova.07labs.com` (web/dashboard)
+> Domains: `nova.07labs.com` (voice/SMS), `nova.07labs.com` (web/dashboard)
 > Runs natively via systemd (no Docker)
 
 ## Branch Strategy
