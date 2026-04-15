@@ -186,13 +186,13 @@ function initProviders(): void {
 // ============================================================
 
 const EXEC_MCP_SERVERS: Record<string, string[]> = {
-  research: ["exa", "tavily", "firecrawl"],  // primary researcher
-  cto:      ["exa", "tavily"],               // occasional tech research
-  cmo:      ["exa", "tavily"],               // occasional market research
-  critic:   [],  // analyzes contributions, doesn't need live search
-  ceo:      [],  // strategizes from briefings, not live data
-  cfo:      [],  // internal data analysis
-  coo:      [],  // delegates only
+  research: ["exa", "tavily", "firecrawl", "memwright"],  // primary researcher
+  cto:      ["exa", "tavily", "memwright"],               // occasional tech research
+  cmo:      ["exa", "tavily", "memwright"],               // occasional market research
+  critic:   ["memwright"],  // analyzes contributions, doesn't need live search
+  ceo:      ["memwright"],  // strategizes from briefings, not live data
+  cfo:      ["memwright"],  // internal data analysis
+  coo:      ["memwright"],  // delegates only
 };
 
 let _execMcpConfigPath: string | undefined;
