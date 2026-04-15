@@ -225,7 +225,8 @@ export async function processMemoryIntents(
       entity: match[1],
       limit: 1,
     });
-    if (results[0]) await memwright.forget((results[0] as { id: string }).id);
+    const first = results[0] as { id?: string } | undefined;
+    if (first?.id) await memwright.forget(first.id);
     clean = clean.replace(match[0], "");
   }
 
@@ -323,8 +324,7 @@ export async function processMemoryIntents(
 
   // [MESSAGE: @username | content] — inter-user messaging
   const messageTagRegex = /\[MESSAGE:\s*@([^\s|]+)\s*\|\s*([^\]]+)\]/g;
-  let msgMatch: RegExpExecArray | null;
-  while ((msgMatch = messageTagRegex.exec(response)) !== null) {
+  for (const msgMatch of response.matchAll(messageTagRegex)) {
     const targetUsername = msgMatch[1].trim();
     const messageContent = msgMatch[2].trim();
 
