@@ -204,17 +204,35 @@ If no meaningful consolidation can be done, return: []`;
 // CLAUDE REVIEW
 // ============================================================
 
-async function askClaudeToReview(facts: MemoryEntry[]): Promise<string[]> {
-  if (!facts.length) return [];
+interface InsightEntry {
+  id: string;
+  content: string;
+}
+
+interface ReviewResult {
+  factIdsToDelete: string[];
+  insightIdsToDelete: string[];
+}
+
+async function askClaudeToReview(
+  facts: MemoryEntry[],
+  insightsByUser: Map<string, InsightEntry[]> = new Map()
+): Promise<ReviewResult> {
+  const allInsights = Array.from(insightsByUser.values()).flat();
+  if (!facts.length && !allInsights.length) return { factIdsToDelete: [], insightIdsToDelete: [] };
 
   // Build a numbered list for Claude to review
   const factList = facts.map((f, i) =>
     `${i + 1}. [${f.id}] (${new Date(f.created_at).toLocaleDateString()}) ${f.content}`
   ).join("\n");
 
+  const insightSection = allInsights.length
+    ? `\n\n--- DREAM-MODE INSIGHTS ---\nThese are behavioral/strategic insights derived during background analysis. Apply the same hygiene:\nDELETE insights that are: REDUNDANT (same idea multiple ways), CONTRADICTED (superseded by newer), STALE (time-bound and no longer relevant), or TRIVIAL (low-signal).\nKEEP insights that are durable patterns, strategic observations, or unique non-obvious connections.\n\n${allInsights.map((ins, i) => `${i + 1}. [${ins.id}] ${ins.content}`).join("\n")}`
+    : "";
+
   const prompt = `You are reviewing a personal AI assistant's memory bank. Your job is to identify entries that should be DELETED.
 
-DELETE entries that are:
+DELETE facts that are:
 1. EPHEMERAL EVENTS: One-time dates, dinners, lunches, appointments, meetings, reservations — anything with a specific date that has passed or will pass
 2. SCHEDULE CHANGES: "moved to Thursday", "changed from Friday" — these are calendar updates, not long-term facts
 3. DUPLICATES: Same information stated multiple ways — keep only the most recent/complete version
@@ -222,7 +240,7 @@ DELETE entries that are:
 5. TRIVIAL: Implementation details, debugging notes, temporary states
 6. TOO SPECIFIC: "DJ ordered the steak" — not useful long-term
 
-KEEP entries that are:
+KEEP facts that are:
 1. IDENTITY: Names, relationships, contact info, birthdays
 2. BUSINESS: Company details, pricing, clients, revenue
 3. PREFERENCES: Communication style, tools, workflows, recurring schedules
@@ -230,7 +248,7 @@ KEEP entries that are:
 
 Here are the current facts:
 
-${factList}
+${factList}${insightSection}
 
 Respond with ONLY the IDs to DELETE, one per line, in this exact format:
 DELETE: <id>
@@ -249,17 +267,27 @@ Do not explain your reasoning. Just list the IDs.`;
       outputFormat: "text",
     });
 
-    if (result.text.toUpperCase() === "NONE") return [];
+    if (result.text.trim().toUpperCase() === "NONE") return { factIdsToDelete: [], insightIdsToDelete: [] };
 
-    const ids: string[] = [];
+    const insightIdSet = new Set(allInsights.map(i => i.id));
+    const factIdsToDelete: string[] = [];
+    const insightIdsToDelete: string[] = [];
+
     for (const line of result.text.split("\n")) {
-      const match = line.match(/DELETE:\s*([0-9a-f-]{36})/i);
-      if (match) ids.push(match[1]);
+      const match = line.match(/DELETE:\s*([^\s]+)/i);
+      if (match) {
+        const id = match[1];
+        if (insightIdSet.has(id)) {
+          insightIdsToDelete.push(id);
+        } else {
+          factIdsToDelete.push(id);
+        }
+      }
     }
-    return ids;
+    return { factIdsToDelete, insightIdsToDelete };
   } catch (error) {
     console.error("Claude review error:", error);
-    return [];
+    return { factIdsToDelete: [], insightIdsToDelete: [] };
   }
 }
 
@@ -317,25 +345,61 @@ async function main() {
     console.log(`Archived ${deleted} old completed goals`);
   }
 
-  // Step 3: Claude reviews remaining facts for ephemeral/stale entries
+  // Step 3: Claude reviews remaining facts + insights in one pass
   const remainingFacts = facts.filter(f => !dupeIds.includes(f.id));
-  if (remainingFacts.length > 0) {
-    console.log(`Asking Claude to review ${remainingFacts.length} facts...`);
-    const idsToDelete = await askClaudeToReview(remainingFacts);
 
-    if (idsToDelete.length) {
-      // Log what's being deleted for transparency
-      const deletedFacts = remainingFacts.filter(f => idsToDelete.includes(f.id));
-      for (const f of deletedFacts) {
-        console.log(`  Deleting: "${f.content.substring(0, 80)}"`);
+  // Fetch insights per user for co-review
+  const insightsByUser = new Map<string, { id: string; content: string }[]>();
+  for (const user of users) {
+    try {
+      const insights = await memwright.search({
+        namespace: `user:${user.id}`,
+        category: "insight",
+        limit: 50,
+      });
+      if (insights && insights.length >= 3) {
+        insightsByUser.set(user.id, insights.map((m: any) => ({ id: m.id, content: m.content || m.id })));
       }
+    } catch (err) {
+      console.warn(`[memory-review] Failed to fetch insights for ${user.name}:`, err);
+    }
+  }
 
-      const deleted = await deleteMemoryEntries(db, idsToDelete);
+  const totalInsightCount = Array.from(insightsByUser.values()).reduce((s, arr) => s + arr.length, 0);
+  if (remainingFacts.length > 0 || totalInsightCount > 0) {
+    console.log(`Asking Claude to review ${remainingFacts.length} facts + ${totalInsightCount} insights...`);
+    const { factIdsToDelete, insightIdsToDelete } = await askClaudeToReview(remainingFacts, insightsByUser);
+
+    if (factIdsToDelete.length) {
+      const deletedFacts = remainingFacts.filter(f => factIdsToDelete.includes(f.id));
+      for (const f of deletedFacts) {
+        console.log(`  Deleting fact: "${f.content.substring(0, 80)}"`);
+      }
+      const deleted = await deleteMemoryEntries(db, factIdsToDelete);
       totalDeleted += deleted;
       report.push(`Stale/ephemeral removed: ${deleted}`);
-      console.log(`Claude flagged ${deleted} entries for removal`);
-    } else {
-      console.log("Claude: all facts look good");
+      console.log(`Claude flagged ${deleted} facts for removal`);
+    }
+
+    if (insightIdsToDelete.length) {
+      let insightsPruned = 0;
+      for (const id of insightIdsToDelete) {
+        const ok = await memwright.forget(id);
+        if (ok) {
+          insightsPruned++;
+          console.log(`[memory-review]   Deleted insight ${id}`);
+        } else {
+          console.warn(`[memory-review]   forget() returned false for insight ${id}`);
+        }
+      }
+      if (insightsPruned > 0) {
+        report.push(`Insights pruned: ${insightsPruned}`);
+        console.log(`Claude flagged ${insightsPruned} insights for removal`);
+      }
+    }
+
+    if (!factIdsToDelete.length && !insightIdsToDelete.length) {
+      console.log("Claude: all facts and insights look good");
     }
   }
 
@@ -377,81 +441,6 @@ async function main() {
     if (orphaned > 0) report.push(`Orphaned short-term IDs cleaned: ${orphaned}`);
   } else {
     console.log("[memory-review] Step 6: No expired short-term memories");
-  }
-
-  // Step 7: Review insight memories for hygiene (stale, contradicted, or duplicate insights from dream mode)
-  console.log("[memory-review] Step 7: Reviewing dream-mode insights for hygiene...");
-  for (const user of users) {
-    try {
-      const insights = await memwright.search({
-        namespace: `user:${user.id}`,
-        category: "insight",
-        limit: 50,
-      });
-      if (!insights || insights.length < 3) continue; // Not enough to bother reviewing
-
-      const insightText = insights
-        .map((m, i) => `[${i}] [${m.id}] ${m.content || m.id}`)
-        .join("\n");
-
-      const insightPrompt = `You are reviewing an AI assistant's dream-mode insights for a user. Identify entries that should be DELETED.
-
-DELETE insights that are:
-1. REDUNDANT: Same idea expressed multiple ways — keep only the clearest version
-2. CONTRADICTED: Superseded by a more recent insight
-3. STALE: Time-bound observations that are no longer relevant
-4. TRIVIAL: Low-signal observations unlikely to improve future decisions
-
-KEEP insights that are:
-1. Durable patterns about the user's behavior, preferences, or situation
-2. Strategic or business-relevant observations
-3. Unique, non-obvious connections
-
-Here are the current insights (format: [index] [id] content):
-
-${insightText}
-
-Respond with ONLY the IDs to DELETE, one per line, in this exact format:
-DELETE: <id>
-
-If nothing should be deleted, respond with:
-NONE
-
-Do not explain your reasoning. Just list the IDs.`;
-
-      const result = await getDefaultProvider().call({
-        prompt: insightPrompt,
-        model: "haiku",
-        maxTurns: 1,
-        outputFormat: "text",
-      });
-
-      if (result.text.trim().toUpperCase() === "NONE") {
-        console.log(`[memory-review] Step 7: All insights look good for ${user.name}`);
-        continue;
-      }
-
-      let insightsPruned = 0;
-      for (const line of result.text.split("\n")) {
-        const match = line.match(/DELETE:\s*([^\s]+)/i);
-        if (match) {
-          const id = match[1];
-          const ok = await memwright.forget(id);
-          if (ok) {
-            insightsPruned++;
-            console.log(`[memory-review]   Deleted insight ${id} for ${user.name}`);
-          } else {
-            console.warn(`[memory-review]   forget() returned false for insight ${id}`);
-          }
-        }
-      }
-      if (insightsPruned > 0) {
-        report.push(`Insights pruned (${user.name}): ${insightsPruned}`);
-        console.log(`[memory-review] Step 7: Pruned ${insightsPruned} stale insights for ${user.name}`);
-      }
-    } catch (err) {
-      console.warn(`[memory-review] Insight review failed for ${user.name}:`, err);
-    }
   }
 
   // Report
