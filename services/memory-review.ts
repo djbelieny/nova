@@ -16,7 +16,7 @@ import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-pro
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
-import { memwright } from "../src/memwright-client.ts";
+import { memwright, type SearchResult } from "../src/memwright-client.ts";
 
 // Register AI providers (memory-review runs standalone)
 registerProvider(new ClaudeProvider());
@@ -138,7 +138,7 @@ async function consolidateMemories(db: Database, facts: MemoryEntry[]): Promise<
 
   if (candidates.length < 5) return 0; // Not enough to consolidate
 
-  console.log(`Analyzing ${candidates.length} low-weight memories for consolidation...`);
+  console.log(`[memory-review] Analyzing ${candidates.length} low-weight memories for consolidation...`);
 
   const prompt = `You are an AI memory manager. Your task is to group related but low-importance memories and summarize them into high-level, permanent facts.
 
@@ -190,7 +190,7 @@ If no meaningful consolidation can be done, return: []`;
         // Delete originals
         db.deleteMemoryEntries(c.original_ids);
         totalConsolidated += c.original_ids.length;
-        console.log(`Consolidated ${c.original_ids.length} memories into: "${c.summary}"`);
+        console.log(`[memory-review] Consolidated ${c.original_ids.length} memories into: "${c.summary}"`);
       }
     }
     return totalConsolidated;
@@ -273,9 +273,11 @@ Do not explain your reasoning. Just list the IDs.`;
     const factIdsToDelete: string[] = [];
     const insightIdsToDelete: string[] = [];
 
+    // Memwright IDs are standard UUIDs (8-4-4-4-12 hex, e.g. "550e8400-e29b-41d4-a716-446655440000")
+    const deleteRegex = /DELETE:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
     for (const line of result.text.split("\n")) {
-      const match = line.match(/DELETE:\s*([^\s]+)/i);
-      if (match) {
+      let match: RegExpExecArray | null;
+      while ((match = deleteRegex.exec(line)) !== null) {
         const id = match[1];
         if (insightIdSet.has(id)) {
           insightIdsToDelete.push(id);
@@ -315,14 +317,14 @@ function findExactDuplicates(facts: MemoryEntry[]): string[] {
 // ============================================================
 
 async function main() {
-  console.log("Running memory review...");
+  console.log("[memory-review] Running memory review...");
   const db = getDb();
 
   const facts = getAllFacts(db);
   const completedGoals = getCompletedGoals(db);
   const users = getActiveUsers(db);
 
-  console.log(`Found ${facts.length} facts, ${completedGoals.length} old completed goals`);
+  console.log(`[memory-review] Found ${facts.length} facts, ${completedGoals.length} old completed goals`);
 
   let totalDeleted = 0;
   const report: string[] = [];
@@ -333,7 +335,7 @@ async function main() {
     const deleted = await deleteMemoryEntries(db, dupeIds);
     totalDeleted += deleted;
     report.push(`Duplicates removed: ${deleted}`);
-    console.log(`Removed ${deleted} exact duplicates`);
+    console.log(`[memory-review] Removed ${deleted} exact duplicates`);
   }
 
   // Step 2: Archive old completed goals (> 30 days)
@@ -342,43 +344,52 @@ async function main() {
     const deleted = await deleteMemoryEntries(db, goalIds);
     totalDeleted += deleted;
     report.push(`Archived completed goals (30d+): ${deleted}`);
-    console.log(`Archived ${deleted} old completed goals`);
+    console.log(`[memory-review] Archived ${deleted} old completed goals`);
   }
 
   // Step 3: Claude reviews remaining facts + insights in one pass
   const remainingFacts = facts.filter(f => !dupeIds.includes(f.id));
 
   // Fetch insights per user for co-review
-  const insightsByUser = new Map<string, { id: string; content: string }[]>();
-  for (const user of users) {
-    try {
-      const insights = await memwright.search({
-        namespace: `user:${user.id}`,
-        category: "insight",
-        limit: 50,
-      });
-      if (insights && insights.length >= 3) {
-        insightsByUser.set(user.id, insights.map((m: any) => ({ id: m.id, content: m.content || m.id })));
+  const insightsByUser = new Map<string, InsightEntry[]>();
+  await Promise.all(
+    users.map(async (user) => {
+      try {
+        const insights = await memwright.search({
+          namespace: `user:${user.id}`,
+          category: "insight",
+          limit: 50,
+        });
+        if (insights && insights.length >= 3) {
+          insightsByUser.set(
+            user.id,
+            insights
+              .filter((m: SearchResult) => m.content?.trim())
+              .map((m: SearchResult) => ({ id: m.id, content: m.content }))
+          );
+        } else {
+          console.log(`[memory-review] Skipping insight review for ${user.name}: ${insights?.length ?? 0} insights (min 3)`);
+        }
+      } catch (err) {
+        console.warn(`[memory-review] Failed to fetch insights for ${user.name}:`, err);
       }
-    } catch (err) {
-      console.warn(`[memory-review] Failed to fetch insights for ${user.name}:`, err);
-    }
-  }
+    })
+  );
 
   const totalInsightCount = Array.from(insightsByUser.values()).reduce((s, arr) => s + arr.length, 0);
   if (remainingFacts.length > 0 || totalInsightCount > 0) {
-    console.log(`Asking Claude to review ${remainingFacts.length} facts + ${totalInsightCount} insights...`);
+    console.log(`[memory-review] Asking Claude to review ${remainingFacts.length} facts + ${totalInsightCount} insights...`);
     const { factIdsToDelete, insightIdsToDelete } = await askClaudeToReview(remainingFacts, insightsByUser);
 
     if (factIdsToDelete.length) {
       const deletedFacts = remainingFacts.filter(f => factIdsToDelete.includes(f.id));
       for (const f of deletedFacts) {
-        console.log(`  Deleting fact: "${f.content.substring(0, 80)}"`);
+        console.log(`[memory-review]   Deleting fact: "${f.content.substring(0, 80)}"`);
       }
       const deleted = await deleteMemoryEntries(db, factIdsToDelete);
       totalDeleted += deleted;
       report.push(`Stale/ephemeral removed: ${deleted}`);
-      console.log(`Claude flagged ${deleted} facts for removal`);
+      console.log(`[memory-review] Claude flagged ${deleted} facts for removal`);
     }
 
     if (insightIdsToDelete.length) {
@@ -394,12 +405,12 @@ async function main() {
       }
       if (insightsPruned > 0) {
         report.push(`Insights pruned: ${insightsPruned}`);
-        console.log(`Claude flagged ${insightsPruned} insights for removal`);
+        console.log(`[memory-review] Claude flagged ${insightsPruned} insights for removal`);
       }
     }
 
     if (!factIdsToDelete.length && !insightIdsToDelete.length) {
-      console.log("Claude: all facts and insights look good");
+      console.log("[memory-review] Claude: all facts and insights look good");
     }
   }
 
@@ -407,7 +418,7 @@ async function main() {
   const decayedCount = await decayMemoryWeights(db, facts);
   if (decayedCount > 0) {
     report.push(`Memory weights decayed: ${decayedCount}`);
-    console.log(`Decayed weight for ${decayedCount} inactive memories`);
+    console.log(`[memory-review] Decayed weight for ${decayedCount} inactive memories`);
   }
 
   // Step 5: Consolidate old low-weight memories
@@ -415,7 +426,7 @@ async function main() {
   if (consolidatedCount > 0) {
     totalDeleted += consolidatedCount;
     report.push(`Memories consolidated: ${consolidatedCount}`);
-    console.log(`Consolidated ${consolidatedCount} low-weight memories`);
+    console.log(`[memory-review] Consolidated ${consolidatedCount} low-weight memories`);
   }
 
   // Step 6: Prune expired short-term memories from Memwright
@@ -423,19 +434,25 @@ async function main() {
   const expired = db.getExpiredShortTermMemories();
   if (expired.length > 0) {
     console.log(`[memory-review] Found ${expired.length} expired short-term entries`);
-    let pruned = 0;
-    let orphaned = 0;
-    for (const entry of expired) {
-      const ok = await memwright.forget(entry.id);
-      // Delete from tracking regardless of forget() result:
-      // false = either Memwright reset (orphaned) or already gone — clean up either way
-      db.deleteShortTermMemory(entry.id);
-      if (ok) pruned++;
-      else {
-        orphaned++;
-        console.warn(`[memory-review] Memwright forget returned false for ${entry.id} — cleaned up tracking anyway`);
-      }
-    }
+    const results = await Promise.all(
+      expired.map(async (entry) => {
+        try {
+          const ok = await memwright.forget(entry.id);
+          // Delete from tracking regardless of forget() result:
+          // false = either Memwright reset (orphaned) or already gone — clean up either way
+          db.deleteShortTermMemory(entry.id);
+          if (!ok) {
+            console.warn(`[memory-review] Memwright forget returned false for ${entry.id} — cleaned up tracking anyway`);
+          }
+          return ok ? "pruned" : "orphaned";
+        } catch (err) {
+          console.warn(`[memory-review] Error forgetting ${entry.id}:`, err);
+          return "orphaned";
+        }
+      })
+    );
+    const pruned = results.filter((r) => r === "pruned").length;
+    const orphaned = results.filter((r) => r === "orphaned").length;
     console.log(`[memory-review] Step 6 complete: ${pruned} pruned, ${orphaned} orphaned IDs cleaned`);
     if (pruned > 0) report.push(`Short-term memories pruned: ${pruned}`);
     if (orphaned > 0) report.push(`Orphaned short-term IDs cleaned: ${orphaned}`);
@@ -445,7 +462,7 @@ async function main() {
 
   // Report
   const remaining = facts.length - totalDeleted + (consolidatedCount > 0 ? 1 : 0);
-  console.log(`\nMemory review complete: ${totalDeleted} removed/consolidated, ${remaining} remaining`);
+  console.log(`[memory-review] Memory review complete: ${totalDeleted} removed/consolidated, ${remaining} remaining`);
 
   if (totalDeleted > 0) {
     // Notify admin
