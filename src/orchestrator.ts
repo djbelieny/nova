@@ -47,6 +47,7 @@ import {
   getRecentHistory,
   getTaskContext,
   getScheduleContext,
+  getSessionSummaryContext,
 } from "./memory.ts";
 import { emit } from "./events.ts";
 
@@ -1015,7 +1016,9 @@ export function orchestrate(
   ctx: OrchestratorContext,
   text: string,
   user: any,
-  supabase: Database | null
+  supabase: Database | null,
+  sessionKey?: string,
+  channel?: string
 ): void {
   // Generate a request_id for message flow tracking
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
@@ -1032,6 +1035,8 @@ export function orchestrate(
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { sessionId: requestId }),
       userId: user.id,
+      sessionKey: sessionKey ?? "",
+      userMessage: text,
     });
     return;
   }
@@ -1055,18 +1060,20 @@ export function orchestrate(
         if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
         if (raw === "__NOT_REVISION__") {
           // Continue with normal orchestration
-          orchestrateMain(ctx, text, user, supabase, requestId);
+          orchestrateMain(ctx, text, user, supabase, requestId, sessionKey);
           return "__SKIP__";
         }
         return processMemoryIntents(supabase, raw, user.id, user.timezone, { sessionId: requestId });
       },
       userId: user.id,
+      sessionKey: sessionKey ?? "",
+      userMessage: text,
     });
     return;
   }
 
   // No supabase — go directly to main orchestration
-  orchestrateMain(ctx, text, user, supabase, requestId);
+  orchestrateMain(ctx, text, user, supabase, requestId, sessionKey);
 }
 
 /**
@@ -1077,12 +1084,13 @@ function orchestrateMain(
   text: string,
   user: any,
   supabase: Database | null,
-  requestId: string
+  requestId: string,
+  sessionKey?: string
 ): void {
   // Step 1: Fast heuristic — no Claude call needed
   if (isSimpleMessage(text)) {
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Simple path (heuristic): ${text.substring(0, 50)}`, classification: "simple" } });
-    routeSimple(ctx, text, user, supabase);
+    routeSimple(ctx, text, user, supabase, sessionKey);
     return;
   }
 
@@ -1176,15 +1184,16 @@ function orchestrateMain(
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Classified as: ${classification.type}`, classification: classification.type } });
 
     if (classification.type === "simple") {
-      const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+      const [relevantContext, memoryContext, sessionSummary, taskContext, scheduleContext] = await Promise.all([
         getRelevantContext(supabase, text, user.id),
         getMemoryContext(supabase, user.id, 1500),
-        getRecentHistory(supabase, user.id),
+        getSessionSummaryContext(supabase, user.id, sessionKey ?? ""),
         getTaskContext(supabase, user.id),
         getScheduleContext(supabase, user.id, user.timezone),
       ]);
+      const recentHistory = await getRecentHistory(supabase, user.id, sessionSummary ? 5 : 12);
       return {
-        prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext, { contactContext: (ctx as any)?._whatsappContactContext }),
+        prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext, { contactContext: (ctx as any)?._whatsappContactContext, sessionSummary: sessionSummary || undefined }),
         hint: text,
       };
     }
@@ -1213,6 +1222,8 @@ function orchestrateMain(
       return processMemoryIntents(supabase, raw, user.id, user.timezone, { sessionId: requestId });
     },
     userId: user.id,
+    sessionKey: sessionKey ?? "",
+    userMessage: text,
   });
 }
 
@@ -1224,22 +1235,26 @@ function routeSimple(
   ctx: OrchestratorContext,
   text: string,
   user: any,
-  supabase: Database | null
+  supabase: Database | null,
+  sessionKey?: string
 ): void {
   _runTask(ctx as Context, text.substring(0, 50), async () => {
-    const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+    const [relevantContext, memoryContext, sessionSummary, taskContext, scheduleContext] = await Promise.all([
       getRelevantContext(supabase, text, user.id),
       getMemoryContext(supabase, user.id, 1500),
-      getRecentHistory(supabase, user.id),
+      getSessionSummaryContext(supabase, user.id, sessionKey ?? ""),
       getTaskContext(supabase, user.id),
       getScheduleContext(supabase, user.id, user.timezone),
     ]);
+    const recentHistory = await getRecentHistory(supabase, user.id, sessionSummary ? 5 : 12);
     return {
-      prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext, { contactContext: (ctx as any)?._whatsappContactContext }),
+      prompt: _buildPrompt(user, text, relevantContext, memoryContext, recentHistory, taskContext, scheduleContext, { contactContext: (ctx as any)?._whatsappContactContext, sessionSummary: sessionSummary || undefined }),
       hint: text,
     };
   }, {
     postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone, {}),
+    sessionKey: sessionKey ?? "",
+    userMessage: text,
   });
 }
 

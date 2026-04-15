@@ -1501,7 +1501,7 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
         (ctx as any)._whatsappContactContext = contactContext;
       }
 
-      orchestrate(ctx._raw || ctx, actualText, user, supabase);
+      orchestrate(ctx._raw || ctx, actualText, user, supabase, getSessionKey(user.id, msg.channelType), msg.channelType);
       return;
     }
 
@@ -1513,7 +1513,7 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       (ctx as any)._whatsappContactContext = contactContext;
     }
 
-    orchestrate(ctx._raw || ctx, text, user, supabase);
+    orchestrate(ctx._raw || ctx, text, user, supabase, getSessionKey(user.id, msg.channelType), msg.channelType);
     return;
   }
 
