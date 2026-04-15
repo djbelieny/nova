@@ -13,7 +13,11 @@ interface RecallResult {
   score: number;
   source: string;
   id: string;
-  memory?: { category?: string; [key: string]: unknown };
+  memory?: {
+    category?: string;
+    metadata?: Record<string, unknown>;
+    [key: string]: unknown;
+  };
 }
 
 interface SearchResult {

@@ -38,10 +38,9 @@ export function initMemorySummarizer(callAI: SummarizeAI): void {
 // Maintains a compact working memory summary for each active session.
 let _sessionSummarizer: ((prompt: string, model: string) => Promise<string>) | null = null;
 
-/**
- * Wire in an AI caller for session summary updates.
- * Call once from relay.ts after providers are registered.
- */
+/** Wire in an AI caller for session summary generation.
+ *  The callAI function receives (prompt, modelTier) where modelTier is e.g. "haiku".
+ *  Call once at startup, alongside initMemorySummarizer. */
 export function initSessionSummarizer(
   callAI: (prompt: string, model: string) => Promise<string>
 ): void {
@@ -56,6 +55,7 @@ export async function getSessionSummaryContext(
   userId: string,
   sessionKey: string
 ): Promise<string> {
+  // Sync DB call — async for API uniformity with other memory context functions
   if (!db) return "";
   const row = db.getSessionSummary(userId, sessionKey);
   if (!row) return "";
@@ -576,7 +576,7 @@ export async function getRelevantContext(
 
     // Promote short-term memories that get recalled — atomically via SQLite lock
     for (const r of results) {
-      const meta = (r as any).memory?.metadata as Record<string, unknown> | undefined;
+      const meta = r.memory?.metadata;
       if (meta?.short_term === true && meta?.promoted !== true) {
         const locked = db?.markShortTermMemoryPromoted(r.id);
         if (locked) {
@@ -709,7 +709,7 @@ export async function getDecisionContext(
  * Not exported — called only from getRelevantContext promotion loop.
  */
 function promoteToLongTerm(result: RecallResult, userId: string): void {
-  const meta = (result as any).memory?.metadata as Record<string, unknown> | undefined;
+  const meta = result.memory?.metadata;
   memwright.add({
     content: result.content,
     namespace: `user:${userId}`,
