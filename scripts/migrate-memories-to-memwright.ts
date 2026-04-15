@@ -23,7 +23,7 @@ async function main() {
   // 2. Migrate shared memories
   console.log("[migrate] Migrating shared memories...");
   try {
-    const sharedMemories = (db as any).shared.db.query(`
+    const sharedMemories = db.raw.query(`
       SELECT id, type, content, scope, deadline, created_at, user_id
       FROM memory
       WHERE type IN ('fact', 'goal', 'preference')
@@ -74,7 +74,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log(`[migrate] Found ${users.length} users`);
+  console.log(`[migrate] Migrating ${users.length} active users (inactive users excluded)`);
 
   for (const user of users) {
     const userId = user.id;
@@ -172,6 +172,9 @@ async function main() {
     }
   }
 
+  // Note: totalErrors counts DB-read and connection-level errors only.
+  // Individual Memwright write failures are caught inside batchAdd/add and
+  // logged as warnings — they are not reflected in this count.
   console.log(
     `[migrate] Done. Memories: ${totalMemories}, Messages: ${totalMessages}, Errors: ${totalErrors}`
   );
