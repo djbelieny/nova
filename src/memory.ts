@@ -377,14 +377,8 @@ export async function getMemoryContext(
     if (!allResults.length) return "";
 
     // Separate goals from facts for display
-    const goals = allResults.filter(r => {
-      const mem = r as { memory?: { category?: string } };
-      return mem.memory?.category === "goal";
-    });
-    const facts = allResults.filter(r => {
-      const mem = r as { memory?: { category?: string } };
-      return mem.memory?.category !== "goal";
-    });
+    const goals = allResults.filter(r => r.memory?.category === "goal");
+    const facts = allResults.filter(r => r.memory?.category !== "goal");
 
     const parts: string[] = [];
 
@@ -506,8 +500,6 @@ export async function getRelevantContext(
   query: string,
   userId: string
 ): Promise<string> {
-  if (!db) return "";
-
   try {
     const results = await memwright.recall(query, {
       namespace: `user:${userId}`,

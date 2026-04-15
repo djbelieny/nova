@@ -13,6 +13,7 @@ interface RecallResult {
   score: number;
   source: string;
   id: string;
+  memory?: { category?: string; [key: string]: unknown };
 }
 
 interface ApiResponse<T = unknown> {
