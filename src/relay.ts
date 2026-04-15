@@ -24,6 +24,8 @@ import {
   getRecentHistory,
   getTaskContext,
   getScheduleContext,
+  getSessionSummaryContext,
+  updateSessionSummaryAsync,
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
@@ -55,7 +57,7 @@ import {
   parseButtons,
   cleanResponseForUser,
 } from "./channels/telegram.ts";
-import { getDecisionContext, initMemorySummarizer } from "./memory.ts";
+import { getDecisionContext, initMemorySummarizer, initSessionSummarizer } from "./memory.ts";
 import { emit, initEventBus, startStallDetection, shutdownEventBus } from "./events.ts";
 import { initGoalEngine, start as startGoalEngine, runOnce as runGoalEngineOnce } from "../services/goal-engine.ts";
 import { initPredictiveScheduler, start as startPredictiveScheduler } from "../services/predictive-scheduler.ts";
@@ -316,6 +318,12 @@ function invalidateUserCache(platformId?: string): void {
   }
 }
 
+function getSessionKey(userId: string, channel: string): string {
+  const now = new Date();
+  const bucket = Math.floor(now.getUTCHours() / 4);
+  return `${userId}-${channel}-${now.toISOString().slice(0, 10)}-b${bucket}`;
+}
+
 async function saveMessage(
   role: string,
   content: string,
@@ -335,13 +343,17 @@ async function saveMessage(
       embedding: embedding || null,
     });
     if (role === "user" || role === "assistant") {
-      memwright.add({
+      const result = await memwright.add({
         content,
         namespace: `user:${userId}`,
         category: "conversation",
         tags: [role],
-        metadata: { role, channel },
+        metadata: { role, channel, short_term: true, ttl_days: 7, promoted: false },
       });
+      if (result?.id) {
+        const expiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+        supabase.insertShortTermMemory(userId, result.id, expiresAt);
+      }
     }
   } catch (error) {
     console.error("DB save error:", error);
@@ -564,14 +576,16 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
     const platformCtx = createGenericPlatformContext(adapter, chatId, user);
     await platformCtx.replyWithChatAction("typing");
 
+    const buttonSessionKey = getSessionKey(user!.id, "telegram");
     runTask(platformCtx, `Button: ${selection.substring(0, 40)}`, async () => {
-      const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+      const [relevantContext, memoryContext, sessionSummary, taskContext, scheduleContext] = await Promise.all([
         getRelevantContext(supabase, selection, user!.id),
         getMemoryContext(supabase, user!.id),
-        getRecentHistory(supabase, user!.id),
+        getSessionSummaryContext(supabase, user!.id, buttonSessionKey),
         getTaskContext(supabase, user!.id),
         getScheduleContext(supabase, user!.id, user!.timezone),
       ]);
+      const recentHistory = await getRecentHistory(supabase, user!.id, sessionSummary ? 5 : 12);
       return {
         prompt: buildPrompt(
           user!,
@@ -580,12 +594,16 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
           memoryContext,
           recentHistory,
           taskContext,
-          scheduleContext
+          scheduleContext,
+          { sessionSummary: sessionSummary || undefined }
         ),
         hint: selection,
       };
     }, {
       postProcess: (raw) => processMemoryIntents(supabase, raw, user!.id, user!.timezone),
+      userId: user!.id,
+      sessionKey: buttonSessionKey,
+      userMessage: selection,
     });
   }
 });
@@ -947,7 +965,7 @@ function runTask(
   ctx: Context | PlatformContext | any,
   taskDescription: string,
   buildTask: () => Promise<{ prompt: string; model?: ModelTier; hint?: string }>,
-  opts?: { postProcess?: (response: string) => Promise<string>; userId?: string }
+  opts?: { postProcess?: (response: string) => Promise<string>; userId?: string; sessionKey?: string; userMessage?: string }
 ): void {
   const taskId = `task-${++taskCounter}`;
   const task: ActiveTask = {
@@ -1008,6 +1026,17 @@ function runTask(
       const response = opts?.postProcess
         ? await opts.postProcess(rawResponse)
         : rawResponse;
+
+      // Update working memory session summary (fire-and-forget)
+      if (opts?.userId && opts?.sessionKey) {
+        updateSessionSummaryAsync(
+          supabase,
+          opts.userId,
+          opts.sessionKey,
+          opts.userMessage || "",
+          response
+        );
+      }
 
       // Orchestrator handled the response internally — skip sending
       if (response === "__SKIP__") {
@@ -1510,14 +1539,16 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
 
       await saveMessage("user", `[Voice ${msg.voice.durationSec}s]: ${transcription}`, user.id, undefined, msg.channelType);
 
+      const voiceSessionKey = getSessionKey(user!.id, msg.channelType);
       runTask(ctx, `Voice: ${transcription.substring(0, 40)}`, async () => {
-        const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+        const [relevantContext, memoryContext, sessionSummary, taskContext, scheduleContext] = await Promise.all([
           getRelevantContext(supabase, transcription, user!.id),
           getMemoryContext(supabase, user!.id),
-          getRecentHistory(supabase, user!.id),
+          getSessionSummaryContext(supabase, user!.id, voiceSessionKey),
           getTaskContext(supabase, user!.id),
           getScheduleContext(supabase, user!.id, user!.timezone),
         ]);
+        const recentHistory = await getRecentHistory(supabase, user!.id, sessionSummary ? 5 : 12);
         return {
           prompt: buildPrompt(
             user!,
@@ -1526,12 +1557,16 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
             memoryContext,
             recentHistory,
             taskContext,
-            scheduleContext
+            scheduleContext,
+            { sessionSummary: sessionSummary || undefined }
           ),
           hint: transcription,
         };
       }, {
         postProcess: (raw) => processMemoryIntents(supabase, raw, user!.id, user!.timezone),
+        userId: user!.id,
+        sessionKey: voiceSessionKey,
+        userMessage: transcription,
       });
     } catch (error) {
       console.error("Voice error:", error);
@@ -1775,7 +1810,7 @@ function buildPrompt(
   recentHistory?: string,
   taskContext?: string,
   scheduleContext?: string,
-  options?: { ghlLocationId?: string; contactContext?: string; teamContext?: string }
+  options?: { ghlLocationId?: string; contactContext?: string; teamContext?: string; sessionSummary?: string }
 ): string {
   const now = new Date();
   const timeStr = now.toLocaleString("en-US", {
@@ -1831,6 +1866,10 @@ function buildPrompt(
       ? user.profile_text.slice(0, 2000) + "\n[...profile truncated]"
       : user.profile_text;
     parts.push(`\nProfile:\n${profileText}`);
+  }
+  // Working memory — inject session summary before recent history
+  if (options?.sessionSummary) {
+    parts.push(`\n${options.sessionSummary}`);
   }
   if (tRecentHistory) parts.push(`\n${tRecentHistory}`);
 
@@ -2874,6 +2913,7 @@ registerProvider(codexProvider);
 // Wire haiku into the memory module so long facts/goals are AI-summarized
 // before being stored. Short content skips the AI call entirely.
 initMemorySummarizer(async (prompt: string) => callAI(prompt, "haiku"));
+initSessionSummarizer(async (prompt: string, model: string) => callAI(prompt, model));
 
 // Wire call transcript processor (haiku for extraction, sonnet for Notion + task execution)
 initCallProcessor({
