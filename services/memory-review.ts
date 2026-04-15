@@ -274,11 +274,10 @@ Do not explain your reasoning. Just list the IDs.`;
     const insightIdsToDelete: string[] = [];
 
     // Memwright IDs are standard UUIDs (8-4-4-4-12 hex, e.g. "550e8400-e29b-41d4-a716-446655440000")
-    const deleteRegex = /DELETE:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
     for (const line of result.text.split("\n")) {
-      let match: RegExpExecArray | null;
-      while ((match = deleteRegex.exec(line)) !== null) {
-        const id = match[1];
+      const m = line.match(/DELETE:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+      if (m) {
+        const id = m[1];
         if (insightIdSet.has(id)) {
           insightIdsToDelete.push(id);
         } else {
@@ -360,15 +359,14 @@ async function main() {
           category: "insight",
           limit: 50,
         });
-        if (insights && insights.length >= 3) {
+        const validInsights = (insights ?? []).filter((m: SearchResult) => m.content?.trim());
+        if (validInsights.length >= 3) {
           insightsByUser.set(
             user.id,
-            insights
-              .filter((m: SearchResult) => m.content?.trim())
-              .map((m: SearchResult) => ({ id: m.id, content: m.content }))
+            validInsights.map((m: SearchResult) => ({ id: m.id, content: m.content }))
           );
         } else {
-          console.log(`[memory-review] Skipping insight review for ${user.name}: ${insights?.length ?? 0} insights (min 3)`);
+          console.log(`[memory-review] Skipping insight review for ${user.name}: ${validInsights.length} valid insights (min 3)`);
         }
       } catch (err) {
         console.warn(`[memory-review] Failed to fetch insights for ${user.name}:`, err);
