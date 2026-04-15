@@ -60,6 +60,12 @@ fi
 echo "Restarting services..."
 systemctl restart nova-relay nova-voice nova-dashboard nova-miniapp
 
+# Restart Memwright memory service if installed
+if systemctl is-enabled nova-memwright &>/dev/null; then
+  systemctl restart nova-memwright
+  echo "  Restarted nova-memwright"
+fi
+
 # Restart executive services with staggered delays to avoid resource storm.
 # Order: no-MCP execs first, then MCP-enabled execs last.
 EXEC_SERVICES="nova-exec-coo nova-exec-critic nova-exec-ceo nova-exec-cfo nova-exec-cmo nova-exec-cto nova-exec-research"

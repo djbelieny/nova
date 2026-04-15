@@ -106,6 +106,14 @@
         "GHL_API_KEY": "${GHL_API_KEY}",
         "GHL_BASE_URL": "${GHL_BASE_URL}"
       }
+    },
+    "memwright": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "agent_memory.mcp.server"],
+      "env": {
+        "MEMWRIGHT_DATA_DIR": "${MEMWRIGHT_DATA_DIR}"
+      }
     }
   }
 }

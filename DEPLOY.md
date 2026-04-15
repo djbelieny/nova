@@ -46,6 +46,7 @@ ssh root@your-server.com "bash /opt/nova/scripts/deploy.sh"
 | Exec - COO       | `nova-exec-coo.service`  | —    | COO executive bot            |
 | Exec - Research  | `nova-exec-research.service` | — | Research executive bot       |
 | Exec - Critic    | `nova-exec-critic.service`   | — | Critic executive bot         |
+| Memwright        | `nova-memwright.service` | 8765 | Memory service (Memwright)   |
 | Scheduler        | cron (`/etc/cron.d/nova`) | —   | Periodic services            |
 | Caddy            | `caddy.service`          | 80, 443 | Reverse proxy, auto HTTPS |
 
@@ -169,11 +170,23 @@ If setting up a new server from scratch:
 8. Copy `.env.example` to `.env` and fill in all values
 9. Copy `config/profile.example.md` to `config/profile.md`
 10. Run `bun install`
-11. Create systemd unit files (see `/etc/systemd/system/nova-*.service`)
-12. Install crontab: copy adapted entries to `/etc/cron.d/nova`
-13. Enable services: `systemctl enable --now nova-relay nova-voice nova-dashboard nova-miniapp`
-14. Point DNS for your domains to server IP
-15. Caddy handles HTTPS certificates automatically
+11. Install Memwright:
+    ```bash
+    # Install Memwright (first deploy only)
+    python3 -m venv /opt/nova/.venv-memwright
+    /opt/nova/.venv-memwright/bin/pip install memwright uvicorn[standard]
+
+    # Install and enable Memwright service
+    cp setup/nova-memwright.service /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable nova-memwright
+    systemctl restart nova-memwright
+    ```
+12. Create systemd unit files (see `/etc/systemd/system/nova-*.service`)
+13. Install crontab: copy adapted entries to `/etc/cron.d/nova`
+14. Enable services: `systemctl enable --now nova-relay nova-voice nova-dashboard nova-miniapp`
+15. Point DNS for your domains to server IP
+16. Caddy handles HTTPS certificates automatically
 
 ### SSH Deploy Key Setup
 

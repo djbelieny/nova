@@ -1,0 +1,16 @@
+[Unit]
+Description=Nova Memwright Memory Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=nova
+WorkingDirectory=/opt/nova
+ExecStart=/opt/nova/.venv-memwright/bin/uvicorn agent_memory.api:app --host 127.0.0.1 --port 8765
+Restart=always
+RestartSec=5
+Environment=MEMWRIGHT_DATA_DIR=/opt/nova/data/memwright
+
+[Install]
+WantedBy=multi-user.target

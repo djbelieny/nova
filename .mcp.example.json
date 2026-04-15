@@ -103,6 +103,14 @@
       "env": {
         "GEMINI_API_KEY": "${GEMINI_API_KEY}"
       }
+    },
+    "memwright": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "agent_memory.mcp.server"],
+      "env": {
+        "MEMWRIGHT_DATA_DIR": "${MEMWRIGHT_DATA_DIR}"
+      }
     }
   }
 }
