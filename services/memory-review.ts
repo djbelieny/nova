@@ -16,6 +16,7 @@ import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-pro
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
+import { memwright } from "../src/memwright-client.ts";
 
 // Register AI providers (memory-review runs standalone)
 registerProvider(new ClaudeProvider());
@@ -353,7 +354,107 @@ async function main() {
     console.log(`Consolidated ${consolidatedCount} low-weight memories`);
   }
 
-  // Step 6: Report
+  // Step 6: Prune expired short-term memories from Memwright
+  console.log("[memory-review] Step 6: Pruning expired short-term memories...");
+  const expired = db.getExpiredShortTermMemories();
+  if (expired.length > 0) {
+    console.log(`[memory-review] Found ${expired.length} expired short-term entries`);
+    let pruned = 0;
+    let orphaned = 0;
+    for (const entry of expired) {
+      const ok = await memwright.forget(entry.id);
+      // Delete from tracking regardless of forget() result:
+      // false = either Memwright reset (orphaned) or already gone — clean up either way
+      db.deleteShortTermMemory(entry.id);
+      if (ok) pruned++;
+      else {
+        orphaned++;
+        console.warn(`[memory-review] Memwright forget returned false for ${entry.id} — cleaned up tracking anyway`);
+      }
+    }
+    console.log(`[memory-review] Step 6 complete: ${pruned} pruned, ${orphaned} orphaned IDs cleaned`);
+    if (pruned > 0) report.push(`Short-term memories pruned: ${pruned}`);
+    if (orphaned > 0) report.push(`Orphaned short-term IDs cleaned: ${orphaned}`);
+  } else {
+    console.log("[memory-review] Step 6: No expired short-term memories");
+  }
+
+  // Step 7: Review insight memories for hygiene (stale, contradicted, or duplicate insights from dream mode)
+  console.log("[memory-review] Step 7: Reviewing dream-mode insights for hygiene...");
+  for (const user of users) {
+    try {
+      const insights = await memwright.search({
+        namespace: `user:${user.id}`,
+        category: "insight",
+        limit: 50,
+      });
+      if (!insights || insights.length < 3) continue; // Not enough to bother reviewing
+
+      const insightText = insights
+        .map((m, i) => `[${i}] [${m.id}] ${m.content || m.id}`)
+        .join("\n");
+
+      const insightPrompt = `You are reviewing an AI assistant's dream-mode insights for a user. Identify entries that should be DELETED.
+
+DELETE insights that are:
+1. REDUNDANT: Same idea expressed multiple ways — keep only the clearest version
+2. CONTRADICTED: Superseded by a more recent insight
+3. STALE: Time-bound observations that are no longer relevant
+4. TRIVIAL: Low-signal observations unlikely to improve future decisions
+
+KEEP insights that are:
+1. Durable patterns about the user's behavior, preferences, or situation
+2. Strategic or business-relevant observations
+3. Unique, non-obvious connections
+
+Here are the current insights (format: [index] [id] content):
+
+${insightText}
+
+Respond with ONLY the IDs to DELETE, one per line, in this exact format:
+DELETE: <id>
+
+If nothing should be deleted, respond with:
+NONE
+
+Do not explain your reasoning. Just list the IDs.`;
+
+      const result = await getDefaultProvider().call({
+        prompt: insightPrompt,
+        model: "haiku",
+        maxTurns: 1,
+        outputFormat: "text",
+      });
+
+      if (result.text.trim().toUpperCase() === "NONE") {
+        console.log(`[memory-review] Step 7: All insights look good for ${user.name}`);
+        continue;
+      }
+
+      let insightsPruned = 0;
+      for (const line of result.text.split("\n")) {
+        const match = line.match(/DELETE:\s*([^\s]+)/i);
+        if (match) {
+          const id = match[1];
+          const ok = await memwright.forget(id);
+          if (ok) {
+            insightsPruned++;
+            console.log(`[memory-review]   Deleted insight ${id} for ${user.name}`);
+          } else {
+            console.warn(`[memory-review]   forget() returned false for insight ${id}`);
+          }
+        }
+      }
+      if (insightsPruned > 0) {
+        report.push(`Insights pruned (${user.name}): ${insightsPruned}`);
+        console.log(`[memory-review] Step 7: Pruned ${insightsPruned} stale insights for ${user.name}`);
+      }
+    } catch (err) {
+      console.warn(`[memory-review] Insight review failed for ${user.name}:`, err);
+    }
+  }
+
+  // Report
   const remaining = facts.length - totalDeleted + (consolidatedCount > 0 ? 1 : 0);
   console.log(`\nMemory review complete: ${totalDeleted} removed/consolidated, ${remaining} remaining`);
 
