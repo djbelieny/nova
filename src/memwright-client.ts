@@ -48,7 +48,7 @@ class MemwrightClient {
         return null;
       }
 
-      return { id: result.data.id };
+      return result.data ? { id: result.data.id } : null;
     } catch (err) {
       console.warn(`[memwright] add error: ${err instanceof Error ? err.message : String(err)}`);
       return null;
