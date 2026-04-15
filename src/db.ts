@@ -402,6 +402,9 @@ class SharedDatabase {
       )
     `);
 
+    // Lifecycle tracker for conversation messages written to Memwright with short-term TTL.
+    // id = Memwright memory ID (opaque foreign key; content lives in Memwright, not here).
+    // Pruned weekly by memory-review.ts; promoted entries are skipped during pruning.
     this.db.run(`
       CREATE TABLE IF NOT EXISTS short_term_memories (
         id         TEXT PRIMARY KEY,
@@ -794,7 +797,7 @@ class UserDatabase {
         UNIQUE(user_id, session_key)
       )
     `);
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_session_summaries_user ON session_summaries(user_id, last_updated DESC)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_session_summaries_user ON session_summaries(user_id, last_updated)`);
 
     // Memory extensions for goal engine
     try { this.db.run(`ALTER TABLE memory ADD COLUMN last_reviewed_at TEXT`); } catch {}
@@ -3159,6 +3162,8 @@ export class Database {
     `, [userId, sessionKey, summary]);
   }
 
+  /** Returns the active session summary, or null if none exists or it expired (>4h old).
+   *  Callers treat both cases identically — no distinction is needed. */
   getSessionSummary(userId: string, sessionKey: string): { summary: string } | null {
     const udb = this.getUserDb(userId);
     const row = udb.db.query(`
