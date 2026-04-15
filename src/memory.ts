@@ -95,7 +95,7 @@ export function compressForStorage(text: string, type: "fact" | "goal"): string 
  * Detect a loose category from a fact string.
  * Used to group facts in context rather than dumping a flat list.
  */
-function detectFactCategory(fact: string): string {
+export function detectFactCategory(fact: string): string {
   const f = fact.toLowerCase();
   if (/\b(name|call(ed)?|known as|nickname)\b/.test(f)) return "identity";
   if (/\b(company|business|brand|startup|agency|firm|org|organisation|organization|industry|sector)\b/.test(f)) return "business";

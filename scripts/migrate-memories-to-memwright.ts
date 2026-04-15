@@ -2,18 +2,7 @@
 
 import { getDb } from "../src/db.ts";
 import { memwright } from "../src/memwright-client.ts";
-
-function detectCategory(content: string): string {
-  const f = content.toLowerCase();
-  if (/\b(name|call(ed)?|known as|nickname)\b/.test(f)) return "identity";
-  if (/\b(company|business|brand|startup|agency|firm|org|industry|sector)\b/.test(f)) return "business";
-  if (/\b(email|phone|address|location|city|country|timezone|website|url)\b/.test(f)) return "contact";
-  if (/\b(prefer|like|love|hate|dislike|avoid|always|never|style|tone|format)\b/.test(f)) return "preferences";
-  if (/\b(client|customer|partner|vendor|contact|team|colleague|employee)\b/.test(f)) return "people";
-  if (/\b(product|service|offer|price|pricing|plan|feature|tool|platform)\b/.test(f)) return "product";
-  if (/\b(revenue|mrr|arr|profit|budget|spend|cost|sales|deal)\b/.test(f)) return "finance";
-  return "general";
-}
+import { detectFactCategory } from "../src/memory.ts";
 
 async function main() {
   console.log("[migrate] Starting Nova → Memwright migration");
@@ -42,20 +31,23 @@ async function main() {
     `).all() as any[];
 
     if (sharedMemories.length > 0) {
-      const requests = sharedMemories.map((mem: any) => ({
-        content: mem.content,
-        namespace: "nova:shared",
-        category: detectCategory(mem.content),
-        tags: [mem.type, mem.scope].filter(Boolean),
-        metadata: {
-          originalId: mem.id,
-          type: mem.type,
-          scope: mem.scope,
-          deadline: mem.deadline,
-          userId: mem.user_id,
-          createdAt: mem.created_at,
-        },
-      }));
+      const requests = sharedMemories.map((mem: any) => {
+        const isGoal = mem.type === "goal";
+        return {
+          content: mem.content,
+          namespace: "nova:shared",
+          category: isGoal ? "goal" : detectFactCategory(mem.content),
+          tags: isGoal ? ["goal"] : [mem.type, mem.scope].filter(Boolean),
+          metadata: {
+            originalId: mem.id,
+            type: mem.type,
+            scope: mem.scope,
+            deadline: mem.deadline,
+            userId: mem.user_id,
+            createdAt: mem.created_at,
+          },
+        };
+      });
 
       try {
         await memwright.batchAdd(requests);
@@ -113,20 +105,23 @@ async function main() {
     }
 
     if (memories.length > 0) {
-      const memRequests = memories.map((mem: any) => ({
-        content: mem.content,
-        namespace,
-        category: detectCategory(mem.content),
-        tags: [mem.type, mem.scope].filter(Boolean),
-        metadata: {
-          originalId: mem.id,
-          type: mem.type,
-          scope: mem.scope,
-          deadline: mem.deadline,
-          userId: mem.user_id ?? userId,
-          createdAt: mem.created_at,
-        },
-      }));
+      const memRequests = memories.map((mem: any) => {
+        const isGoal = mem.type === "goal";
+        return {
+          content: mem.content,
+          namespace,
+          category: isGoal ? "goal" : detectFactCategory(mem.content),
+          tags: isGoal ? ["goal"] : [mem.type, mem.scope].filter(Boolean),
+          metadata: {
+            originalId: mem.id,
+            type: mem.type,
+            scope: mem.scope,
+            deadline: mem.deadline,
+            userId: mem.user_id ?? userId,
+            createdAt: mem.created_at,
+          },
+        };
+      });
 
       try {
         await memwright.batchAdd(memRequests);
@@ -156,7 +151,7 @@ async function main() {
         content: `[${msg.role}] ${msg.content}`,
         namespace,
         category: "conversation",
-        tags: ["message", msg.role, msg.channel].filter(Boolean),
+        tags: [msg.role].filter(Boolean),
         metadata: {
           originalId: msg.id,
           role: msg.role,
