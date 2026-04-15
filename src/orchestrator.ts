@@ -505,7 +505,7 @@ export async function handleApproval(
 
     // Aggregate
     const aggregated = await aggregate(pending.originalText, allResults);
-    const processed = await processMemoryIntents(pending.supabase, aggregated, pending.user.id, pending.user.timezone);
+    const processed = await processMemoryIntents(pending.supabase, aggregated, pending.user.id, pending.user.timezone, { agentSlug: "planner", sessionId: pending.requestId });
     await _saveMessage("assistant", processed, pending.user.id);
 
     // Deliver workspace files before text response
@@ -1030,7 +1030,7 @@ export function orchestrate(
       await handleRevision(ctx, text, user, supabase, revSession);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
-      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { sessionId: requestId }),
       userId: user.id,
     });
     return;
@@ -1058,7 +1058,7 @@ export function orchestrate(
           orchestrateMain(ctx, text, user, supabase, requestId);
           return "__SKIP__";
         }
-        return processMemoryIntents(supabase, raw, user.id, user.timezone);
+        return processMemoryIntents(supabase, raw, user.id, user.timezone, { sessionId: requestId });
       },
       userId: user.id,
     });
@@ -1097,7 +1097,7 @@ function orchestrateMain(
     }, {
       postProcess: async (raw) => {
         if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
-        return processMemoryIntents(supabase, raw, user.id, user.timezone);
+        return processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId });
       },
       userId: user.id,
     });
@@ -1113,7 +1113,7 @@ function orchestrateMain(
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
-      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
       userId: user.id,
     });
     return;
@@ -1127,7 +1127,7 @@ function orchestrateMain(
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
-      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
       userId: user.id,
     });
     return;
@@ -1141,7 +1141,7 @@ function orchestrateMain(
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
-      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
       userId: user.id,
     });
     return;
@@ -1155,7 +1155,7 @@ function orchestrateMain(
       await routeComplex(ctx, text, user, supabase, plan, "generic", requestId);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
-      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone),
+      postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
       userId: user.id,
     });
     return;
@@ -1178,7 +1178,7 @@ function orchestrateMain(
     if (classification.type === "simple") {
       const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
         getRelevantContext(supabase, text, user.id),
-        getMemoryContext(supabase, user.id),
+        getMemoryContext(supabase, user.id, 1500),
         getRecentHistory(supabase, user.id),
         getTaskContext(supabase, user.id),
         getScheduleContext(supabase, user.id, user.timezone),
@@ -1210,7 +1210,7 @@ function orchestrateMain(
   }, {
     postProcess: async (raw) => {
       if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
-      return processMemoryIntents(supabase, raw, user.id, user.timezone);
+      return processMemoryIntents(supabase, raw, user.id, user.timezone, { sessionId: requestId });
     },
     userId: user.id,
   });
@@ -1229,7 +1229,7 @@ function routeSimple(
   _runTask(ctx as Context, text.substring(0, 50), async () => {
     const [relevantContext, memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
       getRelevantContext(supabase, text, user.id),
-      getMemoryContext(supabase, user.id),
+      getMemoryContext(supabase, user.id, 1500),
       getRecentHistory(supabase, user.id),
       getTaskContext(supabase, user.id),
       getScheduleContext(supabase, user.id, user.timezone),
@@ -1239,7 +1239,7 @@ function routeSimple(
       hint: text,
     };
   }, {
-    postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone),
+    postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone, {}),
   });
 }
 
@@ -1452,7 +1452,7 @@ async function routeComplex(
       const allSucceeded = results.every((r) => r.success);
 
       const aggregated = await aggregate(text, results);
-      const processed = await processMemoryIntents(supabase, aggregated, user.id, user.timezone);
+      const processed = await processMemoryIntents(supabase, aggregated, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId });
       await _saveMessage("assistant", processed, user.id);
 
       // Final checklist update with completion timestamp
