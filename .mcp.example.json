@@ -106,7 +106,7 @@
     },
     "memwright": {
       "type": "stdio",
-      "command": "python",
+      "command": "python3",
       "args": ["-m", "agent_memory.mcp.server"],
       "env": {
         "MEMWRIGHT_DATA_DIR": "${MEMWRIGHT_DATA_DIR}"

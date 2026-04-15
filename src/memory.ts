@@ -225,7 +225,7 @@ export async function processMemoryIntents(
       entity: match[1],
       limit: 1,
     });
-    const first = results[0] as { id?: string } | undefined;
+    const first = results[0];
     if (first?.id) await memwright.forget(first.id);
     clean = clean.replace(match[0], "");
   }

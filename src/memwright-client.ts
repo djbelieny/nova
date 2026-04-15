@@ -16,6 +16,12 @@ interface RecallResult {
   memory?: { category?: string; [key: string]: unknown };
 }
 
+interface SearchResult {
+  id: string;
+  content: string;
+  [key: string]: unknown;
+}
+
 interface ApiResponse<T = unknown> {
   ok: boolean;
   data?: T;
@@ -29,11 +35,14 @@ class MemwrightClient {
   }
 
   async add(req: AddRequest): Promise<{ id: string } | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
     try {
       const response = await fetch(`${this.baseUrl}/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(req),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -53,6 +62,8 @@ class MemwrightClient {
     } catch (err) {
       console.warn(`[memwright] add error: ${err instanceof Error ? err.message : String(err)}`);
       return null;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -60,6 +71,8 @@ class MemwrightClient {
     query: string,
     opts: { namespace: string; budget?: number }
   ): Promise<RecallResult[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
     try {
       const body: Record<string, unknown> = {
         query,
@@ -71,6 +84,7 @@ class MemwrightClient {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -92,6 +106,8 @@ class MemwrightClient {
         `[memwright] recall error: ${err instanceof Error ? err.message : String(err)}`
       );
       return [];
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -100,7 +116,9 @@ class MemwrightClient {
     category?: string;
     entity?: string;
     limit?: number;
-  }): Promise<unknown[]> {
+  }): Promise<SearchResult[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
     try {
       const body: Record<string, unknown> = {
         namespace: opts.namespace,
@@ -113,6 +131,7 @@ class MemwrightClient {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -122,18 +141,20 @@ class MemwrightClient {
         return [];
       }
 
-      const result: ApiResponse<unknown[]> = await response.json();
+      const result: ApiResponse<SearchResult[]> = await response.json();
       if (!result.ok || !Array.isArray(result.data)) {
         console.warn(`[memwright] search returned invalid data`);
         return [];
       }
 
-      return result.data;
+      return (result.data as SearchResult[]) ?? [];
     } catch (err) {
       console.warn(
         `[memwright] search error: ${err instanceof Error ? err.message : String(err)}`
       );
       return [];
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -148,11 +169,14 @@ class MemwrightClient {
   }
 
   async forget(memoryId: string): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
     try {
       const response = await fetch(`${this.baseUrl}/forget`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ memory_id: memoryId }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -175,12 +199,18 @@ class MemwrightClient {
         `[memwright] forget error: ${err instanceof Error ? err.message : String(err)}`
       );
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
   async health(): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
     try {
-      const response = await fetch(`${this.baseUrl}/health`);
+      const response = await fetch(`${this.baseUrl}/health`, {
+        signal: controller.signal,
+      });
 
       if (!response.ok) {
         return false;
@@ -193,6 +223,8 @@ class MemwrightClient {
         `[memwright] health check error: ${err instanceof Error ? err.message : String(err)}`
       );
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
@@ -201,4 +233,4 @@ export const memwright = new MemwrightClient(
   process.env.MEMWRIGHT_URL ?? "http://localhost:8765"
 );
 
-export { MemwrightClient, AddRequest, RecallResult };
+export { MemwrightClient, AddRequest, RecallResult, SearchResult };
