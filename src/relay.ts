@@ -320,6 +320,7 @@ function invalidateUserCache(platformId?: string): void {
 
 function getSessionKey(userId: string, channel: string): string {
   const now = new Date();
+  // 6 buckets of 4 hours each per UTC day (hours 0–3, 4–7, ..., 20–23)
   const bucket = Math.floor(now.getUTCHours() / 4);
   return `${userId}-${channel}-${now.toISOString().slice(0, 10)}-b${bucket}`;
 }
@@ -1034,7 +1035,7 @@ function runTask(
           opts.userId,
           opts.sessionKey,
           opts.userMessage || "",
-          response
+          rawResponse
         );
       }
 
@@ -1591,14 +1592,16 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       const memoryMode = isMemoryIntent(caption);
       await saveMessage("user", `[Image]: ${caption}`, user.id, undefined, msg.channelType);
 
+      const imageSessionKey = getSessionKey(user!.id, msg.channelType);
       runTask(ctx, `Image: ${caption.substring(0, 40)}`, async () => {
-        const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+        const [memoryContext, sessionSummary, taskContext, scheduleContext] = await Promise.all([
           getMemoryContext(supabase, user!.id),
-          getRecentHistory(supabase, user!.id),
+          getSessionSummaryContext(supabase, user!.id, imageSessionKey),
           getTaskContext(supabase, user!.id),
           getScheduleContext(supabase, user!.id, user!.timezone),
         ]);
-        const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
+        const recentHistory = await getRecentHistory(supabase, user!.id, sessionSummary ? 5 : 12);
+        const contextPrefix = [memoryContext, taskContext, scheduleContext, sessionSummary, recentHistory].filter(Boolean).join("\n\n");
         const prompt = memoryMode
           ? buildMemoryExtractionPrompt(filePath, `image_${fileId}.jpg`, caption)
           : (contextPrefix ? contextPrefix + "\n\n" : "") + `[Image: ${filePath}]\n\n${caption}`;
@@ -1608,6 +1611,9 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
           setTimeout(() => unlink(filePath).catch(() => {}), 10 * 60 * 1000);
           return processMemoryIntents(supabase, raw, user!.id, user!.timezone);
         },
+        userId: user!.id,
+        sessionKey: imageSessionKey,
+        userMessage: caption,
       });
     } catch (error) {
       console.error("Image error:", error);
@@ -1638,14 +1644,16 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       const memoryMode = isMemoryIntent(caption);
       await saveMessage("user", `[Document: ${msg.document.filename}]: ${caption}`, user.id, undefined, msg.channelType);
 
+      const docSessionKey = getSessionKey(user!.id, msg.channelType);
       runTask(ctx, `Doc: ${msg.document.filename}`, async () => {
-        const [memoryContext, recentHistory, taskContext, scheduleContext] = await Promise.all([
+        const [memoryContext, sessionSummary, taskContext, scheduleContext] = await Promise.all([
           getMemoryContext(supabase, user!.id),
-          getRecentHistory(supabase, user!.id),
+          getSessionSummaryContext(supabase, user!.id, docSessionKey),
           getTaskContext(supabase, user!.id),
           getScheduleContext(supabase, user!.id, user!.timezone),
         ]);
-        const contextPrefix = [memoryContext, taskContext, scheduleContext, recentHistory].filter(Boolean).join("\n\n");
+        const recentHistory = await getRecentHistory(supabase, user!.id, sessionSummary ? 5 : 12);
+        const contextPrefix = [memoryContext, taskContext, scheduleContext, sessionSummary, recentHistory].filter(Boolean).join("\n\n");
         const prompt = memoryMode
           ? buildMemoryExtractionPrompt(filePath, msg.document!.filename || "document", caption)
           : (contextPrefix ? contextPrefix + "\n\n" : "") + `[File: ${filePath}]\n\n${caption}`;
@@ -1660,6 +1668,9 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
           }
           return processMemoryIntents(supabase, raw, user!.id, user!.timezone);
         },
+        userId: user!.id,
+        sessionKey: docSessionKey,
+        userMessage: caption,
       });
     } catch (error) {
       console.error("Document error:", error);
