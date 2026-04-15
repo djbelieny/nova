@@ -401,6 +401,16 @@ class SharedDatabase {
         updated_at      TEXT DEFAULT (datetime('now'))
       )
     `);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS short_term_memories (
+        id         TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        promoted   INTEGER DEFAULT 0
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_stm_expires ON short_term_memories(expires_at, promoted)`);
   }
 
   close(): void {
@@ -773,6 +783,18 @@ class UserDatabase {
       )
     `);
     this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_prep_unique ON queued_prep_tasks(user_id, calendar_event_id, rule_id)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS session_summaries (
+        id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        user_id      TEXT NOT NULL,
+        session_key  TEXT NOT NULL,
+        summary      TEXT NOT NULL,
+        last_updated TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, session_key)
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_session_summaries_user ON session_summaries(user_id, last_updated DESC)`);
 
     // Memory extensions for goal engine
     try { this.db.run(`ALTER TABLE memory ADD COLUMN last_reviewed_at TEXT`); } catch {}
@@ -3120,6 +3142,59 @@ export class Database {
     udb.db.run(`
       UPDATE memory SET last_reviewed_at = datetime('now'), progress_notes = ? WHERE id = ?
     `, [JSON.stringify(notes.slice(-20)), memoryId]); // keep last 20
+  }
+
+  // ============================================================
+  // Session Summaries (→ user DB)
+  // ============================================================
+
+  upsertSessionSummary(userId: string, sessionKey: string, summary: string): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(`
+      INSERT INTO session_summaries(user_id, session_key, summary, last_updated)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(user_id, session_key) DO UPDATE SET
+        summary = excluded.summary,
+        last_updated = datetime('now')
+    `, [userId, sessionKey, summary]);
+  }
+
+  getSessionSummary(userId: string, sessionKey: string): { summary: string } | null {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(`
+      SELECT summary FROM session_summaries
+      WHERE user_id = ? AND session_key = ? AND last_updated > datetime('now', '-4 hours')
+      LIMIT 1
+    `).get(userId, sessionKey) as { summary: string } | null;
+    return row ?? null;
+  }
+
+  // ============================================================
+  // Short-Term Memories (→ shared.db)
+  // ============================================================
+
+  insertShortTermMemory(userId: string, memwrightId: string, expiresAt: string): void {
+    this.shared.db.run(`
+      INSERT OR IGNORE INTO short_term_memories(id, user_id, expires_at) VALUES (?, ?, ?)
+    `, [memwrightId, userId, expiresAt]);
+  }
+
+  markShortTermMemoryPromoted(memwrightId: string): boolean {
+    const result = this.shared.db.run(`
+      UPDATE short_term_memories SET promoted = 1 WHERE id = ? AND promoted = 0
+    `, [memwrightId]);
+    return result.changes > 0;
+  }
+
+  getExpiredShortTermMemories(): Array<{ id: string; user_id: string }> {
+    return this.shared.db.query(`
+      SELECT id, user_id FROM short_term_memories
+      WHERE expires_at < datetime('now') AND promoted = 0
+    `).all() as Array<{ id: string; user_id: string }>;
+  }
+
+  deleteShortTermMemory(id: string): void {
+    this.shared.db.run(`DELETE FROM short_term_memories WHERE id = ?`, [id]);
   }
 }
 
