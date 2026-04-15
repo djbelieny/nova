@@ -358,65 +358,41 @@ export async function processMemoryIntents(
  */
 export async function getMemoryContext(
   db: Database | null,
-  userId: string
+  userId: string,
+  budget: number = 3000
 ): Promise<string> {
-  if (!db) return "";
-
   try {
-    const facts = db.getFacts(userId);
-    const goals = db.getActiveGoals(userId);
+    const [userResults, sharedResults] = await Promise.all([
+      memwright.recall("user facts preferences goals context", {
+        namespace: `user:${userId}`,
+        budget: Math.floor(budget * 0.8),
+      }),
+      memwright.recall("shared facts context", {
+        namespace: "nova:shared",
+        budget: Math.floor(budget * 0.2),
+      }),
+    ]);
+
+    const allResults = [...userResults, ...sharedResults];
+    if (!allResults.length) return "";
+
+    // Separate goals from facts for display
+    const goals = allResults.filter(r => {
+      const mem = r as { memory?: { category?: string } };
+      return mem.memory?.category === "goal";
+    });
+    const facts = allResults.filter(r => {
+      const mem = r as { memory?: { category?: string } };
+      return mem.memory?.category !== "goal";
+    });
 
     const parts: string[] = [];
-    const idsToUpdate: string[] = [];
 
-    if (facts?.length) {
-      // Cap at 50 most-recently-accessed facts
-      const capped = facts.slice(0, 50);
-      capped.forEach((f: any) => idsToUpdate.push(f.id));
-
-      // Group by category so the model parses context faster and
-      // similar facts cluster together (better retrieval, fewer tokens wasted on headers)
-      const groups: Record<string, string[]> = {};
-      for (const f of capped) {
-        const cat = detectFactCategory(f.content);
-        (groups[cat] ??= []).push(f.content);
-      }
-
-      // Emit as a compact, grouped block — no separate FACTS header per group
-      const ORDER = ["identity", "business", "product", "finance", "contact", "preferences", "people", "general"];
-      const factLines: string[] = [];
-      for (const cat of ORDER) {
-        if (!groups[cat]?.length) continue;
-        // For identity/contact/preferences, inline them on one row per group
-        if (["identity", "contact"].includes(cat) && groups[cat].length <= 4) {
-          factLines.push(groups[cat].join(" | "));
-        } else {
-          for (const fact of groups[cat]) factLines.push(fact);
-        }
-      }
-      if (facts.length > 50) factLines.push(`+${facts.length - 50} more`);
-      parts.push("FACTS:\n" + factLines.map(l => `- ${l}`).join("\n"));
+    if (facts.length) {
+      parts.push("FACTS:\n" + facts.map(r => `- ${r.content}`).join("\n"));
     }
-
-    if (goals?.length) {
-      const cappedGoals = goals.slice(0, 15);
-      cappedGoals.forEach((g: any) => idsToUpdate.push(g.id));
-      // Summarize any verbose legacy goals on the fly (won't re-summarize already-short entries)
-      const goalLines = await Promise.all(cappedGoals.map(async (g: any) => {
-        const deadline = g.deadline
-          ? ` → ${new Date(g.deadline).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
-          : "";
-        const content = g.content.length > 120
-          ? await summarizeForStorage(g.content, "goal")
-          : g.content;
-        return `- ${content}${deadline}`;
-      }));
-      if (goals.length > 15) goalLines.push(`- +${goals.length - 15} more goals`);
-      parts.push("GOALS:\n" + goalLines.join("\n"));
-    }
-
-    if (idsToUpdate.length > 0) {
-      db.updateMultipleMemoryAccessTimes(idsToUpdate);
+    if (goals.length) {
+      parts.push("GOALS:\n" + goals.map(r => `- ${r.content}`).join("\n"));
     }
 
     return parts.join("\n\n");
@@ -523,8 +499,7 @@ export async function getRecentHistory(
 }
 
 /**
- * Semantic search for relevant past messages.
- * Generates embedding locally and calls pgvector match functions via Supabase RPC.
+ * Semantic search for relevant past memories via Memwright ranked recall.
  */
 export async function getRelevantContext(
   db: Database | null,
@@ -534,38 +509,21 @@ export async function getRelevantContext(
   if (!db) return "";
 
   try {
-    const { semanticSearch } = await import("./embeddings.ts");
-    const data = await semanticSearch(query, {
-      table: "messages",
-      matchCount: 5,
-      userId,
+    const results = await memwright.recall(query, {
+      namespace: `user:${userId}`,
+      budget: 1000,
     });
 
-    if (!data?.length) {
-      return "";
-    }
+    if (!results.length) return "";
 
-    // Summarise each result to its first complete sentence or 200 chars.
-    // Semantic search already found the most relevant messages — we only need
-    // their key point, not the full text.
-    const MAX_RELEVANT_CHARS = 200;
     return (
       "RELEVANT PAST:\n" +
-      data
-        .map((m: any) => {
-          let content = (m.content || "").trim();
-          if (content.length > MAX_RELEVANT_CHARS) {
-            const firstSentence = content.split(/[.!?\n]/)[0].trim();
-            content = firstSentence.length >= 20 && firstSentence.length <= MAX_RELEVANT_CHARS
-              ? firstSentence + "."
-              : content.slice(0, content.lastIndexOf(" ", MAX_RELEVANT_CHARS) || MAX_RELEVANT_CHARS).trim();
-          }
-          return `[${m.role}]: ${content}`;
-        })
+      results
+        .map(r => `- ${r.content}`)
         .join("\n")
     );
   } catch (error) {
-    console.warn("Semantic search unavailable:", error);
+    console.warn("Relevant context error:", error);
     return "";
   }
 }
