@@ -19,6 +19,7 @@
     "miniapp": "bun run src/miniapp.ts",
     "miniapp:dev": "bun run --watch src/miniapp.ts",
     "migrate:supabase": "bun run scripts/migrate-supabase.ts",
+    "migrate:memwright": "bun run scripts/migrate-memories-to-memwright.ts",
     "exec": "bun run src/executive-node.ts",
     "exec:ceo": "bun run --env-file=.env.ceo --env-file=.env src/executive-node.ts --role ceo",
     "exec:cfo": "bun run --env-file=.env.cfo --env-file=.env src/executive-node.ts --role cfo",
