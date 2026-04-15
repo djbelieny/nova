@@ -14,6 +14,7 @@ import { spawn } from "bun";
 import { writeFile, mkdir, readFile, unlink, stat } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
 import { getDb, type Database, embeddingToBlob } from "./db.ts";
+import { memwright } from "./memwright-client.ts";
 import { transcribe } from "./transcribe.ts";
 import { trackCost, initCostTracker } from "./cost-tracker.ts";
 import {
@@ -333,6 +334,15 @@ async function saveMessage(
       user_id: userId,
       embedding: embedding || null,
     });
+    if (role === "user" || role === "assistant") {
+      memwright.add({
+        content,
+        namespace: `user:${userId}`,
+        category: "conversation",
+        tags: [role],
+        metadata: { role, channel },
+      });
+    }
   } catch (error) {
     console.error("DB save error:", error);
   }
@@ -3192,6 +3202,15 @@ if (MINIAPP_URL && telegramAdapter) {
 // Initialize event bus for structured observability
 initEventBus({ db: supabase, digestIntervalMs: 15 * 60 * 1000 });
 startStallDetection();
+
+// Memwright memory service health check (non-blocking)
+memwright.health().then(ok => {
+  if (ok) {
+    console.log("[memwright] Connected");
+  } else {
+    console.warn("[memwright] Service unavailable — memory context degraded. Start with: uvicorn agent_memory.api:app --port 8765");
+  }
+});
 
 // Daily data retention cleanup (logs: 30d, cost_tracking: 90d)
 setInterval(() => {
