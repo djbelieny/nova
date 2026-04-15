@@ -15,9 +15,9 @@ interface RecallResult {
   id: string;
 }
 
-interface ApiResponse<T> {
+interface ApiResponse<T = unknown> {
   ok: boolean;
-  data: T;
+  data?: T;
 }
 
 class MemwrightClient {
@@ -63,11 +63,8 @@ class MemwrightClient {
       const body: Record<string, unknown> = {
         query,
         namespace: opts.namespace,
+        ...(opts.budget !== undefined && { budget: opts.budget }),
       };
-
-      if (opts.budget !== undefined) {
-        body.budget = opts.budget;
-      }
 
       const response = await fetch(`${this.baseUrl}/recall`, {
         method: "POST",
@@ -102,23 +99,14 @@ class MemwrightClient {
     category?: string;
     entity?: string;
     limit?: number;
-  }): Promise<any[]> {
+  }): Promise<unknown[]> {
     try {
       const body: Record<string, unknown> = {
         namespace: opts.namespace,
+        ...(opts.category !== undefined && { category: opts.category }),
+        ...(opts.entity !== undefined && { entity: opts.entity }),
+        ...(opts.limit !== undefined && { limit: opts.limit }),
       };
-
-      if (opts.category !== undefined) {
-        body.category = opts.category;
-      }
-
-      if (opts.entity !== undefined) {
-        body.entity = opts.entity;
-      }
-
-      if (opts.limit !== undefined) {
-        body.limit = opts.limit;
-      }
 
       const response = await fetch(`${this.baseUrl}/search`, {
         method: "POST",
@@ -133,7 +121,7 @@ class MemwrightClient {
         return [];
       }
 
-      const result: ApiResponse<any[]> = await response.json();
+      const result: ApiResponse<unknown[]> = await response.json();
       if (!result.ok || !Array.isArray(result.data)) {
         console.warn(`[memwright] search returned invalid data`);
         return [];
@@ -152,15 +140,9 @@ class MemwrightClient {
     requests: AddRequest[],
     concurrency: number = 10
   ): Promise<void> {
-    try {
-      for (let i = 0; i < requests.length; i += concurrency) {
-        const chunk = requests.slice(i, i + concurrency);
-        await Promise.all(chunk.map((req) => this.add(req)));
-      }
-    } catch (err) {
-      console.warn(
-        `[memwright] batchAdd error: ${err instanceof Error ? err.message : String(err)}`
-      );
+    for (let i = 0; i < requests.length; i += concurrency) {
+      const chunk = requests.slice(i, i + concurrency);
+      await Promise.all(chunk.map((req) => this.add(req)));
     }
   }
 
@@ -186,7 +168,7 @@ class MemwrightClient {
         return false;
       }
 
-      return result.data.forgotten;
+      return result.data?.forgotten ?? false;
     } catch (err) {
       console.warn(
         `[memwright] forget error: ${err instanceof Error ? err.message : String(err)}`
