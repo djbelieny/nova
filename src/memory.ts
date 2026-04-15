@@ -13,6 +13,7 @@
 
 import type { Database } from "./db.ts";
 import { memwright } from "./memwright-client.ts";
+import type { RecallResult } from "./memwright-client.ts";
 
 /** Escape SQL LIKE/ILIKE wildcards to prevent wildcard injection. */
 function escapeIlike(text: string): string {
@@ -31,6 +32,71 @@ let _summarizeAI: SummarizeAI | null = null;
  */
 export function initMemorySummarizer(callAI: SummarizeAI): void {
   _summarizeAI = callAI;
+}
+
+// ── Session summarizer (optional — injected from relay.ts at startup) ──
+// Maintains a compact working memory summary for each active session.
+let _sessionSummarizer: ((prompt: string, model: string) => Promise<string>) | null = null;
+
+/**
+ * Wire in an AI caller for session summary updates.
+ * Call once from relay.ts after providers are registered.
+ */
+export function initSessionSummarizer(
+  callAI: (prompt: string, model: string) => Promise<string>
+): void {
+  _sessionSummarizer = callAI;
+}
+
+/**
+ * Read the current session summary and format it for prompt injection.
+ */
+export async function getSessionSummaryContext(
+  db: Database | null,
+  userId: string,
+  sessionKey: string
+): Promise<string> {
+  if (!db) return "";
+  const row = db.getSessionSummary(userId, sessionKey);
+  if (!row) return "";
+  const summary = row.summary.slice(0, 600); // safety cap
+  return `CURRENT SESSION:\n${summary}`;
+}
+
+/**
+ * Fire-and-forget session summary update after each exchange.
+ * Keeps a rolling working memory of what happened this session.
+ */
+export function updateSessionSummaryAsync(
+  db: Database | null,
+  userId: string,
+  sessionKey: string,
+  userMessage: string,
+  assistantResponse: string
+): void {
+  if (!db || !_sessionSummarizer) return;
+
+  const existing = db.getSessionSummary(userId, sessionKey);
+
+  const prompt = `You are maintaining a compact working memory summary for an AI assistant session.
+
+Existing summary (may be empty for new sessions):
+${existing?.summary || "(none yet)"}
+
+Latest exchange:
+User: ${userMessage.slice(0, 500)}
+Assistant: ${assistantResponse.slice(0, 800)}
+
+Update the working memory summary. Keep it under 200 words. Format exactly:
+Current session: [topic in 5 words]. Key context: [2-3 key facts established this session]. User is working on: [current goal or task]. Last exchange: [one sentence summary of what just happened].
+
+Output ONLY the updated summary text, nothing else.`;
+
+  _sessionSummarizer(prompt, "haiku")
+    .then(summary => {
+      db.upsertSessionSummary(userId, sessionKey, summary.trim());
+    })
+    .catch(err => console.warn("[session-summary] Update failed:", err));
 }
 
 /**
@@ -508,6 +574,17 @@ export async function getRelevantContext(
 
     if (!results.length) return "";
 
+    // Promote short-term memories that get recalled — atomically via SQLite lock
+    for (const r of results) {
+      const meta = (r as any).memory?.metadata as Record<string, unknown> | undefined;
+      if (meta?.short_term === true && meta?.promoted !== true) {
+        const locked = db?.markShortTermMemoryPromoted(r.id);
+        if (locked) {
+          promoteToLongTerm(r, userId); // fire-and-forget
+        }
+      }
+    }
+
     return (
       "RELEVANT PAST:\n" +
       results
@@ -624,6 +701,27 @@ export async function getDecisionContext(
     console.warn("Decision context error:", error);
     return "";
   }
+}
+
+/**
+ * Promote a short-term memory to long-term by re-adding it without the short_term flag.
+ * The original short-term entry expires naturally via the pruning sweep in memory-review.ts.
+ * Not exported — called only from getRelevantContext promotion loop.
+ */
+function promoteToLongTerm(result: RecallResult, userId: string): void {
+  const meta = (result as any).memory?.metadata as Record<string, unknown> | undefined;
+  memwright.add({
+    content: result.content,
+    namespace: `user:${userId}`,
+    category: (result.memory?.category as string) || "conversation",
+    tags: ["promoted"],
+    metadata: {
+      ...meta,
+      short_term: false,
+      promoted: true,
+      promoted_at: new Date().toISOString(),
+    },
+  }).catch(err => console.warn("[memory] Short-term promotion failed:", err));
 }
 
 /**
