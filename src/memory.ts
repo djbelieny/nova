@@ -12,8 +12,7 @@
  */
 
 import type { Database } from "./db.ts";
-import { generateEmbedding } from "./embeddings.ts";
-import { embeddingToBlob } from "./db.ts";
+import { memwright } from "./memwright-client.ts";
 
 /** Escape SQL LIKE/ILIKE wildcards to prevent wildcard injection. */
 function escapeIlike(text: string): string {
@@ -174,71 +173,59 @@ export async function processMemoryIntents(
   db: Database | null,
   response: string,
   userId: string,
-  userTimezone?: string
+  userTimezone?: string,
+  agentContext?: { agentSlug?: string; sessionId?: string }
 ): Promise<string> {
   if (!db) return response;
 
   let clean = response;
 
-  // [REMEMBER: fact to store] — summarize before storing, with duplicate detection
+  // [REMEMBER: fact to store] — summarize before storing
   for (const match of response.matchAll(/\[REMEMBER:\s*(.+?)\]/gi)) {
     const fact = await summarizeForStorage(match[1], "fact");
-    // Check for existing similar fact using the summarized version
-    const existing = db.findMemoryByContent(userId, "fact", fact.substring(0, 80));
-
-    if (!existing) {
-      const emb = await generateEmbedding(fact);
-      db.insertMemory({
-        type: "fact",
-        content: fact,
-        user_id: userId,
-        scope: "private",
-        embedding: emb || undefined,
-      });
-    }
+    await memwright.add({
+      content: fact,
+      namespace: `user:${userId}`,
+      category: detectFactCategory(fact),
+      metadata: { agentSlug: agentContext?.agentSlug, sessionId: agentContext?.sessionId },
+    });
     clean = clean.replace(match[0], "");
   }
 
   // [SHARE: fact to share with team]
   for (const match of response.matchAll(/\[SHARE:\s*(.+?)\]/gi)) {
     const summarized = await summarizeForStorage(match[1], "fact");
-    const emb = await generateEmbedding(summarized);
-    db.insertMemory({
-      type: "fact",
+    await memwright.add({
       content: summarized,
-      user_id: userId,
-      scope: "shared",
-      embedding: emb || undefined,
+      namespace: "nova:shared",
+      category: detectFactCategory(summarized),
+      metadata: { agentSlug: agentContext?.agentSlug, sessionId: agentContext?.sessionId },
     });
     clean = clean.replace(match[0], "");
   }
 
   // [GOAL: text] or [GOAL: text | DEADLINE: date]
-  for (const match of response.matchAll(
-    /\[GOAL:\s*(.+?)(?:\s*\|\s*DEADLINE:\s*(.+?))?\]/gi
-  )) {
+  for (const match of response.matchAll(/\[GOAL:\s*(.+?)(?:\s*\|\s*DEADLINE:\s*(.+?))?\]/gi)) {
     const summarized = await summarizeForStorage(match[1], "goal");
-    const emb = await generateEmbedding(summarized);
-    db.insertMemory({
-      type: "goal",
+    await memwright.add({
       content: summarized,
-      deadline: match[2] || undefined,
-      user_id: userId,
-      embedding: emb || undefined,
+      namespace: `user:${userId}`,
+      category: "goal",
+      tags: ["goal"],
+      metadata: { deadline: match[2] || null, agentSlug: agentContext?.agentSlug },
     });
     clean = clean.replace(match[0], "");
   }
 
   // [DONE: search text for completed goal]
   for (const match of response.matchAll(/\[DONE:\s*(.+?)\]/gi)) {
-    const goal = db.findMemoryByContent(userId, "goal", match[1]);
-
-    if (goal) {
-      db.updateMemory(goal.id, {
-        type: "completed_goal",
-        completed_at: new Date().toISOString(),
-      });
-    }
+    const results = await memwright.search({
+      namespace: `user:${userId}`,
+      category: "goal",
+      entity: match[1],
+      limit: 1,
+    });
+    if (results[0]) await memwright.forget((results[0] as { id: string }).id);
     clean = clean.replace(match[0], "");
   }
 
