@@ -30,7 +30,7 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
-import { testClaudeAuth, runClaudeOAuthFlow, isAuthError, isAuthPending, type SendFn as ClaudeAuthSendFn } from "./claude-auth.ts";
+import { testClaudeAuth, runClaudeOAuthFlow, startOAuthFlow, handleAuthCodeReply, isAuthError, isAuthPending, type SendFn as ClaudeAuthSendFn } from "./claude-auth.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
@@ -1528,6 +1528,12 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
 
       orchestrate(ctx._raw || ctx, actualText, user, supabase, getSessionKey(user.id, msg.channelType), msg.channelType);
       return;
+    }
+
+    // If a Claude OAuth flow is in progress, check if this message is the auth code
+    if (isAuthPending()) {
+      const consumed = await handleAuthCodeReply(text);
+      if (consumed) return;
     }
 
     await ctx.replyWithChatAction("typing");
