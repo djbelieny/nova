@@ -35,6 +35,10 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # Memory Review — daily 08:00 UTC (3:00 ET)
 0 8 * * * nova cd /opt/nova && bun run services/memory-review.ts >> /var/log/nova-scheduler.log 2>&1
 
+# Dream Mode — nightly at 07:00 UTC (2:00 ET) and 09:00 UTC (4:00 ET) for night owls
+0 7 * * * nova cd /opt/nova && bun run services/dream.ts --idle >> /var/log/nova/dream.log 2>&1
+0 9 * * * nova cd /opt/nova && bun run services/dream.ts --idle >> /var/log/nova/dream.log 2>&1
+
 # Log Monitor — every 8 hours
 0 0,8,16 * * * nova cd /opt/nova && bun run services/log-monitor.ts >> /var/log/nova-scheduler.log 2>&1
 
