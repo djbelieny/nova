@@ -321,7 +321,9 @@ docker compose build
 echo ""
 echo "${BOLD}Starting Nova...${RESET}"
 
-if [ "$(get_env USE_FULL_PROFILE)" = "true" ]; then
+if [ "$(get_env USE_FULL_PROFILE)" = "true" ] && [ -n "$(get_env NOVA_DOMAIN)" ]; then
+  docker compose --profile full --profile https up -d
+elif [ "$(get_env USE_FULL_PROFILE)" = "true" ]; then
   docker compose --profile full up -d
 else
   docker compose up -d

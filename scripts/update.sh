@@ -15,8 +15,15 @@ if [ -f .env ]; then
   USE_FULL_PROFILE=$(grep "^USE_FULL_PROFILE=" .env 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "false")
 fi
 
+NOVA_DOMAIN=""
+if [ -f .env ]; then
+  NOVA_DOMAIN=$(grep "^NOVA_DOMAIN=" .env 2>/dev/null | cut -d= -f2 | tr -d '"' || echo "")
+fi
+
 echo "Restarting services..."
-if [ "$USE_FULL_PROFILE" = "true" ]; then
+if [ "$USE_FULL_PROFILE" = "true" ] && [ -n "$NOVA_DOMAIN" ]; then
+  docker compose --profile full --profile https up -d
+elif [ "$USE_FULL_PROFILE" = "true" ]; then
   docker compose --profile full up -d
 else
   docker compose up -d

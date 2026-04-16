@@ -109,7 +109,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - nova_workspace:/workspace
-    profiles: [full]
+    profiles: [https]
 
 volumes:
   nova_data:
