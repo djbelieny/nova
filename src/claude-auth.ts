@@ -140,7 +140,7 @@ export async function runClaudeOAuthFlow(send: SendFn, chatId: string): Promise<
   const proc = spawn(["claude", "auth", "login"], {
     stdout: "pipe",
     stderr: "pipe",
-    stdin: "null",
+    stdin: "ignore",
     env: {
       ...process.env,
       // Ensure the CLI knows it's non-interactive and should print the URL
