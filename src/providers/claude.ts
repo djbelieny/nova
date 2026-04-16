@@ -101,11 +101,24 @@ export class ClaudeProvider implements AIProvider {
 
     if (outputFormat === "text") {
       if (exitCode !== 0) {
-        throw new Error(`Claude CLI exited with code ${exitCode}: ${stderr.trim() || "(no stderr)"}`);
+        const err = new Error(`Claude CLI exited with code ${exitCode}: ${stderr.trim() || "(no stderr)"}`);
+        (err as any).exitCode = exitCode;
+        (err as any).stderr = stderr;
+        (err as any).stdout = output;
+        throw err;
       }
       const text = output.trim();
+      // Empty stdout with exit 0 = silent auth failure (CLI tried to open browser, no TTY)
+      if (!text) {
+        const err = new Error("Claude CLI returned empty output (possible auth failure)");
+        (err as any).exitCode = 0;
+        (err as any).stderr = stderr;
+        (err as any).stdout = "";
+        (err as any).isPossibleAuthFailure = true;
+        throw err;
+      }
       return {
-        text: text || "Sorry, I wasn't able to process that. Can you try again?",
+        text,
         model: modelLabel,
         provider: this.name,
         duration_ms: durationMs,
@@ -135,6 +148,9 @@ export class ClaudeProvider implements AIProvider {
 
       const err = new Error(`Claude CLI exited with code ${exitCode}: ${detail}`);
       (err as any).isRateLimit = isRateLimit;
+      (err as any).exitCode = exitCode;
+      (err as any).stderr = stderr;
+      (err as any).stdout = output;
       throw err;
     }
 

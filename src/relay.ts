@@ -808,9 +808,11 @@ async function callAI(prompt: string, model?: LegacyModelTier | ModelTier, userI
     }
 
     // Check if this looks like a Claude auth failure
-    const errMsg = lastError?.message || "";
-    const errStderr = (lastError as any)?.stderr || errMsg;
-    if (isAuthError(errStderr, (lastError as any)?.exitCode ?? 1) && !isAuthPending()) {
+    const errStderr = (lastError as any)?.stderr || lastError?.message || "";
+    const errStdout = (lastError as any)?.stdout ?? "";
+    const errExitCode = (lastError as any)?.exitCode ?? 1;
+    const isPossibleAuth = (lastError as any)?.isPossibleAuthFailure;
+    if ((isPossibleAuth || isAuthError(errStderr, errExitCode, errStdout)) && !isAuthPending()) {
       console.warn("[callAI] Auth error detected — triggering OAuth flow");
       const chatId = userId ? supabase.getUserById(userId)?.telegram_id : process.env.TELEGRAM_USER_ID;
       if (chatId) {

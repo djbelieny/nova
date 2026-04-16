@@ -34,9 +34,25 @@ let _authComplete = process.env.ANTHROPIC_API_KEY ? true : false; // API key →
  * Returns true when stderr / exit code combo strongly suggests an auth failure
  * rather than a runtime error.
  */
-export function isAuthError(stderr: string, exitCode: number): boolean {
-  if (exitCode === 0) return false;
+/**
+ * stdout is the text the provider returned (empty string if no output).
+ * stderr is whatever the CLI printed to stderr.
+ * exitCode is the process exit code.
+ *
+ * Two auth failure modes:
+ *   A) Non-zero exit with auth-related stderr keywords
+ *   B) Exit 0 but stdout is empty — the CLI opened (or tried to open) a
+ *      browser auth flow, had nothing to write to stdout, and exited quietly
+ */
+export function isAuthError(stderr: string, exitCode: number, stdout = ""): boolean {
   const lower = stderr.toLowerCase();
+
+  // Mode B: silent exit 0 with no output
+  if (exitCode === 0 && stdout.trim() === "") return true;
+
+  if (exitCode === 0) return false;
+
+  // Mode A: non-zero with known auth keywords
   return (
     lower.includes("not authenticated") ||
     lower.includes("authentication required") ||
@@ -48,9 +64,7 @@ export function isAuthError(stderr: string, exitCode: number): boolean {
     lower.includes("credentials") ||
     lower.includes("401") ||
     lower.includes("403") ||
-    // Silent exit with no stderr is a common symptom of auth failure when
-    // the CLI tries to open a browser and has nothing to output to
-    (exitCode !== 0 && stderr.trim() === "")
+    stderr.trim() === "" // non-zero exit, empty stderr = silent failure
   );
 }
 
@@ -73,6 +87,8 @@ export async function testClaudeAuth(): Promise<boolean> {
       { stdout: "pipe", stderr: "pipe" },
     );
 
+    // Collect stdout while also enforcing a timeout
+    const stdoutPromise = new Response(proc.stdout).text().catch(() => "");
     const timedOut = await Promise.race<boolean>([
       proc.exited.then(() => false),
       new Promise<boolean>((r) => setTimeout(() => r(true), 20_000)),
@@ -83,7 +99,10 @@ export async function testClaudeAuth(): Promise<boolean> {
       return false;
     }
 
-    const ok = proc.exitCode === 0;
+    const stdout = await stdoutPromise;
+    // Must exit 0 AND return non-empty text — empty stdout with exit 0 means
+    // the CLI tried to open a browser auth flow and got no TTY (auth needed)
+    const ok = proc.exitCode === 0 && stdout.trim().length > 0;
     if (ok) _authComplete = true;
     return ok;
   } catch {
