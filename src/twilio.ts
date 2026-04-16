@@ -568,7 +568,7 @@ async function outputCallResult(
       transcript = (messages as Array<{ role: string; text: string }>)
         .filter((m) => m.text)
         .map((m) => {
-          const speaker = m.role === "user" ? calleeName : "Nova";
+          const speaker = m.role === "user" ? calleeName : NOVA_NAME;
           return `${speaker}: ${m.text}`;
         })
         .join("\n");

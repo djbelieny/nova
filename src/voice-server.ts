@@ -424,7 +424,7 @@ async function sendGuestTranscript(callSid: string, state: CallState): Promise<v
   const turnCount = state.turns.length;
 
   const transcript = state.turns
-    .map((t) => `${t.role === "user" ? "Caller" : "Nova"}: ${t.content}`)
+    .map((t) => `${t.role === "user" ? "Caller" : NOVA_NAME}: ${t.content}`)
     .join("\n");
 
   const message = `📞 Call from ${callerPhone} (${callerName})\nDuration: ${turnCount} turns\n\n${transcript}`;
@@ -612,7 +612,7 @@ interface ExtractedTask {
 
 async function extractTasksFromTranscript(turns: { role: string; content: string }[], userName: string): Promise<ExtractedTask[]> {
   const transcript = turns
-    .map((t) => `${t.role === "user" ? userName : "Nova"}: ${t.content}`)
+    .map((t) => `${t.role === "user" ? userName : NOVA_NAME}: ${t.content}`)
     .join("\n");
 
   const prompt = `Analyze this phone call transcript between ${userName} and Nova (AI assistant).
@@ -1066,7 +1066,7 @@ async function handleGather(body: string): Promise<Response> {
   // Build conversation prompt with full turn history
   const userName = state.isOwner ? (state.user?.name || FALLBACK_USER_NAME) : "Caller";
   const turnHistory = state.turns
-    .map((t) => `${t.role === "user" ? userName : "Nova"}: ${t.content}`)
+    .map((t) => `${t.role === "user" ? userName : NOVA_NAME}: ${t.content}`)
     .join("\n");
 
   const prompt = (state.isOwner

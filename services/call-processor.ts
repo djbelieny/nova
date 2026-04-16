@@ -14,6 +14,7 @@
 import { getDb, type Database } from "../src/db.ts";
 import { emit } from "../src/events.ts";
 import { processMemoryIntents } from "../src/memory.ts";
+import { NOVA_NAME } from "../src/identity.ts";
 
 // ============================================================
 // Types
@@ -165,7 +166,7 @@ function buildNotionPrompt(extracted: ExtractedCall, meta: CallMeta): string {
 
   if (extracted.tasks.length) {
     const taskLines = extracted.tasks.map(t => {
-      const who = t.assignee === "user" ? "You" : t.assignee === "nova" || t.assignee === "unassigned" ? "Nova" : t.assignee;
+      const who = t.assignee === "user" ? "You" : t.assignee === "nova" || t.assignee === "unassigned" ? NOVA_NAME : t.assignee;
       return `- [${who}] ${t.description}`;
     });
     sections.push(`## Action Items\n${taskLines.join("\n")}`);
