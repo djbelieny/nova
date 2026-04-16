@@ -279,7 +279,7 @@ function buildTelegramMessage(
 
   if (executedTasks.length) {
     lines.push("");
-    lines.push("*Nova completed:*");
+    lines.push(`*${NOVA_NAME} completed:*`);
     for (const t of executedTasks) {
       lines.push(`• ${t}`);
     }

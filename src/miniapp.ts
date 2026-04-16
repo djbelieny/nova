@@ -33,6 +33,7 @@ import {
   type ApiKeyProvider,
 } from "./integrations.ts";
 import { WhatsAppManager } from "./whatsapp-manager.ts";
+import { NOVA_NAME } from "./identity.ts";
 
 // ============================================================
 // CONFIGURATION
@@ -689,12 +690,12 @@ function renderOAuthResult(success: boolean, message: string): string {
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<title>Nova — Integration</title>
+<title>${NOVA_NAME} — Integration</title>
 <style>body{background:#0a0a0f;color:#fff;font-family:'Inter',-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;}
 .card{background:rgba(255,255,255,0.055);border-radius:14px;padding:40px;max-width:400px;border:1px solid rgba(255,255,255,0.10);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 4px 24px rgba(0,0,0,0.25);}.icon{font-size:48px;margin-bottom:16px;}.msg{font-size:18px;margin-bottom:24px;color:${color};}
 .hint{font-size:14px;color:#999;}</style></head>
 <body><div class="card"><div class="icon">${emoji}</div><div class="msg">${message.replace(/</g, "&lt;")}</div>
-<div class="hint">You can close this window and return to the Nova app.</div></div></body></html>`;
+<div class="hint">You can close this window and return to the ${NOVA_NAME} app.</div></div></body></html>`;
 }
 
 // ============================================================
@@ -711,7 +712,7 @@ function renderMiniApp(): string {
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <title>Nova</title>
+  <title>${NOVA_NAME}</title>
   <style>
     :root {
       --bg: var(--tg-theme-bg-color, #0a0a0f);
@@ -1321,7 +1322,7 @@ function renderMiniApp(): string {
         <div class="avatar" id="profileAvatar" style="background:#6366f1;">?</div>
         <div class="profile-info">
           <h2 id="profileName">Loading...</h2>
-          <p id="profileRole">Nova User</p>
+          <p id="profileRole">${NOVA_NAME} User</p>
         </div>
       </div>
 
@@ -1749,7 +1750,7 @@ function renderMiniApp(): string {
       if (profileData) {
         var name = profileData.name || 'User';
         document.getElementById('profileName').textContent = name;
-        document.getElementById('profileRole').textContent = profileData.role || 'Nova User';
+        document.getElementById('profileRole').textContent = profileData.role || '${NOVA_NAME} User';
         document.getElementById('profileAvatar').textContent = name.charAt(0).toUpperCase();
         document.getElementById('fieldName').value = profileData.name || '';
         document.getElementById('fieldTimezone').value = profileData.timezone || '';

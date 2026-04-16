@@ -391,7 +391,7 @@ function getGreeting(calleeName: string, langCode?: string): string {
   if (langCode && GREETINGS[langCode]) {
     return GREETINGS[langCode](calleeName, USER_NAME);
   }
-  return `Hi ${calleeName}, this is Nova, ${USER_NAME}'s AI assistant. ${USER_NAME} asked me to give you a call. Do you have a moment?`;
+  return `Hi ${calleeName}, this is ${NOVA_NAME}, ${USER_NAME}'s AI assistant. ${USER_NAME} asked me to give you a call. Do you have a moment?`;
 }
 
 async function makeThirdPartyCall(to: string, calleeName: string, subject: string, language?: string): Promise<void> {

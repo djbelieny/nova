@@ -8,6 +8,7 @@
 
 import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { stat } from "fs/promises";
+import { NOVA_NAME } from "../identity.ts";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -445,7 +446,7 @@ export class TelegramAdapter implements ChannelAdapter {
   async setMenuButton(url: string): Promise<void> {
     try {
       await this.bot.api.setChatMenuButton({
-        menu_button: { type: "web_app", text: "Nova App", web_app: { url } },
+        menu_button: { type: "web_app", text: `${NOVA_NAME} App`, web_app: { url } },
       });
       console.log(`[telegram] Mini App menu button registered: ${url}`);
     } catch (err: any) {

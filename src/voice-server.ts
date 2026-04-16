@@ -384,7 +384,7 @@ SELF-IMPROVEMENT:
 You learn from every interaction. If ${userName} describes a recurring task or workflow during the call, or asks you to create a skill, note it as a task. After the call, you'll use /skill-creator to build reusable skills that automate repetitive workflows.
 
 PERSONALITY:
-- You're Nova — confident, direct, helpful
+- You're ${NOVA_NAME} — confident, direct, helpful
 - Brief and casual by default, more detail when needed
 - You're ${userName}'s trusted assistant — act like it`;
 }
@@ -411,7 +411,7 @@ IMPORTANT BOUNDARIES:
 CURRENT TIME: ${getTimeStr()}
 
 PERSONALITY:
-- You're Nova — warm, helpful, professional
+- You're ${NOVA_NAME} — warm, helpful, professional
 - You're ${userName}'s assistant — represent him well
 - At the end of the conversation, let them know you'll pass their message along to ${userName}`;
 }
@@ -615,9 +615,9 @@ async function extractTasksFromTranscript(turns: { role: string; content: string
     .map((t) => `${t.role === "user" ? userName : NOVA_NAME}: ${t.content}`)
     .join("\n");
 
-  const prompt = `Analyze this phone call transcript between ${userName} and Nova (AI assistant).
+  const prompt = `Analyze this phone call transcript between ${userName} and ${NOVA_NAME} (AI assistant).
 
-Extract ALL actionable tasks that ${userName} asked Nova to do. These are things Nova agreed to handle after the call — things that require using tools (email, calendar, Notion, web search, etc.).
+Extract ALL actionable tasks that ${userName} asked ${NOVA_NAME} to do. These are things ${NOVA_NAME} agreed to handle after the call — things that require using tools (email, calendar, Notion, web search, etc.).
 
 Do NOT include:
 - Things already discussed/resolved during the call
@@ -858,8 +858,8 @@ async function handleIncoming(body: string): Promise<Response> {
   }
 
   const greeting = state.isOwner
-    ? "Hey, it's Nova. What's up?"
-    : `Hi, this is Nova, ${FALLBACK_USER_NAME}'s assistant. How can I help you?`;
+    ? `Hey, it's ${NOVA_NAME}. What's up?`
+    : `Hi, this is ${NOVA_NAME}, ${FALLBACK_USER_NAME}'s assistant. How can I help you?`;
 
   const gather = await playAndGather(`${VOICE_SERVER_URL}/voice/gather`, greeting);
   return twiml(gather);
@@ -897,8 +897,8 @@ async function handleOutgoing(body: string): Promise<Response> {
   }
 
   const welcomeText = state.context
-    ? "Hey, it's Nova. I was actually calling about something — let me tell you what's up."
-    : "Hey, it's Nova. What's up?";
+    ? `Hey, it's ${NOVA_NAME}. I was actually calling about something — let me tell you what's up.`
+    : `Hey, it's ${NOVA_NAME}. What's up?`;
 
   // If there's outgoing call context, generate an opening based on it
   if (state.context) {
@@ -996,7 +996,7 @@ async function handleStreamRequest(body: string): Promise<Response> {
   const wsUrl = `${wsBase}?token=${wsToken}&sid=${encodeURIComponent(callSid)}`;
 
   return twiml(`
-    <Say voice="Polly.Joanna">Connecting to Nova's live stream. This is a beta feature for real-time conversation.</Say>
+    <Say voice="Polly.Joanna">Connecting to ${NOVA_NAME}'s live stream. This is a beta feature for real-time conversation.</Say>
     <Connect>
       <Stream url="${wsUrl}" />
     </Connect>

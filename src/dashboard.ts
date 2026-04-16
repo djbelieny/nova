@@ -239,7 +239,7 @@ function noPasswordWarningPage(): Response {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nova — Dashboard Disabled</title>
+  <title>${NOVA_NAME} — Dashboard Disabled</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -282,7 +282,7 @@ function loginPage(error?: string, returnTo?: string): Response {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nova — Login</title>
+  <title>${NOVA_NAME} — Login</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -375,7 +375,7 @@ function loginPage(error?: string, returnTo?: string): Response {
 </head>
 <body>
   <div class="login-box">
-    <div class="login-logo"><div class="login-logo-badge">N</div><div class="login-logo-text">Nova</div></div>
+    <div class="login-logo"><div class="login-logo-badge">N</div><div class="login-logo-text">${NOVA_NAME}</div></div>
     ${errorHtml}
     <form method="POST" action="${DASHBOARD_BASE}/login">
       ${returnField}
@@ -488,14 +488,14 @@ async function getStatus(): Promise<unknown> {
 
   const services = isMac
     ? [
-        { name: "relay", label: "Nova Core", unit: "com.nova.core" },
+        { name: "relay", label: `${NOVA_NAME} Core`, unit: "com.nova.core" },
         { name: "voice-server", label: "Voice Server", unit: "com.nova.voice-server" },
         { name: "smart-checkin", label: "Smart Check-in", unit: "com.nova.smart-checkin" },
         { name: "morning-briefing", label: "Morning Briefing", unit: "com.nova.morning-briefing" },
         { name: "dashboard", label: "Dashboard", unit: "com.nova.dashboard" },
       ]
     : [
-        { name: "relay", label: "Nova Core", unit: "nova-relay" },
+        { name: "relay", label: `${NOVA_NAME} Core`, unit: "nova-relay" },
         { name: "voice", label: "Voice Server", unit: "nova-voice" },
         { name: "dashboard", label: "Dashboard", unit: "nova-dashboard" },
         { name: "miniapp", label: "Mini App", unit: "nova-miniapp" },
@@ -1310,7 +1310,7 @@ function renderKanban(): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Nova — Kanban Board</title>
+<title>${NOVA_NAME} — Kanban Board</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1544,7 +1544,7 @@ function renderKanban(): string {
 <div class="kb-header">
   <a class="kb-logo" href="${DASHBOARD_BASE}/">
     <div class="kb-logo-badge">N</div>
-    <div><div class="kb-title">Nova</div><div class="kb-subtitle">Kanban</div></div>
+    <div><div class="kb-title">${NOVA_NAME}</div><div class="kb-subtitle">Kanban</div></div>
   </a>
   <a class="kb-back" href="${DASHBOARD_BASE}/">← Dashboard</a>
   <div class="kb-header-right">
@@ -2166,7 +2166,7 @@ function renderDashboard(): string {
 <div class="header">
   <div class="logo">
     <div class="logo-badge">N</div>
-    <div><div class="logo-title">Nova</div><div class="logo-subtitle">Eagle Eye</div></div>
+    <div><div class="logo-title">${NOVA_NAME}</div><div class="logo-subtitle">Eagle Eye</div></div>
   </div>
   <div class="header-info">
     <span><span class="live-dot"></span>Live</span>
@@ -2201,7 +2201,7 @@ function renderDashboard(): string {
   <div class="center-stage">
     <!-- Tab bar -->
     <div class="dock-tabs" id="center-dock-tabs">
-      <button class="dock-tab active" data-panel="nova-dock">Nova</button>
+      <button class="dock-tab active" data-panel="nova-dock">${NOVA_NAME}</button>
       <button class="dock-tab" data-panel="chat-dock">Chat</button>
       <button class="dock-tab" data-panel="messages-dock">History</button>
       <button class="dock-tab" data-panel="agent-tasks-dock">Agent Tasks</button>
