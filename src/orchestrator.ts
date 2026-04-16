@@ -1258,6 +1258,7 @@ function routeSimple(
     };
   }, {
     postProcess: (raw) => processMemoryIntents(supabase, raw, user.id, user.timezone, {}),
+    userId: user.id,
     sessionKey: sessionKey ?? "",
     userMessage: text,
   });

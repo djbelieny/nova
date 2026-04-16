@@ -10,6 +10,7 @@
  *      bun run services/dream.ts --user <id>   (specific user)
  */
 
+import "dotenv/config";
 import { getDb, type Database } from "../src/db.ts";
 import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
 import { ClaudeProvider } from "../src/providers/claude.ts";
