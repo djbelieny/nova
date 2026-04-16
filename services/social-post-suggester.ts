@@ -161,7 +161,7 @@ Format as Markdown with clear separation between the 3 posts.`;
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("Running social post suggester...");
 
   if (!BOT_TOKEN) {

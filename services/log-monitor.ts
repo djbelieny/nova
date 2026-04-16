@@ -272,7 +272,7 @@ NOTIFY: YES | NO
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("Running log monitor...");
 
   if (!BOT_TOKEN || !CHAT_ID) {

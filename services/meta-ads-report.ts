@@ -188,7 +188,7 @@ async function buildReport(): Promise<string> {
 
 // ─── Main ────────────────────────────────────────────────
 
-async function main() {
+export async function main() {
   console.log("Building Meta Ads report...");
 
   if (!BOT_TOKEN || !TELEGRAM_USER_ID) {

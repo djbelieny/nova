@@ -209,7 +209,7 @@ Format as Markdown with clear headers for each opportunity.`;
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("Running lead suggester...");
 
   if (!BOT_TOKEN) {

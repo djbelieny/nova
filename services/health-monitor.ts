@@ -659,7 +659,7 @@ async function autoFix(issue: HealthIssue): Promise<string> {
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("[health-monitor] Starting health checks...");
 
   if (!BOT_TOKEN || !CHAT_ID) {

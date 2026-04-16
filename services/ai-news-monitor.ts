@@ -168,7 +168,7 @@ Create a concise Telegram digest:
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("Running AI news monitor...");
 
   if (!BOT_TOKEN) {
