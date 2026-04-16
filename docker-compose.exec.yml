@@ -1,0 +1,132 @@
+version: "3.9"
+# Executive Board Overlay — 7 AI executive services
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.exec.yml up -d
+# Each role reads from its own .env.{role} file (create from .env.{role}.example)
+
+services:
+  exec-ceo:
+    build: .
+    command: bun run src/executive-node.ts --role ceo
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.ceo
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    depends_on: [relay, memwright]
+
+  exec-cfo:
+    build: .
+    command: bun run src/executive-node.ts --role cfo
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.cfo
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    depends_on: [relay, memwright]
+
+  exec-cmo:
+    build: .
+    command: bun run src/executive-node.ts --role cmo
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.cmo
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    depends_on: [relay, memwright]
+
+  exec-cto:
+    build: .
+    command: bun run src/executive-node.ts --role cto
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.cto
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    depends_on: [relay, memwright]
+
+  exec-coo:
+    build: .
+    command: bun run src/executive-node.ts --role coo
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.coo
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    depends_on: [relay, memwright]
+
+  exec-research:
+    build: .
+    command: bun run src/executive-node.ts --role research
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.research
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    depends_on: [relay, memwright]
+
+  exec-critic:
+    build: .
+    command: bun run src/executive-node.ts --role critic
+    restart: unless-stopped
+    env_file:
+      - .env
+      - .env.critic
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    depends_on: [relay, memwright]
+
+volumes:
+  nova_data:
+    external: true
+  nova_workspace:
+    external: true
+  nova_memwright:
+    external: true

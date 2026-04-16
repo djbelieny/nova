@@ -1,35 +1,15 @@
-csm.07labs.com, nova.07labs.com, novaapp.07labs.com, miniapp.07labs.com, mininova.07labs.com {
-	# Telegram Mini App (default)
-	reverse_proxy localhost:3034
+# Caddyfile for Nova Portability
+# Usage:
+#   Set NOVA_DOMAIN environment variable before starting:
+#   export NOVA_DOMAIN=nova.example.com
+#   docker-compose up -d caddy
+#
+# The domain substitution happens automatically via caddy's env plugin.
+# If NOVA_DOMAIN is not set, caddy will use the literal string.
 
-	# Dashboard under /dashboard
-	handle_path /dashboard/* {
-		reverse_proxy localhost:3033
-	}
-
-	# Voice server under /voice
-	handle /voice/* {
-		reverse_proxy localhost:8080
-	}
-}
-
-nova.1osm.com, mininova.1osm.com {
-	# Voice server (Twilio webhook)
-	handle /voice/* {
-		reverse_proxy localhost:8080
-	}
-
-	# SMS + audio endpoints
-	handle /sms/* {
-		reverse_proxy localhost:8080
-	}
-	handle /audio/* {
-		reverse_proxy localhost:8080
-	}
-	handle /health {
-		reverse_proxy localhost:8080
-	}
-
-	# Fallback to miniapp
-	reverse_proxy localhost:3034
+{$NOVA_DOMAIN} {
+    reverse_proxy /voice/* voice:8080
+    reverse_proxy /miniapp/* miniapp:3034
+    reverse_proxy /dashboard/* dashboard:3033
+    reverse_proxy /webhook/* relay:3000
 }

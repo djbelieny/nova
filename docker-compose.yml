@@ -1,0 +1,119 @@
+version: "3.9"
+
+services:
+  relay:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+      - ${CLAUDE_HOME_DIR:-/tmp/claude-home}:/root/.claude:ro
+      - ${CLAUDE_CONFIG_DIR:-/tmp/claude-config}:/root/.config/@anthropic-ai:ro
+    depends_on:
+      memwright:
+        condition: service_healthy
+
+  memwright:
+    build:
+      context: .
+      dockerfile: Dockerfile.memwright
+    restart: unless-stopped
+    volumes:
+      - nova_memwright:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  scheduler:
+    build: .
+    command: bun run services/scheduler.ts
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+      - MEMWRIGHT_URL=http://memwright:8765
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+      - ${CLAUDE_HOME_DIR:-/tmp/claude-home}:/root/.claude:ro
+      - ${CLAUDE_CONFIG_DIR:-/tmp/claude-config}:/root/.config/@anthropic-ai:ro
+    profiles: [full]
+    depends_on:
+      - relay
+      - memwright
+
+  voice:
+    build: .
+    command: bun run src/voice-server.ts
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+    ports:
+      - "${VOICE_PORT:-8080}:8080"
+    volumes:
+      - nova_data:/data
+      - nova_workspace:/workspace
+    profiles: [full]
+
+  dashboard:
+    build: .
+    command: bun run src/dashboard.ts
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+    ports:
+      - "${DASHBOARD_PORT:-3033}:3033"
+    volumes:
+      - nova_data:/data
+    profiles: [full]
+
+  miniapp:
+    build: .
+    command: bun run src/miniapp.ts
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - NOVA_DATA_DIR=/data
+      - NOVA_WORKSPACE=/workspace
+      - NOVA_DIR=/workspace
+    ports:
+      - "${MINIAPP_PORT:-3034}:3034"
+    volumes:
+      - nova_data:/data
+    profiles: [full]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - nova_workspace:/workspace
+    profiles: [full]
+
+volumes:
+  nova_data:
+  nova_workspace:
+  nova_memwright:
+  claude_config:
+  caddy_data:
