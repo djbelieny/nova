@@ -125,8 +125,5 @@ services:
 
 volumes:
   nova_data:
-    external: true
   nova_workspace:
-    external: true
   nova_memwright:
-    external: true

@@ -7,27 +7,27 @@ RUN apt-get update && apt-get install -y \
     # Playwright browser dependencies
     chromium libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
-    libxrandr2 libgbm1 libasound2 libpangocairo-1.0-0 libpango-1.0-0 \
+    libxrandr2 libgbm1 libasound2t64 libpangocairo-1.0-0 libpango-1.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install claude CLI — works with ANTHROPIC_API_KEY or mounted OAuth credentials
-RUN npm install -g @anthropic-ai/claude-code
+RUN bun install -g @anthropic-ai/claude-code
 
 # Install mcp2cli — on-demand MCP tool bridge used by exec agents
-RUN npm install -g mcp2cli
+RUN bun install -g mcp2cli
 
 # Install gws CLI — Google Workspace CLI
-RUN npm install -g @googleworkspace/cli
+RUN bun install -g @googleworkspace/cli
 
 # Install Python memwright — for the memwright MCP server entry in .mcp.json
 RUN pip3 install memwright --break-system-packages
 
 # Install project dependencies
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Pre-install Playwright Chromium browser
-RUN npx playwright install chromium
+RUN bunx playwright install chromium
 
 # Copy source
 COPY . .
