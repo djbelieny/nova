@@ -1,32 +1,34 @@
 /**
  * Docker Scheduler — replaces config/nova.cron for Docker deployments.
  *
- * Runs all Nova scheduled services at the same UTC times as the system cron.
- * Each service handles its own rate-gating and idempotency.
+ * Spawns each service as a child process (same as cron does) so services
+ * can use process.exit() freely without affecting the scheduler itself.
+ *
+ * All UTC times match config/nova.cron exactly.
  *
  * Run: bun run services/scheduler.ts
  */
 
 import "dotenv/config";
+import { spawn } from "bun";
+import { join, dirname } from "path";
 
-// Import all scheduled services
-import { main as taskDispatcher } from "./task-dispatcher.ts";
-import { main as morningBriefing } from "./morning-briefing.ts";
-import { main as smartCheckin } from "./smart-checkin.ts";
-import { main as aiNewsMonitor } from "./ai-news-monitor.ts";
-import { main as socialPostSuggester } from "./social-post-suggester.ts";
-import { main as leadSuggester } from "./lead-suggester.ts";
-import { main as metaAdsReport } from "./meta-ads-report.ts";
-import { main as memoryReview } from "./memory-review.ts";
-import { main as dream } from "./dream.ts";
-import { main as logMonitor } from "./log-monitor.ts";
-import { main as healthMonitor } from "./health-monitor.ts";
+const SERVICES_DIR = join(dirname(import.meta.path));
 
-async function runSafely(name: string, fn: () => Promise<void>): Promise<void> {
+async function runService(name: string, script: string): Promise<void> {
+  console.log(`[scheduler] Running ${name}...`);
   try {
-    await fn();
+    const proc = spawn(["bun", "run", join(SERVICES_DIR, script)], {
+      stdout: "inherit",
+      stderr: "inherit",
+      env: process.env,
+    });
+    await proc.exited;
+    if (proc.exitCode !== 0) {
+      console.error(`[scheduler] ${name} exited with code ${proc.exitCode}`);
+    }
   } catch (err) {
-    console.error(`[scheduler] ${name} failed:`, err);
+    console.error(`[scheduler] ${name} failed to spawn:`, err);
   }
 }
 
@@ -34,10 +36,10 @@ console.log("[scheduler] Starting Nova Docker Scheduler");
 console.log("[scheduler] All times are UTC, matching config/nova.cron");
 
 // Task dispatcher — every 60 seconds
-setInterval(() => runSafely("task-dispatcher", taskDispatcher), 60_000);
+setInterval(() => runService("task-dispatcher", "task-dispatcher.ts"), 60_000);
 
 // Health monitor — every 30 minutes
-setInterval(() => runSafely("health-monitor", healthMonitor), 30 * 60_000);
+setInterval(() => runService("health-monitor", "health-monitor.ts"), 30 * 60_000);
 
 // All other services — checked every minute via tick
 let lastTickMinute = -1;
@@ -51,7 +53,7 @@ setInterval(async () => {
   const m = now.getUTCMinutes();
 
   // morning-briefing: 14:00
-  if (h === 14 && m === 0) runSafely("morning-briefing", morningBriefing);
+  if (h === 14 && m === 0) runService("morning-briefing", "morning-briefing.ts");
 
   // smart-checkin: 14:00, 15:30, 17:00, 19:00, 21:00, 23:00
   if (
@@ -62,32 +64,32 @@ setInterval(async () => {
     (h === 21 && m === 0) ||
     (h === 23 && m === 0)
   ) {
-    runSafely("smart-checkin", smartCheckin);
+    runService("smart-checkin", "smart-checkin.ts");
   }
 
   // ai-news-monitor: 13:00, 18:00, 23:00
-  if ((h === 13 || h === 18 || h === 23) && m === 0) runSafely("ai-news-monitor", aiNewsMonitor);
+  if ((h === 13 || h === 18 || h === 23) && m === 0) runService("ai-news-monitor", "ai-news-monitor.ts");
 
   // social-post-suggester: 14:30
-  if (h === 14 && m === 30) runSafely("social-post-suggester", socialPostSuggester);
+  if (h === 14 && m === 30) runService("social-post-suggester", "social-post-suggester.ts");
 
   // lead-suggester: 15:00
-  if (h === 15 && m === 0) runSafely("lead-suggester", leadSuggester);
+  if (h === 15 && m === 0) runService("lead-suggester", "lead-suggester.ts");
 
   // meta-ads-report: 13:30
-  if (h === 13 && m === 30) runSafely("meta-ads-report", metaAdsReport);
+  if (h === 13 && m === 30) runService("meta-ads-report", "meta-ads-report.ts");
 
   // memory-review: 8:00
-  if (h === 8 && m === 0) runSafely("memory-review", memoryReview);
+  if (h === 8 && m === 0) runService("memory-review", "memory-review.ts");
 
-  // dream: 7:00, 9:00 (--idle equivalent: rate gate + idle check inside runDreamCycle)
-  if ((h === 7 || h === 9) && m === 0) runSafely("dream", dream);
+  // dream: 7:00, 9:00
+  if ((h === 7 || h === 9) && m === 0) runService("dream", "dream.ts");
 
   // log-monitor: 0:00, 8:00, 16:00
-  if ((h === 0 || h === 8 || h === 16) && m === 0) runSafely("log-monitor", logMonitor);
+  if ((h === 0 || h === 8 || h === 16) && m === 0) runService("log-monitor", "log-monitor.ts");
 }, 60_000);
 
-// Run task-dispatcher immediately on start
-runSafely("task-dispatcher", taskDispatcher);
+// Run task-dispatcher once on startup
+runService("task-dispatcher", "task-dispatcher.ts");
 
 console.log("[scheduler] All jobs scheduled. Waiting...");
