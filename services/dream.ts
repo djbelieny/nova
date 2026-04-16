@@ -19,6 +19,7 @@ import { CodexProvider } from "../src/providers/codex.ts";
 import { GroqProvider } from "../src/providers/groq.ts";
 import { memwright } from "../src/memwright-client.ts";
 import { getMemoryContext } from "../src/memory.ts";
+import { NOVA_NAME } from "../src/identity.ts";
 
 registerProvider(new GroqProvider());
 registerProvider(new ClaudeProvider());
@@ -151,7 +152,7 @@ async function runDreamCycle(db: Database, user: ProactiveUser): Promise<number>
   // 3. Format as User/Nova exchanges, capped at 20,000 chars
   let exchanges = "";
   for (const msg of sorted) {
-    const prefix = msg.role === "user" ? "User" : "Nova";
+    const prefix = msg.role === "user" ? "User" : NOVA_NAME;
     const line = `${prefix}: ${msg.content}\n`;
     if ((exchanges + line).length > 20_000) break;
     exchanges += line;

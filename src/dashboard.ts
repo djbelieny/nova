@@ -18,6 +18,7 @@ import { orchestrate, initOrchestrator, type WebContext } from "./orchestrator.t
 import { transcribe } from "./transcribe.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { registerProvider, getProvider } from "./ai-provider.ts";
+import { NOVA_NAME } from "./identity.ts";
 import { ExecComms } from "./exec-comms.ts";
 import { initBoard, conveneBoard, startBoardPoller } from "./board.ts";
 
@@ -54,7 +55,7 @@ function dashboardBuildPrompt(user: any, userMessage: string): string {
     hour: "2-digit", minute: "2-digit",
   });
 
-  return `You are Nova, a multi-agent AI assistant. Current time: ${timeStr}.
+  return `You are ${NOVA_NAME}, a multi-agent AI assistant. Current time: ${timeStr}.
 
 ## User Message
 ${userMessage}`;

@@ -18,6 +18,7 @@
 import { dirname, join } from "path";
 import { getDb, type Database } from "../src/db.ts";
 import { emit } from "../src/events.ts";
+import { NOVA_NAME } from "../src/identity.ts";
 
 const PROJECT_ROOT = join(dirname(import.meta.path), "..");
 const REVIEW_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
@@ -99,7 +100,7 @@ async function runGoalReviewForUser(user: any): Promise<void> {
     return `ID: ${g.id}\nGoal: ${g.content}\nDeadline: ${g.deadline || "none"}\nLast progress note: ${lastNote || "none"}`;
   }).join("\n\n");
 
-  const prompt = `You are Nova's autonomous goal manager for user: ${user.name}.
+  const prompt = `You are ${NOVA_NAME}'s autonomous goal manager for user: ${user.name}.
 
 Review these active goals and determine which need action right now.
 

@@ -67,6 +67,7 @@ import { getReputationContext, getWeeklyReputationReport, recordTaskOutcome } fr
 import { listProjects, getProjectBrief, createProject } from "./projects.ts";
 import { initCallProcessor, processCallTranscript } from "../services/call-processor.ts";
 import { searchZoomRecordings, processRecordingById, type ZoomMeeting } from "../services/zoom-transcript-poller.ts";
+import { NOVA_NAME } from "./identity.ts";
 
 // Executive board (optional — only active if SUPABASE_URL is configured)
 let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
@@ -1341,8 +1342,8 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       const enabled = await toggleVoiceResponses(supabase, user.id);
       await ctx.reply(
         enabled
-          ? "Voice mode on. You can also toggle this in the Nova Mini App (Profile > Preferences)."
-          : "Voice mode off. You can also toggle this in the Nova Mini App (Profile > Preferences)."
+          ? `Voice mode on. You can also toggle this in the ${NOVA_NAME} Mini App (Profile > Preferences).`
+          : `Voice mode off. You can also toggle this in the ${NOVA_NAME} Mini App (Profile > Preferences).`
       );
       return;
     }
@@ -2207,7 +2208,7 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
 
   // Migrated to Mini App: /adduser, /removeuser, /listusers
   if (command === "/adduser" || command === "/removeuser" || command === "/listusers") {
-    await ctx.reply("This command has moved to the Nova Mini App (Users tab).");
+    await ctx.reply(`This command has moved to the ${NOVA_NAME} Mini App (Users tab).`);
     return true;
   }
 
@@ -2328,7 +2329,7 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
       const duOut = await new Response(duProc.stdout).text();
       await duProc.exited;
       const dataSize = duOut.trim().split(/\s+/)[0];
-      dataLine = `\nNova data: ${dataSize}`;
+      dataLine = `\n${NOVA_NAME} data: ${dataSize}`;
     } catch {}
 
     // AI Providers
@@ -2337,7 +2338,7 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
       ? `\nProviders: ${providerNames.join(", ")}`
       : "";
 
-    const statusMsg = `<b>Nova System Status</b>
+    const statusMsg = `<b>${NOVA_NAME} System Status</b>
 
 <b>Uptime</b>: ${uptimeH}h ${uptimeM}m
 <b>Slots</b>: ${slotsLine}
@@ -2366,10 +2367,10 @@ ${diskLine}${dataLine}
       if (diffOut.trim()) {
         await ctx.reply(`Uncommitted changes:\n${diffOut.trim()}\n\nReloading...`);
       } else {
-        await ctx.reply("Reloading Nova... I'll be back in a few seconds.");
+        await ctx.reply(`Reloading ${NOVA_NAME}... I'll be back in a few seconds.`);
       }
     } catch {
-      await ctx.reply("Reloading Nova... I'll be back in a few seconds.");
+      await ctx.reply(`Reloading ${NOVA_NAME}... I'll be back in a few seconds.`);
     }
     // Give the message time to send, then restart the process
     // launchd (KeepAlive=true) will restart us automatically
@@ -2419,12 +2420,12 @@ ${diskLine}${dataLine}
 
   // Migrated to Mini App: /schedules, /agents
   if (command === "/schedules") {
-    await ctx.reply("Scheduled tasks have moved to the Nova Mini App (Schedules tab).");
+    await ctx.reply(`Scheduled tasks have moved to the ${NOVA_NAME} Mini App (Schedules tab).`);
     return true;
   }
 
   if (command === "/agents") {
-    await ctx.reply("Agent list has moved to the Nova Mini App (Agents tab).");
+    await ctx.reply(`Agent list has moved to the ${NOVA_NAME} Mini App (Agents tab).`);
     return true;
   }
 
@@ -2623,7 +2624,7 @@ ${diskLine}${dataLine}
       }
     } else {
       await ctx.reply(
-        "<b>/zoom search &lt;keywords&gt;</b> — find a recording and add it to Nova's brain\n\nExample: /zoom search client proposal",
+        `<b>/zoom search &lt;keywords&gt;</b> — find a recording and add it to ${NOVA_NAME}'s brain\n\nExample: /zoom search client proposal`,
         { parse_mode: "HTML" }
       );
     }
@@ -3205,7 +3206,7 @@ console.log(`[webhook] Ingestion server on port ${WEBHOOK_PORT}`);
 await loadAgents();
 
 // Startup config validation — report which features are active/disabled
-console.log("Starting Nova (multi-channel mode)...");
+console.log(`Starting ${NOVA_NAME} (multi-channel mode)...`);
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
 
 // Channel status
@@ -3315,7 +3316,7 @@ if (telegramAdapter) {
     const admins = supabase.getUsersByRole("admin");
     if (admins?.length) {
       const adminIds = admins.map((a: any) => a.telegram_id).filter(Boolean);
-      telegramAdapter.notifyAdmins(adminIds, "Nova is back online.");
+      telegramAdapter.notifyAdmins(adminIds, `${NOVA_NAME} is back online.`);
 
       // Recover pending approvals for each admin user
       for (const admin of admins) {

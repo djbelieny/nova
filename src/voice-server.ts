@@ -19,6 +19,7 @@ import { registerProvider, getDefaultProvider } from "./ai-provider.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
 import { CodexProvider } from "./providers/codex.ts";
+import { NOVA_NAME } from "./identity.ts";
 
 // Register AI providers (voice-server runs standalone, not via relay.ts)
 registerProvider(new ClaudeProvider());
@@ -314,7 +315,7 @@ function buildVoiceSystemPrompt(callContext?: string, callUser?: CallUser): stri
   const userName = callUser?.name || FALLBACK_USER_NAME;
   const userTimezone = callUser?.timezone || FALLBACK_USER_TIMEZONE;
   const userProfile = callUser?.profile_text || profile;
-  return `You are Nova, ${userName}'s personal AI assistant, on a live phone call.
+  return `You are ${NOVA_NAME}, ${userName}'s personal AI assistant, on a live phone call.
 
 VOICE CALL PROTOCOL:
 - You are on a real-time voice call — speak naturally and conversationally
@@ -390,7 +391,7 @@ PERSONALITY:
 
 function buildGuestSystemPrompt(callerPhone: string): string {
   const userName = FALLBACK_USER_NAME;
-  return `You are Nova, ${userName}'s AI assistant, on a phone call with a caller (${callerPhone}).
+  return `You are ${NOVA_NAME}, ${userName}'s AI assistant, on a phone call with a caller (${callerPhone}).
 
 VOICE CALL PROTOCOL:
 - You are on a real-time voice call — speak naturally and conversationally
@@ -691,7 +692,7 @@ CRITICAL SAFETY RULES:
 - Log every change in CHANGELOG.md.`;
   }
 
-  const prompt = `You are Nova, ${userName}'s AI assistant. ${userName} asked you to do the following during a phone call. Now execute it using your available tools.
+  const prompt = `You are ${NOVA_NAME}, ${userName}'s AI assistant. ${userName} asked you to do the following during a phone call. Now execute it using your available tools.
 
 TASK: ${task.task}
 ${task.urgent ? "PRIORITY: URGENT — handle this immediately and thoroughly." : ""}${selfEditInstructions}

@@ -16,6 +16,7 @@ import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-pro
 import { ClaudeProvider } from "../src/providers/claude.ts";
 import { GeminiProvider } from "../src/providers/gemini.ts";
 import { CodexProvider } from "../src/providers/codex.ts";
+import { NOVA_NAME } from "../src/identity.ts";
 
 // Register AI providers (log-monitor runs standalone)
 registerProvider(new ClaudeProvider());
@@ -182,7 +183,7 @@ async function analyzeWithClaude(
     )
     .join("\n");
 
-  const prompt = `You are Nova's self-monitoring system. Analyze these new log entries from Nova's background services and take action.
+  const prompt = `You are ${NOVA_NAME}'s self-monitoring system. Analyze these new log entries from ${NOVA_NAME}'s background services and take action.
 
 LOG ENTRIES:
 ${logSections}

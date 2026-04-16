@@ -11,6 +11,7 @@ import { InlineKeyboard } from "grammy";
 import type { ExecComms, BoardSession, BoardContribution } from "./exec-comms.ts";
 import { saveBoardMeeting, saveDecision } from "./notion-board.ts";
 import { emit } from "./events.ts";
+import { NOVA_NAME } from "./identity.ts";
 
 // ============================================================
 // Constants
@@ -213,7 +214,7 @@ async function synthesizeAndPresent(
         .join("\n")
     : "None";
 
-  const prompt = `You are Nova, synthesizing a board meeting.
+  const prompt = `You are ${NOVA_NAME}, synthesizing a board meeting.
 
 QUESTION: ${session.question}
 

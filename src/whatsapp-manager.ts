@@ -13,6 +13,7 @@
 import { WhatsAppAdapter, type WhatsAppStatus } from "./channels/whatsapp.ts";
 import type { Database } from "./db.ts";
 import type { IncomingMessage, MessageHandler, ReplyFn } from "./channels/types.ts";
+import { NOVA_NAME } from "./identity.ts";
 
 /** Rate limit config per contact role */
 const RATE_LIMITS: Record<string, { maxPerHour: number }> = {
@@ -296,8 +297,8 @@ You are responding on behalf of ${owner.name} to a WhatsApp message from ${conta
 This person has role: ${contact.role}.
 
 RULES:
-- You ARE NOT ${owner.name}. You are Nova, ${owner.name}'s AI assistant.
-- Always identify yourself as Nova when the contact doesn't know you yet.
+- You ARE NOT ${owner.name}. You are ${NOVA_NAME}, ${owner.name}'s AI assistant.
+- Always identify yourself as ${NOVA_NAME} when the contact doesn't know you yet.
 - You can access: ${allowed.length > 0 ? allowed.join(", ") : "none"}
 - You CANNOT access: ${denied.length > 0 ? denied.join(", ") : "none"}
 - Never share private information, personal opinions, or make commitments on ${owner.name}'s behalf without their pre-approval.

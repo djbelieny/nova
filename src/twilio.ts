@@ -16,6 +16,7 @@ import "dotenv/config";
 import { writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { trackCost } from "./cost-tracker.ts";
+import { NOVA_NAME } from "./identity.ts";
 
 // Twilio
 const ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || "";
@@ -324,7 +325,7 @@ function buildThirdPartyPrompt(calleeName: string, subject: string, language?: s
     ? `\nLANGUAGE: Speak in ${language}. Conduct the entire conversation in ${language}.`
     : `\nLANGUAGE: Start in English. If ${calleeName} responds in a different language, immediately switch to that language and continue the conversation entirely in their language. Match their language naturally without commenting on the switch.`;
 
-  return `You are Nova, ${USER_NAME}'s AI assistant, on a live phone call with ${calleeName}.
+  return `You are ${NOVA_NAME}, ${USER_NAME}'s AI assistant, on a live phone call with ${calleeName}.
 
 YOUR OBJECTIVE: ${subject}
 
@@ -378,12 +379,12 @@ function resolveLanguageCode(lang: string): string | undefined {
 
 // Greetings in the callee's language
 const GREETINGS: Record<string, (name: string, userName: string) => string> = {
-  es: (name, user) => `Hola ${name}, soy Nova, la asistente de inteligencia artificial de ${user}. ${user} me pidió que te llamara. ¿Tienes un momento?`,
-  fr: (name, user) => `Bonjour ${name}, c'est Nova, l'assistante IA de ${user}. ${user} m'a demandé de vous appeler. Avez-vous un moment?`,
-  pt: (name, user) => `Olá ${name}, sou a Nova, assistente de IA do ${user}. ${user} me pediu para ligar. Você tem um momento?`,
-  de: (name, user) => `Hallo ${name}, hier ist Nova, die KI-Assistentin von ${user}. ${user} hat mich gebeten, Sie anzurufen. Haben Sie einen Moment?`,
-  it: (name, user) => `Ciao ${name}, sono Nova, l'assistente IA di ${user}. ${user} mi ha chiesto di chiamarti. Hai un momento?`,
-  ht: (name, user) => `Bonjou ${name}, mwen se Nova, asistan AI ${user} a. ${user} te mande m rele ou. Èske ou gen yon ti moman?`,
+  es: (name, user) => `Hola ${name}, soy ${NOVA_NAME}, la asistente de inteligencia artificial de ${user}. ${user} me pidió que te llamara. ¿Tienes un momento?`,
+  fr: (name, user) => `Bonjour ${name}, c'est ${NOVA_NAME}, l'assistante IA de ${user}. ${user} m'a demandé de vous appeler. Avez-vous un moment?`,
+  pt: (name, user) => `Olá ${name}, sou a ${NOVA_NAME}, assistente de IA do ${user}. ${user} me pediu para ligar. Você tem um momento?`,
+  de: (name, user) => `Hallo ${name}, hier ist ${NOVA_NAME}, die KI-Assistentin von ${user}. ${user} hat mich gebeten, Sie anzurufen. Haben Sie einen Moment?`,
+  it: (name, user) => `Ciao ${name}, sono ${NOVA_NAME}, l'assistente IA di ${user}. ${user} mi ha chiesto di chiamarti. Hai un momento?`,
+  ht: (name, user) => `Bonjou ${name}, mwen se ${NOVA_NAME}, asistan AI ${user} a. ${user} te mande m rele ou. Èske ou gen yon ti moman?`,
 };
 
 function getGreeting(calleeName: string, langCode?: string): string {
