@@ -11,16 +11,15 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install claude CLI — works with ANTHROPIC_API_KEY or mounted OAuth credentials
-RUN bun install -g @anthropic-ai/claude-code
-
-# Install mcp2cli — on-demand MCP tool bridge used by exec agents
-RUN bun install -g mcp2cli
+# Use npm (bundled with nodejs) for packages that need postinstall scripts
+RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/* \
+    && npm install -g @anthropic-ai/claude-code
 
 # Install gws CLI — Google Workspace CLI
 RUN bun install -g @googleworkspace/cli
 
-# Install Python memwright — for the memwright MCP server entry in .mcp.json
-RUN pip3 install memwright --break-system-packages
+# Install Python packages: memwright (memory service MCP) + mcp2cli (on-demand MCP bridge)
+RUN pip3 install memwright mcp2cli --break-system-packages
 
 # Install project dependencies
 COPY package.json bun.lock ./
