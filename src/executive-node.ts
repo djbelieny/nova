@@ -12,6 +12,7 @@ import { Bot } from "grammy";
 import type { Context } from "grammy";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
+import { homedir } from "os";
 import { existsSync } from "fs";
 import { ExecComms } from "./exec-comms.ts";
 import { loadAgents, getAgentCatalog } from "./agent-router.ts";
@@ -238,7 +239,7 @@ async function initExecMcpConfig(execRole: string): Promise<void> {
 
     if (Object.keys(filtered).length === 0) return;
 
-    const configDir = join(process.env.HOME || "/tmp", ".nova", "exec");
+    const configDir = join(process.env.NOVA_WORKSPACE ?? join(homedir(), ".nova"), "exec");
     await mkdir(configDir, { recursive: true });
     _execMcpConfigPath = join(configDir, `mcp-${execRole}.json`);
     await writeFile(_execMcpConfigPath, JSON.stringify({ mcpServers: filtered }, null, 2));

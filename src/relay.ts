@@ -13,6 +13,7 @@ import type { Context } from "grammy";
 import { spawn } from "bun";
 import { writeFile, mkdir, readFile, unlink, stat } from "fs/promises";
 import { join, dirname, basename, resolve } from "path";
+import { homedir } from "os";
 import { getDb, type Database, embeddingToBlob } from "./db.ts";
 import { memwright } from "./memwright-client.ts";
 import { transcribe } from "./transcribe.ts";
@@ -80,7 +81,8 @@ const PROJECT_ROOT = dirname(dirname(import.meta.path));
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const PROJECT_DIR = process.env.PROJECT_DIR || "";
-const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || join(process.env.HOME || "~", ".nova");
+const NOVA_WORKSPACE = process.env.NOVA_WORKSPACE ?? join(homedir(), ".nova");
+const NOVA_DIR = process.env.NOVA_DIR || process.env.RELAY_DIR || NOVA_WORKSPACE;
 
 // Directories
 const TEMP_DIR = join(NOVA_DIR, "temp");

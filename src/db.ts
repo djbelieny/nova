@@ -54,7 +54,7 @@ function decryptCredentials(value: string): string {
 }
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
-const DATA_DIR = join(PROJECT_ROOT, "data");
+const DATA_DIR = process.env.NOVA_DATA_DIR ?? join(PROJECT_ROOT, "data");
 const SHARED_DB_PATH = join(DATA_DIR, "shared.db");
 const USERS_DIR = join(DATA_DIR, "users");
 const LEGACY_DB_PATH = join(DATA_DIR, "nova.db");
