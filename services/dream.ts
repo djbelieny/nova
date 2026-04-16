@@ -143,36 +143,19 @@ async function runDreamCycle(db: Database, user: ProactiveUser): Promise<number>
     }
   }
 
-  // 2. Recall recent conversations from Memwright
-  let results: Awaited<ReturnType<typeof memwright.recall>> = [];
-  try {
-    results = await memwright.recall("recent conversation messages", {
-      namespace: `user:${user.id}`,
-      budget: 5000,
-    });
-  } catch (err) {
-    console.warn(`[dream] ${user.name}: memwright recall failed — ${err}`);
-  }
+  // 2. Fetch recent conversation messages chronologically
+  const recentMessages = db.getRecentMessages(user.id, 50);
+  const sorted = [...recentMessages].reverse(); // getRecentMessages returns newest-first, reverse to get oldest-first
 
-  // 3. Format as User/Nova exchanges, sorted by timestamp, capped at 20,000 chars
-  const sorted = [...results].sort((a, b) => {
-    const ta = (a.memory?.metadata as any)?.created_at ?? (a.memory?.metadata as any)?.timestamp ?? "";
-    const tb = (b.memory?.metadata as any)?.created_at ?? (b.memory?.metadata as any)?.timestamp ?? "";
-    return ta < tb ? -1 : ta > tb ? 1 : 0;
-  });
-
-  const exchanges: string[] = [];
-  let totalChars = 0;
-  for (const r of sorted) {
-    const role = (r.memory?.metadata as any)?.role === "assistant" ? "Nova" : "User";
-    const line = `${role}: ${r.content}`;
-    if (totalChars + line.length > 20_000) break;
-    exchanges.push(line);
-    totalChars += line.length + 1;
+  // 3. Format as User/Nova exchanges, capped at 20,000 chars
+  let exchanges = "";
+  for (const msg of sorted) {
+    const prefix = msg.role === "user" ? "User" : "Nova";
+    const line = `${prefix}: ${msg.content}\n`;
+    if ((exchanges + line).length > 20_000) break;
+    exchanges += line;
   }
-  const formattedExchanges = exchanges.length
-    ? exchanges.join("\n")
-    : "(no recent conversations found)";
+  const formattedExchanges = exchanges.trim() || "(no recent conversation history)";
 
   // 4. Get existing memory context so Claude knows what NOT to re-record
   let existingContext = "";
@@ -222,13 +205,14 @@ Nothing new: output only NO_INSIGHTS`;
   const insightMatches = [...response.matchAll(/\[INSIGHT:\s*(.+?)\]/gi)];
   const insights = insightMatches.map(m => m[1].trim()).filter(Boolean);
 
-  if (response.trim().toUpperCase() === "NO_INSIGHTS" || insights.length === 0) {
+  if (insights.length === 0) {
     console.log(`[dream] ${user.name}: no new insights this cycle`);
     saveDreamState(user.id, { lastDreamAt: new Date().toISOString(), lastInsightCount: 0 });
     return 0;
   }
 
   // 8. Write insights to Memwright
+  let savedCount = 0;
   try {
     await memwright.batchAdd(
       insights.map(text => ({
@@ -242,18 +226,19 @@ Nothing new: output only NO_INSIGHTS`;
         },
       }))
     );
+    savedCount = insights.length;
   } catch (err) {
-    console.warn(`[dream] ${user.name}: batchAdd failed — ${err}`);
+    console.warn(`[dream] ${user.name}: batchAdd failed — ${err}. Will retry next cycle.`);
   }
 
   // 9. Update state
-  saveDreamState(user.id, { lastDreamAt: new Date().toISOString(), lastInsightCount: insights.length });
+  saveDreamState(user.id, { lastDreamAt: new Date().toISOString(), lastInsightCount: savedCount });
 
   // 10. Optional Telegram notification
   if (user.preferences?.dream_notify === true && insights.length >= 3 && BOT_TOKEN) {
     await sendTelegram(
       user.telegram_id,
-      `🌙 Dream mode ran — extracted ${insights.length} new insights from your recent conversations.`
+      `Dream mode ran — extracted ${insights.length} new insights from your recent conversations.`
     );
   }
 

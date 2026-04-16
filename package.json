@@ -27,7 +27,8 @@
     "exec:cto": "bun run --env-file=.env.cto --env-file=.env src/executive-node.ts --role cto",
     "exec:coo": "bun run --env-file=.env.coo --env-file=.env src/executive-node.ts --role coo",
     "exec:research": "bun run --env-file=.env.research --env-file=.env src/executive-node.ts --role research",
-    "exec:critic": "bun run --env-file=.env.critic --env-file=.env src/executive-node.ts --role critic"
+    "exec:critic": "bun run --env-file=.env.critic --env-file=.env src/executive-node.ts --role critic",
+    "dream": "bun run services/dream.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
