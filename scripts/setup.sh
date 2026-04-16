@@ -352,6 +352,28 @@ done
 kill "$LOG_PID" 2>/dev/null || true
 
 # ==============================================================
+# STEP 12: Create admin user in database
+# ==============================================================
+echo ""
+echo "${BOLD}Creating your user account...${RESET}"
+TELEGRAM_USER_ID_VAL=$(get_env TELEGRAM_USER_ID)
+USER_NAME_VAL=$(get_env USER_NAME)
+USER_TIMEZONE_VAL=$(get_env USER_TIMEZONE)
+
+docker compose exec -T relay bun -e "
+import { getDb } from './src/db.ts';
+const db = getDb();
+const user = db.upsertUser({
+  telegram_id: '${TELEGRAM_USER_ID_VAL}',
+  name: '${USER_NAME_VAL}',
+  timezone: '${USER_TIMEZONE_VAL}',
+  role: 'admin',
+  preferences: { proactive_checkin: true },
+});
+console.log('User ready:', user?.name || 'created');
+" 2>/dev/null && info "✓ Admin user created" || warn "Could not auto-create user — you may need to add yourself via the dashboard"
+
+# ==============================================================
 # Done
 # ==============================================================
 echo ""
