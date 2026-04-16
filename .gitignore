@@ -16,6 +16,7 @@ config/schedule.json
 # Runtime files
 data/
 *.lock
+!bun.lock
 *.log
 logs/
 temp/
