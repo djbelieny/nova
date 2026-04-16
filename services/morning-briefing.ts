@@ -196,7 +196,7 @@ Skip sections with no data silently. Bullet points, be brief. Keep it under 300 
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("Building morning briefing (multi-user)...");
 
   if (!BOT_TOKEN) {

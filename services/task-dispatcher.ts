@@ -204,7 +204,7 @@ function advanceTask(
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("Running task dispatcher...");
 
   if (!BOT_TOKEN) {

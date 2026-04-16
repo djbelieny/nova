@@ -315,7 +315,7 @@ function findExactDuplicates(facts: MemoryEntry[]): string[] {
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("[memory-review] Running memory review...");
   const db = getDb();
 

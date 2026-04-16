@@ -251,7 +251,7 @@ Nothing new: output only NO_INSIGHTS`;
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   const db = getDb();
   const users = getAllProactiveUsers(db);
   const idleOnly = process.argv.includes("--idle");

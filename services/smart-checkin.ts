@@ -379,7 +379,7 @@ REASON: [why]`;
 // MAIN
 // ============================================================
 
-async function main() {
+export async function main() {
   console.log("Running smart check-in (multi-user)...");
 
   if (!BOT_TOKEN) {
