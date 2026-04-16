@@ -220,7 +220,7 @@ echo ""
 # ==============================================================
 # STEP 6: Optional — Voice & TTS
 # ==============================================================
-if [ -z "$(get_env GROQ_API_KEY)" ]; then
+if [ -z "$(get_env VOICE_PROVIDER)" ]; then
   read -rp "Enable voice support? (requires Groq API key) [y/N]: " VOICE_CHOICE
   echo ""
   if [ "${VOICE_CHOICE,,}" = "y" ]; then
@@ -238,6 +238,8 @@ if [ -z "$(get_env GROQ_API_KEY)" ]; then
         set_env "ELEVENLABS_VOICE_ID" "$ELEVENLABS_VOICE_ID"
       fi
     fi
+  else
+    set_env "VOICE_PROVIDER" "disabled"
   fi
 fi
 echo ""
@@ -245,7 +247,7 @@ echo ""
 # ==============================================================
 # STEP 7: Optional — Dashboard
 # ==============================================================
-if [ -z "$(get_env DASHBOARD_PASS)" ]; then
+if [ -z "$(get_env DASHBOARD_ENABLED)" ]; then
   read -rp "Enable admin dashboard? [y/N]: " DASH_CHOICE
   echo ""
   if [ "${DASH_CHOICE,,}" = "y" ]; then
@@ -253,7 +255,10 @@ if [ -z "$(get_env DASHBOARD_PASS)" ]; then
     set_env "DASHBOARD_USER" "$DASHBOARD_USER"
     DASHBOARD_PASS=$(prompt_secret "Dashboard password")
     set_env "DASHBOARD_PASS" "$DASHBOARD_PASS"
+    set_env "DASHBOARD_ENABLED" "true"
     USE_FULL_PROFILE="true"
+  else
+    set_env "DASHBOARD_ENABLED" "false"
   fi
 fi
 echo ""
@@ -261,7 +266,7 @@ echo ""
 # ==============================================================
 # STEP 8: Optional — Custom domain (HTTPS via Caddy)
 # ==============================================================
-if [ -z "$(get_env NOVA_DOMAIN)" ]; then
+if ! grep -q "^NOVA_DOMAIN=" "$ENV_FILE" 2>/dev/null; then
   read -rp "Do you have a domain name for Nova? (enables HTTPS via Caddy) [y/N]: " DOMAIN_CHOICE
   echo ""
   if [ "${DOMAIN_CHOICE,,}" = "y" ]; then
@@ -275,6 +280,8 @@ if [ -z "$(get_env NOVA_DOMAIN)" ]; then
     else
       info "  ✓ Caddyfile found"
     fi
+  else
+    set_env "NOVA_DOMAIN" ""
   fi
 fi
 
