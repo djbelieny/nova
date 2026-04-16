@@ -278,7 +278,7 @@ export async function main() {
   console.log("\nDispatcher complete");
 }
 
-main().catch((err) => {
+if (import.meta.main) main().catch((err) => {
   console.error("Dispatcher error:", err);
   process.exit(1);
 });

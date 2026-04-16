@@ -226,4 +226,4 @@ export async function main() {
   }
 }
 
-main();
+if (import.meta.main) { main(); }

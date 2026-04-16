@@ -270,4 +270,4 @@ export async function main() {
   }
 }
 
-main().catch(console.error);
+if (import.meta.main) { main().catch(console.error); }

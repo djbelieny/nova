@@ -819,7 +819,7 @@ export async function main() {
   console.log("[health-monitor] Done.");
 }
 
-main().catch((err) => {
+if (import.meta.main) main().catch((err) => {
   console.error("[health-monitor] Fatal:", err);
   process.exit(1);
 });
