@@ -1,10 +1,8 @@
-node_modules
 .git
-logs
-output
-workspace
-agent-team
+node_modules
+.nova
+data/
 *.log
-.DS_Store
 .env
-.wrangler
+.env.*
+!.env.example

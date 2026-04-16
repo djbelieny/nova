@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+WORKDIR /app
+
+RUN pip install --no-cache-dir memwright uvicorn
+
+ENV MEMWRIGHT_DATA_DIR=/data
+EXPOSE 8765
+
+CMD ["uvicorn", "agent_memory.api:app", "--host", "0.0.0.0", "--port", "8765"]
