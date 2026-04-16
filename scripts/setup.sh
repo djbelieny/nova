@@ -51,11 +51,13 @@ set_env() {
   local key="$1"
   local value="$2"
   if [ -f "$ENV_FILE" ] && grep -q "^${key}=" "$ENV_FILE"; then
-    # Update existing line
-    sed -i.bak "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+    # Update existing line — escape | so it doesn't break the sed delimiter
+    local escaped_value
+    escaped_value=$(printf '%s' "$value" | sed 's/|/\\|/g')
+    sed -i.bak "s|^${key}=.*|${key}=\"${escaped_value}\"|" "$ENV_FILE"
     rm -f "$ENV_FILE.bak"
   else
-    echo "${key}=${value}" >> "$ENV_FILE"
+    echo "${key}=\"${value}\"" >> "$ENV_FILE"
   fi
 }
 
@@ -76,10 +78,10 @@ prompt() {
 # ---- Secret prompt (no echo) ----
 prompt_secret() {
   local msg="$1"
-  local var
-  read -rsp "$msg: " var
-  echo ""
-  echo "$var"
+  local -n _secret_out="$2"
+  printf "%s: " "$msg" >&2
+  read -rs _secret_out
+  echo "" >&2
 }
 
 # ==============================================================
@@ -153,28 +155,39 @@ if [ -z "$(get_env ANTHROPIC_API_KEY)" ] && [ -z "$(get_env CLAUDE_HOME_DIR)" ];
   read -rp "Choice [1/2]: " AUTH_CHOICE
   echo ""
 
+  if [ "$AUTH_CHOICE" != "1" ] && [ "$AUTH_CHOICE" != "2" ]; then
+    die "Invalid choice '$AUTH_CHOICE'. Please enter 1 or 2."
+  fi
+
   if [ "${AUTH_CHOICE}" = "2" ]; then
-    ANTHROPIC_API_KEY=$(prompt_secret "Enter your Anthropic API key")
+    prompt_secret "Enter your Anthropic API key" ANTHROPIC_API_KEY
     set_env "ANTHROPIC_API_KEY" "$ANTHROPIC_API_KEY"
   else
     # OAuth mode — detect credential paths
     CLAUDE_HOME="${HOME}/.claude"
     CLAUDE_CONFIG="${HOME}/.config/@anthropic-ai"
 
+    CREDS_FOUND=false
     if [ -d "$CLAUDE_HOME" ] && [ -d "$CLAUDE_CONFIG" ]; then
+      # Check for actual credential files, not just directories
+      if find "$CLAUDE_HOME" -name "*.json" -maxdepth 2 | grep -q .; then
+        CREDS_FOUND=true
+      fi
+    fi
+
+    if [ "$CREDS_FOUND" = "true" ]; then
       set_env "CLAUDE_HOME_DIR" "$CLAUDE_HOME"
       set_env "CLAUDE_CONFIG_DIR" "$CLAUDE_CONFIG"
-      info "  ✓ Found Claude credentials at $CLAUDE_HOME and $CLAUDE_CONFIG"
-    elif [ -d "$CLAUDE_HOME" ]; then
-      set_env "CLAUDE_HOME_DIR" "$CLAUDE_HOME"
-      warn "Found $CLAUDE_HOME but not $CLAUDE_CONFIG — OAuth may be incomplete."
-      read -rp "Continue anyway? [y/N]: " CONT
-      [ "${CONT,,}" = "y" ] || die "Setup cancelled."
+      info "  ✓ Found Claude credentials at $CLAUDE_HOME"
     else
-      warn "Claude credentials not found at $CLAUDE_HOME or $CLAUDE_CONFIG."
-      warn "Make sure you have run 'claude' at least once and authenticated."
-      read -rp "Continue anyway? [y/N]: " CONT
-      [ "${CONT,,}" = "y" ] || die "Setup cancelled."
+      if [ -d "$CLAUDE_HOME" ]; then
+        warn "~/.claude exists but no credential files found — run 'claude' to authenticate first, then re-run setup."
+      else
+        warn "Claude credentials not found at ~/.claude — run 'claude' to authenticate first, then re-run setup."
+      fi
+      warn "Continuing with OAuth mode, but Nova may fail to start until credentials are present."
+      set_env "CLAUDE_HOME_DIR" "$CLAUDE_HOME"
+      set_env "CLAUDE_CONFIG_DIR" "$CLAUDE_CONFIG"
     fi
   fi
 fi
@@ -224,14 +237,14 @@ if [ -z "$(get_env VOICE_PROVIDER)" ]; then
   read -rp "Enable voice support? (requires Groq API key) [y/N]: " VOICE_CHOICE
   echo ""
   if [ "${VOICE_CHOICE,,}" = "y" ]; then
-    GROQ_API_KEY=$(prompt_secret "Enter your Groq API key (console.groq.com)")
+    prompt_secret "Enter your Groq API key (console.groq.com)" GROQ_API_KEY
     set_env "GROQ_API_KEY" "$GROQ_API_KEY"
     set_env "VOICE_PROVIDER" "groq"
 
     read -rp "Enable ElevenLabs TTS? [y/N]: " TTS_CHOICE
     echo ""
     if [ "${TTS_CHOICE,,}" = "y" ]; then
-      ELEVENLABS_API_KEY=$(prompt_secret "Enter your ElevenLabs API key")
+      prompt_secret "Enter your ElevenLabs API key" ELEVENLABS_API_KEY
       set_env "ELEVENLABS_API_KEY" "$ELEVENLABS_API_KEY"
       ELEVENLABS_VOICE_ID=$(prompt "Enter your ElevenLabs voice ID (leave blank for default)")
       if [ -n "$ELEVENLABS_VOICE_ID" ]; then
@@ -253,7 +266,7 @@ if [ -z "$(get_env DASHBOARD_ENABLED)" ]; then
   if [ "${DASH_CHOICE,,}" = "y" ]; then
     DASHBOARD_USER=$(prompt "Dashboard username" "admin")
     set_env "DASHBOARD_USER" "$DASHBOARD_USER"
-    DASHBOARD_PASS=$(prompt_secret "Dashboard password")
+    prompt_secret "Dashboard password" DASHBOARD_PASS
     set_env "DASHBOARD_PASS" "$DASHBOARD_PASS"
     set_env "DASHBOARD_ENABLED" "true"
     USE_FULL_PROFILE="true"
