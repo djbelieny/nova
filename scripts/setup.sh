@@ -363,43 +363,20 @@ done
 kill "$LOG_PID" 2>/dev/null || true
 
 # ==============================================================
-# STEP 12: Validate Claude authentication
+# STEP 12: Claude authentication
 # ==============================================================
 echo ""
-echo "${BOLD}Testing Claude authentication...${RESET}"
-
-CLAUDE_AUTH_PENDING_VAL=$(get_env CLAUDE_AUTH_PENDING)
 ANTHROPIC_API_KEY_VAL=$(get_env ANTHROPIC_API_KEY)
 
-CLAUDE_OK=false
-CLAUDE_RESULT=$(timeout 30 docker compose exec -T relay sh -c \
-  'claude -p "Respond with exactly: NOVA_READY" --output-format text --max-turns 1 2>&1' 2>/dev/null \
-  || echo "CLAUDE_TIMEOUT")
-
-if echo "$CLAUDE_RESULT" | grep -qi "NOVA_READY"; then
-  info "  ✓ Claude is authenticated and responding"
-  CLAUDE_OK=true
+if [ -n "$ANTHROPIC_API_KEY_VAL" ]; then
+  echo "${BOLD}Claude auth: API key mode${RESET}"
+  echo "Using ANTHROPIC_API_KEY. If Nova doesn't respond, check your key is valid:"
+  echo "  docker compose logs relay -f"
 else
-  echo ""
-  if [ -n "$ANTHROPIC_API_KEY_VAL" ]; then
-    warn "Claude did not respond — check that your ANTHROPIC_API_KEY is valid."
-    echo ""
-    echo "To verify your key, run:"
-    echo "  docker compose exec relay sh -c 'claude -p \"hello\" --output-format text --max-turns 1'"
-    echo ""
-    echo "To update the key, edit .env then restart:"
-    echo "  docker compose restart relay"
-  else
-    warn "Claude is not authenticated inside the container."
-    echo ""
-    echo "Run this command to complete OAuth authentication:"
-    echo ""
-    echo "  ${BOLD}docker compose exec -it relay claude${RESET}"
-    echo ""
-    echo "You will receive a URL — open it in your browser to log in."
-    echo "Once complete, restart Nova:"
-    echo "  docker compose restart relay"
-  fi
+  echo "${BOLD}Claude auth: OAuth mode${RESET}"
+  info "  ✓ Nova will send an authentication link to your Telegram when it starts."
+  echo "Check your Telegram — a login URL will arrive within a few seconds."
+  echo "Open it in your browser to authorize Claude, then Nova will be ready."
 fi
 
 # ==============================================================

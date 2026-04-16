@@ -30,6 +30,7 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
+import { testClaudeAuth, runClaudeOAuthFlow, isAuthError, isAuthPending, type SendFn as ClaudeAuthSendFn } from "./claude-auth.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, startMiniAppApprovalPolling, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
@@ -804,6 +805,25 @@ async function callAI(prompt: string, model?: LegacyModelTier | ModelTier, userI
         }
         if (attempt >= 1) break;
       }
+    }
+
+    // Check if this looks like a Claude auth failure
+    const errMsg = lastError?.message || "";
+    const errStderr = (lastError as any)?.stderr || errMsg;
+    if (isAuthError(errStderr, (lastError as any)?.exitCode ?? 1) && !isAuthPending()) {
+      console.warn("[callAI] Auth error detected — triggering OAuth flow");
+      const chatId = userId ? supabase.getUserById(userId)?.telegram_id : process.env.TELEGRAM_USER_ID;
+      if (chatId) {
+        const sendFn: ClaudeAuthSendFn = async (id, payload) => {
+          const adapter = channels.getTelegram();
+          if (adapter) await adapter.send(id, payload);
+        };
+        // Run in background so the caller gets an immediate response
+        runClaudeOAuthFlow(sendFn, chatId).catch(console.error);
+      }
+      throw new Error(
+        `${NOVA_NAME} needs to authenticate with Claude. Check Telegram — an authorization link has been sent.`,
+      );
     }
 
     throw lastError || new Error("AI call failed after retries");
@@ -3310,6 +3330,29 @@ Bun.serve({
 console.log(`[wa-webhook] Internal listener on port ${WA_WEBHOOK_PORT}`);
 
 console.log("All channels started! Users are managed via the 'users' table in the local DB.");
+
+// Claude auth check — runs in background so startup isn't blocked.
+// If not authenticated, sends the OAuth URL to the configured admin Telegram chat.
+if (!process.env.ANTHROPIC_API_KEY) {
+  (async () => {
+    // Small delay so the Telegram bot is fully connected before we try to send
+    await new Promise((r) => setTimeout(r, 3_000));
+    const authed = await testClaudeAuth();
+    if (!authed) {
+      const adminChatId = process.env.TELEGRAM_USER_ID;
+      const adapter = channels.getTelegram();
+      if (adminChatId && adapter) {
+        console.warn("[claude-auth] Not authenticated — sending OAuth URL via Telegram");
+        const sendFn: ClaudeAuthSendFn = async (id, payload) => adapter.send(id, payload);
+        await runClaudeOAuthFlow(sendFn, adminChatId).catch(console.error);
+      } else {
+        console.error("[claude-auth] Not authenticated and no Telegram adapter — set ANTHROPIC_API_KEY or authenticate manually");
+      }
+    } else {
+      console.log("[claude-auth] Claude authenticated ✓");
+    }
+  })().catch(console.error);
+}
 
 // Notify admin users that Nova is back online (via Telegram if available)
 // Also recover any pending approvals that survived the restart
