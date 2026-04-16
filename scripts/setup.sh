@@ -149,27 +149,29 @@ USE_FULL_PROFILE="${USE_FULL_PROFILE:-false}"
 # ==============================================================
 if [ -z "$(get_env ANTHROPIC_API_KEY)" ] && [ -z "$(get_env CLAUDE_HOME_DIR)" ]; then
   echo "${BOLD}How will Nova access Claude?${RESET}"
-  echo "  1) I have Claude Code authenticated on this machine (OAuth — uses your subscription)"
-  echo "  2) I have an Anthropic API key"
+  echo "  1) Anthropic API key ${GREEN}(recommended — works on any machine)${RESET}"
+  echo "  2) Claude Code OAuth ${YELLOW}(only works if claude is already authenticated on THIS machine)${RESET}"
   echo ""
-  read -rp "Choice [1/2]: " AUTH_CHOICE
+  read -rp "Choice [1/2, default: 1]: " AUTH_CHOICE
+  AUTH_CHOICE="${AUTH_CHOICE:-1}"
   echo ""
 
   if [ "$AUTH_CHOICE" != "1" ] && [ "$AUTH_CHOICE" != "2" ]; then
     die "Invalid choice '$AUTH_CHOICE'. Please enter 1 or 2."
   fi
 
-  if [ "${AUTH_CHOICE}" = "2" ]; then
+  if [ "${AUTH_CHOICE}" = "1" ]; then
     prompt_secret "Enter your Anthropic API key" ANTHROPIC_API_KEY
     set_env "ANTHROPIC_API_KEY" "$ANTHROPIC_API_KEY"
   else
-    # OAuth mode — detect credential paths
+    # OAuth mode — credentials on THIS host machine are mounted read-only into the container.
+    # This only works if claude is already authenticated on the host (e.g., your local Mac).
+    # On a fresh VPS or CI machine, use Option 1 (API key) instead.
     CLAUDE_HOME="${HOME}/.claude"
     CLAUDE_CONFIG="${HOME}/.config/@anthropic-ai"
 
     CREDS_FOUND=false
     if [ -d "$CLAUDE_HOME" ] && [ -d "$CLAUDE_CONFIG" ]; then
-      # Check for actual credential files, not just directories
       if find "$CLAUDE_HOME" -name "*.json" -maxdepth 2 | grep -q .; then
         CREDS_FOUND=true
       fi
@@ -180,14 +182,23 @@ if [ -z "$(get_env ANTHROPIC_API_KEY)" ] && [ -z "$(get_env CLAUDE_HOME_DIR)" ];
       set_env "CLAUDE_CONFIG_DIR" "$CLAUDE_CONFIG"
       info "  ✓ Found Claude credentials at $CLAUDE_HOME"
     else
-      if [ -d "$CLAUDE_HOME" ]; then
-        warn "~/.claude exists but no credential files found — run 'claude' to authenticate first, then re-run setup."
+      echo ""
+      warn "No Claude credentials found at ~/.claude on this machine."
+      echo ""
+      echo "OAuth mode requires the claude CLI to be authenticated on the host first."
+      echo "On a fresh server, use an API key instead."
+      echo ""
+      read -rp "Switch to API key mode? [Y/n]: " SWITCH_CHOICE
+      echo ""
+      if [ "${SWITCH_CHOICE,,}" != "n" ]; then
+        prompt_secret "Enter your Anthropic API key" ANTHROPIC_API_KEY
+        set_env "ANTHROPIC_API_KEY" "$ANTHROPIC_API_KEY"
       else
-        warn "Claude credentials not found at ~/.claude — run 'claude' to authenticate first, then re-run setup."
+        warn "Continuing with OAuth mode — Claude auth will be needed inside the container after startup."
+        set_env "CLAUDE_HOME_DIR" "$CLAUDE_HOME"
+        set_env "CLAUDE_CONFIG_DIR" "$CLAUDE_CONFIG"
+        set_env "CLAUDE_AUTH_PENDING" "true"
       fi
-      warn "Continuing with OAuth mode, but Nova may fail to start until credentials are present."
-      set_env "CLAUDE_HOME_DIR" "$CLAUDE_HOME"
-      set_env "CLAUDE_CONFIG_DIR" "$CLAUDE_CONFIG"
     fi
   fi
 fi
@@ -352,7 +363,47 @@ done
 kill "$LOG_PID" 2>/dev/null || true
 
 # ==============================================================
-# STEP 12: Create admin user in database
+# STEP 12: Validate Claude authentication
+# ==============================================================
+echo ""
+echo "${BOLD}Testing Claude authentication...${RESET}"
+
+CLAUDE_AUTH_PENDING_VAL=$(get_env CLAUDE_AUTH_PENDING)
+ANTHROPIC_API_KEY_VAL=$(get_env ANTHROPIC_API_KEY)
+
+CLAUDE_OK=false
+CLAUDE_RESULT=$(timeout 30 docker compose exec -T relay sh -c \
+  'claude -p "Respond with exactly: NOVA_READY" --output-format text --max-turns 1 2>&1' 2>/dev/null \
+  || echo "CLAUDE_TIMEOUT")
+
+if echo "$CLAUDE_RESULT" | grep -qi "NOVA_READY"; then
+  info "  ✓ Claude is authenticated and responding"
+  CLAUDE_OK=true
+else
+  echo ""
+  if [ -n "$ANTHROPIC_API_KEY_VAL" ]; then
+    warn "Claude did not respond — check that your ANTHROPIC_API_KEY is valid."
+    echo ""
+    echo "To verify your key, run:"
+    echo "  docker compose exec relay sh -c 'claude -p \"hello\" --output-format text --max-turns 1'"
+    echo ""
+    echo "To update the key, edit .env then restart:"
+    echo "  docker compose restart relay"
+  else
+    warn "Claude is not authenticated inside the container."
+    echo ""
+    echo "Run this command to complete OAuth authentication:"
+    echo ""
+    echo "  ${BOLD}docker compose exec -it relay claude${RESET}"
+    echo ""
+    echo "You will receive a URL — open it in your browser to log in."
+    echo "Once complete, restart Nova:"
+    echo "  docker compose restart relay"
+  fi
+fi
+
+# ==============================================================
+# STEP 13: Create admin user in database
 # ==============================================================
 echo ""
 echo "${BOLD}Creating your user account...${RESET}"
