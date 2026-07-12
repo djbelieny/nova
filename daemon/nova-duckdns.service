@@ -1,0 +1,30 @@
+[Unit]
+Description=DuckDNS IP Updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=DUCKDNS_DOMAIN=YOUR_DUCKDNS_DOMAIN
+Environment=DUCKDNS_TOKEN=YOUR_DUCKDNS_TOKEN
+ExecStart=/bin/bash -c '\
+  cache_dir=/var/lib/nova; \
+  cache_file=$cache_dir/duckdns-last-ip; \
+  mkdir -p $cache_dir; \
+  current_ip=$(curl -s https://api.ipify.org); \
+  cached_ip=$(cat $cache_file 2>/dev/null || echo ""); \
+  if [ "$current_ip" = "$cached_ip" ]; then \
+    echo "IP unchanged ($current_ip) — skipping"; \
+    exit 0; \
+  fi; \
+  result=$(curl -s "https://www.duckdns.org/update?domains=${DUCKDNS_DOMAIN}&token=${DUCKDNS_TOKEN}&ip="); \
+  if [ "$result" = "OK" ]; then \
+    echo "$current_ip" > $cache_file; \
+    echo "DuckDNS updated: $cached_ip -> $current_ip"; \
+  else \
+    echo "DuckDNS update failed: $result" >&2; \
+    exit 1; \
+  fi'
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-duckdns

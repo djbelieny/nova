@@ -1,0 +1,50 @@
+# Nova Scheduled Services
+# All times in UTC. Services run as nova user.
+# DJ's timezone: America/New_York (UTC-5 / UTC-4 DST)
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Task Dispatcher — every 60 seconds
+* * * * * nova cd /opt/nova && bun run services/task-dispatcher.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Support Ticket Worker — every 60 seconds (no-op unless TICKET_OPERATOR_USER_ID is set;
+# escalates every ticket until a client repo with client_match is configured)
+* * * * * nova cd /opt/nova && bun run services/ticket-worker.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Morning Briefing — daily 14:00 UTC (9:00 ET)
+0 14 * * * nova cd /opt/nova && bun run services/morning-briefing.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Smart Check-in — 14:00, 15:30, 17:00, 19:00, 21:00, 23:00 UTC
+0 14 * * * nova cd /opt/nova && bun run services/smart-checkin.ts >> /var/log/nova-scheduler.log 2>&1
+30 15 * * * nova cd /opt/nova && bun run services/smart-checkin.ts >> /var/log/nova-scheduler.log 2>&1
+0 17 * * * nova cd /opt/nova && bun run services/smart-checkin.ts >> /var/log/nova-scheduler.log 2>&1
+0 19 * * * nova cd /opt/nova && bun run services/smart-checkin.ts >> /var/log/nova-scheduler.log 2>&1
+0 21 * * * nova cd /opt/nova && bun run services/smart-checkin.ts >> /var/log/nova-scheduler.log 2>&1
+0 23 * * * nova cd /opt/nova && bun run services/smart-checkin.ts >> /var/log/nova-scheduler.log 2>&1
+
+# AI News Monitor — 3x/day: 13:00, 18:00, 23:00 UTC (8am, 1pm, 6pm ET)
+0 13 * * * nova cd /opt/nova && bun run services/ai-news-monitor.ts >> /var/log/nova-scheduler.log 2>&1
+0 18 * * * nova cd /opt/nova && bun run services/ai-news-monitor.ts >> /var/log/nova-scheduler.log 2>&1
+0 23 * * * nova cd /opt/nova && bun run services/ai-news-monitor.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Social Post Suggester — daily 14:30 UTC (9:30 ET, after morning news)
+30 14 * * * nova cd /opt/nova && bun run services/social-post-suggester.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Lead Suggester — daily 15:00 UTC (10:00 ET)
+0 15 * * * nova cd /opt/nova && bun run services/lead-suggester.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Meta Ads Report — daily 13:30 UTC (8:30 ET)
+30 13 * * * nova cd /opt/nova && bun run services/meta-ads-report.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Memory Review — daily 08:00 UTC (3:00 ET)
+0 8 * * * nova cd /opt/nova && bun run services/memory-review.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Dream Mode — nightly at 07:00 UTC (2:00 ET) and 09:00 UTC (4:00 ET) for night owls
+0 7 * * * nova cd /opt/nova && bun run services/dream.ts --idle >> /var/log/nova/dream.log 2>&1
+0 9 * * * nova cd /opt/nova && bun run services/dream.ts --idle >> /var/log/nova/dream.log 2>&1
+
+# Log Monitor — every 8 hours
+0 0,8,16 * * * nova cd /opt/nova && bun run services/log-monitor.ts >> /var/log/nova-scheduler.log 2>&1
+
+# Health Monitor — every 30 minutes
+*/30 * * * * nova cd /opt/nova && bun run services/health-monitor.ts >> /var/log/nova-scheduler.log 2>&1

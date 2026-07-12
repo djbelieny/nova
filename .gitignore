@@ -1,0 +1,75 @@
+# Environment
+.env
+.env.*
+!.env.example
+DEPLOYMENT_TARGET.md
+
+# Dependencies
+node_modules/
+
+# Bun (lockfile is committed for reproducible builds)
+
+# Personal config (keep examples, ignore actual)
+config/profile.md
+config/schedule.json
+
+# Runtime files
+data/
+*.lock
+!bun.lock
+*.log
+logs/
+temp/
+uploads/
+session.json
+
+# Supabase
+supabase/.temp/
+
+# Generated output / artifacts
+workspace/
+agent-team/
+output/
+
+# Generated reports / docs (from Claude sessions)
+GHL_*.md
+GHL_*.txt
+NOTION_*.md
+
+# Binary assets (pitch decks, presentations)
+*.pptx
+
+# Wrangler
+.wrangler/
+
+# npm lockfile (project uses bun)
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal docs
+AUDIT_REPORT.md
+OPTIMIZATION_PLAN.md
+IDEAS.md
+CHANGELOG.md
+.mcp.json
+.mcp.nova.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.worktrees/
+
+# Personal infra / internal planning docs (not part of the OSS release)
+workers/landing/
+docs/superpowers/
+public/index.html
+docs/MINIAPP_REMOVAL_OPS.md

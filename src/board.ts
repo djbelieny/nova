@@ -1,0 +1,509 @@
+/**
+ * Board Meeting Coordinator
+ *
+ * Convenes the executive board (CEO, CFO, CMO, CTO, COO, Research, Critic),
+ * monitors contributions, synthesizes options, and presents decisions to the user.
+ *
+ * Flow: convene -> collect contributions -> critique -> synthesize -> present options -> decide
+ */
+
+import { InlineKeyboard } from "grammy";
+import type { ExecComms, BoardSession, BoardContribution } from "./exec-comms.ts";
+import { saveBoardMeeting, saveDecision } from "./notion-board.ts";
+import { emit } from "./events.ts";
+
+// ============================================================
+// Constants
+// ============================================================
+
+const ALL_EXEC_ROLES = ["ceo", "cfo", "cmo", "cto", "research", "critic"];  // COO excluded — delegates only
+const NON_CRITIC_ROLES = ["ceo", "cfo", "cmo", "cto", "research"];
+const CRITIC_ROLE = "critic";
+const POLL_INTERVAL = 3000;
+const PHASE1_TIMEOUT = 5 * 60 * 1000;
+const PHASE2_TIMEOUT = 2 * 60 * 1000;
+
+// ============================================================
+// Types
+// ============================================================
+
+interface BoardOption {
+  title: string;
+  description: string;
+  supporters: string[];
+  risks: string;
+  confidence: number;
+  effort: "low" | "medium" | "high";
+}
+
+// ============================================================
+// Injected Dependencies
+// ============================================================
+
+let _callAI: (prompt: string, tier?: string, hint?: string) => Promise<string>;
+let _comms: ExecComms;
+let _sendMessage: (chatId: string | number, text: string, keyboard?: any) => Promise<void>;
+let _onDecision: ((sessionId: string, decision: string, userId: string) => Promise<void>) | null = null;
+
+export function initBoard(deps: {
+  callAI: (prompt: string, tier?: string, hint?: string) => Promise<string>;
+  comms: ExecComms;
+  sendMessage: (chatId: string | number, text: string, keyboard?: any) => Promise<void>;
+  onDecision?: (sessionId: string, decision: string, userId: string) => Promise<void>;
+}): void {
+  _callAI = deps.callAI;
+  _comms = deps.comms;
+  _sendMessage = deps.sendMessage;
+  _onDecision = deps.onDecision ?? null;
+}
+
+// ============================================================
+// Active session tracking
+// ============================================================
+
+const activeSessions = new Map<string, { userId: string; chatId: string | number; createdAt: number }>();
+
+// Periodic cleanup of stale board sessions (30min)
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of activeSessions) {
+    if (now - session.createdAt > 30 * 60 * 1000) activeSessions.delete(id);
+  }
+}, 30 * 60 * 1000);
+
+// ============================================================
+// Convene Board
+// ============================================================
+
+export async function conveneBoard(
+  question: string,
+  userId: string,
+  chatId: string | number,
+  followUpOf?: string,
+): Promise<string> {
+  const sessionId = await _comms.conveneBoard(question, ALL_EXEC_ROLES, userId);
+
+  if (!sessionId) {
+    await _sendMessage(chatId, "Failed to convene board session. Please try again.");
+    return "";
+  }
+
+  // Link follow-up if provided
+  if (followUpOf) {
+    await _comms.updateSession(sessionId, { follow_up_of: followUpOf } as any);
+  }
+
+  emit({ type: "board.convened", level: "info", data: { message: `Board convened for: "${question}"`, question, sessionId, module: "board" } });
+  await _sendMessage(chatId, "Board convened. Executives analyzing independently...");
+  await _comms.updateSession(sessionId, { status: "analyzing" });
+
+  // Track and monitor
+  activeSessions.set(sessionId, { userId, chatId, createdAt: Date.now() });
+  monitorSession(sessionId, userId, chatId).catch((err) => {
+    emit({ type: "error", level: "error", data: { message: `Monitor error for session ${sessionId}`, module: "board", error: String(err) } });
+    _sendMessage(chatId, "Board session encountered an error during analysis.").catch(() => {});
+    activeSessions.delete(sessionId);
+  });
+
+  return sessionId;
+}
+
+// ============================================================
+// Session Monitor
+// ============================================================
+
+async function monitorSession(
+  sessionId: string,
+  userId: string,
+  chatId: string | number,
+): Promise<void> {
+  const startTime = Date.now();
+  const reportedRoles = new Set<string>();
+
+  // Phase 1: Wait for all non-critic contributions
+  while (Date.now() - startTime < PHASE1_TIMEOUT) {
+    const contributions = await _comms.getContributions(sessionId);
+    const nonCriticContributions = contributions.filter(
+      (c) => c.role !== CRITIC_ROLE && !c.is_critique,
+    );
+    const contributingRoles = new Set(nonCriticContributions.map((c) => c.role));
+
+    // Show new contributions as they arrive
+    for (const c of nonCriticContributions) {
+      if (!reportedRoles.has(c.role)) {
+        reportedRoles.add(c.role);
+        const summary = c.contribution.length > 300
+          ? c.contribution.slice(0, 300) + "..."
+          : c.contribution;
+        await _sendMessage(chatId, `[${c.role.toUpperCase()}] ${summary}`);
+      }
+    }
+
+    // Check if all non-critic roles contributed
+    const allNonCriticDone = NON_CRITIC_ROLES.every((r) => contributingRoles.has(r));
+    if (allNonCriticDone) break;
+
+    // Fallback: only wait for online nodes
+    const statuses = await _comms.getNodeStatuses();
+    const onlineRoles = new Set(
+      statuses.filter((s) => s.status === "online").map((s) => s.role),
+    );
+    const relevantRoles = NON_CRITIC_ROLES.filter((r) => onlineRoles.has(r));
+    if (relevantRoles.length > 0 && relevantRoles.every((r) => contributingRoles.has(r))) break;
+
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+  }
+
+  // Transition to critique phase
+  await _comms.updateSession(sessionId, { status: "critiquing" });
+  await _sendMessage(chatId, "All executives contributed. Critic reviewing...");
+
+  // Phase 2: Wait for critic
+  const criticStart = Date.now();
+  while (Date.now() - criticStart < PHASE2_TIMEOUT) {
+    const contributions = await _comms.getContributions(sessionId);
+    const critique = contributions.find((c) => c.is_critique);
+    if (critique) {
+      const summary = critique.contribution.length > 300
+        ? critique.contribution.slice(0, 300) + "..."
+        : critique.contribution;
+      await _sendMessage(chatId, `[CRITIC] ${summary}`);
+      break;
+    }
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+  }
+
+  // Phase 3: Synthesize
+  await _sendMessage(chatId, "Synthesizing board recommendations...");
+  await _comms.updateSession(sessionId, { status: "synthesizing" });
+  await synthesizeAndPresent(sessionId, userId, chatId);
+}
+
+// ============================================================
+// Synthesis
+// ============================================================
+
+async function synthesizeAndPresent(
+  sessionId: string,
+  userId: string,
+  chatId: string | number,
+): Promise<void> {
+  const session = await _comms.getSession(sessionId);
+  if (!session) {
+    await _sendMessage(chatId, "Board session not found.");
+    return;
+  }
+
+  // Gather contributions
+  const contributions = await _comms.getContributions(sessionId);
+  const nonCriticContributions = contributions.filter((c) => !c.is_critique);
+  const critique = contributions.find((c) => c.is_critique);
+
+  // Get recent decisions for context
+  const recentDecisions = await _comms.getRecentDecisions(userId, 5);
+
+  // Build synthesis prompt
+  const contributionsBlock = nonCriticContributions
+    .map((c) => `[${c.role.toUpperCase()}]: ${c.contribution}`)
+    .join("\n\n");
+
+  const decisionsBlock = recentDecisions.length > 0
+    ? recentDecisions
+        .map((d) => `- Q: ${d.question} -> ${d.chosen_option} (${d.outcome ?? "pending"})`)
+        .join("\n")
+    : "None";
+
+  const prompt = `You are Nova, synthesizing a board meeting.
+
+QUESTION: ${session.question}
+
+EXECUTIVE CONTRIBUTIONS:
+${contributionsBlock}
+
+CRITIC'S ANALYSIS:
+${critique?.contribution ?? "No critique submitted (timed out)."}
+
+PAST DECISIONS (for context):
+${decisionsBlock}
+
+Synthesize into 3-5 distinct options. For each option:
+1. Title (1 line)
+2. Description (2-3 sentences)
+3. Supporting executives (who advocated this direction)
+4. Key risks (from critic's analysis)
+5. Confidence score (0-1, based on executive agreement + critic's assessment)
+6. Estimated effort (low/medium/high)
+
+Format as JSON array: [{ "title": "...", "description": "...", "supporters": ["ceo", "cmo"], "risks": "...", "confidence": 0.85, "effort": "medium" }]
+
+Return ONLY the JSON array, no other text.`;
+
+  let raw: string;
+  try {
+    raw = await _callAI(prompt, "premium", "board-synthesis");
+  } catch (err) {
+    emit({ type: "error", level: "error", data: { message: `Synthesis AI call failed (premium): ${err}`, module: "board", sessionId } });
+    // Retry with standard tier
+    try {
+      raw = await _callAI(prompt, "standard", "board-synthesis-retry");
+    } catch (err2) {
+      emit({ type: "error", level: "error", data: { message: `Synthesis AI call failed (standard): ${err2}`, module: "board", sessionId } });
+      await _sendMessage(chatId, "Board meeting completed but AI synthesis failed. The executive contributions are shown above.");
+      await _comms.updateSession(sessionId, { status: "failed" });
+      activeSessions.delete(sessionId);
+      return;
+    }
+  }
+
+  const options = parseOptions(raw);
+
+  if (options.length === 0) {
+    emit({ type: "error", level: "error", data: { message: `Synthesis JSON parse failed. Raw: ${raw.slice(0, 500)}`, module: "board", sessionId } });
+    await _sendMessage(chatId, "Board meeting completed but synthesis parsing failed. The executive contributions are shown above.");
+    await _comms.updateSession(sessionId, { status: "failed" });
+    activeSessions.delete(sessionId);
+    return;
+  }
+
+  // Store options in session
+  await _comms.updateSession(sessionId, { options, status: "presented" });
+
+  // Format and present to user
+  const message = formatBoardResults(session.question, options);
+  const keyboard = buildOptionKeyboard(sessionId, options);
+  await _sendMessage(chatId, message, keyboard);
+
+  // Save board meeting summary to Notion (non-blocking)
+  const contributingRoles = nonCriticContributions.map((c) => c.role);
+  if (critique) contributingRoles.push("critic");
+  saveBoardMeeting({
+    topic: session.question,
+    sessionId,
+    participants: contributingRoles,
+    summary: message.slice(0, 2000),
+    decisionMade: false,
+    confidenceScore: options.length > 0
+      ? options.reduce((s, o) => s + o.confidence, 0) / options.length
+      : undefined,
+    bodyMarkdown: [
+      `## Question\n${session.question}`,
+      `\n## Executive Contributions`,
+      ...nonCriticContributions.map((c) => `\n### ${c.role.toUpperCase()}\n${c.contribution}`),
+      critique ? `\n## Critic's Analysis\n${critique.contribution}` : "",
+      `\n## Options Presented`,
+      ...options.map((o, i) => `\n### Option ${i + 1}: ${o.title}\n${o.description}\n- Confidence: ${Math.round(o.confidence * 100)}%\n- Supporters: ${o.supporters.join(", ")}\n- Risks: ${o.risks}\n- Effort: ${o.effort}`),
+    ].filter(Boolean).join("\n"),
+  }).catch((err) => emit({ type: "error", level: "error", data: { message: "Notion save failed", module: "board", error: String(err) } }));
+
+  activeSessions.delete(sessionId);
+}
+
+// ============================================================
+// Option Parsing
+// ============================================================
+
+function parseOptions(raw: string): BoardOption[] {
+  try {
+    // Extract JSON array from response (handle markdown code blocks)
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .filter((o: any) => o.title && o.description)
+      .map((o: any) => ({
+        title: String(o.title),
+        description: String(o.description),
+        supporters: Array.isArray(o.supporters) ? o.supporters.map(String) : [],
+        risks: String(o.risks ?? "Unknown"),
+        confidence: typeof o.confidence === "number" ? o.confidence : 0.5,
+        effort: ["low", "medium", "high"].includes(o.effort) ? o.effort : "medium",
+      }));
+  } catch {
+    emit({ type: "error", level: "error", data: { message: "Failed to parse synthesis options", module: "board" } });
+    return [];
+  }
+}
+
+// ============================================================
+// Presentation Formatting
+// ============================================================
+
+function formatBoardResults(question: string, options: BoardOption[]): string {
+  const lines: string[] = [
+    "Board Meeting Results\n",
+    `Question: ${question}\n`,
+  ];
+
+  options.forEach((opt, i) => {
+    const confidencePct = Math.round(opt.confidence * 100);
+    const supporters = opt.supporters.map((s) => s.toUpperCase()).join(", ");
+    lines.push(
+      `Option ${i + 1}: ${opt.title} (Confidence: ${confidencePct}%)`,
+      opt.description,
+      `Supported by: ${supporters || "General consensus"}`,
+      `Risks: ${opt.risks}`,
+      `Effort: ${opt.effort}`,
+      "",
+    );
+  });
+
+  return lines.join("\n");
+}
+
+function buildOptionKeyboard(sessionId: string, options: BoardOption[]): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  options.forEach((_, i) => {
+    keyboard.text(`Option ${i + 1}`, `board_option:${sessionId}:${i}`);
+  });
+  keyboard.text("Dismiss", `board_dismiss:${sessionId}`);
+
+  return keyboard;
+}
+
+// ============================================================
+// Handle Board Decision
+// ============================================================
+
+export async function handleBoardDecision(
+  sessionId: string,
+  chosenOption: string,
+  userId: string,
+): Promise<void> {
+  const session = await _comms.getSession(sessionId);
+  if (!session) {
+    emit({ type: "error", level: "error", data: { message: `Session ${sessionId} not found for decision`, module: "board" } });
+    return;
+  }
+
+  const chatId = activeSessions.get(sessionId)?.chatId;
+  const options = session.options as BoardOption[];
+  const optionIndex = parseInt(chosenOption, 10);
+  const chosen = options[optionIndex];
+
+  if (!chosen) {
+    emit({ type: "error", level: "error", data: { message: `Invalid option index ${optionIndex} for session ${sessionId}`, module: "board" } });
+    return;
+  }
+
+  // Update session with decision
+  await _comms.updateSession(sessionId, {
+    chosen_option: chosen.title,
+    decision_rationale: chosen.description,
+    status: "decided",
+  });
+
+  // Generate consensus summary
+  const consensusPrompt = `Summarize this board decision in 2-3 sentences for executive briefing:
+Question: ${session.question}
+Chosen: ${chosen.title} - ${chosen.description}
+Confidence: ${Math.round(chosen.confidence * 100)}%
+Supporters: ${chosen.supporters.join(", ")}`;
+
+  const consensus = await _callAI(consensusPrompt, "fast", "board-consensus");
+
+  // Store consensus
+  emit({ type: "board.decision", level: "info", data: { message: `Board decision: ${chosen.title}`, decision: chosen.title, sessionId, question: session.question, confidence: chosen.confidence, module: "board" } });
+  await _comms.updateSession(sessionId, { consensus });
+
+  // Record in decisions table
+  await _comms.recordDecision({
+    user_id: userId,
+    question: session.question,
+    chosen_option: chosen.title,
+    rationale: chosen.description,
+    confidence: chosen.confidence,
+    board_session_id: sessionId,
+    contributing_roles: chosen.supporters,
+  });
+
+  // Brief all executives
+  await _comms.sendBrief(
+    null,
+    "Board Decision",
+    `Decision made on: "${session.question}"\n\nChosen: ${chosen.title}\n\n${consensus}`,
+  );
+
+  // Save decision to Notion (non-blocking)
+  saveDecision({
+    decision: chosen.title,
+    proposedBy: chosen.supporters[0] || "CEO",
+    rationale: `${chosen.description}\n\nConsensus: ${consensus}`,
+    confidence: chosen.confidence,
+    impactAreas: chosen.supporters.length > 3 ? ["Strategy"] : undefined,
+  }).catch((err) => emit({ type: "error", level: "error", data: { message: "Notion decision save failed", module: "board", error: String(err) } }));
+
+  // Check for stalling
+  const isStalling = await _comms.checkStalling(userId);
+
+  // Send confirmation to user
+  const targetChatId = chatId ?? userId;
+  let confirmationMsg = `Decision recorded: ${chosen.title}\n\n${consensus}`;
+  if (isStalling) {
+    confirmationMsg +=
+      "\n\nNote: Recent board sessions appear to cover similar ground. Consider moving to execution or reframing the question.";
+  }
+
+  await _sendMessage(targetChatId, confirmationMsg);
+
+  // Kick off autonomous project execution (non-blocking)
+  if (_onDecision) {
+    _onDecision(sessionId, chosen.title, userId).catch((err) =>
+      emit({ type: "error", level: "error", data: { message: "onDecision callback failed", module: "board", error: String(err) } })
+    );
+  }
+}
+
+// ============================================================
+// Board Poller
+// ============================================================
+
+const pollerSessions = new Set<string>();
+let pollerRunning = false;
+
+export function startBoardPoller(): void {
+  if (pollerRunning) return;
+  pollerRunning = true;
+
+  const POLLER_INTERVAL = 10_000;
+
+  const tick = async () => {
+    if (!pollerRunning) return;
+
+    try {
+      // Check for sessions that might have been created externally
+      // (e.g., from another node or the dashboard)
+      const pending = await _comms.getPendingSessions();
+
+      for (const session of pending) {
+        if (pollerSessions.has(session.id)) continue;
+        if (activeSessions.has(session.id)) continue;
+
+        pollerSessions.add(session.id);
+        emit({ type: "board.convened", level: "info", data: { message: `Poller picked up session ${session.id}: "${session.question}"`, question: session.question, sessionId: session.id, module: "board" } });
+
+        // These sessions were convened but not monitored by this node.
+        // If status is still 'convened' or 'analyzing', start monitoring.
+        if (session.status === "convened" || session.status === "analyzing") {
+          const chatId = session.metadata?.chatId ?? session.user_id;
+          activeSessions.set(session.id, { userId: session.user_id, chatId, createdAt: Date.now() });
+
+          monitorSession(session.id, session.user_id, chatId).catch((err) => {
+            emit({ type: "error", level: "error", data: { message: `Poller monitor error for ${session.id}`, module: "board", error: String(err) } });
+            activeSessions.delete(session.id);
+          });
+        }
+      }
+    } catch (err) {
+      emit({ type: "error", level: "error", data: { message: "Poller tick error", module: "board", error: String(err) } });
+    }
+
+    setTimeout(tick, POLLER_INTERVAL);
+  };
+
+  setTimeout(tick, POLLER_INTERVAL);
+  emit({ type: "system.health", level: "info", data: { message: "Board poller started", module: "board" } });
+}
