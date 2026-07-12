@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Documentation — install, configure, and run your AI team</title>
+<meta name="description" content="Complete Nova documentation: installation, every environment variable, channels, agents, memory tags, scheduling, MCP integrations, dashboard, voice, the executive board, and troubleshooting.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+    --sidebar-w: 264px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+  body {
+    background: var(--ink); color: var(--text);
+    font-family: var(--body); font-size: 16px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--tg); outline-offset: 2px; border-radius: 4px;
+  }
+
+  /* ── Top bar ── */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 60; height: 58px;
+    background: color-mix(in srgb, var(--ink) 90%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 16px; padding: 0 20px;
+  }
+  .wordmark {
+    display: flex; align-items: center; gap: 9px;
+    font-family: var(--display); font-weight: 800; font-size: 19px;
+    color: var(--text) !important; letter-spacing: -0.02em; text-decoration: none !important;
+  }
+  .wordmark .docs-tag {
+    font-family: var(--mono); font-size: 12px; font-weight: 400;
+    color: var(--tg); border: 1px solid var(--line); border-radius: 99px;
+    padding: 2px 10px; margin-left: 2px;
+  }
+  .topbar .spacer { flex: 1; }
+  .topbar .gh {
+    color: var(--muted); font-size: 14.5px; font-weight: 500; text-decoration: none !important;
+  }
+  .topbar .gh:hover { color: var(--text); }
+  .nav-toggle {
+    display: none; background: none; border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 6px 12px; font-family: var(--mono); font-size: 13px; cursor: pointer;
+  }
+
+  /* ── Layout ── */
+  .layout { display: flex; padding-top: 58px; max-width: 1400px; margin: 0 auto; }
+
+  /* Sidebar */
+  aside {
+    width: var(--sidebar-w); flex-shrink: 0;
+    position: sticky; top: 58px; height: calc(100vh - 58px);
+    overflow-y: auto; padding: 24px 8px 60px 20px;
+    border-right: 1px solid var(--line);
+    scrollbar-width: thin;
+  }
+  .nav-filter {
+    width: calc(100% - 12px); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; color: var(--text); font-family: var(--mono); font-size: 13px;
+    padding: 8px 12px; margin-bottom: 18px;
+  }
+  .nav-filter::placeholder { color: var(--faint); }
+  .nav-group { margin-bottom: 20px; }
+  .nav-group > .g-label {
+    font-family: var(--mono); font-size: 11.5px; color: var(--faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    display: block; margin-bottom: 8px;
+  }
+  .nav-group a {
+    display: block; color: var(--muted); font-size: 14.5px; padding: 5px 10px;
+    border-radius: 7px; text-decoration: none !important;
+    border-left: 2px solid transparent;
+  }
+  .nav-group a:hover { color: var(--text); background: var(--panel-2); }
+  .nav-group a.active { color: var(--tg); border-left-color: var(--tg); background: var(--panel-2); border-radius: 0 7px 7px 0; }
+
+  /* Main */
+  main { flex: 1; min-width: 0; padding: 40px 48px 120px; max-width: 860px; }
+  @media (max-width: 900px) {
+    aside {
+      position: fixed; left: 0; top: 58px; bottom: 0; z-index: 55;
+      background: var(--ink); transform: translateX(-100%);
+      transition: transform .25s ease; width: min(300px, 85vw);
+    }
+    aside.open { transform: none; box-shadow: 24px 0 60px rgba(0,0,0,.5); }
+    .nav-toggle { display: block; }
+    main { padding: 32px 20px 100px; }
+  }
+
+  /* ── Typography ── */
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(32px, 4.5vw, 44px); letter-spacing: -0.03em; line-height: 1.06;
+    margin-bottom: 14px;
+  }
+  .lede { color: var(--muted); font-size: 18px; margin-bottom: 8px; max-width: 38em; }
+  section { padding-top: 56px; margin-top: 8px; }
+  section + section { border-top: 1px solid var(--line); margin-top: 56px; }
+  .sec-eyebrow { font-family: var(--mono); font-size: 12.5px; color: var(--amber); display: block; margin-bottom: 10px; }
+  h2 {
+    font-family: var(--display); font-weight: 700; font-size: 28px;
+    letter-spacing: -0.02em; margin-bottom: 14px;
+  }
+  h3 {
+    font-family: var(--display); font-weight: 700; font-size: 19px;
+    margin: 34px 0 10px;
+  }
+  h3 .h-mono { font-family: var(--mono); font-weight: 500; font-size: 16px; color: var(--tg); }
+  p { color: var(--muted); margin-bottom: 14px; max-width: 44em; }
+  p strong, li strong { color: var(--text); font-weight: 600; }
+  ul, ol { color: var(--muted); margin: 0 0 16px 22px; }
+  li { margin-bottom: 7px; }
+  code {
+    font-family: var(--mono); font-size: 0.88em;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1.5px 6px; color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  pre {
+    background: #070B14; border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin: 14px 0 20px;
+    font-family: var(--mono); font-size: 13.5px; line-height: 1.85;
+    overflow-x: auto; color: var(--text);
+  }
+  pre code { background: none; border: none; padding: 0; }
+  pre .c { color: var(--faint); }
+  pre .p { color: var(--tg); user-select: none; }
+  pre .k { color: var(--amber); }
+
+  /* Tables */
+  .tbl-wrap { overflow-x: auto; margin: 14px 0 22px; border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase;
+    color: var(--faint); text-align: left; padding: 10px 14px;
+    background: var(--panel-2); border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--line); color: var(--muted); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; }
+  td:first-child code { color: var(--tg); }
+
+  /* Callouts */
+  .callout {
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 10px; background: var(--panel-2);
+    padding: 14px 18px; margin: 16px 0 20px; font-size: 15px; color: var(--muted);
+    max-width: 44em;
+  }
+  .callout .co-label { font-family: var(--mono); font-size: 12px; display: block; margin-bottom: 6px; color: var(--tg); }
+  .callout.warn { border-left-color: var(--amber); }
+  .callout.warn .co-label { color: var(--amber); }
+  .callout.danger { border-left-color: var(--rose); }
+  .callout.danger .co-label { color: var(--rose); }
+  .callout.ok { border-left-color: var(--green); }
+  .callout.ok .co-label { color: var(--green); }
+  .callout code { background: var(--ink); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  /* Tag chips (agents/skills) */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
+  .chip {
+    font-family: var(--mono); font-size: 12.5px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 99px; padding: 4px 12px;
+  }
+  .chip b { color: var(--text); font-weight: 500; }
+
+  footer {
+    border-top: 1px solid var(--line); margin-top: 72px; padding-top: 28px;
+    color: var(--faint); font-size: 14px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } aside { transition: none; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation">menu</button>
+  <a class="wordmark" href="/">
+    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+    Nova <span class="docs-tag">docs</span>
+  </a>
+  <span class="spacer"></span>
+  <a class="gh" href="https://github.com/djbelieny/nova" rel="noopener">GitHub →</a>
+</div>
+
+<div class="layout">
+<aside id="sidebar">
+  <input class="nav-filter" id="navFilter" type="search" placeholder="filter sections…" aria-label="Filter navigation">
+  <div class="nav-group">
+    <span class="g-label">Start here</span>
+    <a href="#overview">Overview</a>
+    <a href="#getting-started">Getting started</a>
+    <a href="#configuration">Configuration</a>
+    <a href="#channels">Channels</a>
+  </div>
+  <div class="nav-group">
+    <span class="g-label">Using Nova</span>
+    <a href="#talking">Talking to Nova</a>
+    <a href="#approval">Approvals &amp; autopilot</a>
+    <a href="#agents">The 24 agents</a>
+    <a href="#skills">Skills</a>
+    <a href="#memory">Memory &amp; intent tags</a>
+    <a href="#scheduling">Scheduling &amp; proactive</a>
+    <a href="#providers">AI providers &amp; routing</a>
+  </div>
+  <div class="nav-group">
+    <span class="g-label">Surfaces</span>
+    <a href="#mcp">MCP integrations</a>
+    <a href="#dashboard">Web dashboard</a>
+    <a href="#voice">Voice</a>
+    <a href="#tickets">Support tickets</a>
+  </div>
+  <div class="nav-group">
+    <span class="g-label">Advanced</span>
+    <a href="#board">Executive board</a>
+    <a href="#always-on">Running always-on</a>
+    <a href="#database">Database &amp; backups</a>
+    <a href="#security">Security model</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </div>
+</aside>
+
+<main>
+  <h1>Nova documentation</h1>
+  <p class="lede">Everything you need to install, configure, and run your self-hosted AI team — from the first Telegram message to a seven-node executive board.</p>
+
+  <!-- ══════════════ OVERVIEW ══════════════ -->
+  <section id="overview">
+    <span class="sec-eyebrow">[overview]</span>
+    <h2>What Nova is</h2>
+    <p>Nova is an open-source, self-hosted multi-agent platform. You talk to it from <strong>Telegram, WhatsApp, or Slack</strong>; it classifies each message, decomposes complex requests into subtasks, routes them to <strong>24 specialist agents</strong>, and executes in two phases — safe preparation first, then a <strong>human approval gate</strong> before anything is published, sent, or paid for.</p>
+    <pre><code>User ─▶ Channel ─▶ relay ─▶ orchestrator ─▶ planner
+        (Telegram/     │ classify           │ decompose
+         WhatsApp/     │ (heuristic →       │ (subtasks +
+         Slack)        │  pattern cache →   │  dependencies)
+                       │  LLM)              │
+                       ▼                    ▼
+                agent-router ◀── 24 specialist agents
+                       │
+             prepare ─▶ <span class="k">approve</span> ─▶ execute
+                       │
+                  Response ─▶ User</code></pre>
+    <p>Everything runs on your machine: <strong>Bun + TypeScript</strong>, local SQLite with vector search, your own AI CLI accounts (Claude, Gemini, Codex), and credentials encrypted at rest. MIT licensed — <a href="https://github.com/djbelieny/nova" rel="noopener">source on GitHub</a>.</p>
+  </section>
+
+  <!-- ══════════════ GETTING STARTED ══════════════ -->
+  <section id="getting-started">
+    <span class="sec-eyebrow">[getting started]</span>
+    <h2>Installation</h2>
+    <h3>Prerequisites</h3>
+    <ul>
+      <li><strong><a href="https://bun.sh" rel="noopener">Bun</a> 1.3+</strong> — <code>curl -fsSL https://bun.sh/install | bash</code></li>
+      <li><strong><a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> CLI</strong>, installed and authenticated — <code>npm install -g @anthropic-ai/claude-code</code>, then <code>claude auth</code></li>
+      <li>A <strong>Telegram account</strong> (to create your bot)</li>
+      <li>macOS 13+ or Ubuntu 22.04+; 2&nbsp;GB RAM minimum (4&nbsp;GB recommended)</li>
+    </ul>
+    <p>Optional accounts unlock more: Gemini, Groq (free voice transcription), Twilio (phone calls), Perplexity (web research), Meta, Notion, Google Workspace, and more — all covered in <a href="#configuration">Configuration</a>.</p>
+
+    <h3>Option A — guided setup (recommended)</h3>
+    <p>Claude Code reads the repo's <code>CLAUDE.md</code> and walks you through eight phases: Telegram, database, personalization, first run, always-on services, proactive services, voice, and research.</p>
+    <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
+<span class="p">$</span> bun run setup          <span class="c"># install deps, create .env</span>
+<span class="p">$</span> claude                 <span class="c"># let Claude guide the rest</span></code></pre>
+
+    <h3>Option B — manual setup</h3>
+    <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
+<span class="p">$</span> bun run setup           <span class="c"># install deps, create .env</span>
+<span class="p">$</span> vim .env                <span class="c"># bot token, user ID, encryption key</span>
+<span class="p">$</span> cp .mcp.example.json .mcp.json
+<span class="p">$</span> cp config/profile.example.md config/profile.md
+<span class="p">$</span> bun run test:telegram   <span class="c"># verify the bot connects</span>
+<span class="p">$</span> bun run test:sqlite     <span class="c"># verify the database</span>
+<span class="p">$</span> bun run start</code></pre>
+    <div class="callout ok">
+      <span class="co-label">[first run]</span>
+      <p>The local embedding model (all-MiniLM-L6-v2, ~23&nbsp;MB) downloads on first use. When the relay is up, message your bot on Telegram — you should get a reply within seconds. Run <code>bun run setup:verify</code> for a full health check.</p>
+    </div>
+
+    <h3>Command reference</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td><code>bun run start</code></td><td>Start the relay (main bot process)</td></tr>
+      <tr><td><code>bun run dev</code></td><td>Start with auto-reload on file changes</td></tr>
+      <tr><td><code>bun run dashboard</code></td><td>Start the web dashboard on port 3033</td></tr>
+      <tr><td><code>bun run voice</code></td><td>Start the Twilio voice-call server</td></tr>
+      <tr><td><code>bun run setup</code></td><td>Install dependencies, create <code>.env</code> from the example</td></tr>
+      <tr><td><code>bun run test:telegram</code> / <code>test:sqlite</code> / <code>test:voice</code></td><td>Verify Telegram token, database, and voice transcription</td></tr>
+      <tr><td><code>bun run setup:verify</code></td><td>Full installation health check</td></tr>
+      <tr><td><code>bun run setup:launchd</code> / <code>setup:systemd</code> / <code>setup:services</code></td><td>Configure always-on services (macOS / Linux / PM2)</td></tr>
+      <tr><td><code>bun run typecheck</code> / <code>bun run test</code></td><td>TypeScript check; run the test suite against an isolated DB</td></tr>
+      <tr><td><code>bun run backup</code></td><td>Archive <code>data/</code>, <code>config/</code>, and <code>.env</code> to <code>~/.nova/backups/</code></td></tr>
+      <tr><td><code>bun run exec:ceo</code> … <code>exec:critic</code></td><td>Start an executive board node</td></tr>
+    </table></div>
+  </section>
+
+  <!-- ══════════════ CONFIGURATION ══════════════ -->
+  <section id="configuration">
+    <span class="sec-eyebrow">[configuration]</span>
+    <h2>Configuration</h2>
+    <p>All secrets live in <code>.env</code> (copied from <code>.env.example</code>). Personal context lives in <code>config/profile.md</code>, loaded into every prompt. MCP servers are declared in <code>.mcp.json</code> (copied from <code>.mcp.example.json</code>).</p>
+
+    <div class="callout danger">
+      <span class="co-label">[required]</span>
+      <p><strong><code>NOVA_ENCRYPTION_KEY</code></strong> — Nova will not start without it. Generate with <code>openssl rand -hex 32</code>. It encrypts OAuth tokens and stored credentials with AES-256-GCM.</p>
+    </div>
+
+    <h3>Core</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+      <tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td>—</td><td><strong>Required.</strong> From @BotFather</td></tr>
+      <tr><td><code>TELEGRAM_USER_ID</code></td><td>—</td><td><strong>Required.</strong> Your numeric ID, from @userinfobot</td></tr>
+      <tr><td><code>NOVA_ENCRYPTION_KEY</code></td><td>—</td><td><strong>Required.</strong> 64-char hex; credential encryption at rest</td></tr>
+      <tr><td><code>BOT_NAME</code></td><td><code>Nova</code></td><td>The name your assistant calls itself</td></tr>
+      <tr><td><code>USER_NAME</code></td><td>—</td><td>Your first name (recommended)</td></tr>
+      <tr><td><code>USER_TIMEZONE</code></td><td><code>UTC</code></td><td>IANA timezone, e.g. <code>America/New_York</code></td></tr>
+      <tr><td><code>CLAUDE_PATH</code></td><td><code>claude</code></td><td>Claude CLI path (auto-detected if in PATH)</td></tr>
+      <tr><td><code>RELAY_DIR</code></td><td><code>~/.nova</code></td><td>Relay data directory (workspace, uploads, logs)</td></tr>
+      <tr><td><code>PROJECT_DIR</code></td><td>repo dir</td><td>Working directory handed to Claude</td></tr>
+    </table></div>
+
+    <h3>Channels</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Variable</th><th>Purpose</th></tr>
+      <tr><td><code>WHATSAPP_WEBHOOK_URL</code></td><td>Public URL Kapso posts WhatsApp webhooks to (per-user Kapso key + phone-number ID are added in the dashboard)</td></tr>
+      <tr><td><code>SLACK_BOT_TOKEN</code></td><td>Slack bot token (<code>xoxb-…</code>), Socket Mode</td></tr>
+      <tr><td><code>SLACK_APP_TOKEN</code></td><td>Slack app-level token (<code>xapp-…</code>)</td></tr>
+    </table></div>
+
+    <h3>AI providers &amp; research</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Variable</th><th>Purpose</th></tr>
+      <tr><td><code>GEMINI_API_KEY</code></td><td>Enables the Gemini provider</td></tr>
+      <tr><td><code>CODEX_PATH</code></td><td>Path to the Codex CLI (auto-detected if in PATH)</td></tr>
+      <tr><td><code>GROQ_API_KEY</code></td><td>Voice transcription (free tier at console.groq.com)</td></tr>
+      <tr><td><code>PERPLEXITY_API_KEY</code></td><td>Web research: sonar-pro (ask), sonar-deep-research, sonar-reasoning-pro</td></tr>
+    </table></div>
+
+    <h3>Voice &amp; phone</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+      <tr><td><code>VOICE_PROVIDER</code></td><td><code>groq</code></td><td><code>groq</code> or <code>local</code> (whisper.cpp)</td></tr>
+      <tr><td><code>WHISPER_BINARY</code> / <code>WHISPER_MODEL_PATH</code></td><td><code>whisper-cpp</code></td><td>Local transcription binary and model file</td></tr>
+      <tr><td><code>TWILIO_ACCOUNT_SID</code> / <code>TWILIO_AUTH_TOKEN</code> / <code>TWILIO_PHONE_NUMBER</code></td><td>—</td><td>Phone calls &amp; SMS</td></tr>
+      <tr><td><code>USER_PHONE</code> / <code>USER_PIN</code></td><td>—</td><td>Your number and a private PIN for call authentication</td></tr>
+      <tr><td><code>VOICE_SERVER_PORT</code></td><td><code>80</code></td><td>Voice server port (production deployments typically use 8080 behind a proxy)</td></tr>
+      <tr><td><code>VOICE_SERVER_URL</code> / <code>WEBHOOK_BASE_URL</code></td><td>—</td><td>Public URLs Twilio calls back to</td></tr>
+      <tr><td><code>ELEVENLABS_API_KEY</code> / <code>ELEVENLABS_VOICE_ID</code></td><td>George</td><td>Text-to-speech for voice replies</td></tr>
+    </table></div>
+
+    <h3>Dashboard, integrations &amp; services</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Variable</th><th>Purpose</th></tr>
+      <tr><td><code>DASHBOARD_USER</code> / <code>DASHBOARD_PASS</code></td><td>Dashboard login — <strong>the dashboard stays disabled until <code>DASHBOARD_PASS</code> is set</strong></td></tr>
+      <tr><td><code>DASHBOARD_PUBLIC_URL</code></td><td>Public dashboard URL; used as the OAuth redirect base</td></tr>
+      <tr><td><code>GOOGLE_CLIENT_ID/SECRET</code>, <code>NOTION_CLIENT_ID/SECRET</code>, <code>ZOOM_CLIENT_ID/SECRET</code>, <code>TIKTOK_CLIENT_KEY/SECRET</code></td><td>OAuth apps you create; users connect accounts from the dashboard</td></tr>
+      <tr><td><code>META_ACCESS_TOKEN</code>, <code>META_AD_ACCOUNT_ID</code>, <code>META_APP_ID</code>, <code>META_APP_SECRET</code></td><td>Meta Ads API (<code>act_XXXXX</code> account format)</td></tr>
+      <tr><td><code>SQUARE_LOCATIONS</code></td><td>Comma-separated <code>Name (LOCATION_ID)</code> pairs the voice assistant may mention</td></tr>
+      <tr><td><code>HEYGEN_API_KEY</code> / <code>FAL_API_KEY</code></td><td>AI avatar video / text-to-video</td></tr>
+      <tr><td><code>RESEND_API_KEY</code>, <code>RESEND_WEBHOOK_SECRET</code>, <code>TICKET_SUPPORT_FROM</code>, <code>TICKET_OPERATOR_USER_ID</code>, <code>TELEGRAM_ADMIN_ID</code>, <code>TICKET_DEPLOY_DRYRUN</code></td><td>Support-ticket pipeline (see <a href="#tickets">Support tickets</a>)</td></tr>
+      <tr><td><code>SUPABASE_URL</code> / <code>SUPABASE_SERVICE_ROLE_KEY</code></td><td>Executive board shared database (see <a href="#board">Executive board</a>)</td></tr>
+      <tr><td><code>MEMWRIGHT_URL</code> / <code>MEMWRIGHT_DATA_DIR</code></td><td>Optional long-term memory service (defaults <code>http://localhost:8765</code>, <code>./data/memwright</code>); Nova degrades gracefully without it</td></tr>
+      <tr><td><code>HEARTBEAT_*</code></td><td>Proactive check-in controls (see <a href="#scheduling">Scheduling</a>)</td></tr>
+    </table></div>
+
+    <h3>Your profile</h3>
+    <p><code>config/profile.md</code> is freeform markdown about you — role, businesses, preferences, constraints — injected into every conversation. Start from <code>config/profile.example.md</code>. It's gitignored; it never leaves your machine.</p>
+  </section>
+
+  <!-- ══════════════ CHANNELS ══════════════ -->
+  <section id="channels">
+    <span class="sec-eyebrow">[channels]</span>
+    <h2>Connecting channels</h2>
+    <h3>Telegram (required)</h3>
+    <ol>
+      <li>Message <strong>@BotFather</strong> → <code>/newbot</code> → pick a display name, then a username ending in <code>bot</code>.</li>
+      <li>Copy the token (looks like <code>7123…:AAH…</code>) into <code>TELEGRAM_BOT_TOKEN</code>.</li>
+      <li>Message <strong>@userinfobot</strong> → <code>/start</code> → copy your numeric ID into <code>TELEGRAM_USER_ID</code>.</li>
+      <li>Verify: <code>bun run test:telegram</code>.</li>
+    </ol>
+    <h3>WhatsApp</h3>
+    <p>WhatsApp runs through <a href="https://kapso.ai" rel="noopener">Kapso</a> (Meta Cloud API). Set <code>WHATSAPP_WEBHOOK_URL</code> to a public URL that reaches the relay's <code>POST /webhook/kapso</code> endpoint, then add each user's Kapso API key and phone-number ID from the dashboard's WhatsApp page.</p>
+    <h3>Slack</h3>
+    <ol>
+      <li>Create an app at api.slack.com/apps → <em>From scratch</em>.</li>
+      <li>Enable <strong>Socket Mode</strong>; create an app-level token (<code>xapp-…</code>) → <code>SLACK_APP_TOKEN</code>.</li>
+      <li>Add bot scopes <code>channels:history</code>, <code>chat:write</code>, <code>im:history</code>, <code>im:write</code>; install to your workspace.</li>
+      <li>Copy the bot token (<code>xoxb-…</code>) → <code>SLACK_BOT_TOKEN</code>.</li>
+    </ol>
+  </section>
+
+  <!-- ══════════════ TALKING ══════════════ -->
+  <section id="talking">
+    <span class="sec-eyebrow">[using nova]</span>
+    <h2>Talking to Nova</h2>
+    <p>Just write naturally. Every message runs through three classification tiers — a fast heuristic for short messages, a pattern cache of plans that worked before, and LLM classification only for genuinely new complex requests. You can also steer explicitly:</p>
+    <ul>
+      <li><strong>Address an agent directly</strong> by name: <code>Pixel, create a week of Instagram content</code>.</li>
+      <li><strong>Force a provider</strong>: prefix with <code>/claude</code>, <code>/gemini</code>, or <code>/codex</code>.</li>
+      <li><strong>Voice messages</strong> are transcribed automatically (Groq or local Whisper).</li>
+    </ul>
+    <h3>Commands</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td><code>/start</code> / <code>/help</code></td><td>Intro and command list</td></tr>
+      <tr><td><code>/agents</code></td><td>Browse all 24 agents with one-tap "Use" buttons</td></tr>
+      <tr><td><code>/memory</code> / <code>/goals</code> / <code>/tasks</code></td><td>Show stored facts, goals, and agent tasks</td></tr>
+      <tr><td><code>/schedule</code>, <code>/schedule list</code></td><td>Manage scheduled tasks</td></tr>
+      <tr><td><code>/usage</code></td><td>Cost and usage summary</td></tr>
+      <tr><td><code>/board &lt;question&gt;</code></td><td>Convene the executive board (if configured)</td></tr>
+      <tr><td><code>/voice</code></td><td>Voice settings</td></tr>
+      <tr><td><code>/feedback good|bad</code> (or 👍/👎)</td><td>Rate the last response — feeds pattern learning</td></tr>
+      <tr><td><code>/settings autopilot &lt;category&gt; [limit_usd]</code></td><td>Auto-approve a category, optionally capped: <code>social_post</code>, <code>email</code>, <code>ad_spend</code>, <code>code_deploy</code>, <code>seo</code>, <code>research</code>, <code>general</code>, <code>*</code></td></tr>
+      <tr><td><code>/settings access @user &lt;level&gt;</code></td><td>Per-user visibility: <code>none</code>, <code>tasks-only</code>, <code>tasks+goals</code>, <code>full-summary</code></td></tr>
+      <tr><td><code>/settings role &lt;job_role&gt;</code></td><td>Tell Nova your role for better context</td></tr>
+      <tr><td><code>/codebase add &lt;name&gt; &lt;git-url&gt;</code> / <code>list</code> / <code>remove</code></td><td>Register repos for dev tasks</td></tr>
+      <tr><td><code>/devtask &lt;description&gt;</code></td><td>Queue a background coding task on a registered repo</td></tr>
+    </table></div>
+    <h3>Admin commands</h3>
+    <p>Users with the <code>admin</code> role also get <code>/adduser</code>, <code>/removeuser</code>, <code>/listusers</code>, <code>/share &lt;fact&gt;</code> (shared memory), <code>/status</code>, <code>/reload</code>, <code>/revert</code>, <code>/schedules</code>, <code>/budget</code>, <code>/project</code>, <code>/webhook</code>, <code>/zoom</code>, and <code>/reputation</code>.</p>
+  </section>
+
+  <!-- ══════════════ APPROVAL ══════════════ -->
+  <section id="approval">
+    <span class="sec-eyebrow">[trust model]</span>
+    <h2>Approvals &amp; autopilot</h2>
+    <p>Execution is two-phase. <strong>Prepare</strong> (research, drafts, images, analysis) runs freely. <strong>Execute</strong> (publish, send, spend) waits for your explicit approval — inline buttons in chat: <strong>Approve / Revise / Cancel</strong>. Tapping <em>Revise</em> turns your next message into feedback and re-runs preparation.</p>
+    <h3>Skipping the gate deliberately</h3>
+    <p>Start your message with an auto-approve phrase and the whole request executes without stopping: <code>just do it</code>, <code>go ahead</code>, <code>approved in advance</code>, <code>do everything</code>, <code>no need to confirm</code>, <code>skip approval</code>, <code>execute directly</code>, <code>don't ask</code>, <code>full auto</code>, <code>run it all</code>, <code>do it all</code> (Portuguese equivalents work too: <code>aprovado</code>, <code>pode executar</code>, <code>faz tudo</code>, <code>manda ver</code>…).</p>
+    <div class="callout warn">
+      <span class="co-label">[be aware]</span>
+      <p>Auto-approve phrases bypass the safety gate by design, and per-category autopilot (<code>/settings autopilot</code>) keeps bypassing it until you turn it off (<code>/settings autopilot off</code>). Anyone who can message as you can use them — keep your chat surface private.</p>
+    </div>
+  </section>
+
+  <!-- ══════════════ AGENTS ══════════════ -->
+  <section id="agents">
+    <span class="sec-eyebrow">[roster]</span>
+    <h2>The 24 agents</h2>
+    <p>Each agent is a markdown file in <code>.claude/agents/</code> — YAML frontmatter (name, description) plus a system prompt. The router picks agents during decomposition, or you address one by name.</p>
+    <div class="chips">
+      <span class="chip"><b>Helios</b> · paid ads</span><span class="chip"><b>Pixel</b> · social media</span><span class="chip"><b>Kai</b> · content</span><span class="chip"><b>Orion</b> · email</span><span class="chip"><b>Morpheus</b> · video</span><span class="chip"><b>Architect</b> · web dev</span><span class="chip"><b>Athena</b> · strategy</span><span class="chip"><b>Digit</b> · analytics</span><span class="chip"><b>Echo</b> · support</span><span class="chip"><b>Flux</b> · funnels</span><span class="chip"><b>Quill</b> · grants</span><span class="chip"><b>Lex</b> · legal</span><span class="chip"><b>Helia</b> · PR</span><span class="chip"><b>Bridge</b> · partnerships</span><span class="chip"><b>Oracle</b> · trends</span><span class="chip"><b>Cipher</b> · data science</span><span class="chip"><b>Rift</b> · security</span><span class="chip"><b>Joule</b> · automation</span><span class="chip"><b>Nexus</b> · community</span><span class="chip"><b>Aura</b> · brand voice</span><span class="chip"><b>Zen</b> · productivity</span><span class="chip"><b>Tesseract</b> · systems</span><span class="chip"><b>Magnus</b> · SEO</span><span class="chip"><b>Cyra</b> · site optimization</span>
+    </div>
+    <h3>Adding your own</h3>
+    <p>Create <code>.claude/agents/yourname.md</code> with frontmatter and a system prompt, map its tools and skills in <code>src/agent-router.ts</code>, and it joins the roster. Agent knowledge-base PDFs can be dropped in <code>agent-team/knowledge_bases/</code> (optional).</p>
+  </section>
+
+  <!-- ══════════════ SKILLS ══════════════ -->
+  <section id="skills">
+    <span class="sec-eyebrow">[skills]</span>
+    <h2>Skills</h2>
+    <p>45 reusable skills live in <code>.claude/skills/</code> — agents invoke them as needed. Highlights: document creation (<code>docx</code>, <code>xlsx</code>, <code>pptx</code>, <code>pdf</code>), <code>image-gen</code>, <code>canvas-design</code>, <code>ai-video-creator</code>, <code>content-research-writer</code>, <code>ghostwriter</code> (full book pipeline), <code>social-media-manager</code>, <code>email-marketing</code>, <code>meta-ads-manager</code>, <code>competitive-ads-extractor</code>, <code>lead-research-assistant</code>, <code>customer-support</code>, <code>reviews-testimonials</code>, <code>platform-maker</code> (SaaS generator), <code>ui-ux-pro-max</code>, <code>file-organizer</code>, <code>telegram-file-sender</code>, <code>notebooklm</code>, <code>skill-creator</code>, plus suites for Google Workspace (<code>gws-*</code>: Gmail, Calendar, Drive, Docs, Sheets), GoHighLevel (<code>ghl-*</code>: contacts, marketing, billing, content, admin), and Cloudflare (<code>cloudflare-dns</code>, <code>cloudflare-workers</code>).</p>
+    <p>To add one, use the <code>skill-creator</code> skill or write a <code>SKILL.md</code> by hand in a new directory — keep it generic, with credentials referenced from <code>.env</code>.</p>
+  </section>
+
+  <!-- ══════════════ MEMORY ══════════════ -->
+  <section id="memory">
+    <span class="sec-eyebrow">[memory]</span>
+    <h2>Memory &amp; intent tags</h2>
+    <p>Nova remembers facts, goals, and tasks in local SQLite with vector search — recalled semantically and injected into context (up to 50 facts/goals, 12 recent messages, 5 semantic matches, 20 tasks). The model manages memory through intent tags in its responses; Nova parses them, acts, and strips them before you see the reply. You can trigger them naturally ("remember that…", "set a goal to…").</p>
+    <pre><code>[REMEMBER: fact]                      <span class="c">save a fact (with embedding)</span>
+[SHARE: fact]                         <span class="c">fact visible to all users</span>
+[GOAL: text | DEADLINE: date]         <span class="c">save a goal</span>
+[DONE: search text]                   <span class="c">complete a matching goal</span>
+[TASK: agent | description]           <span class="c">create an agent task</span>
+[TASK_START|TASK_DONE|TASK_BLOCKED|TASK_CANCEL: …]
+[SCHEDULE: title | datetime | instructions]
+[SCHEDULE: … | RECUR: rule]           <span class="c">recurring</span>
+[SCHEDULE: … | RECUR: rule | IF: condition]
+[SCHEDULE_CANCEL: search text]
+[DEVTASK: project | description]      <span class="c">queue a background dev task</span></code></pre>
+    <h3>Recurrence DSL</h3>
+    <p><code>daily:HH:MM</code> · <code>weekly:DAY:HH:MM</code> (0=Sunday) · <code>weekdays:HH:MM</code> · <code>interval:SECONDS</code></p>
+  </section>
+
+  <!-- ══════════════ SCHEDULING ══════════════ -->
+  <section id="scheduling">
+    <span class="sec-eyebrow">[proactive]</span>
+    <h2>Scheduling &amp; proactive services</h2>
+    <p>Beyond one-off schedules, Nova ships background services that work while you don't (times below are the cron defaults, UTC):</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Service</th><th>Schedule</th><th>What it does</th></tr>
+      <tr><td>Task dispatcher</td><td>every 60s</td><td>Runs due scheduled tasks</td></tr>
+      <tr><td>Morning briefing</td><td>daily</td><td>Day summary: calendar, goals, tasks, news</td></tr>
+      <tr><td>Smart check-in</td><td>several/day</td><td>Context-aware nudges, capped by heartbeat limits</td></tr>
+      <tr><td>AI news monitor</td><td>3×/day</td><td>Curated AI/tech news</td></tr>
+      <tr><td>Social post suggester</td><td>daily</td><td>Post ideas from your context</td></tr>
+      <tr><td>Lead suggester</td><td>daily</td><td>Business lead ideas</td></tr>
+      <tr><td>Meta ads report</td><td>daily</td><td>Ad performance summary</td></tr>
+      <tr><td>Memory review</td><td>daily</td><td>Dedupes and curates memory</td></tr>
+      <tr><td>Health monitor</td><td>every 30 min</td><td>Polls <code>/health</code>; DMs you after 3 consecutive failures</td></tr>
+      <tr><td>Log monitor / Dream mode</td><td>periodic</td><td>Error triage / idle-time reflection</td></tr>
+    </table></div>
+    <h3>Heartbeat controls</h3>
+    <p><code>HEARTBEAT_ENABLED=true</code> · <code>HEARTBEAT_INTERVAL_MIN=30</code> · <code>HEARTBEAT_MAX_DAILY=3</code> (proactive messages per user per day) · <code>HEARTBEAT_ACTIVE_HOURS=8-22</code> (your timezone). Emptying <code>config/heartbeat.md</code> disables proactive check-ins entirely.</p>
+  </section>
+
+  <!-- ══════════════ PROVIDERS ══════════════ -->
+  <section id="providers">
+    <span class="sec-eyebrow">[routing]</span>
+    <h2>AI providers &amp; routing</h2>
+    <p>Nova drives AI through CLIs you've already authenticated — no raw API keys needed for Claude. Routing precedence: <strong>force prefix → user preference → task hint → MCP dependency → rate-limit fallback</strong>.</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Provider</th><th>Via</th><th>Tiers</th></tr>
+      <tr><td>Claude</td><td><code>claude</code> CLI</td><td>fast=Haiku · standard=Sonnet · premium=Opus</td></tr>
+      <tr><td>Gemini</td><td><code>gemini</code> CLI</td><td>fast=Flash · standard=Pro · premium=Ultra</td></tr>
+      <tr><td>Codex</td><td><code>codex</code> CLI</td><td>standard</td></tr>
+      <tr><td>Groq</td><td>API</td><td>Whisper voice transcription</td></tr>
+    </table></div>
+  </section>
+
+  <!-- ══════════════ MCP ══════════════ -->
+  <section id="mcp">
+    <span class="sec-eyebrow">[integrations]</span>
+    <h2>MCP integrations</h2>
+    <p>Copy <code>.mcp.example.json</code> to <code>.mcp.json</code>. Each server runs on demand via <code>npx</code>; credentials come from <code>.env</code> or per-user storage (encrypted, managed in the dashboard — <code>src/integrations.ts</code> generates each user's MCP config).</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Server</th><th>Purpose</th><th>Credentials</th></tr>
+      <tr><td><code>notion</code></td><td>Docs, databases, pages</td><td>OAuth via dashboard (or <code>NOTION_MCP_HEADERS</code>)</td></tr>
+      <tr><td><code>google-workspace</code></td><td>Gmail, Calendar, Drive, Docs, Sheets</td><td>OAuth via dashboard (<code>GOOGLE_CLIENT_*</code>)</td></tr>
+      <tr><td><code>playwright</code></td><td>Browser automation, scraping, screenshots</td><td>none</td></tr>
+      <tr><td><code>cloudflare</code></td><td>Workers, DNS, edge</td><td><code>CLOUDFLARE_API_TOKEN</code>, <code>CLOUDFLARE_ACCOUNT_ID</code></td></tr>
+      <tr><td><code>zoom</code></td><td>Meetings</td><td><code>ZOOM_ACCOUNT_ID</code>, <code>ZOOM_CLIENT_*</code></td></tr>
+      <tr><td><code>square</code></td><td>POS, sales data</td><td><code>SQUARE_ACCESS_TOKEN</code></td></tr>
+      <tr><td><code>clickup</code></td><td>Task management</td><td><code>CLICKUP_API_TOKEN</code></td></tr>
+      <tr><td><code>gohighlevel</code></td><td>CRM, campaigns, publishing</td><td><code>GHL_BEARER_TOKEN</code></td></tr>
+      <tr><td><code>firecrawl</code></td><td>Web scraping</td><td><code>FIRECRAWL_API_KEY</code></td></tr>
+      <tr><td><code>tavily</code> / <code>exa</code></td><td>Web search / semantic search</td><td><code>TAVILY_API_KEY</code> / <code>EXA_API_KEY</code></td></tr>
+      <tr><td><code>browserbase</code></td><td>Cloud browser sessions</td><td><code>BROWSERBASE_API_KEY</code>, <code>BROWSERBASE_PROJECT_ID</code></td></tr>
+    </table></div>
+    <p>Service-based MCPs in <code>services/</code> add YouTube, TikTok, Zoom, and Meta social publishing. The optional <code>memwright</code> server provides long-term vector memory (port 8765).</p>
+  </section>
+
+  <!-- ══════════════ DASHBOARD ══════════════ -->
+  <section id="dashboard">
+    <span class="sec-eyebrow">[dashboard]</span>
+    <h2>Web dashboard</h2>
+    <p>A full admin and per-user surface on <strong>port 3033</strong>: set <code>DASHBOARD_PASS</code> (and optionally <code>DASHBOARD_USER</code>, default <code>admin</code>), then <code>bun run dashboard</code> and open <code>http://localhost:3033</code>. Sessions are cookie-based with rate limiting; non-admin users only ever see their own data.</p>
+    <ul>
+      <li><strong>Dashboard &amp; Kanban</strong> — live activity, task board, agent status</li>
+      <li><strong>Approvals</strong> — resolve pending approval gates from the browser</li>
+      <li><strong>Integrations</strong> — connect Google, Notion, Zoom, TikTok via OAuth (callback: <code>http://localhost:3033/auth/&lt;provider&gt;/callback</code>, or your <code>DASHBOARD_PUBLIC_URL</code>)</li>
+      <li><strong>Memory, History, Schedules, Skills</strong> — inspect and edit what Nova knows and runs</li>
+      <li><strong>Tickets, WhatsApp, Shared credentials, Health, Costs</strong> — operations pages</li>
+    </ul>
+  </section>
+
+  <!-- ══════════════ VOICE ══════════════ -->
+  <section id="voice">
+    <span class="sec-eyebrow">[voice]</span>
+    <h2>Voice</h2>
+    <h3>Voice messages (transcription)</h3>
+    <p><strong>Groq</strong> (recommended, free tier ~2000/day): <code>VOICE_PROVIDER=groq</code> + <code>GROQ_API_KEY</code>. <strong>Local</strong>: install ffmpeg + whisper.cpp, download <code>ggml-base.en.bin</code> (~142&nbsp;MB) to <code>~/whisper-models/</code>, set <code>VOICE_PROVIDER=local</code>. Verify with <code>bun run test:voice</code>.</p>
+    <h3>Phone calls (Twilio)</h3>
+    <p>Run <code>bun run voice</code> to start the call server (default port 80; production typically 8080 behind a reverse proxy). Configure the Twilio env vars plus <code>USER_PIN</code> — callers authenticate by PIN, talk to Nova, and actionable requests are extracted from the transcript and executed after the call. Replies use ElevenLabs TTS when configured. Webhooks are HMAC-verified; endpoints: <code>/voice/*</code>, <code>/sms/*</code>, <code>/audio/*</code>, <code>/health</code>.</p>
+  </section>
+
+  <!-- ══════════════ TICKETS ══════════════ -->
+  <section id="tickets">
+    <span class="sec-eyebrow">[support]</span>
+    <h2>Support tickets</h2>
+    <p>An email-driven pipeline: inbound support email (via <a href="https://resend.com" rel="noopener">Resend</a> webhooks, signature-verified) becomes a ticket → triage → an agent drafts a fix in the matched client repo → you approve from Telegram → deploy. Configure <code>RESEND_API_KEY</code>, <code>RESEND_WEBHOOK_SECRET</code>, <code>TICKET_SUPPORT_FROM</code>, <code>TICKET_OPERATOR_USER_ID</code>, and <code>TELEGRAM_ADMIN_ID</code>; the worker (<code>bun run ticket-worker</code>) polls every 60&nbsp;seconds. <code>TICKET_DEPLOY_DRYRUN=true</code> (the default) keeps deploys simulated until you flip it.</p>
+  </section>
+
+  <!-- ══════════════ BOARD ══════════════ -->
+  <section id="board">
+    <span class="sec-eyebrow">[advanced]</span>
+    <h2>Executive board</h2>
+    <p>An optional distributed layer: seven executive nodes — CEO, CFO, CMO, CTO, COO, Research, Critic — each with a distinct reasoning persona and its own AI provider, coordinating through a shared Supabase database. Ask <code>/board should we switch to usage-based pricing?</code> and you get independent analyses, an adversarial pre-mortem from the Critic, and 3–5 synthesized options with confidence scores. Pick one; the decision is recorded and the COO dispatches execution.</p>
+    <h3>Setup</h3>
+    <ol>
+      <li>Create a Supabase project; apply <code>supabase/migrations/001_executive_board.sql</code>.</li>
+      <li>Set <code>SUPABASE_URL</code> and <code>SUPABASE_SERVICE_ROLE_KEY</code> in <code>.env</code>. The board tables use row-level security with no anonymous access — the service role key is required and must only live on trusted servers.</li>
+      <li>Create <code>.env.&lt;role&gt;</code> per node (<code>EXEC_ROLE</code>, <code>EXEC_NODE_ID</code>, a bot token, optional <code>EXEC_AI_PROVIDER</code>).</li>
+      <li>Start nodes: <code>bun run exec:ceo</code>, <code>exec:cfo</code>, … <code>exec:critic</code> — same machine or seven separate VPSes (systemd units <code>nova-exec-&lt;role&gt;</code>).</li>
+    </ol>
+    <p>Executives use their own intent tags: <code>[DELEGATE: agent | task]</code> (optionally <code>| PROVIDER: claude</code>), <code>[BRIEF: role|all | summary]</code>, and <code>[DECISION: question | chosen | rationale | CONFIDENCE: 0.8]</code>.</p>
+  </section>
+
+  <!-- ══════════════ ALWAYS-ON ══════════════ -->
+  <section id="always-on">
+    <span class="sec-eyebrow">[operations]</span>
+    <h2>Running always-on</h2>
+    <h3>macOS — launchd</h3>
+    <pre><code><span class="p">$</span> bun run setup:launchd -- --service core   <span class="c"># just the relay</span>
+<span class="p">$</span> bun run setup:launchd -- --service all    <span class="c"># relay + dashboard + proactive services</span>
+<span class="p">$</span> launchctl list | grep com.nova            <span class="c"># verify</span>
+<span class="p">$</span> bun run setup:logrotate                   <span class="c"># daily log rotation</span></code></pre>
+    <p>Services install as <code>~/Library/LaunchAgents/com.nova.*.plist</code>; individual services: <code>core</code>, <code>dashboard</code>, <code>memwright</code>, <code>checkin</code>, <code>briefing</code>, <code>memory-review</code>, <code>dispatcher</code>, <code>health-monitor</code>, <code>voice</code>.</p>
+    <h3>Linux — systemd</h3>
+    <pre><code><span class="p">$</span> sudo bun run setup:systemd --service all
+<span class="p">$</span> systemctl enable --now nova-relay nova-dashboard
+<span class="p">$</span> journalctl -u nova-relay -f               <span class="c"># logs</span></code></pre>
+    <h3>Windows / anywhere — PM2</h3>
+    <pre><code><span class="p">$</span> bun run setup:services -- --service all
+<span class="p">$</span> npx pm2 status</code></pre>
+    <p>For public exposure (webhooks, dashboard, voice), put Caddy or another reverse proxy in front — see <code>DEPLOY.md</code> in the repo for a production walkthrough.</p>
+  </section>
+
+  <!-- ══════════════ DATABASE ══════════════ -->
+  <section id="database">
+    <span class="sec-eyebrow">[data]</span>
+    <h2>Database &amp; backups</h2>
+    <p>Split SQLite with <code>sqlite-vec</code> for vector search. Embeddings are computed locally (all-MiniLM-L6-v2, 384 dimensions) — nothing leaves your machine.</p>
+    <pre><code>data/shared.db       <span class="c"># users, status, logs, cost tracking, shared memory</span>
+data/users/{id}.db   <span class="c"># per-user: messages, memory, tasks, approvals, schedules, patterns</span>
+data/memwright/      <span class="c"># optional long-term memory service store</span></code></pre>
+    <p><strong>Backups:</strong> <code>bun run backup</code> archives <code>data/</code>, <code>config/</code>, and <code>.env</code> to <code>~/.nova/backups/</code> (last 7 kept; scheduled daily when services are installed). To restore: stop services, extract the archive, copy the three paths back, restart.</p>
+  </section>
+
+  <!-- ══════════════ SECURITY ══════════════ -->
+  <section id="security">
+    <span class="sec-eyebrow">[security]</span>
+    <h2>Security model</h2>
+    <ul>
+      <li><strong>Approval gates</strong> separate consequential actions from safe ones, per category and per user.</li>
+      <li><strong>Credentials at rest</strong> — OAuth tokens are AES-256-GCM encrypted with <code>NOVA_ENCRYPTION_KEY</code>.</li>
+      <li><strong>Webhooks verified</strong> — Twilio HMAC with timing-safe comparison; Resend svix signatures.</li>
+      <li><strong>Dashboard</strong> — authenticated sessions, per-user data isolation, rate limiting. Always set <code>DASHBOARD_PASS</code> and serve over HTTPS if exposed.</li>
+      <li><strong>Executive board</strong> — RLS on all shared tables; service role key on trusted servers only.</li>
+      <li><strong>SQL</strong> — fully parameterized queries; AI CLIs invoked with argv arrays (no shell interpolation of your messages).</li>
+    </ul>
+    <p>Found a vulnerability? Report privately via <a href="https://github.com/djbelieny/nova/security" rel="noopener">GitHub Security Advisories</a> — see <code>SECURITY.md</code>.</p>
+  </section>
+
+  <!-- ══════════════ TROUBLESHOOTING ══════════════ -->
+  <section id="troubleshooting">
+    <span class="sec-eyebrow">[help]</span>
+    <h2>Troubleshooting</h2>
+    <div class="tbl-wrap"><table>
+      <tr><th>Symptom</th><th>Check</th></tr>
+      <tr><td>Nova won't start</td><td><code>NOVA_ENCRYPTION_KEY</code> set? Generate with <code>openssl rand -hex 32</code> and restart. Then <code>claude "hello"</code> to confirm the CLI is authenticated.</td></tr>
+      <tr><td>Bot doesn't reply</td><td>Token has no stray spaces; <code>TELEGRAM_USER_ID</code> matches @userinfobot; <code>bun run test:telegram</code>; check relay logs.</td></tr>
+      <tr><td>Dashboard unreachable</td><td><code>DASHBOARD_PASS</code> must be set or login is disabled; <code>curl http://localhost:3033</code>; is the dashboard process running?</td></tr>
+      <tr><td>Database errors</td><td><code>bun run test:sqlite</code>; confirm <code>data/</code> exists and sqlite-vec loaded.</td></tr>
+      <tr><td>Claude CLI not found</td><td><code>npm install -g @anthropic-ai/claude-code</code>, or set <code>CLAUDE_PATH</code>.</td></tr>
+      <tr><td>Voice transcription fails</td><td><code>bun run test:voice</code>; Groq key valid, or whisper binary + model path correct.</td></tr>
+      <tr><td>High memory use</td><td>200–500&nbsp;MB is normal for the relay; restart the service if it exceeds ~1&nbsp;GB.</td></tr>
+      <tr><td>Gemini errors</td><td><code>gemini auth login</code> to refresh CLI credentials.</td></tr>
+    </table></div>
+    <p>Still stuck? <a href="https://github.com/djbelieny/nova/issues" rel="noopener">Open an issue</a> — include your OS, Bun version, and relay logs (secrets redacted).</p>
+  </section>
+
+  <footer>
+    <span>Nova — MIT licensed. <a href="/">Home</a> · <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> · <a href="https://github.com/djbelieny/nova/blob/main/CONTRIBUTING.md" rel="noopener">Contributing</a></span>
+    <span>Docs generated from the repository — corrections welcome via PR.</span>
+  </footer>
+</main>
+</div>
+
+<script>
+(function () {
+  // Mobile nav toggle
+  const sidebar = document.getElementById("sidebar");
+  const toggle = document.getElementById("navToggle");
+  toggle.addEventListener("click", () => sidebar.classList.toggle("open"));
+  sidebar.addEventListener("click", e => { if (e.target.tagName === "A") sidebar.classList.remove("open"); });
+
+  // Nav filter
+  const filter = document.getElementById("navFilter");
+  filter.addEventListener("input", () => {
+    const q = filter.value.toLowerCase();
+    document.querySelectorAll(".nav-group").forEach(group => {
+      let any = false;
+      group.querySelectorAll("a").forEach(a => {
+        const hit = a.textContent.toLowerCase().includes(q);
+        a.style.display = hit ? "" : "none";
+        if (hit) any = true;
+      });
+      group.style.display = any ? "" : "none";
+    });
+  });
+
+  // Scrollspy
+  const links = [...document.querySelectorAll(".nav-group a")];
+  const map = new Map(links.map(a => [a.getAttribute("href").slice(1), a]));
+  const spy = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(a => a.classList.remove("active"));
+        const link = map.get(e.target.id);
+        if (link) link.classList.add("active");
+      }
+    });
+  }, { rootMargin: "-20% 0px -70% 0px" });
+  document.querySelectorAll("main section[id]").forEach(s => spy.observe(s));
+})();
+</script>
+
+</body>
+</html>
