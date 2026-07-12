@@ -1,0 +1,10 @@
+{
+  "name": "nova-site",
+  "compatibility_date": "2026-07-01",
+  "assets": {
+    "directory": "./public"
+  }
+  // Custom domains (mynova.space, www.mynova.space) are attached at the
+  // account level via the Workers Domains API — the deploy token lacks
+  // zone-scope permissions, so they are intentionally not declared here.
+}

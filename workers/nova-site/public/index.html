@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova — an open-source AI team you run from Telegram</title>
+<meta name="description" content="Nova is a self-hosted, open-source multi-agent platform: 24 specialist agents, task decomposition, and human approval before anything ships, spends, or sends.">
+<meta property="og:title" content="Nova — an open-source AI team you run from Telegram">
+<meta property="og:description" content="24 specialist agents, task decomposition, and human approval before anything ships, spends, or sends. Self-hosted, MIT licensed.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://mynova.space">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--tg);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px;
+  }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark svg { display: block; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px;
+    padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Hero ── */
+  .hero { padding: 84px 0 72px; position: relative; overflow: hidden; }
+  .hero::before {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(600px 320px at 78% 18%, rgba(42,171,238,0.10), transparent 70%),
+      radial-gradient(420px 260px at 12% 80%, rgba(240,180,41,0.05), transparent 70%);
+    pointer-events: none;
+  }
+  .hero-grid {
+    display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px;
+    align-items: center; position: relative;
+  }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 44px; } }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.04em; margin-bottom: 18px; display: block;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(38px, 5.2vw, 58px);
+    line-height: 1.04; letter-spacing: -0.03em;
+    margin-bottom: 22px;
+  }
+  h1 .accent { color: var(--tg); }
+  .hero p.lede { color: var(--muted); font-size: 19px; max-width: 32em; margin-bottom: 32px; }
+  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .cta {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-weight: 600; font-size: 16px;
+    padding: 13px 22px; border-radius: 10px;
+  }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); }
+  .hero-meta {
+    margin-top: 30px; display: flex; gap: 8px 14px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 12.5px; color: var(--faint);
+  }
+  .hero-meta span {
+    border: 1px solid var(--line); border-radius: 99px;
+    padding: 4px 12px;
+  }
+
+  /* ── Signature: the conversation ── */
+  .chat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+    max-width: 480px;
+    justify-self: end;
+    width: 100%;
+    min-height: 430px;
+  }
+  @media (max-width: 900px) { .chat { justify-self: start; } }
+  .chat-title {
+    display: flex; align-items: center; gap: 9px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--faint);
+    padding-bottom: 14px; margin-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .msg, .log, .approval { opacity: 0; transform: translateY(8px); transition: opacity .45s ease, transform .45s ease; }
+  .shown { opacity: 1; transform: none; }
+  .msg { margin-bottom: 14px; max-width: 92%; }
+  .msg.user {
+    margin-left: auto;
+    background: var(--tg-deep);
+    color: #F2FAFF;
+    padding: 11px 14px; border-radius: 14px 14px 4px 14px;
+    font-size: 14.5px; line-height: 1.5;
+  }
+  .log {
+    font-family: var(--mono); font-size: 12.5px;
+    color: var(--muted); margin: 0 0 10px 4px;
+    display: flex; gap: 8px; align-items: baseline;
+  }
+  .log .tag { color: var(--tg); }
+  .log .ok { color: var(--green); }
+  .agent-name { color: var(--text); font-weight: 500; }
+  .approval {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--amber);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-top: 16px;
+    font-size: 14px;
+  }
+  .approval.approved { border-left-color: var(--green); }
+  .approval .ap-head {
+    font-family: var(--mono); font-size: 12px; color: var(--amber);
+    margin-bottom: 8px; letter-spacing: 0.03em;
+  }
+  .approval.approved .ap-head { color: var(--green); }
+  .approval p { color: var(--muted); margin-bottom: 12px; line-height: 1.55; }
+  .ap-buttons { display: flex; gap: 8px; }
+  .ap-buttons button {
+    font-family: var(--body); font-size: 13.5px; font-weight: 600;
+    padding: 7px 14px; border-radius: 7px; cursor: default;
+    border: 1px solid var(--line); background: transparent; color: var(--muted);
+  }
+  .ap-buttons button.approve { background: var(--green); border-color: var(--green); color: var(--ink); }
+  .ap-done {
+    display: none; font-family: var(--mono); font-size: 12.5px; color: var(--green);
+  }
+  .approval.approved .ap-buttons { display: none; }
+  .approval.approved .ap-done { display: block; }
+
+  /* ── Sections ── */
+  section { padding: 88px 0; border-top: 1px solid var(--line); }
+  .sec-eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--amber);
+    display: block; margin-bottom: 14px;
+  }
+  h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(28px, 3.6vw, 40px);
+    letter-spacing: -0.02em; line-height: 1.1;
+    margin-bottom: 16px; max-width: 22em;
+  }
+  .sec-lede { color: var(--muted); max-width: 38em; margin-bottom: 44px; }
+
+  /* Pipeline */
+  .pipeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 820px) { .pipeline { grid-template-columns: 1fr; } }
+  .stage {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 24px;
+  }
+  .stage .st-label {
+    font-family: var(--mono); font-size: 12.5px; color: var(--tg);
+    display: block; margin-bottom: 12px;
+  }
+  .stage h3 { font-family: var(--display); font-weight: 700; font-size: 20px; margin-bottom: 10px; }
+  .stage p { color: var(--muted); font-size: 15.5px; }
+
+  /* Trust */
+  .trust-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  @media (max-width: 820px) { .trust-grid { grid-template-columns: 1fr; } }
+  .trust-list { list-style: none; display: grid; gap: 18px; }
+  .trust-list li { display: flex; gap: 14px; align-items: baseline; color: var(--muted); font-size: 16px; }
+  .trust-list .mark { font-family: var(--mono); font-size: 13px; color: var(--green); white-space: nowrap; }
+  .trust-list strong { color: var(--text); font-weight: 600; }
+
+  /* Agents */
+  .agent-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 10px;
+  }
+  .agent {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; background: var(--panel-2);
+    transition: border-color .2s ease;
+  }
+  .agent:hover { border-color: var(--tg); }
+  .agent .a-name {
+    font-family: var(--display); font-weight: 700; font-size: 16px;
+    display: block;
+  }
+  .agent .a-domain { font-size: 13px; color: var(--faint); }
+
+  /* Board */
+  .board-note { font-family: var(--mono); font-size: 13.5px; color: var(--faint); margin-bottom: 28px; }
+  .board-note .cmd { color: var(--amber); }
+  .board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .exec {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px 20px;
+  }
+  .exec .role { font-family: var(--display); font-weight: 700; font-size: 17px; }
+  .exec .persona { font-size: 14px; color: var(--muted); margin-top: 4px; }
+  .exec .lens { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 10px; }
+
+  /* Stack */
+  .stack-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px 22px; }
+  @media (max-width: 880px) { .stack-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .stack-grid { grid-template-columns: 1fr; } }
+  .stack-item { border-top: 2px solid var(--line); padding-top: 16px; }
+  .stack-item h3 { font-family: var(--display); font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  .stack-item p { font-size: 14.5px; color: var(--muted); }
+
+  /* Quick start */
+  .terminal {
+    background: #070B14; border: 1px solid var(--line);
+    border-radius: 14px; padding: 26px 28px;
+    font-family: var(--mono); font-size: 14.5px; line-height: 2.05;
+    overflow-x: auto; max-width: 720px;
+  }
+  .terminal .c { color: var(--faint); }
+  .terminal .p { color: var(--tg); user-select: none; }
+  .qs-note { margin-top: 20px; color: var(--muted); font-size: 15.5px; max-width: 40em; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; }
+  .foot-inner {
+    display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+    color: var(--faint); font-size: 14.5px;
+  }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .msg, .log, .approval { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="#" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#agents">Agents</a>
+      <a href="#board">The board</a>
+      <a href="#start">Quick start</a>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">open source · self-hosted · MIT</span>
+      <h1>An AI team that <span class="accent">asks before it acts.</span></h1>
+      <p class="lede">Nova is a multi-agent platform you run yourself and talk to from Telegram, WhatsApp, or Slack. It breaks big requests into subtasks, hands them to 24 specialist agents — and nothing ships, spends, or sends without your approval.</p>
+      <div class="cta-row">
+        <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">View on GitHub</a>
+        <a class="cta ghost" href="#start">Quick start</a>
+      </div>
+      <div class="hero-meta">
+        <span>Bun + TypeScript</span>
+        <span>local SQLite</span>
+        <span>your API keys</span>
+        <span>your machine</span>
+      </div>
+    </div>
+
+    <div class="chat" id="chat" aria-label="Example conversation with Nova">
+      <div class="chat-title"><span class="dot" aria-hidden="true"></span> nova · connected · telegram</div>
+      <div class="msg user">Launch a spring promo for the studio — landing page, a 3-email sequence, and ads. Budget $400.</div>
+      <div class="log"><span class="tag">[classify]</span> complex · 6 subtasks · 3 agents</div>
+      <div class="log"><span class="tag">[prepare]</span> <span class="agent-name">Architect</span> — landing page built <span class="ok">✓</span></div>
+      <div class="log"><span class="tag">[prepare]</span> <span class="agent-name">Orion</span> — email sequence drafted <span class="ok">✓</span></div>
+      <div class="log"><span class="tag">[prepare]</span> <span class="agent-name">Helios</span> — ad set ready, 2 audiences <span class="ok">✓</span></div>
+      <div class="approval" id="approval">
+        <span class="ap-head">[approval required]</span>
+        <p>Ready to execute: publish the page, schedule 3 emails, launch ads at $400 total. Nothing has gone live yet.</p>
+        <div class="ap-buttons" aria-hidden="true">
+          <button class="approve">Approve</button>
+          <button>Revise</button>
+          <button>Cancel</button>
+        </div>
+        <span class="ap-done">approved · executing… links in thread ✓</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="how">
+  <div class="wrap">
+    <span class="sec-eyebrow">[message flow]</span>
+    <h2>Every message runs the same honest pipeline.</h2>
+    <p class="sec-lede">No magic router, no black box. A message is classified, decomposed if it's big, and executed in two phases — with the consequential half gated behind you.</p>
+    <div class="pipeline">
+      <div class="stage">
+        <span class="st-label">01 · classify</span>
+        <h3>Three tiers, cheapest first</h3>
+        <p>Short messages skip straight to the model. Repeat requests hit a pattern cache of plans that worked before. Only genuinely new, complex asks pay for LLM classification.</p>
+      </div>
+      <div class="stage">
+        <span class="st-label">02 · decompose</span>
+        <h3>Subtasks with dependencies</h3>
+        <p>Complex requests become a plan: subtasks, dependency order, and a specialist agent for each. Independent branches run in parallel.</p>
+      </div>
+      <div class="stage">
+        <span class="st-label">03 · prepare → approve → execute</span>
+        <h3>Safe work first, then the gate</h3>
+        <p>Research, drafts, and images happen freely. Publishing, sending, and spending wait for the approval card — Approve, Revise, or Cancel, from your chat.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap trust-grid">
+    <div>
+      <span class="sec-eyebrow">[trust model]</span>
+      <h2>Built like it handles your credentials — because it does.</h2>
+      <p class="sec-lede">Nova connects to your email, calendar, CRM, and ad accounts. The security posture treats that seriously.</p>
+    </div>
+    <ul class="trust-list">
+      <li><span class="mark">approval →</span><span><strong>Two-phase execution.</strong> Consequential actions are separated from safe ones and gated behind explicit approval, per category, per user.</span></li>
+      <li><span class="mark">local →</span><span><strong>Your data stays home.</strong> Messages, memory, and tasks live in local SQLite with per-user isolation. Embeddings are computed on your machine.</span></li>
+      <li><span class="mark">encrypted →</span><span><strong>Credentials at rest.</strong> OAuth tokens are AES-256-GCM encrypted; webhook signatures verified; dashboard sessions authenticated.</span></li>
+      <li><span class="mark">yours →</span><span><strong>Your keys, your models.</strong> Routes across Claude, Gemini, and Codex CLIs under your own accounts, with rate-limit fallback.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section id="agents">
+  <div class="wrap">
+    <span class="sec-eyebrow">[roster]</span>
+    <h2>24 specialists. One chat.</h2>
+    <p class="sec-lede">Each agent has its own system prompt, tools, skills, and MCP access — a working team weighted toward marketing and operations, and fully yours to edit. Adding an agent is writing a markdown file.</p>
+    <div class="agent-grid">
+      <div class="agent"><span class="a-name">Helios</span><span class="a-domain">Paid advertising</span></div>
+      <div class="agent"><span class="a-name">Pixel</span><span class="a-domain">Social media</span></div>
+      <div class="agent"><span class="a-name">Kai</span><span class="a-domain">Content writing</span></div>
+      <div class="agent"><span class="a-name">Orion</span><span class="a-domain">Email marketing</span></div>
+      <div class="agent"><span class="a-name">Morpheus</span><span class="a-domain">Video content</span></div>
+      <div class="agent"><span class="a-name">Architect</span><span class="a-domain">Web development</span></div>
+      <div class="agent"><span class="a-name">Athena</span><span class="a-domain">Business strategy</span></div>
+      <div class="agent"><span class="a-name">Digit</span><span class="a-domain">Data analytics</span></div>
+      <div class="agent"><span class="a-name">Echo</span><span class="a-domain">Customer support</span></div>
+      <div class="agent"><span class="a-name">Flux</span><span class="a-domain">Funnel engineering</span></div>
+      <div class="agent"><span class="a-name">Quill</span><span class="a-domain">Grant writing</span></div>
+      <div class="agent"><span class="a-name">Lex</span><span class="a-domain">Legal &amp; compliance</span></div>
+      <div class="agent"><span class="a-name">Helia</span><span class="a-domain">Public relations</span></div>
+      <div class="agent"><span class="a-name">Bridge</span><span class="a-domain">Partnerships</span></div>
+      <div class="agent"><span class="a-name">Oracle</span><span class="a-domain">Trend forecasting</span></div>
+      <div class="agent"><span class="a-name">Cipher</span><span class="a-domain">Data science</span></div>
+      <div class="agent"><span class="a-name">Rift</span><span class="a-domain">Cybersecurity</span></div>
+      <div class="agent"><span class="a-name">Joule</span><span class="a-domain">Workflow automation</span></div>
+      <div class="agent"><span class="a-name">Nexus</span><span class="a-domain">Community building</span></div>
+      <div class="agent"><span class="a-name">Aura</span><span class="a-domain">Brand voice</span></div>
+      <div class="agent"><span class="a-name">Zen</span><span class="a-domain">Productivity</span></div>
+      <div class="agent"><span class="a-name">Tesseract</span><span class="a-domain">Systems thinking</span></div>
+      <div class="agent"><span class="a-name">Magnus</span><span class="a-domain">SEO</span></div>
+      <div class="agent"><span class="a-name">Cyra</span><span class="a-domain">Website optimization</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="board">
+  <div class="wrap">
+    <span class="sec-eyebrow">[executive board]</span>
+    <h2>Convene a board meeting when the question is big enough.</h2>
+    <p class="sec-lede">An optional distributed layer: seven executive nodes, each with its own reasoning persona, deliberating over a shared database. Independent analysis, an adversarial pre-mortem, then synthesized options with confidence scores — you pick, it executes.</p>
+    <p class="board-note"><span class="cmd">/board</span> should we switch to usage-based pricing?</p>
+    <div class="board-grid">
+      <div class="exec"><span class="role">CEO</span><div class="persona">Day-1 thinking, flywheels, customer obsession</div><div class="lens">long-term vision</div></div>
+      <div class="exec"><span class="role">CFO</span><div class="persona">Unit economics and pricing discipline</div><div class="lens">capital efficiency</div></div>
+      <div class="exec"><span class="role">CMO</span><div class="persona">Remarkable over incremental; tribes over funnels</div><div class="lens">audience &amp; brand</div></div>
+      <div class="exec"><span class="role">CTO</span><div class="persona">Everything fails; design for it</div><div class="lens">architecture &amp; reliability</div></div>
+      <div class="exec"><span class="role">COO</span><div class="persona">Execution tracking, bottleneck hunting</div><div class="lens">turns decisions into work</div></div>
+      <div class="exec"><span class="role">Research</span><div class="persona">Aggregation theory, platform economics</div><div class="lens">market intelligence</div></div>
+      <div class="exec"><span class="role">Critic</span><div class="persona">Inversion and pre-mortem; analysis only</div><div class="lens">keeps everyone honest</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <span class="sec-eyebrow">[what's inside]</span>
+    <h2>Batteries included, nothing locked in.</h2>
+    <div class="stack-grid">
+      <div class="stack-item"><h3>Persistent memory</h3><p>Facts, goals, and tasks with local vector search — Nova remembers across conversations and injects the right context.</p></div>
+      <div class="stack-item"><h3>Pattern learning</h3><p>Successful plans are cached and reused, so repeat requests skip classification entirely.</p></div>
+      <div class="stack-item"><h3>Scheduler &amp; proactive services</h3><p>Morning briefings, smart check-ins, recurring and conditional tasks — it works while you don't.</p></div>
+      <div class="stack-item"><h3>12 MCP integrations</h3><p>Notion, Google Workspace, Playwright, Cloudflare, Square, GoHighLevel, and more — per-user credentials.</p></div>
+      <div class="stack-item"><h3>45 skills</h3><p>Image generation, DOCX/XLSX/PPTX/PDF creation, research writing, ad extraction — invoked by agents as needed.</p></div>
+      <div class="stack-item"><h3>Voice</h3><p>Voice messages transcribed via Groq or local Whisper; optional phone-call server with task extraction.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <span class="sec-eyebrow">[quick start]</span>
+    <h2>Running in five commands.</h2>
+    <div class="terminal" role="figure" aria-label="Quick start commands">
+      <div><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova</div>
+      <div><span class="p">$</span> bun run setup&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c"># installs deps, creates .env</span></div>
+      <div><span class="p">$</span> vim .env&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c"># add your Telegram bot token</span></div>
+      <div><span class="p">$</span> bun run test:telegram&nbsp;<span class="c"># verify the bot connects</span></div>
+      <div><span class="p">$</span> bun run start</div>
+    </div>
+    <p class="qs-note">Prerequisites: <a href="https://bun.sh" rel="noopener">Bun</a>, the <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> CLI, and a Telegram bot token from @BotFather. Everything else is optional and documented in the repo.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
+    <span>
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SETUP.md" rel="noopener">Setup guide</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  const steps = document.querySelectorAll("#chat .msg, #chat .log, #chat .approval");
+  const approval = document.getElementById("approval");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (reduced) {
+    steps.forEach(s => s.classList.add("shown"));
+    approval.classList.add("approved");
+    return;
+  }
+
+  let started = false;
+  function play() {
+    if (started) return;
+    started = true;
+    steps.forEach((step, i) => {
+      setTimeout(() => step.classList.add("shown"), 600 + i * 850);
+    });
+    setTimeout(() => approval.classList.add("approved"), 600 + steps.length * 850 + 1400);
+  }
+
+  const io = new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) { play(); io.disconnect(); }
+  }, { threshold: 0.3 });
+  io.observe(document.getElementById("chat"));
+})();
+</script>
+
+</body>
+</html>
