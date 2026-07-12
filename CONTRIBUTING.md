@@ -29,7 +29,7 @@ See [SETUP.md](SETUP.md) for the full walkthrough and [docs/ARCHITECTURE.md](doc
 
 - Keep PRs focused — one change per PR.
 - Describe what changed and why; include repro steps for bug fixes.
-- CI (typecheck + tests) must be green.
+- Run `bun run typecheck` and `bun run test` before submitting — both must pass.
 
 ## Adding an Agent
 
