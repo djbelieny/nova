@@ -1,6 +1,24 @@
 # Nova
 
+**An AI team that asks before it acts.**
+
 A multi-agent AI orchestration platform. 24 specialist agents, task decomposition, human-in-the-loop approval, persistent memory, and multi-channel messaging — all coordinated through Telegram, WhatsApp, or Slack.
+
+<p align="center">
+  <a href="https://mynova.space">
+    <img src="docs/assets/nova-landing.png" alt="Nova landing page — an AI team that asks before it acts" width="100%">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://mynova.space"><b>Website</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://mynova.space/docs/"><b>Documentation</b></a>
+  &nbsp;·&nbsp;
+  <a href="#quick-start"><b>Quick start</b></a>
+  &nbsp;·&nbsp;
+  <a href="LICENSE"><b>MIT license</b></a>
+</p>
 
 ```
 User ──▶ Channel ──▶ relay.ts ──▶ orchestrator.ts ──▶ planner.ts
@@ -155,6 +173,7 @@ GROQ_API_KEY=           # For Groq (free at console.groq.com)
 
 ## Documentation
 
+- **[mynova.space/docs](https://mynova.space/docs/)** — Full documentation: every feature, command, and configuration option
 - **[SETUP.md](SETUP.md)** — Guided setup walkthrough (8 phases)
 - **[CLAUDE.md](CLAUDE.md)** — Architecture & conventions (Claude Code reads this)
 - **[DEPLOY.md](DEPLOY.md)** — Production deployment
