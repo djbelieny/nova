@@ -173,6 +173,12 @@ GROQ_API_KEY=           # For Groq (free at console.groq.com)
 
 ## Documentation
 
+<p align="center">
+  <a href="https://mynova.space/docs/">
+    <img src="docs/assets/nova-docs.png" alt="Nova documentation site" width="100%">
+  </a>
+</p>
+
 - **[mynova.space/docs](https://mynova.space/docs/)** — Full documentation: every feature, command, and configuration option
 - **[SETUP.md](SETUP.md)** — Guided setup walkthrough (8 phases)
 - **[CLAUDE.md](CLAUDE.md)** — Architecture & conventions (Claude Code reads this)
