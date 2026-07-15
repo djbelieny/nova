@@ -1278,7 +1278,7 @@ async function resolveApproval(id: string, action: string, feedback?: string, us
 
 export async function getAutonomyView(userId: string): Promise<unknown> {
   try {
-    return { grants: supabase.getAutonomyGrants(userId) };
+    return { grants: supabase.listAutonomyGrants(userId) };
   } catch (e: any) {
     return { grants: [], error: e.message };
   }
@@ -1327,7 +1327,7 @@ export async function getBudgetsView(userId: string): Promise<unknown> {
     // Per-agent spend today from the action ledger (consequential actions).
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const grants = safe(() => supabase.getAutonomyGrants(userId), []);
+    const grants = safe(() => supabase.listAutonomyGrants(userId), []);
     const actions = safe(() => supabase.getActions(userId, { limit: 500 }), []);
     const spendByAgent: Record<string, number> = {};
     for (const a of actions) {

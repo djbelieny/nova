@@ -10,10 +10,10 @@ import {
 const U = "44444444-4444-4444-8444-444444444444";
 const U2 = "55555555-5555-4555-8555-555555555555";
 
-test("setAutonomyGrant / getAutonomyGrants round-trips and upserts", () => {
+test("setAutonomyGrant / listAutonomyGrants round-trips and upserts", () => {
   const db = getDb();
   db.setAutonomyGrant(U, { agent: "pixel", action_type: "social.publish", level: 2, spend_cap_daily: 5 });
-  let grants = db.getAutonomyGrants(U);
+  let grants = db.listAutonomyGrants(U);
   expect(grants.length).toBe(1);
   expect(grants[0].agent).toBe("pixel");
   expect(grants[0].level).toBe(2);
@@ -21,7 +21,7 @@ test("setAutonomyGrant / getAutonomyGrants round-trips and upserts", () => {
 
   // Upsert same key updates in place.
   db.setAutonomyGrant(U, { agent: "pixel", action_type: "social.publish", level: 3, spend_cap_daily: 10 });
-  grants = db.getAutonomyGrants(U);
+  grants = db.listAutonomyGrants(U);
   expect(grants.length).toBe(1);
   expect(grants[0].level).toBe(3);
   expect(grants[0].spend_cap_daily).toBe(10);
