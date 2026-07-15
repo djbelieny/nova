@@ -32,6 +32,7 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
+import { recordSubtaskAction } from "./ledger.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
 import {
   ChannelRegistry,
@@ -3519,14 +3520,13 @@ function startAgentDelegationPoller(comms: any): void {
         _active.add(delegation.id);
 
         (async () => {
+          const agentSlug = delegation.assigned_agent!;
+          // Strip parent tag from description for cleaner agent prompt
+          const taskDesc = delegation.task_description
+            .replace(/^\[ParentDelegation:[^\]]+\]\s*/, "")
+            .trim();
           try {
             await comms.claimDelegation(delegation.id);
-
-            const agentSlug = delegation.assigned_agent!;
-            // Strip parent tag from description for cleaner agent prompt
-            const taskDesc = delegation.task_description
-              .replace(/^\[ParentDelegation:[^\]]+\]\s*/, "")
-              .trim();
 
             const baseContext = [
               `You are executing a delegated task assigned by the COO.`,
@@ -3550,9 +3550,15 @@ function startAgentDelegationPoller(comms: any): void {
             };
 
             await comms.completeDelegation(delegation.id, result, artifactsFn(result));
+            recordSubtaskAction(delegation.user_id, "execute", {
+              description: taskDesc, agent: agentSlug, success: true, artifacts: artifactsFn(result),
+            });
             console.log(`[agent-dispatcher] Completed delegation ${delegation.id} (${agentSlug})`);
           } catch (err) {
             await comms.failDelegation(delegation.id, String(err));
+            recordSubtaskAction(delegation.user_id, "execute", {
+              description: taskDesc, agent: agentSlug, success: false,
+            });
             console.error(`[agent-dispatcher] Failed delegation ${delegation.id}:`, err);
           } finally {
             _active.delete(delegation.id);

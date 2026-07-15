@@ -1,5 +1,5 @@
 import { getDb } from "./db.ts";
-import { getSandboxWarning } from "./sandbox/index.ts";
+import { getResolvedSandboxName } from "./sandbox/index.ts";
 
 const ACTION_TYPE_RULES: Array<[RegExp, string]> = [
   [/\b(send|reply|forward)\b.*\b(email|newsletter|mail)\b|\b(email|newsletter)\b.*\bsend\b/i, "email.send"],
@@ -27,7 +27,7 @@ export function recordSubtaskAction(
       agent: r.agent ?? "nova",
       action_type: deriveActionType(r.description),
       phase,
-      sandbox_backend: getSandboxWarning() ? "local" : (process.env.NOVA_SANDBOX_BACKEND || "local"),
+      sandbox_backend: getResolvedSandboxName() ?? "local",
       outcome: r.success ? "success" : "failed",
       artifacts: r.artifacts,
     });

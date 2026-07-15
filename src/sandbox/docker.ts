@@ -4,15 +4,26 @@ import { realpathSync, existsSync } from "fs";
 import type { SandboxBackend, SandboxExecOpts, WrappedCommand } from "./index.ts";
 
 export const BLOCKED_BIND_ROOTS = [
-  ".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".docker", ".nova/credentials",
+  ".ssh", ".aws", ".gnupg", ".config/gcloud", ".config/gh", ".kube", ".docker",
+  ".claude", ".netrc", ".npmrc", ".git-credentials", ".nova/credentials",
 ].map((p) => `${homedir()}/${p}`);
+
+function withSlash(p: string): string {
+  return p.endsWith("/") ? p : `${p}/`;
+}
 
 export function validateBind(bind: string): void {
   const hostPath = bind.split(":")[0];
   const resolved = existsSync(hostPath) ? realpathSync(hostPath) : hostPath;
   for (const root of BLOCKED_BIND_ROOTS) {
-    if (resolved === root || resolved.startsWith(`${root}/`)) {
-      throw new Error(`Sandbox bind '${bind}' is blocked: '${resolved}' is a credential root`);
+    // Block when the bind IS a credential root, is UNDER one, or is an ANCESTOR
+    // of one (mounting $HOME or / would expose the credential root inside it).
+    if (
+      resolved === root ||
+      resolved.startsWith(`${root}/`) ||
+      withSlash(root).startsWith(withSlash(resolved))
+    ) {
+      throw new Error(`Sandbox bind '${bind}' is blocked: '${resolved}' exposes credential root '${root}'`);
     }
   }
 }
@@ -36,16 +47,21 @@ export class DockerBackend implements SandboxBackend {
     validateBind(workspaceBind);
     const binds = opts.extraBinds ?? [];
     for (const bind of binds) validateBind(bind);
+    const envFlags = (opts.envPassthrough ?? []).flatMap((name) => ["-e", name]);
     const wrapped = [
       "docker", "run", "--rm",
       "--network", opts.network ?? "none",
       "--read-only",
       "--cap-drop", "ALL",
       "--security-opt", "no-new-privileges",
-      "--tmpfs", "/tmp",
+      "--pids-limit", process.env.NOVA_SANDBOX_PIDS_LIMIT || "512",
+      "--memory", process.env.NOVA_SANDBOX_MEMORY || "2g",
+      "--cpus", process.env.NOVA_SANDBOX_CPUS || "2",
+      "--tmpfs", "/tmp:size=512m",
       "-v", workspaceBind,
       "-w", "/workspace",
       "-e", "HOME=/workspace",
+      ...envFlags,
       ...binds.flatMap((b) => ["-v", b]),
       this.image,
       ...argv,

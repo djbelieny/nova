@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { deriveActionType, recordSubtaskAction } from "../src/ledger.ts";
+import { resolveSandboxBackend, resetSandboxForTests } from "../src/sandbox/index.ts";
 import { getDb } from "../src/db.ts";
 
 const U = "33333333-3333-4333-8333-333333333333";
@@ -31,4 +32,14 @@ test("failed subtasks record outcome failed and never throw", () => {
   recordSubtaskAction(U, "execute", { description: "Publish to x.com", agent: "pixel", success: false });
   const rows = getDb().getActions(U, { actionType: "social.publish" });
   expect(rows[0].outcome).toBe("failed");
+});
+
+test("sandbox_backend records the actually-resolved backend, not the env guess", async () => {
+  const UU = "44444444-4444-4444-8444-444444444444";
+  resetSandboxForTests();
+  process.env.NOVA_SANDBOX_BACKEND = "local";
+  await resolveSandboxBackend();
+  recordSubtaskAction(UU, "execute", { description: "Research pricing", agent: "digit", success: true });
+  const rows = getDb().getActions(UU, { actionType: "task.generic" });
+  expect(rows[0].sandbox_backend).toBe("local");
 });

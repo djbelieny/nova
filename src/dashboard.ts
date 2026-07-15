@@ -5825,7 +5825,7 @@ const server = Bun.serve({
       const agent = url.searchParams.get("agent") || undefined;
       const actionType = url.searchParams.get("actionType") || undefined;
       const parsed = parseInt(url.searchParams.get("limit") || "50");
-      const limit = Number.isFinite(parsed) ? Math.min(parsed, 500) : 50;
+      const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 500) : 50;
       try {
         return jsonResponse({ actions: supabase.getActions(userId, { agent, actionType, limit }) });
       } catch (e: any) {

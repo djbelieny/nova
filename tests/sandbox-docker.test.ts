@@ -45,3 +45,32 @@ test("extraBinds are validated and appended", () => {
   const { argv } = backend.wrapCommand(["x"], { cwd: "/t", extraBinds: ["/data/in:/in:ro"] });
   expect(argv.join(" ")).toContain("-v /data/in:/in:ro");
 });
+
+test("ancestor directories of a credential root are blocked", () => {
+  const home = homedir();
+  // Mounting $HOME or / would expose ~/.ssh (a credential root) inside the container.
+  expect(() => validateBind(`${home}:/workspace:rw`)).toThrow(/blocked/i);
+  expect(() => validateBind(`/:/host:rw`)).toThrow(/blocked/i);
+});
+
+test("expanded blocklist covers common credential files", () => {
+  const home = homedir();
+  for (const name of [".netrc", ".npmrc", ".git-credentials", ".claude", ".config/gh"]) {
+    expect(() => validateBind(`${home}/${name}:/x:ro`)).toThrow(/blocked/i);
+  }
+});
+
+test("resource caps and env passthrough are emitted", () => {
+  const backend = new DockerBackend("img");
+  const { argv } = backend.wrapCommand(["claude", "-p", "hi"], {
+    cwd: "/tmp/ws", envPassthrough: ["ANTHROPIC_API_KEY", "PATH"],
+  });
+  const joined = argv.join(" ");
+  expect(joined).toContain("--pids-limit");
+  expect(joined).toContain("--memory");
+  expect(joined).toContain("--cpus");
+  expect(joined).toContain("-e ANTHROPIC_API_KEY");
+  expect(joined).toContain("-e PATH");
+  // Passthrough forwards names only — no secret values land in argv.
+  expect(joined).not.toContain("ANTHROPIC_API_KEY=");
+});

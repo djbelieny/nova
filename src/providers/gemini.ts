@@ -13,6 +13,8 @@
 
 import { spawn } from "bun";
 import { writeFile, mkdir, rm } from "fs/promises";
+import { mkdirSync } from "fs";
+import { wrapForExecution } from "../sandbox/index.ts";
 import { join } from "path";
 import { readFileSync, readdirSync, copyFileSync } from "fs";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
@@ -92,10 +94,21 @@ export class GeminiProvider implements AIProvider {
     const { getDb } = await import("../db.ts");
     const geminiKey = getModelApiKey(getDb(), "gemini") || process.env.GEMINI_API_KEY;
 
-    const proc = spawn(args, {
+    const isToolExecution = !opts.sandboxed && !opts.noMcp;
+    if (isToolExecution) { try { mkdirSync(cwd, { recursive: true }); } catch {} }
+    const wrapped = await wrapForExecution(args, cwd, isToolExecution, {
+      network: "bridge",
+      envPassthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "PATH"],
+      workspaceDir: cwd,
+    });
+    if (wrapped.argv[0] === "docker" && homeOverride) {
+      console.warn("[sandbox] gemini MCP settings (temp HOME) are not applied inside the docker sandbox; use the local backend if MCP tools are required.");
+    }
+
+    const proc = spawn(wrapped.argv, {
       stdout: "pipe",
       stderr: "pipe",
-      cwd,
+      cwd: wrapped.cwd,
       env: {
         ...process.env,
         GEMINI_API_KEY: geminiKey || undefined,
