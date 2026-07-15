@@ -182,7 +182,7 @@ export class ExecComms {
   async pollMessages(since: Date): Promise<ExecMessage[]> {
     const iso = since.toISOString();
     return this.query<ExecMessage>("exec_messages",
-      `or=(to_role.eq.${this.role},to_role.is.null)&created_at=gt.${iso}&not.read_by=cs.{${this.role}}&order=created_at.asc`);
+      `or=(to_role.eq.${this.role},to_role.is.null)&created_at=gt.${iso}&read_by=not.cs.{${this.role}}&order=created_at.asc`);
   }
 
   async markRead(messageId: string): Promise<void> {
@@ -287,8 +287,8 @@ export class ExecComms {
     const id = rows[0]?.id ?? "";
     if (id) {
       await this.insert("decision_log", {
-        decision_id: id, event_type: "decision_made", actor: this.role,
-        details: { question: decision.question, chosen: decision.chosen_option }, user_id: decision.user_id,
+        decision_id: id, event_type: "decision_made", role: this.role,
+        data: { question: decision.question, chosen: decision.chosen_option, user_id: decision.user_id },
       }, "return=minimal");
     }
     return id;
@@ -301,8 +301,8 @@ export class ExecComms {
   async updateOutcome(decisionId: string, outcome: string, notes?: string): Promise<void> {
     await this.update("decisions", { outcome, outcome_notes: notes ?? null }, `id=eq.${decisionId}`);
     await this.insert("decision_log", {
-      decision_id: decisionId, event_type: "outcome_recorded", actor: this.role,
-      details: { outcome, notes },
+      decision_id: decisionId, event_type: "outcome_recorded", role: this.role,
+      data: { outcome, notes },
     }, "return=minimal");
   }
 

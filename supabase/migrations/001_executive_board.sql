@@ -200,3 +200,35 @@ ALTER TABLE decision_log        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exec_heartbeats     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE projects            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE proactive_runs      ENABLE ROW LEVEL SECURITY;
+
+-- 11. Functions & triggers (previously created out-of-band; required for fresh installs)
+
+-- Atomic read-receipt append used by ExecComms.markRead() via /rest/v1/rpc.
+-- Idempotent: skips messages the reader has already seen.
+CREATE OR REPLACE FUNCTION array_append_read_by(msg_id UUID, reader TEXT)
+RETURNS VOID AS $$
+  UPDATE exec_messages
+  SET read_by = array_append(read_by, reader)
+  WHERE id = msg_id AND NOT (read_by @> ARRAY[reader]);
+$$ LANGUAGE sql;
+
+-- Keep updated_at accurate server-side instead of trusting client timestamps.
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_board_sessions_updated_at ON board_sessions;
+CREATE TRIGGER trg_board_sessions_updated_at
+  BEFORE UPDATE ON board_sessions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_delegations_updated_at ON delegations;
+CREATE TRIGGER trg_delegations_updated_at
+  BEFORE UPDATE ON delegations FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS trg_projects_updated_at ON projects;
+CREATE TRIGGER trg_projects_updated_at
+  BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION set_updated_at();
