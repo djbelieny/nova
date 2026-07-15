@@ -106,8 +106,10 @@ export class ClaudeProvider implements AIProvider {
     const isToolExecution = !opts.sandboxed && !opts.noMcp;
     // Docker mounts the caller's explicit workspace when given (so flows like the
     // dev-task-dispatcher operate on the same dir the host inspects), but never
-    // the repo/PROJECT_ROOT — fall back to the per-user nova workspace there.
-    const dockerWorkspace = (opts.cwd && opts.cwd !== PROJECT_ROOT)
+    // the repo (PROJECT_ROOT is .../nova/src; REPO_ROOT its parent holds .env,
+    // .mcp.json, data/) — fall back to the per-user nova workspace there.
+    const REPO_ROOT = dirname(PROJECT_ROOT);
+    const dockerWorkspace = (opts.cwd && opts.cwd !== PROJECT_ROOT && opts.cwd !== REPO_ROOT)
       ? opts.cwd
       : (opts.userId ? userWorkspace : novaWorkspace);
     if (isToolExecution) {
