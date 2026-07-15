@@ -32,7 +32,8 @@
     "exec:critic": "bun run --env-file=.env.critic --env-file=.env src/executive-node.ts --role critic",
     "dream": "bun run services/dream.ts",
     "backup": "bun scripts/backup.ts",
-    "ticket-worker": "bun run services/ticket-worker.ts"
+    "ticket-worker": "bun run services/ticket-worker.ts",
+    "sandbox:verify": "bash deploy/sandbox/verify-docker.sh"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
