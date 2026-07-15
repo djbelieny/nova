@@ -12,16 +12,10 @@ import { dirname } from "path";
 import { mkdirSync } from "fs";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
 import { wrapForExecution } from "../sandbox/index.ts";
+import { planSandboxAuth } from "../sandbox/auth.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const CLI_TIMEOUT_MS = 300_000;
-
-// Credential env vars forwarded into the docker sandbox so the CLI can
-// authenticate against the model API over the bridge network.
-const CLAUDE_ENV_PASSTHROUGH = [
-  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
-  "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "PATH",
-];
 
 export { wrapForExecution };
 
@@ -115,13 +109,17 @@ export class ClaudeProvider implements AIProvider {
     if (isToolExecution) {
       try { mkdirSync(dockerWorkspace, { recursive: true }); } catch {}
     }
+    const auth = planSandboxAuth("claude");
     const wrapped = await wrapForExecution(args, cwd, isToolExecution, {
       network: "bridge",
-      envPassthrough: CLAUDE_ENV_PASSTHROUGH,
+      auth,
       workspaceDir: dockerWorkspace,
     });
-    if (wrapped.argv[0] === "docker" && !opts.noMcp && !opts.useMcp2cli && opts.mcpConfigPath) {
-      console.warn("[sandbox] claude --mcp-config host path is not mounted inside the docker sandbox; MCP tools via config file are unavailable in this mode (use mcp2cli or the local backend).");
+    if (wrapped.argv[0] === "docker") {
+      if (auth.warning) console.warn(`[sandbox] ${auth.warning}`);
+      if (!opts.noMcp && !opts.useMcp2cli && opts.mcpConfigPath) {
+        console.warn("[sandbox] claude --mcp-config host path is not mounted inside the docker sandbox; MCP tools via config file are unavailable in this mode (use mcp2cli or the local backend).");
+      }
     }
 
     const proc = spawn(wrapped.argv, {

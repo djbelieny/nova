@@ -15,6 +15,7 @@ import { spawn } from "bun";
 import { writeFile, mkdir, rm } from "fs/promises";
 import { mkdirSync } from "fs";
 import { wrapForExecution } from "../sandbox/index.ts";
+import { planSandboxAuth } from "../sandbox/auth.ts";
 import { join } from "path";
 import { readFileSync, readdirSync, copyFileSync } from "fs";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
@@ -99,13 +100,15 @@ export class GeminiProvider implements AIProvider {
     // container — use the caller's cwd when given, else the per-user workspace.
     const dockerWorkspace = opts.cwd || userWorkspace;
     if (isToolExecution) { try { mkdirSync(dockerWorkspace, { recursive: true }); } catch {} }
+    const auth = planSandboxAuth("gemini");
     const wrapped = await wrapForExecution(args, cwd, isToolExecution, {
       network: "bridge",
-      envPassthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "PATH"],
+      auth,
       workspaceDir: dockerWorkspace,
     });
-    if (wrapped.argv[0] === "docker" && homeOverride) {
-      console.warn("[sandbox] gemini MCP settings (temp HOME) are not applied inside the docker sandbox; use the local backend if MCP tools are required.");
+    if (wrapped.argv[0] === "docker") {
+      if (auth.warning) console.warn(`[sandbox] ${auth.warning}`);
+      if (homeOverride) console.warn("[sandbox] gemini MCP settings (temp HOME) are not applied inside the docker sandbox; use the local backend if MCP tools are required.");
     }
 
     const proc = spawn(wrapped.argv, {

@@ -1,4 +1,5 @@
 import { LocalBackend } from "./local.ts";
+import { prepareAuthWorkspace, type SandboxAuthPlan } from "./auth.ts";
 
 export interface SandboxExecOpts {
   cwd: string;
@@ -6,6 +7,11 @@ export interface SandboxExecOpts {
   workspaceAccess?: "rw" | "ro";
   extraBinds?: string[];
   envPassthrough?: string[];
+  envSet?: Record<string, string>;
+  // Curated read-only OAuth credential mounts from src/sandbox/auth.ts ONLY.
+  // Unlike extraBinds these bypass the bind blocklist, so they must never
+  // carry user-supplied paths.
+  credentialMounts?: string[];
 }
 export interface WrappedCommand { argv: string[]; cwd: string; }
 export interface SandboxBackend {
@@ -18,6 +24,7 @@ export interface WrapExecOpts {
   network?: "none" | "bridge";
   envPassthrough?: string[];
   workspaceDir?: string;
+  auth?: SandboxAuthPlan;
 }
 
 let resolved: SandboxBackend | null = null;
@@ -65,9 +72,13 @@ export async function wrapForExecution(
   if (!isToolExecution) return { argv, cwd };
   const backend = await resolveSandboxBackend();
   if (backend.name === "local") return backend.wrapCommand(argv, { cwd });
+  const workspaceDir = opts.workspaceDir ?? cwd;
+  if (opts.auth) prepareAuthWorkspace(workspaceDir, opts.auth);
   return backend.wrapCommand(argv, {
-    cwd: opts.workspaceDir ?? cwd,
+    cwd: workspaceDir,
     network: opts.network ?? "bridge",
-    envPassthrough: opts.envPassthrough,
+    envPassthrough: [...(opts.envPassthrough ?? []), ...(opts.auth?.envPassthrough ?? [])],
+    envSet: opts.auth?.envSet,
+    credentialMounts: opts.auth?.credentialMounts,
   });
 }

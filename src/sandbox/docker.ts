@@ -47,7 +47,13 @@ export class DockerBackend implements SandboxBackend {
     validateBind(workspaceBind);
     const binds = opts.extraBinds ?? [];
     for (const bind of binds) validateBind(bind);
+    // Credential mounts are curated by src/sandbox/auth.ts (never user input);
+    // they intentionally bypass the blocklist but are forced read-only.
+    const credMounts = (opts.credentialMounts ?? []).map((m) =>
+      m.endsWith(":ro") ? m : `${m}:ro`,
+    );
     const envFlags = (opts.envPassthrough ?? []).flatMap((name) => ["-e", name]);
+    const envSetFlags = Object.entries(opts.envSet ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
     const wrapped = [
       "docker", "run", "--rm",
       "--network", opts.network ?? "none",
@@ -62,7 +68,9 @@ export class DockerBackend implements SandboxBackend {
       "-w", "/workspace",
       "-e", "HOME=/workspace",
       ...envFlags,
+      ...envSetFlags,
       ...binds.flatMap((b) => ["-v", b]),
+      ...credMounts.flatMap((m) => ["-v", m]),
       this.image,
       ...argv,
     ];

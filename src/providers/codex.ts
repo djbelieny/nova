@@ -14,6 +14,7 @@ import { readFile, unlink } from "fs/promises";
 import { join } from "path";
 import { mkdirSync } from "fs";
 import { resolveSandboxBackend, wrapForExecution } from "../sandbox/index.ts";
+import { planSandboxAuth } from "../sandbox/auth.ts";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
 
 export class CodexProvider implements AIProvider {
@@ -96,11 +97,13 @@ export class CodexProvider implements AIProvider {
 
     const dockerWorkspace = resolvedCwd || userWorkspace;
     if (isToolExecution) { try { mkdirSync(dockerWorkspace, { recursive: true }); } catch {} }
+    const auth = planSandboxAuth("codex");
     const wrapped = await wrapForExecution(args, dockerWorkspace, isToolExecution, {
       network: "bridge",
-      envPassthrough: ["OPENAI_API_KEY", "PATH"],
+      auth,
       workspaceDir: dockerWorkspace,
     });
+    if (inDocker && auth.warning) console.warn(`[sandbox] ${auth.warning}`);
 
     const startTime = Date.now();
 
