@@ -1274,6 +1274,135 @@ async function resolveApproval(id: string, action: string, feedback?: string, us
   }
 }
 
+// ── Governance control plane ────────────────────────────────────────────────
+
+export async function getAutonomyView(userId: string): Promise<unknown> {
+  try {
+    return { grants: supabase.getAutonomyGrants(userId) };
+  } catch (e: any) {
+    return { grants: [], error: e.message };
+  }
+}
+
+export async function setAutonomyGrantView(userId: string, body: any): Promise<unknown> {
+  try {
+    const agent = String(body?.agent || "").trim().toLowerCase();
+    const actionType = String(body?.action_type || body?.actionType || "").trim();
+    if (!agent || !actionType) return { error: "agent and action_type are required" };
+    const level = Number(body?.level);
+    if (!Number.isInteger(level) || level < 0 || level > 3) {
+      return { error: "level must be an integer 0-3" };
+    }
+    const capAction = normalizeCap(body?.spend_cap_action ?? body?.spendCapAction);
+    const capDaily = normalizeCap(body?.spend_cap_daily ?? body?.spendCapDaily);
+    if (capAction === "invalid" || capDaily === "invalid") {
+      return { error: "spend caps must be non-negative numbers" };
+    }
+    const grant = supabase.setAutonomyGrant(userId, {
+      agent,
+      action_type: actionType,
+      level,
+      spend_cap_action: capAction,
+      spend_cap_daily: capDaily,
+    });
+    return { ok: true, grant };
+  } catch (e: any) {
+    return { error: e.message };
+  }
+}
+
+function normalizeCap(v: unknown): number | null | "invalid" {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return "invalid";
+  return n;
+}
+
+export async function getBudgetsView(userId: string): Promise<unknown> {
+  try {
+    const summary = supabase.getCostSummary(userId);
+    const dailyCap = envNum("NOVA_DAILY_BUDGET_USD");
+    const monthlyCap = envNum("NOVA_MONTHLY_BUDGET_USD");
+
+    // Per-agent spend today from the action ledger (consequential actions).
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const grants = safe(() => supabase.getAutonomyGrants(userId), []);
+    const actions = safe(() => supabase.getActions(userId, { limit: 500 }), []);
+    const spendByAgent: Record<string, number> = {};
+    for (const a of actions) {
+      if (a.created_at && new Date(a.created_at) < todayStart) continue;
+      spendByAgent[a.agent] = (spendByAgent[a.agent] || 0) + (a.cost_usd || 0);
+    }
+    const perAgent = grants
+      .filter((g: any) => g.spend_cap_daily != null)
+      .map((g: any) => ({
+        agent: g.agent,
+        action_type: g.action_type,
+        cap_daily: g.spend_cap_daily,
+        spent_today: spendByAgent[g.agent] || 0,
+      }));
+
+    return {
+      budgets: {
+        today: summary.today,
+        month: summary.month,
+        allTime: summary.allTime,
+        dailyCap,
+        monthlyCap,
+        dailyRemaining: dailyCap != null ? Math.max(0, dailyCap - summary.today) : null,
+        monthlyRemaining: monthlyCap != null ? Math.max(0, monthlyCap - summary.month) : null,
+        topAgents: summary.topAgents,
+        perAgent,
+      },
+    };
+  } catch (e: any) {
+    return { budgets: null, error: e.message };
+  }
+}
+
+export async function getGoalsView(userId: string): Promise<unknown> {
+  try {
+    const rows = supabase.getGoals(userId);
+    const goals = rows.map((g: any) => {
+      let notes: any[] = [];
+      try {
+        notes = JSON.parse(g.progress_notes || "[]");
+      } catch {
+        notes = [];
+      }
+      return {
+        id: g.id,
+        content: g.content,
+        deadline: g.deadline || null,
+        priority: g.priority ?? 0,
+        created_at: g.created_at,
+        last_reviewed_at: g.last_reviewed_at || null,
+        progress_notes: notes.slice(-5),
+        progress_count: notes.length,
+      };
+    });
+    return { goals };
+  } catch (e: any) {
+    return { goals: [], error: e.message };
+  }
+}
+
+function envNum(name: string): number | null {
+  const raw = process.env[name];
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function safe<T>(fn: () => T, fallback: T): T {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+
 async function getAllMemory(userId?: string): Promise<unknown> {
   try {
     // getMemoryForDashboard returns 100 recent entries across all types
@@ -2908,6 +3037,185 @@ export function renderWhatsappPage(): string {
 // APPROVALS PAGE
 // ============================================================
 
+// ============================================================
+// GOVERNANCE CONTROL PLANE PAGE
+// ============================================================
+
+export function renderGovernancePage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Governance</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.2rem;font-weight:700;margin-bottom:.4rem}
+  h2{font-size:.95rem;font-weight:700;margin:1.6rem 0 .7rem}
+  .sub{color:var(--dim);font-size:.8rem;margin-bottom:1rem}
+  .back{display:inline-block;margin-bottom:1rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:.6rem}
+  select,input{background:rgba(255,255,255,.06);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:.8rem}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:8px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:.4rem}
+  .stat{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px}
+  .stat .n{font-size:1.15rem;font-weight:700}
+  .stat .l{font-size:.72rem;color:var(--dim);margin-top:2px}
+  table{width:100%;border-collapse:collapse;font-size:.78rem}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border)}
+  th{color:var(--dim);font-weight:600}
+  .empty{color:var(--dim);font-size:.82rem;padding:6px 0}
+  .btn{padding:4px 10px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.75rem;font-weight:600;cursor:pointer}
+  .btn:hover{opacity:.85}
+  .pill{display:inline-block;padding:1px 7px;border-radius:99px;font-size:.7rem;font-weight:600}
+  .l0{background:rgba(148,163,184,.18);color:#94a3b8}
+  .l1{background:rgba(99,102,241,.18);color:#a5b4fc}
+  .l2{background:rgba(245,158,11,.16);color:var(--yellow)}
+  .l3{background:rgba(34,197,94,.16);color:var(--green)}
+  .toast{position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:8px;font-size:.83rem;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:999}
+  .toast.show{opacity:1}
+  .toast-success{background:rgba(34,197,94,.2);border:1px solid rgba(34,197,94,.4);color:var(--green)}
+  .toast-error{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:var(--red)}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Governance</h1>
+  <div class="sub">Approve, audit, set autonomy, and watch spend &amp; goals — one control plane.</div>
+  <div class="bar">
+    <label class="sub" style="margin:0">User:</label>
+    <select id="userSel"><option value="">— select —</option></select>
+  </div>
+
+  <h2>Pending Approvals</h2>
+  <div id="approvals"><p class="empty">…</p></div>
+
+  <h2>Budget &amp; Spend</h2>
+  <div id="budgets"><p class="empty">…</p></div>
+
+  <h2>Autonomy Levels</h2>
+  <div class="sub">0 = always ask · 1 = notify · 2 = act within caps · 3 = full autonomy</div>
+  <div id="autonomy"><p class="empty">Select a user.</p></div>
+  <div class="card" id="grantForm" style="display:none">
+    <div class="bar">
+      <input id="gAgent" placeholder="agent (e.g. pixel)" />
+      <input id="gAction" placeholder="action_type (e.g. social.publish)" />
+      <select id="gLevel"><option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option></select>
+      <input id="gCapAction" placeholder="cap/action $" style="width:110px" />
+      <input id="gCapDaily" placeholder="cap/day $" style="width:100px" />
+      <button class="btn" id="gSave">Set grant</button>
+    </div>
+  </div>
+
+  <h2>Action Ledger</h2>
+  <div id="ledger"><p class="empty">Select a user.</p></div>
+
+  <h2>Goals</h2>
+  <div id="goals"><p class="empty">Select a user.</p></div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  var uid = '';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function money(n){return '$'+(Number(n)||0).toFixed(4);}
+  var toastEl=document.getElementById('toast'),toastTimer;
+  function showToast(m,t){toastEl.textContent=m;toastEl.className='toast toast-'+(t||'success')+' show';clearTimeout(toastTimer);toastTimer=setTimeout(function(){toastEl.classList.remove('show');},3000);}
+  function q(p){return uid?(p+(p.indexOf('?')>-1?'&':'?')+'user_id='+encodeURIComponent(uid)):p;}
+  function getJSON(p){return fetch(BASE+p).then(function(r){return r.json();});}
+
+  function loadUsers(){
+    getJSON('/api/users').then(function(d){
+      var users=(d&&d.users)||d||[];
+      var sel=document.getElementById('userSel');
+      (users||[]).forEach(function(u){
+        var o=document.createElement('option');o.value=u.id;o.textContent=(u.name||u.username||u.id);sel.appendChild(o);
+      });
+    }).catch(function(){});
+  }
+
+  function loadApprovals(){
+    getJSON('/api/approvals'+(uid?('?user_id='+encodeURIComponent(uid)):'')).then(function(d){
+      var a=(d&&d.approvals)||[];var el=document.getElementById('approvals');
+      if(!a.length){el.innerHTML='<p class="empty">No pending approvals.</p>';return;}
+      el.innerHTML=a.map(function(x){return '<div class="card"><b>'+esc(x.original_text||'(no description)')+'</b>'+(x.prepare_summary?'<div class="sub" style="margin:6px 0 0">'+esc(x.prepare_summary)+'</div>':'')+'</div>';}).join('');
+    });
+  }
+
+  function loadBudgets(){
+    if(!uid){document.getElementById('budgets').innerHTML='<p class="empty">Select a user.</p>';return;}
+    getJSON(q('/api/budgets')).then(function(d){
+      var b=d&&d.budgets;var el=document.getElementById('budgets');
+      if(!b){el.innerHTML='<p class="empty">'+esc((d&&d.error)||'No data.')+'</p>';return;}
+      var h='<div class="grid">';
+      h+='<div class="stat"><div class="n">'+money(b.today)+'</div><div class="l">Today'+(b.dailyCap!=null?(' / '+money(b.dailyCap)):'')+'</div></div>';
+      h+='<div class="stat"><div class="n">'+money(b.month)+'</div><div class="l">This month'+(b.monthlyCap!=null?(' / '+money(b.monthlyCap)):'')+'</div></div>';
+      h+='<div class="stat"><div class="n">'+money(b.allTime)+'</div><div class="l">All time</div></div>';
+      if(b.dailyRemaining!=null)h+='<div class="stat"><div class="n">'+money(b.dailyRemaining)+'</div><div class="l">Daily remaining</div></div>';
+      h+='</div>';
+      if(b.perAgent&&b.perAgent.length){
+        h+='<div class="card"><table><tr><th>Agent</th><th>Action</th><th>Spent today</th><th>Daily cap</th></tr>';
+        b.perAgent.forEach(function(p){h+='<tr><td>'+esc(p.agent)+'</td><td>'+esc(p.action_type)+'</td><td>'+money(p.spent_today)+'</td><td>'+money(p.cap_daily)+'</td></tr>';});
+        h+='</table></div>';
+      }
+      el.innerHTML=h;
+    });
+  }
+
+  function levelPill(l){return '<span class="pill l'+l+'">L'+l+'</span>';}
+  function loadAutonomy(){
+    var el=document.getElementById('autonomy');
+    document.getElementById('grantForm').style.display=uid?'block':'none';
+    if(!uid){el.innerHTML='<p class="empty">Select a user.</p>';return;}
+    getJSON(q('/api/autonomy')).then(function(d){
+      var g=(d&&d.grants)||[];
+      if(!g.length){el.innerHTML='<p class="empty">No autonomy grants yet — everything asks for approval.</p>';return;}
+      var h='<div class="card"><table><tr><th>Agent</th><th>Action</th><th>Level</th><th>Cap/action</th><th>Cap/day</th></tr>';
+      g.forEach(function(x){h+='<tr><td>'+esc(x.agent)+'</td><td>'+esc(x.action_type)+'</td><td>'+levelPill(x.level)+'</td><td>'+(x.spend_cap_action!=null?money(x.spend_cap_action):'—')+'</td><td>'+(x.spend_cap_daily!=null?money(x.spend_cap_daily):'—')+'</td></tr>';});
+      h+='</table></div>';el.innerHTML=h;
+    });
+  }
+
+  function loadLedger(){
+    var el=document.getElementById('ledger');
+    if(!uid){el.innerHTML='<p class="empty">Select a user.</p>';return;}
+    getJSON(q('/api/ledger?limit=25')).then(function(d){
+      var a=(d&&d.actions)||[];
+      if(!a.length){el.innerHTML='<p class="empty">'+esc((d&&d.error)||'No actions recorded.')+'</p>';return;}
+      var h='<div class="card"><table><tr><th>When</th><th>Agent</th><th>Action</th><th>Phase</th><th>Outcome</th><th>Cost</th></tr>';
+      a.forEach(function(x){h+='<tr><td>'+esc((x.created_at||'').replace('T',' ').slice(0,16))+'</td><td>'+esc(x.agent)+'</td><td>'+esc(x.action_type)+'</td><td>'+esc(x.phase)+'</td><td>'+esc(x.outcome)+'</td><td>'+money(x.cost_usd)+'</td></tr>';});
+      h+='</table></div>';el.innerHTML=h;
+    });
+  }
+
+  function loadGoals(){
+    var el=document.getElementById('goals');
+    if(!uid){el.innerHTML='<p class="empty">Select a user.</p>';return;}
+    getJSON(q('/api/goals')).then(function(d){
+      var g=(d&&d.goals)||[];
+      if(!g.length){el.innerHTML='<p class="empty">No active goals.</p>';return;}
+      el.innerHTML=g.map(function(x){
+        return '<div class="card"><b>'+esc(x.content)+'</b>'+(x.deadline?(' <span class="sub">· due '+esc(x.deadline)+'</span>'):'')+'<div class="sub" style="margin-top:4px">'+x.progress_count+' progress note(s)'+(x.last_reviewed_at?(' · last reviewed '+esc((x.last_reviewed_at||'').slice(0,10))):'')+'</div></div>';
+      }).join('');
+    });
+  }
+
+  function reloadAll(){loadApprovals();loadBudgets();loadAutonomy();loadLedger();loadGoals();}
+  document.getElementById('userSel').addEventListener('change',function(e){uid=e.target.value;reloadAll();});
+  document.getElementById('gSave').addEventListener('click',function(){
+    if(!uid){showToast('Select a user first','error');return;}
+    var body={agent:document.getElementById('gAgent').value,action_type:document.getElementById('gAction').value,level:parseInt(document.getElementById('gLevel').value,10),spend_cap_action:document.getElementById('gCapAction').value||null,spend_cap_daily:document.getElementById('gCapDaily').value||null};
+    fetch(BASE+q('/api/autonomy'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}).then(function(d){
+      if(d.ok){showToast('Grant saved');loadAutonomy();loadBudgets();}else{showToast(d.error||'Failed','error');}
+    }).catch(function(e){showToast('Error: '+e.message,'error');});
+  });
+
+  loadUsers();reloadAll();
+</script>
+</body></html>`;
+}
+
 export function renderApprovalsPage(): string {
   return `<!DOCTYPE html>
 <html lang="en"><head>
@@ -4051,6 +4359,7 @@ export function renderDashboard(): string {
       </span>
       <span class="sse-badge" id="sse-badge">LIVE</span>
       <select class="user-select" id="user-selector"><option value="">All Users</option></select>
+      <a href="/governance" class="topbar-action">Governance</a>
       <a href="/kanban" class="topbar-action">Kanban</a>
       <a href="/tickets" class="topbar-action">Tickets</a>
       <a href="/integrations" class="topbar-action">Integrations</a>
@@ -5665,6 +5974,17 @@ const server = Bun.serve({
       });
     }
 
+    // Governance control plane page (admin only)
+    if (path === "/governance") {
+      if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderGovernancePage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Kanban board page (admin only)
     if (path === "/kanban") {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -5832,6 +6152,24 @@ const server = Bun.serve({
         return jsonResponse({ actions: [], error: e.message });
       }
     }
+    // ── Governance control plane ──
+    if (path === "/api/autonomy") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => ({}));
+        return jsonResponse(await setAutonomyGrantView(userId, body));
+      }
+      return jsonResponse(await getAutonomyView(userId));
+    }
+    if (path === "/api/budgets") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      return jsonResponse(await getBudgetsView(userId));
+    }
+    if (path === "/api/goals") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      return jsonResponse(await getGoalsView(userId));
+    }
+
     if (path === "/api/usage-by-user") { const g = adminApi(); if (g) return g; return jsonResponse(await getUsageByUser()); }
     if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks(userId));
     if (path === "/api/kanban") return jsonResponse(await getKanbanData(userId));
@@ -6235,6 +6573,9 @@ console.log("  GET  /api/logs      — Log viewer");
 console.log("  GET  /api/tasks     — Scheduled tasks");
 console.log("  GET  /api/costs      — API cost tracking");
 console.log("  GET  /api/ledger     — Action ledger (agent task audit trail)");
+console.log("  GET/POST /api/autonomy — Autonomy grants (governance)");
+console.log("  GET  /api/budgets    — Spend vs cap summary");
+console.log("  GET  /api/goals      — Active goals + progress");
 console.log("  GET  /api/usage-by-user — Per-user usage breakdown");
 console.log("  GET  /api/agent-tasks — Agent task tracking");
 console.log("  GET  /api/resources — System resources");

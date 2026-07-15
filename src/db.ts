@@ -187,6 +187,16 @@ export interface ActionLedgerRow extends ActionLedgerEntry {
   created_at: string;
 }
 
+export interface AutonomyGrantRow {
+  agent: string;
+  action_type: string;
+  level: number;
+  clean_runs: number;
+  spend_cap_action: number | null;
+  spend_cap_daily: number | null;
+  demoted_at: string | null;
+}
+
 export interface AgentTaskRow {
   id: string;
   created_at: string;
@@ -4306,6 +4316,40 @@ export class Database {
       verification: r.verification ? JSON.parse(r.verification) : undefined,
       artifacts: r.artifacts ? JSON.parse(r.artifacts) : undefined,
     }));
+  }
+
+  // ── Autonomy grants (per-user governance) ─────────────────────────────────
+
+  getAutonomyGrants(userId: string): AutonomyGrantRow[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(
+      `SELECT agent, action_type, level, clean_runs, spend_cap_action, spend_cap_daily, demoted_at
+       FROM autonomy_grants ORDER BY agent ASC, action_type ASC`
+    ).all() as AutonomyGrantRow[];
+  }
+
+  setAutonomyGrant(userId: string, grant: {
+    agent: string;
+    action_type: string;
+    level: number;
+    spend_cap_action?: number | null;
+    spend_cap_daily?: number | null;
+  }): AutonomyGrantRow {
+    const udb = this.getUserDb(userId);
+    udb.db.run(
+      `INSERT INTO autonomy_grants (agent, action_type, level, spend_cap_action, spend_cap_daily)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(agent, action_type) DO UPDATE SET
+         level = excluded.level,
+         spend_cap_action = excluded.spend_cap_action,
+         spend_cap_daily = excluded.spend_cap_daily`,
+      [grant.agent, grant.action_type, grant.level,
+       grant.spend_cap_action ?? null, grant.spend_cap_daily ?? null]
+    );
+    return udb.db.query(
+      `SELECT agent, action_type, level, clean_runs, spend_cap_action, spend_cap_daily, demoted_at
+       FROM autonomy_grants WHERE agent = ? AND action_type = ?`
+    ).get(grant.agent, grant.action_type) as AutonomyGrantRow;
   }
 
   getSupportTicket(userId: string, id: string): SupportTicket | null {
