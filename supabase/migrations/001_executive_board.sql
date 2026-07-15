@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS proactive_runs (
   status      TEXT DEFAULT 'completed',
   output_type TEXT,                                -- notion_doc | sheet_update | brief | delegation
   output_ref  TEXT,                                -- Notion page ID, Sheet URL, etc.
+  behavior_name TEXT,                              -- proactive behavior that produced this run
   metadata    JSONB DEFAULT '{}'
 );
 

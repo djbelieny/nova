@@ -21,6 +21,7 @@
     "dashboard": "bun run src/dashboard.ts",
     "dashboard:dev": "bun run --watch src/dashboard.ts",
     "migrate:supabase": "bun run scripts/migrate-supabase.ts",
+    "migrate:board": "bun run scripts/migrate-board-to-selfhosted.ts",
     "migrate:memwright": "bun run scripts/migrate-memories-to-memwright.ts",
     "exec": "bun run src/executive-node.ts",
     "exec:ceo": "bun run --env-file=.env.ceo --env-file=.env src/executive-node.ts --role ceo",
