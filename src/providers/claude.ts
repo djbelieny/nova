@@ -104,7 +104,12 @@ export class ClaudeProvider implements AIProvider {
         : (opts.cwd || PROJECT_ROOT);
     const startTime = Date.now();
     const isToolExecution = !opts.sandboxed && !opts.noMcp;
-    const dockerWorkspace = opts.userId ? userWorkspace : novaWorkspace;
+    // Docker mounts the caller's explicit workspace when given (so flows like the
+    // dev-task-dispatcher operate on the same dir the host inspects), but never
+    // the repo/PROJECT_ROOT — fall back to the per-user nova workspace there.
+    const dockerWorkspace = (opts.cwd && opts.cwd !== PROJECT_ROOT)
+      ? opts.cwd
+      : (opts.userId ? userWorkspace : novaWorkspace);
     if (isToolExecution) {
       try { mkdirSync(dockerWorkspace, { recursive: true }); } catch {}
     }
@@ -113,6 +118,9 @@ export class ClaudeProvider implements AIProvider {
       envPassthrough: CLAUDE_ENV_PASSTHROUGH,
       workspaceDir: dockerWorkspace,
     });
+    if (wrapped.argv[0] === "docker" && !opts.noMcp && !opts.useMcp2cli && opts.mcpConfigPath) {
+      console.warn("[sandbox] claude --mcp-config host path is not mounted inside the docker sandbox; MCP tools via config file are unavailable in this mode (use mcp2cli or the local backend).");
+    }
 
     const proc = spawn(wrapped.argv, {
       stdout: "pipe",

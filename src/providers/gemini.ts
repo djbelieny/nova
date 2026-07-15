@@ -95,11 +95,14 @@ export class GeminiProvider implements AIProvider {
     const geminiKey = getModelApiKey(getDb(), "gemini") || process.env.GEMINI_API_KEY;
 
     const isToolExecution = !opts.sandboxed && !opts.noMcp;
-    if (isToolExecution) { try { mkdirSync(cwd, { recursive: true }); } catch {} }
+    // Never mount host /tmp (gemini's non-sandboxed cwd default) into the
+    // container — use the caller's cwd when given, else the per-user workspace.
+    const dockerWorkspace = opts.cwd || userWorkspace;
+    if (isToolExecution) { try { mkdirSync(dockerWorkspace, { recursive: true }); } catch {} }
     const wrapped = await wrapForExecution(args, cwd, isToolExecution, {
       network: "bridge",
       envPassthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "PATH"],
-      workspaceDir: cwd,
+      workspaceDir: dockerWorkspace,
     });
     if (wrapped.argv[0] === "docker" && homeOverride) {
       console.warn("[sandbox] gemini MCP settings (temp HOME) are not applied inside the docker sandbox; use the local backend if MCP tools are required.");
