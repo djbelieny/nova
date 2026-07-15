@@ -10,9 +10,18 @@
 import { spawn } from "bun";
 import { dirname } from "path";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
+import { resolveSandboxBackend } from "../sandbox/index.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const CLI_TIMEOUT_MS = 300_000;
+
+export async function wrapForExecution(
+  argv: string[], cwd: string, isToolExecution: boolean,
+): Promise<{ argv: string[]; cwd: string }> {
+  if (!isToolExecution) return { argv, cwd };
+  const backend = await resolveSandboxBackend();
+  return backend.wrapCommand(argv, { cwd });
+}
 
 export class ClaudeProvider implements AIProvider {
   readonly name = "claude";
@@ -92,11 +101,13 @@ export class ClaudeProvider implements AIProvider {
         ? userWorkspace
         : (opts.cwd || PROJECT_ROOT);
     const startTime = Date.now();
+    const isToolExecution = !opts.sandboxed && !opts.noMcp;
+    const wrapped = await wrapForExecution(args, cwd, isToolExecution);
 
-    const proc = spawn(args, {
+    const proc = spawn(wrapped.argv, {
       stdout: "pipe",
       stderr: "pipe",
-      cwd,
+      cwd: wrapped.cwd,
       env: {
         ...process.env,
         CLAUDECODE: undefined,
