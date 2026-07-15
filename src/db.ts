@@ -4365,6 +4365,14 @@ export class Database {
     ).all() as AutonomyGrantRow[];
   }
 
+  updateActionVerification(userId: string, actionId: string, verification: unknown): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(
+      `UPDATE action_ledger SET verification = ? WHERE id = ?`,
+      [JSON.stringify(verification), actionId],
+    );
+  }
+
   getSupportTicket(userId: string, id: string): SupportTicket | null {
     const udb = this.getUserDb(userId);
     return udb.db.query(`SELECT * FROM support_tickets WHERE user_id = ? AND id = ?`).get(userId, id) as SupportTicket | null;
