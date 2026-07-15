@@ -28,6 +28,7 @@ import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents, queryToolReg
 import { getReputationContext } from "./reputation.ts";
 import { emit } from "./events.ts";
 import { recordSubtaskAction } from "./ledger.ts";
+import { verifyOutcome, recordVerification } from "./verify.ts";
 
 let _callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string, systemPrompt?: string) => Promise<string>;
 let _buildPrompt: (...args: any[]) => { systemPrompt: string; userPrompt: string };
@@ -545,6 +546,7 @@ export async function executePhase(
 ): Promise<SubtaskResult[]> {
   const results: SubtaskResult[] = [...(priorResults || [])];
   const completed = new Set<number>(results.map((r) => r.index));
+  const actionIdByIndex = new Map<number, string>();
 
   // Only execute subtasks matching the requested phase
   const phaseIndices = new Set<number>();
@@ -849,12 +851,63 @@ If it has issues, respond with "[REJECTED: reason for rejection]".`;
     for (const r of batchResults) {
       results.push(r);
       completed.add(r.index);
-      recordSubtaskAction(user?.id ?? "unknown", phase, r);
+      const actionId = recordSubtaskAction(user?.id ?? "unknown", phase, r);
+      if (actionId) actionIdByIndex.set(r.index, actionId);
     }
+  }
+
+  // Verification phase: after a consequential (execute) phase, check whether each subtask
+  // actually achieved its goal and record the verdict on the ledger row. Best-effort — this
+  // block must never block or crash the execution path.
+  if (phase === "execute" && db) {
+    await verifyExecutedSubtasks(results, phaseIndices, actionIdByIndex, user?.id ?? "unknown", db);
   }
 
   // Return only the results from this phase
   return results.filter((r) => phaseIndices.has(r.index));
+}
+
+/**
+ * Best-effort post-execute verification. For each executed subtask, ask a cheap fast-tier
+ * model whether the outcome achieved the subtask's goal and patch the ledger row with the
+ * verdict. Failed subtasks short-circuit to a `failed` verdict with no model call. Never throws.
+ */
+async function verifyExecutedSubtasks(
+  results: SubtaskResult[],
+  phaseIndices: Set<number>,
+  actionIdByIndex: Map<number, string>,
+  userId: string,
+  db: Database,
+): Promise<void> {
+  try {
+    const toVerify = results.filter((r) => phaseIndices.has(r.index) && actionIdByIndex.has(r.index));
+    await Promise.all(
+      toVerify.map(async (r) => {
+        const actionId = actionIdByIndex.get(r.index)!;
+        try {
+          const verdict = r.success
+            ? await verifyOutcome({
+                goal: r.description,
+                result: r.result,
+                agent: r.agent,
+                artifacts: r.artifacts.map((a) => ({ type: a.type, value: a.value })),
+              })
+            : { status: "failed" as const, reason: "subtask execution failed", confidence: 0.9 };
+          recordVerification(userId, actionId, verdict, db);
+          emit({
+            type: "agent.progress",
+            level: "info",
+            agentSlug: r.agent || "general",
+            data: { message: `Verification: ${verdict.status} (${r.description.slice(0, 60)})`, subtaskIndex: r.index, verification: verdict, module: "planner" },
+          });
+        } catch (err) {
+          console.debug("[planner] Verification non-critical failure:", err);
+        }
+      }),
+    );
+  } catch (err) {
+    console.debug("[planner] Verification phase non-critical failure:", err);
+  }
 }
 
 /**
