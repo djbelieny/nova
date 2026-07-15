@@ -12,6 +12,9 @@
 import { spawn } from "bun";
 import { readFile, unlink } from "fs/promises";
 import { join } from "path";
+import { mkdirSync } from "fs";
+import { resolveSandboxBackend, wrapForExecution } from "../sandbox/index.ts";
+import { planSandboxAuth } from "../sandbox/auth.ts";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
 
 export class CodexProvider implements AIProvider {
@@ -81,15 +84,33 @@ export class CodexProvider implements AIProvider {
     const novaWorkspace = `${process.env.HOME || "~"}/.nova/workspace`;
     const userWorkspace = opts.userId ? `${novaWorkspace}/users/${opts.userId}` : novaWorkspace;
     const resolvedCwd = opts.sandboxed ? userWorkspace : opts.cwd;
-    if (resolvedCwd) {
+
+    const isToolExecution = !opts.sandboxed && !opts.noMcp;
+    const backend = isToolExecution ? await resolveSandboxBackend() : null;
+    const inDocker = backend?.name === "docker";
+
+    // In docker the container WORKDIR is /workspace, so the host `-C` path must
+    // not be passed; codex defaults to the working directory (the mount).
+    if (resolvedCwd && !inDocker) {
       args.push("-C", resolvedCwd);
     }
 
+    const dockerWorkspace = resolvedCwd || userWorkspace;
+    if (isToolExecution) { try { mkdirSync(dockerWorkspace, { recursive: true }); } catch {} }
+    const auth = planSandboxAuth("codex");
+    const wrapped = await wrapForExecution(args, dockerWorkspace, isToolExecution, {
+      network: "bridge",
+      auth,
+      workspaceDir: dockerWorkspace,
+    });
+    if (inDocker && auth.warning) console.warn(`[sandbox] ${auth.warning}`);
+
     const startTime = Date.now();
 
-    const proc = spawn(args, {
+    const proc = spawn(wrapped.argv, {
       stdout: "pipe",
       stderr: "pipe",
+      cwd: inDocker ? wrapped.cwd : undefined,
       env: {
         ...process.env,
         OPENAI_API_KEY: process.env.OPENAI_API_KEY || undefined,

@@ -5820,6 +5820,18 @@ const server = Bun.serve({
     }
     if (path === "/api/tasks") return jsonResponse(await getTasks());
     if (path === "/api/costs") return jsonResponse(await getCosts(userId));
+    if (path === "/api/ledger") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      const agent = url.searchParams.get("agent") || undefined;
+      const actionType = url.searchParams.get("actionType") || undefined;
+      const parsed = parseInt(url.searchParams.get("limit") || "50");
+      const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 500) : 50;
+      try {
+        return jsonResponse({ actions: supabase.getActions(userId, { agent, actionType, limit }) });
+      } catch (e: any) {
+        return jsonResponse({ actions: [], error: e.message });
+      }
+    }
     if (path === "/api/usage-by-user") { const g = adminApi(); if (g) return g; return jsonResponse(await getUsageByUser()); }
     if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks(userId));
     if (path === "/api/kanban") return jsonResponse(await getKanbanData(userId));
@@ -6222,6 +6234,7 @@ console.log("  GET  /api/metrics   — Performance metrics");
 console.log("  GET  /api/logs      — Log viewer");
 console.log("  GET  /api/tasks     — Scheduled tasks");
 console.log("  GET  /api/costs      — API cost tracking");
+console.log("  GET  /api/ledger     — Action ledger (agent task audit trail)");
 console.log("  GET  /api/usage-by-user — Per-user usage breakdown");
 console.log("  GET  /api/agent-tasks — Agent task tracking");
 console.log("  GET  /api/resources — System resources");

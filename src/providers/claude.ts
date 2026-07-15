@@ -9,10 +9,15 @@
 
 import { spawn } from "bun";
 import { dirname } from "path";
+import { mkdirSync } from "fs";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
+import { wrapForExecution } from "../sandbox/index.ts";
+import { planSandboxAuth } from "../sandbox/auth.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const CLI_TIMEOUT_MS = 300_000;
+
+export { wrapForExecution };
 
 export class ClaudeProvider implements AIProvider {
   readonly name = "claude";
@@ -92,11 +97,35 @@ export class ClaudeProvider implements AIProvider {
         ? userWorkspace
         : (opts.cwd || PROJECT_ROOT);
     const startTime = Date.now();
+    const isToolExecution = !opts.sandboxed && !opts.noMcp;
+    // Docker mounts the caller's explicit workspace when given (so flows like the
+    // dev-task-dispatcher operate on the same dir the host inspects), but never
+    // the repo (PROJECT_ROOT is .../nova/src; REPO_ROOT its parent holds .env,
+    // .mcp.json, data/) — fall back to the per-user nova workspace there.
+    const REPO_ROOT = dirname(PROJECT_ROOT);
+    const dockerWorkspace = (opts.cwd && opts.cwd !== PROJECT_ROOT && opts.cwd !== REPO_ROOT)
+      ? opts.cwd
+      : (opts.userId ? userWorkspace : novaWorkspace);
+    if (isToolExecution) {
+      try { mkdirSync(dockerWorkspace, { recursive: true }); } catch {}
+    }
+    const auth = planSandboxAuth("claude");
+    const wrapped = await wrapForExecution(args, cwd, isToolExecution, {
+      network: "bridge",
+      auth,
+      workspaceDir: dockerWorkspace,
+    });
+    if (wrapped.argv[0] === "docker") {
+      if (auth.warning) console.warn(`[sandbox] ${auth.warning}`);
+      if (!opts.noMcp && !opts.useMcp2cli && opts.mcpConfigPath) {
+        console.warn("[sandbox] claude --mcp-config host path is not mounted inside the docker sandbox; MCP tools via config file are unavailable in this mode (use mcp2cli or the local backend).");
+      }
+    }
 
-    const proc = spawn(args, {
+    const proc = spawn(wrapped.argv, {
       stdout: "pipe",
       stderr: "pipe",
-      cwd,
+      cwd: wrapped.cwd,
       env: {
         ...process.env,
         CLAUDECODE: undefined,

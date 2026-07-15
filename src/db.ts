@@ -168,6 +168,25 @@ export interface SupportTicket {
   last_error: string | null;
 }
 
+export interface ActionLedgerEntry {
+  user_id: string;
+  agent: string;
+  action_type: string;
+  phase: "prepare" | "execute" | "verify";
+  autonomy_level?: number;
+  approval_id?: string | null;
+  sandbox_backend?: string;
+  cost_usd?: number;
+  outcome: "success" | "failed" | "rejected" | "rolled_back";
+  verification?: unknown;
+  artifacts?: unknown[];
+}
+
+export interface ActionLedgerRow extends ActionLedgerEntry {
+  id: string;
+  created_at: string;
+}
+
 export interface AgentTaskRow {
   id: string;
   created_at: string;
@@ -1016,6 +1035,36 @@ class UserDatabase {
     `);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_execution_patterns_user ON execution_patterns(user_id)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_execution_patterns_success ON execution_patterns(success_count DESC)`);
+
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS action_ledger (
+        id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+        created_at TEXT DEFAULT (datetime('now')),
+        agent TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        phase TEXT NOT NULL CHECK (phase IN ('prepare', 'execute', 'verify')),
+        autonomy_level INTEGER DEFAULT 0,
+        approval_id TEXT,
+        sandbox_backend TEXT,
+        cost_usd REAL DEFAULT 0,
+        outcome TEXT NOT NULL CHECK (outcome IN ('success', 'failed', 'rejected', 'rolled_back')),
+        verification TEXT,
+        artifacts TEXT
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_action_ledger_agent ON action_ledger(agent, action_type, created_at DESC)`);
+    this.db.run(`
+      CREATE TABLE IF NOT EXISTS autonomy_grants (
+        agent TEXT NOT NULL,
+        action_type TEXT NOT NULL,
+        level INTEGER NOT NULL DEFAULT 0,
+        clean_runs INTEGER NOT NULL DEFAULT 0,
+        spend_cap_action REAL,
+        spend_cap_daily REAL,
+        demoted_at TEXT,
+        PRIMARY KEY (agent, action_type)
+      )
+    `);
 
     this.db.run(`
       CREATE TABLE IF NOT EXISTS user_integrations (
@@ -4224,6 +4273,39 @@ export class Database {
     `, [id, data.user_id, data.source, data.client_email, data.client_name || null,
         data.resend_message_id || null, data.subject, data.body_raw]);
     return id;
+  }
+
+  // ============================================================
+  // Action Ledger (→ user DB)
+  // ============================================================
+
+  recordAction(e: ActionLedgerEntry): string {
+    const udb = this.getUserDb(e.user_id);
+    const row = udb.db.query(
+      `INSERT INTO action_ledger (agent, action_type, phase, autonomy_level, approval_id, sandbox_backend, cost_usd, outcome, verification, artifacts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+    ).get(
+      e.agent, e.action_type, e.phase, e.autonomy_level ?? 0, e.approval_id ?? null,
+      e.sandbox_backend ?? null, e.cost_usd ?? 0, e.outcome,
+      e.verification ? JSON.stringify(e.verification) : null,
+      e.artifacts ? JSON.stringify(e.artifacts) : null,
+    ) as { id: string };
+    return row.id;
+  }
+
+  getActions(userId: string, opts: { agent?: string; actionType?: string; limit?: number } = {}): ActionLedgerRow[] {
+    const udb = this.getUserDb(userId);
+    const where: string[] = [];
+    const params: any[] = [];
+    if (opts.agent) { where.push("agent = ?"); params.push(opts.agent); }
+    if (opts.actionType) { where.push("action_type = ?"); params.push(opts.actionType); }
+    const sql = `SELECT * FROM action_ledger ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC LIMIT ?`;
+    params.push(opts.limit ?? 100);
+    return (udb.db.query(sql).all(...params) as any[]).map((r) => ({
+      ...r, user_id: userId,
+      verification: r.verification ? JSON.parse(r.verification) : undefined,
+      artifacts: r.artifacts ? JSON.parse(r.artifacts) : undefined,
+    }));
   }
 
   getSupportTicket(userId: string, id: string): SupportTicket | null {
