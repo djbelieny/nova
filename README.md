@@ -189,7 +189,7 @@ GROQ_API_KEY=           # For Groq (free at console.groq.com)
 
 ## Community & Resources
 
-- **YouTube**: [youtube.com/@djbelieny](https://youtube.com/@djbelieny) — free tutorials
+- **Website**: [jakebelieny.com](https://jakebelieny.com) — the author's personal page
 
 ## License
 
@@ -201,4 +201,4 @@ Nova grew out of Goda's minimal [Claude Code Telegram Relay](https://github.com/
 
 ---
 
-Built by [DJ Belieny](https://youtube.com/@djbelieny)
+Built by [Jake Belieny](https://jakebelieny.com)
