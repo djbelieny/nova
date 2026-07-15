@@ -20,9 +20,9 @@ export function recordSubtaskAction(
   userId: string,
   phase: "prepare" | "execute",
   r: { description: string; agent?: string; success: boolean; artifacts?: unknown[] },
-): void {
+): string | null {
   try {
-    getDb().recordAction({
+    return getDb().recordAction({
       user_id: userId,
       agent: r.agent ?? "nova",
       action_type: deriveActionType(r.description),
@@ -33,5 +33,6 @@ export function recordSubtaskAction(
     });
   } catch (err) {
     console.error("[ledger] Failed to record action:", err);
+    return null;
   }
 }
