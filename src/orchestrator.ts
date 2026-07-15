@@ -42,6 +42,8 @@ import {
   aggregate,
 } from "./planner.ts";
 import type { SubtaskResult, Artifact, ProgressCallback } from "./planner.ts";
+import { decideGate, recordOutcome, type GateMode } from "./autonomy.ts";
+import { deriveActionType } from "./ledger.ts";
 import {
   processMemoryIntents,
   getMemoryContext,
@@ -453,6 +455,9 @@ export async function handleApproval(
 
   if (action === "cancel") {
     pendingApprovals.delete(approvalId);
+    // P2 ladder: a user rejection instantly demotes the involved actions to L0.
+    const cancelExecuteTasks = (pending.plan?.subtasks || []).filter((s: any) => s.phase === "execute");
+    recordLadderOutcomes(pending.user.id, cancelExecuteTasks, { success: false, rejected: true });
     await _saveMessage("assistant", "Task cancelled.", pending.user.id);
     await _sendResponseWithVoice(ctx as any,"Got it — cancelled.", pending.user.id);
     return;
@@ -546,7 +551,7 @@ export async function handleApproval(
 
     // Update trust budget based on post-approval execution outcome
     if (pending.supabase) {
-      const executeTasks = pending.plan.subtasks.filter((s) => s.phase === "execute");
+      const executeTasks = pending.plan.subtasks.filter((s: any) => s.phase === "execute");
       for (const task of executeTasks) {
         const taskType = detectCategory(task.agent || "general", task.description);
         if (allSucceeded) {
@@ -555,9 +560,13 @@ export async function handleApproval(
           recordTrustFailure(pending.supabase, pending.user.id, taskType).catch(() => {});
         }
       }
+      // P2 ladder: approved success is an earned clean run; failure demotes to L0.
+      recordLadderOutcomes(pending.user.id, executeTasks, { success: allSucceeded });
     }
   } catch (error) {
     console.error("[orchestrator] Execute phase error:", error);
+    // P2 ladder: an execute-phase throw is a failure → demote to L0.
+    recordLadderOutcomes(pending.user.id, (pending.plan?.subtasks || []).filter((s: any) => s.phase === "execute"), { success: false });
     await _sendResponseWithVoice(ctx as any,"Something went wrong during the execute phase. The prepare work is still saved — try again.", pending.user.id);
   }
 }
@@ -913,6 +922,59 @@ function detectAutoApprove(text: string): boolean {
 // ============================================================
 // BUDGET-GATED AUTONOMY — rule-based auto-approval
 // ============================================================
+
+// ============================================================
+// P2 AUTONOMY LADDER — bridge between execute subtasks and the ladder engine
+// ============================================================
+
+const LADDER_EST_COST_USD = 0.01;
+
+interface LadderExecuteTask { agent?: string; description: string }
+
+interface LadderGate { mode: GateMode; spentContext?: string }
+
+/** Most-restrictive gate decision across all execute subtasks. */
+function resolveExecuteGate(userId: string, executeTasks: LadderExecuteTask[]): LadderGate {
+  if (executeTasks.length === 0) return { mode: "auto" };
+  const rank: Record<GateMode, number> = { auto: 0, notify: 1, "escalate-cap": 2, ask: 3 };
+  let worst: GateMode = "auto";
+  let spentContext: string | undefined;
+  for (const t of executeTasks) {
+    const agent = t.agent || "general";
+    const actionType = deriveActionType(t.description);
+    let d;
+    try {
+      d = decideGate(userId, agent, actionType, LADDER_EST_COST_USD);
+    } catch {
+      return { mode: "ask" };
+    }
+    if (d.mode === "escalate-cap" && d.cap != null) {
+      const spent = d.spentToday != null ? `$${d.spentToday.toFixed(2)} spent today, ` : "";
+      spentContext = `Spend cap reached for ${agent} / ${actionType}: ${spent}cap $${d.cap.toFixed(2)}.`;
+    }
+    if (rank[d.mode] > rank[worst]) worst = d.mode;
+  }
+  return { mode: worst, spentContext };
+}
+
+/** Record ladder outcomes for every execute subtask. Never throws. */
+function recordLadderOutcomes(
+  userId: string,
+  executeTasks: LadderExecuteTask[],
+  opts: { success: boolean; rejected?: boolean; oneShot?: boolean },
+): void {
+  for (const t of executeTasks) {
+    try {
+      recordOutcome(userId, t.agent || "general", deriveActionType(t.description), {
+        success: opts.success,
+        rejected: opts.rejected,
+        oneShot: opts.oneShot,
+      });
+    } catch (err) {
+      console.error("[autonomy] recordOutcome failed:", err);
+    }
+  }
+}
 
 function detectCategory(agentSlug: string, taskDescription: string): string {
   const desc = taskDescription.toLowerCase();
@@ -1722,6 +1784,9 @@ async function routeComplex(
               const taskType = detectCategory(task.agent || "general", task.description);
               recordTrustSuccess(supabase, user.id, taskType).catch(() => {});
             }
+            // P2 ladder: "just do it" phrases are a one-shot L2 override (never persist);
+            // rule/trust auto-approve counts as an earned clean run.
+            recordLadderOutcomes(user.id, executeTasks, { success: true, oneShot: autoApprove });
           }
           return; // Done — exit retry loop
 
@@ -1748,6 +1813,10 @@ async function routeComplex(
           status: "blocked",
           result: `All retry strategies failed. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
         });
+      }
+      // P2 ladder: a real (non-override) execution failure demotes to L0.
+      if (supabase && !autoApprove) {
+        recordLadderOutcomes(user.id, plan.subtasks.filter((s) => s.phase === "execute"), { success: false });
       }
       return;
     }
@@ -1815,6 +1884,42 @@ async function routeComplex(
     } catch {}
 
     console.log(`[orchestrator] Prepare phase done: ${prepareResults.length} results, ${artifacts.length} artifacts`);
+
+    // === P2 AUTONOMY LADDER — earned autonomy bypasses the gate ===
+    const ladderExecuteTasks = plan.subtasks.filter((s) => s.phase === "execute");
+    const ladderGate = supabase ? resolveExecuteGate(user.id, ladderExecuteTasks) : { mode: "ask" as GateMode };
+
+    if (ladderGate.mode === "auto" || ladderGate.mode === "notify") {
+      emit({ type: "approval.resolved", level: "info", requestId, userId: user.id, data: { message: `Autonomy ladder ${ladderGate.mode} — executing without gate`, action: `ladder-${ladderGate.mode}` } });
+
+      const executeResults = await executePhase(plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults, onProgress, workspaceDir);
+      const allResults = [...prepareResults, ...executeResults];
+      const allSucceeded = allResults.every((r) => r.success);
+
+      const aggregated = await aggregate(text, allResults);
+      const processed = await processMemoryIntents(supabase, aggregated, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId });
+      await _saveMessage("assistant", processed, user.id);
+
+      if (chatId) {
+        const fileCount = await deliverWorkspaceFiles(chatId, workspaceDir, parentTaskId, user.id, supabase);
+        if (fileCount > 0) emit({ type: "task.completed", level: "info", requestId, userId: user.id, data: { message: `Delivered ${fileCount} file(s) from workspace`, fileCount } });
+      }
+
+      // L2 = ledger-only (no notification); L1 = notify after
+      if (ladderGate.mode === "notify") await _sendResponseWithVoice(ctx as any, processed, user.id);
+
+      if (supabase && parentTaskId) {
+        supabase.updateTask(parentTaskId, {
+          status: allSucceeded ? "completed" : "blocked",
+          result: `${allResults.length} subtasks (autonomy ${ladderGate.mode})`,
+        });
+      }
+
+      const durationMs = Date.now() - startTime;
+      await recordExecution(supabase, text, plan, allSucceeded, durationMs, user.id);
+      recordLadderOutcomes(user.id, ladderExecuteTasks, { success: allSucceeded });
+      return;
+    }
 
     // Build approval summary using Haiku
     const approvalSummary = await buildApprovalSummary(text, prepareResults, artifacts, plan);
@@ -1887,8 +1992,9 @@ async function routeComplex(
     else if (subtaskCount <= 3) estimatedCost = `~$${(subtaskCount * 0.01).toFixed(2)}`;
     else estimatedCost = "~$0.05+";
     const costLine = `\n\n⏱ Estimated cost: ${estimatedCost}`;
+    const capLine = ladderGate.spentContext ? `\n\n⚠️ ${ladderGate.spentContext} Approval required.` : "";
 
-    const approvalMessage = `📋 **Task:** ${requestLabel}\n\n${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}${costLine}`;
+    const approvalMessage = `📋 **Task:** ${requestLabel}\n\n${approvalSummary}\n\n**Pending actions:**\n${executeDescriptions}${costLine}${capLine}`;
 
     await _saveMessage("assistant", approvalSummary, user.id);
     await _sendResponseWithVoice(ctx as any,approvalMessage, user.id);

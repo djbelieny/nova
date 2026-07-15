@@ -187,6 +187,16 @@ export interface ActionLedgerRow extends ActionLedgerEntry {
   created_at: string;
 }
 
+export interface AutonomyGrantRow {
+  agent: string;
+  action_type: string;
+  level: number;
+  clean_runs: number;
+  spend_cap_action: number | null;
+  spend_cap_daily: number | null;
+  demoted_at: string | null;
+}
+
 export interface AgentTaskRow {
   id: string;
   created_at: string;
@@ -4306,6 +4316,53 @@ export class Database {
       verification: r.verification ? JSON.parse(r.verification) : undefined,
       artifacts: r.artifacts ? JSON.parse(r.artifacts) : undefined,
     }));
+  }
+
+  /** Sum of today's execute-phase spend for an (agent, action_type) — feeds per-day cap checks. */
+  getDailyActionSpend(userId: string, agent: string, actionType: string): number {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM action_ledger
+       WHERE agent = ? AND action_type = ? AND phase = 'execute' AND date(created_at) = date('now')`
+    ).get(agent, actionType) as { total: number };
+    return row?.total ?? 0;
+  }
+
+  // ============================================================
+  // Autonomy Grants (→ user DB) — materialized ladder state
+  // ============================================================
+
+  getAutonomyGrant(userId: string, agent: string, actionType: string): AutonomyGrantRow | null {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(
+      `SELECT agent, action_type, level, clean_runs, spend_cap_action, spend_cap_daily, demoted_at
+       FROM autonomy_grants WHERE agent = ? AND action_type = ?`
+    ).get(agent, actionType) as AutonomyGrantRow | null;
+    return row ?? null;
+  }
+
+  upsertAutonomyGrant(userId: string, grant: AutonomyGrantRow): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(
+      `INSERT INTO autonomy_grants (agent, action_type, level, clean_runs, spend_cap_action, spend_cap_daily, demoted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(agent, action_type) DO UPDATE SET
+         level = excluded.level,
+         clean_runs = excluded.clean_runs,
+         spend_cap_action = excluded.spend_cap_action,
+         spend_cap_daily = excluded.spend_cap_daily,
+         demoted_at = excluded.demoted_at`,
+      [grant.agent, grant.action_type, grant.level, grant.clean_runs,
+       grant.spend_cap_action, grant.spend_cap_daily, grant.demoted_at]
+    );
+  }
+
+  listAutonomyGrants(userId: string): AutonomyGrantRow[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(
+      `SELECT agent, action_type, level, clean_runs, spend_cap_action, spend_cap_daily, demoted_at
+       FROM autonomy_grants ORDER BY agent, action_type`
+    ).all() as AutonomyGrantRow[];
   }
 
   updateActionVerification(userId: string, actionId: string, verification: unknown): void {
