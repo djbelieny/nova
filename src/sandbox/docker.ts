@@ -32,6 +32,8 @@ export class DockerBackend implements SandboxBackend {
   }
 
   wrapCommand(argv: string[], opts: SandboxExecOpts): WrappedCommand {
+    const workspaceBind = `${opts.cwd}:/workspace:${opts.workspaceAccess ?? "rw"}`;
+    validateBind(workspaceBind);
     const binds = opts.extraBinds ?? [];
     for (const bind of binds) validateBind(bind);
     const wrapped = [
@@ -41,7 +43,7 @@ export class DockerBackend implements SandboxBackend {
       "--cap-drop", "ALL",
       "--security-opt", "no-new-privileges",
       "--tmpfs", "/tmp",
-      "-v", `${opts.cwd}:/workspace:${opts.workspaceAccess ?? "rw"}`,
+      "-v", workspaceBind,
       "-w", "/workspace",
       "-e", "HOME=/workspace",
       ...binds.flatMap((b) => ["-v", b]),

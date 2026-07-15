@@ -32,6 +32,12 @@ test("credential-root binds are blocked, symlinks resolved", () => {
   expect(() => validateBind(`${home}/projects/x:/x:ro`)).not.toThrow();
 });
 
+test("workspace cwd bind is validated against credential roots", () => {
+  const backend = new DockerBackend("img");
+  const home = homedir();
+  expect(() => backend.wrapCommand(["x"], { cwd: `${home}/.ssh` })).toThrow(/blocked/i);
+});
+
 test("extraBinds are validated and appended", () => {
   const backend = new DockerBackend("img");
   const home = homedir();
