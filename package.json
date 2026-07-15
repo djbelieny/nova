@@ -7,6 +7,7 @@
     "dev": "bun run --watch src/relay.ts",
     "test": "NODE_ENV=test NOVA_DB_DIR=./data/test-run bun test tests/",
     "typecheck": "tsc --noEmit",
+    "init": "bun run src/setup-wizard.ts",
     "setup": "bun run setup/install.ts",
     "test:telegram": "bun run setup/test-telegram.ts",
     "test:sqlite": "bun run setup/test-sqlite.ts",
