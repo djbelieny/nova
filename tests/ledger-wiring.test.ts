@@ -9,6 +9,10 @@ test("deriveActionType maps consequential verbs", () => {
   expect(deriveActionType("Publish post to Instagram")).toBe("social.publish");
   expect(deriveActionType("Create ad campaign with $50 budget")).toBe("ads.spend");
   expect(deriveActionType("Research competitor pricing")).toBe("task.generic");
+  expect(deriveActionType("Ship the physical order to the customer")).toBe("task.generic");
+  expect(deriveActionType("Release the grant funds to the vendor")).toBe("task.generic");
+  expect(deriveActionType("Deploy the new website build")).toBe("code.deploy");
+  expect(deriveActionType("Share the x-axis results with the team")).toBe("task.generic");
 });
 
 test("recordSubtaskAction writes a ledger row with sandbox backend name", () => {
@@ -24,7 +28,7 @@ test("recordSubtaskAction writes a ledger row with sandbox backend name", () => 
 });
 
 test("failed subtasks record outcome failed and never throw", () => {
-  recordSubtaskAction(U, "execute", { description: "Publish to X", agent: "pixel", success: false });
+  recordSubtaskAction(U, "execute", { description: "Publish to x.com", agent: "pixel", success: false });
   const rows = getDb().getActions(U, { actionType: "social.publish" });
   expect(rows[0].outcome).toBe("failed");
 });

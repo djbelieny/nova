@@ -3,9 +3,9 @@ import { getSandboxWarning } from "./sandbox/index.ts";
 
 const ACTION_TYPE_RULES: Array<[RegExp, string]> = [
   [/\b(send|reply|forward)\b.*\b(email|newsletter|mail)\b|\b(email|newsletter)\b.*\bsend\b/i, "email.send"],
-  [/\b(publish|post|share)\b.*\b(instagram|facebook|twitter|x|linkedin|tiktok|social)\b/i, "social.publish"],
+  [/\b(publish|post|share)\b.*\b(instagram|facebook|twitter|x\.com|linkedin|tiktok|social)\b/i, "social.publish"],
   [/\b(ad|ads|campaign)\b.*\b(create|launch|budget|spend)\b|\b(create|launch)\b.*\b(ad|ads|campaign)\b/i, "ads.spend"],
-  [/\b(deploy|ship|release)\b/i, "code.deploy"],
+  [/\b(deploy|ship|release)\b.*\b(app|site|website|code|build|version|feature|update|prod|production)\b/i, "code.deploy"],
   [/\b(schedule|book)\b.*\b(meeting|call|event)\b/i, "calendar.create"],
 ];
 
