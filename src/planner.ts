@@ -27,6 +27,7 @@ import type { ModelTier } from "./ai-provider.ts";
 import { getAgentCatalog, buildAgentPrompt, getAgent, getAllAgents, queryToolRegistry, getToolInstructions } from "./agent-router.ts";
 import { getReputationContext } from "./reputation.ts";
 import { emit } from "./events.ts";
+import { recordSubtaskAction } from "./ledger.ts";
 
 let _callClaude: (prompt: string, model?: ModelTier, userId?: string, hint?: string, systemPrompt?: string) => Promise<string>;
 let _buildPrompt: (...args: any[]) => { systemPrompt: string; userPrompt: string };
@@ -848,6 +849,7 @@ If it has issues, respond with "[REJECTED: reason for rejection]".`;
     for (const r of batchResults) {
       results.push(r);
       completed.add(r.index);
+      recordSubtaskAction(user?.id ?? "unknown", phase, r);
     }
   }
 
