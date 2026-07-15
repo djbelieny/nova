@@ -14,6 +14,7 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
 import { ExecComms } from "./exec-comms.ts";
+import { resolveBoardConfig } from "./board-config.ts";
 import { loadAgents, getAgentCatalog } from "./agent-router.ts";
 import { isMcp2cliAvailable, buildMcp2cliInstructions, loadProjectMcpConfig } from "./mcp2cli.ts";
 import {
@@ -84,8 +85,9 @@ if (!VALID_ROLES.includes(role)) {
 // ============================================================
 
 const EXEC_BOT_TOKEN = process.env.EXEC_BOT_TOKEN;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const BOARD_CONFIG = resolveBoardConfig();
+const BOARD_DB_URL = BOARD_CONFIG.url;
+const BOARD_DB_KEY = BOARD_CONFIG.key;
 const EXEC_AI_PROVIDER = (process.env.EXEC_AI_PROVIDER || "claude").toLowerCase();
 const ALLOWED_USERS = (process.env.TELEGRAM_USER_ID || "")
   .split(",")
@@ -95,8 +97,8 @@ const USER_TELEGRAM_USERNAME = process.env.TELEGRAM_USERNAME || "";
 
 const missing: string[] = [];
 if (!EXEC_BOT_TOKEN) missing.push("EXEC_BOT_TOKEN");
-if (!SUPABASE_URL) missing.push("SUPABASE_URL");
-if (!SUPABASE_ANON_KEY) missing.push("SUPABASE_ANON_KEY");
+if (!BOARD_DB_URL) missing.push("BOARD_DB_URL (or SUPABASE_URL)");
+if (!BOARD_DB_KEY) missing.push("BOARD_DB_KEY (or SUPABASE_SERVICE_ROLE_KEY)");
 
 // Claude uses CLI auth locally (no API key needed); Gemini/Codex need keys
 const providerKeyMap: Record<string, string> = {
@@ -380,9 +382,9 @@ async function main() {
   await loadAgents();
   const agentCatalog = getAgentCatalog();
 
-  // 4. Initialize Supabase comms
-  const comms = new ExecComms(role, SUPABASE_URL!, SUPABASE_ANON_KEY!);
-  emit({ type: "exec.message", level: "info", execRole: role, data: { message: "Supabase comms initialized", module: "exec-node" } });
+  // 4. Initialize board comms
+  const comms = new ExecComms(role, BOARD_DB_URL!, BOARD_DB_KEY!);
+  emit({ type: "exec.message", level: "info", execRole: role, data: { message: "Board comms initialized", module: "exec-node" } });
 
   // 5. Register node (bot username filled after bot.api.getMe below)
   const nodeHost = process.env.NODE_HOST || "localhost";

@@ -19,6 +19,7 @@ import { transcribe } from "./transcribe.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { registerProvider, getProvider } from "./ai-provider.ts";
 import { ExecComms } from "./exec-comms.ts";
+import { isBoardConfigured } from "./board-config.ts";
 import { initBoard, conveneBoard, startBoardPoller } from "./board.ts";
 import { notifyAdmin, setAdminNotifier, logError } from "./error-handler.ts";
 import { groupTicketsByColumn, TICKET_COLUMNS } from "./ticket-board.ts";
@@ -238,7 +239,7 @@ initOrchestrator({
 
 let _boardAvailable = false;
 
-if (RUN_SERVER && process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+if (RUN_SERVER && isBoardConfigured()) {
   try {
     const comms = new ExecComms("nova");
     initBoard({

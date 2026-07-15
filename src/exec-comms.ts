@@ -8,6 +8,8 @@
  *        const comms = new ExecComms("ceo");
  */
 
+import { resolveBoardConfig } from "./board-config.ts";
+
 // ============================================================
 // Types
 // ============================================================
@@ -125,13 +127,15 @@ export class ExecComms {
 
   constructor(
     nodeRole: string,
-    supabaseUrl = process.env.SUPABASE_URL!,
-    // Exec nodes are trusted server-side processes. Board tables have RLS
-    // enabled with no anon policies, so the service role key is required.
-    supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY!,
+    // Board backend URL/key. Defaults resolve BOARD_DB_URL/BOARD_DB_KEY, falling
+    // back to the legacy SUPABASE_* env names. Exec nodes are trusted server-side
+    // processes; board tables have RLS enabled with no policies, so the key must
+    // map to a role that bypasses RLS (self-host: nova_board JWT; Supabase: service role).
+    boardUrl = resolveBoardConfig().url!,
+    boardKey = resolveBoardConfig().key!,
   ) {
-    this.url = supabaseUrl.replace(/\/$/, "");
-    this.key = supabaseKey;
+    this.url = boardUrl.replace(/\/$/, "");
+    this.key = boardKey;
     this.role = nodeRole;
   }
 

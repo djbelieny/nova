@@ -78,7 +78,7 @@ import { startDevTaskDispatcher } from "../services/dev-task-dispatcher.ts";
 import { checkCliAuth } from "./cli-auth.ts";
 import { startCsRouter } from './cs-router.ts';
 
-// Executive board (optional — only active if SUPABASE_URL is configured)
+// Executive board (optional — only active if a board backend is configured)
 let boardModule: { conveneBoard: (q: string, userId: string, chatId: string | number) => Promise<void>; handleBoardDecision: (sessionId: string, option: string, userId: string) => Promise<void> } | null = null;
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
@@ -3579,7 +3579,8 @@ function startAgentDelegationPoller(comms: any): void {
 // EXECUTIVE BOARD (optional — requires Supabase)
 // ============================================================
 
-if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
+const { isBoardConfigured: _isBoardConfigured } = await import("./board-config.ts");
+if (_isBoardConfigured()) {
   try {
     const { ExecComms } = await import("./exec-comms.ts");
     const { initBoard, conveneBoard, handleBoardDecision, startBoardPoller } = await import("./board.ts");
