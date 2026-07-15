@@ -23,8 +23,10 @@ bash /opt/nova/scripts/generate-tool-clis.sh || true
 # Ensure mcp2cli is available (exec nodes use it for on-demand MCP tool access
 # instead of spawning persistent MCP server processes)
 if ! command -v mcp2cli &>/dev/null; then
-  echo "Installing mcp2cli globally..."
-  npm install -g mcp2cli
+  # mcp2cli is a PyPI package (github.com/knowsuchagency/mcp2cli), not npm.
+  echo "Installing mcp2cli (PyPI) globally..."
+  pip3 install --break-system-packages mcp2cli || pipx install mcp2cli \
+    || echo "WARN: could not install mcp2cli — install it manually or set MCP2CLI_ENABLED=false"
 fi
 
 # Ensure gws CLI is available (replaces @presto-ai/google-workspace-mcp)
