@@ -185,7 +185,7 @@
     <p class="byline">Jake Belieny <span class="dot">·</span> 15 de julio de 2026 <span class="dot">·</span> 10 min de lectura</p>
 
     <div class="prose">
-      <p>Nova está diseñado para ser auto-alojado. Tu máquina, tus claves de API, tus datos, tus controles de aprobación. Esta guía te lleva a través de cada paso: desde el primer `bun run init` hasta una instancia de producción ejecutando en una VPS, con características opcionales como ejecución en sandbox y una junta ejecutiva distribuida.</p>
+      <p>Nova está diseñado para ser auto-alojado. Tu máquina, tus claves de API, tus datos, tus controles de aprobación. Esta guía te lleva a través de cada paso: desde el primer `bash bootstrap.sh` hasta una instancia de producción ejecutando en una VPS, con características opcionales como ejecución en sandbox y una junta ejecutiva distribuida.</p>
       <p>La mayoría de esto toma menos de cinco minutos. Las partes opcionales — sandbox, coordinación de junta multi-VPS, gobernanza avanzada — las activas cuando estés listo.</p>
 
       <h2>Lo que necesitarás</h2>
@@ -193,33 +193,33 @@
       <p>Antes de comenzar, reúne estas piezas:</p>
 
       <div class="cards">
-        <div class="card"><h4>Tiempo de ejecución Bun</h4><p>El tiempo de ejecución JavaScript rápido en el que Nova se ejecuta. Instala desde bun.sh — toma alrededor de 1 minuto.</p></div>
+        <div class="card"><h4>Una computadora o servidor</h4><p>macOS, Linux o Windows vía WSL2. El instalador configura todo lo demás — el tiempo de ejecución Bun y la CLI de Claude Code se instalan por ti automáticamente.</p></div>
         <div class="card"><h4>Una cuenta de Telegram</h4><p>Nova se comunica a través de Telegram por defecto (WhatsApp y Slack también funcionan). Obtendrás un token de bot de @BotFather.</p></div>
         <div class="card"><h4>Una clave de proveedor de IA</h4><p>Claude (recomendado), Gemini, Codex, o Groq. Comienza con lo que ya usas; Nova cambia proveedores basado en el tipo de tarea.</p></div>
         <div class="card"><h4>Credenciales de MCP (opcional)</h4><p>Google Workspace, Notion, Cloudflare, etc. Cada una añade una herramienta a tus agentes. Puedes saltarte estas por ahora y añadirlas después.</p></div>
       </div>
 
-      <h2>El camino rápido: `bun run init`</h2>
+      <h2>La vía rápida: `bash bootstrap.sh`</h2>
 
-      <p>Nova viene con un asistente de configuración guiado que pregunta exactamente lo que necesita y nada más. Clona el repo, ejecuta el script de inicialización, y estás listo en aproximadamente 3 minutos:</p>
+      <p>Nova viene con un instalador de un solo comando y un asistente de configuración guiado que pregunta exactamente lo que necesita y nada más. Clona el repo, ejecuta un solo comando, y estás listo en aproximadamente 3 minutos:</p>
 
       <div class="callout">
         <p><span class="k">Inicio rápido</span>
         <code>git clone https://github.com/djbelieny/nova.git</code><br>
         <code>cd nova</code><br>
-        <code>bun run init</code></p>
+        <code>bash bootstrap.sh</code></p>
       </div>
 
-      <p>El asistente te preguntará por:</p>
+      <p><code>bootstrap.sh</code> instala cualquier requisito que falte (Bun, la CLI de Claude Code) y luego ejecuta el asistente. Es reanudable — ciérralo y vuelve a ejecutarlo para continuar — y <code>bash bootstrap.sh --check</code> reporta el estado de tu sistema sin cambiar nada. El asistente te preguntará por:</p>
       <ul>
         <li>Un token de bot de Telegram de @BotFather (sigue los prompts)</li>
-        <li>Tu ID de usuario de Telegram (obtén de @userinfobot)</li>
+        <li>Eso es todo lo que escribes para Telegram — tu ID de usuario se <strong>detecta automáticamente</strong> cuando le escribes a tu bot (sin paso de @userinfobot)</li>
         <li>Qué proveedor de IA quieres comenzar con (Claude/Gemini/etc.)</li>
         <li>Tu clave de API para ese proveedor</li>
         <li>Tu nombre y zona horaria (para personalización)</li>
       </ul>
 
-      <p>Escribe un archivo <code>.env</code> mínimo, crea <code>.mcp.json</code> del ejemplo, y verifica la conexión de Telegram. Luego puedes enviarle a tu bot un mensaje de prueba — debería responder inmediatamente.</p>
+      <p>Escribe un archivo <code>.env</code> mínimo, crea <code>.mcp.json</code> del ejemplo, y verifica la conexión de Telegram. Cuando Nova arranca, te saluda en Telegram con ideas para empezar que puedes tocar — así tu primera interacción funciona sin escribir nada. Ejecuta <code>bun run doctor</code> en cualquier momento para una verificación de salud.</p>
 
       <div class="callout">
         <p><span class="k">Eso es todo</span>Ahora tienes una instancia de Nova funcionando que entiende solicitudes clasificadas, enruta al agente correcto, y pide aprobación antes de que algo consecuencial suceda.</p>

@@ -290,18 +290,16 @@
     <h2>Installation</h2>
     <h3>Prerequisites</h3>
     <ul>
-      <li><strong><a href="https://bun.sh" rel="noopener">Bun</a> 1.3+</strong> — <code>curl -fsSL https://bun.sh/install | bash</code></li>
-      <li><strong><a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> CLI</strong>, installed and authenticated — <code>npm install -g @anthropic-ai/claude-code</code>, then <code>claude auth</code></li>
       <li>A <strong>Telegram account</strong> (to create your bot)</li>
-      <li>macOS 13+ or Ubuntu 22.04+; 2&nbsp;GB RAM minimum (4&nbsp;GB recommended)</li>
+      <li>macOS 13+ or Ubuntu 22.04+ (Windows via WSL2); 2&nbsp;GB RAM minimum (4&nbsp;GB recommended)</li>
     </ul>
-    <p>Optional accounts unlock more: Gemini, Groq (free voice transcription), Twilio (phone calls), Perplexity (web research), Meta, Notion, Google Workspace, and more — all covered in <a href="#configuration">Configuration</a>.</p>
+    <p>That's it to start — the installer takes care of the rest. It automatically installs <strong><a href="https://bun.sh" rel="noopener">Bun</a></strong> and the <strong><a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> CLI</strong> if they're missing, so you don't have to set them up by hand. Optional accounts unlock more: Gemini, Groq (free voice transcription), Twilio (phone calls), Perplexity (web research), Meta, Notion, Google Workspace, and more — all covered in <a href="#configuration">Configuration</a>.</p>
 
-    <h3>Option A — guided setup (recommended)</h3>
-    <p>Claude Code reads the repo's <code>CLAUDE.md</code> and walks you through eight phases: Telegram, database, personalization, first run, always-on services, proactive services, voice, and research.</p>
+    <h3>Option A — one command (recommended)</h3>
+    <p>One command installs any missing prerequisites, then launches a friendly <strong>setup wizard</strong>. The wizard walks you through connecting Telegram and an AI provider — no file editing — and can even <strong>detect your Telegram user ID automatically</strong> (it just asks you to message your bot). It's <strong>resumable</strong>: close it and re-run the same command to pick up where you left off.</p>
     <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
-<span class="p">$</span> bun run setup          <span class="c"># install deps, create .env</span>
-<span class="p">$</span> claude                 <span class="c"># let Claude guide the rest</span></code></pre>
+<span class="p">$</span> bash bootstrap.sh      <span class="c"># installs prerequisites, then runs the setup wizard</span></code></pre>
+    <p>Just want to check what's already installed? <code>bash bootstrap.sh --check</code> reports your system and changes nothing.</p>
 
     <h3>Option B — manual setup</h3>
     <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
@@ -314,12 +312,16 @@
 <span class="p">$</span> bun run start</code></pre>
     <div class="callout ok">
       <span class="co-label">[first run]</span>
-      <p>The local embedding model (all-MiniLM-L6-v2, ~23&nbsp;MB) downloads on first use. When the relay is up, message your bot on Telegram — you should get a reply within seconds. Run <code>bun run setup:verify</code> for a full health check.</p>
+      <p>The local embedding model (all-MiniLM-L6-v2, ~23&nbsp;MB) downloads on first use. When Nova starts, it sends you a welcome message on Telegram with tappable starter ideas — so your first interaction works without typing anything. Run <code>bun run doctor</code> anytime for a health check, or <code>bun run update</code> to pull the latest and reinstall.</p>
     </div>
 
     <h3>Command reference</h3>
     <div class="tbl-wrap"><table>
       <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td><code>bash bootstrap.sh</code></td><td>Install prerequisites and launch the setup wizard (<code>--check</code> for a dry run)</td></tr>
+      <tr><td><code>bun run init</code></td><td>Run the setup wizard on its own (resumable)</td></tr>
+      <tr><td><code>bun run doctor</code></td><td>Health check + copyable diagnostics</td></tr>
+      <tr><td><code>bun run update</code></td><td>Pull the latest and reinstall dependencies</td></tr>
       <tr><td><code>bun run start</code></td><td>Start the relay (main bot process)</td></tr>
       <tr><td><code>bun run dev</code></td><td>Start with auto-reload on file changes</td></tr>
       <tr><td><code>bun run dashboard</code></td><td>Start the web dashboard on port 3033</td></tr>
@@ -415,7 +417,7 @@
     <ol>
       <li>Message <strong>@BotFather</strong> → <code>/newbot</code> → pick a display name, then a username ending in <code>bot</code>.</li>
       <li>Copy the token (looks like <code>7123…:AAH…</code>) into <code>TELEGRAM_BOT_TOKEN</code>.</li>
-      <li>Message <strong>@userinfobot</strong> → <code>/start</code> → copy your numeric ID into <code>TELEGRAM_USER_ID</code>.</li>
+      <li>Your numeric user ID is <strong>detected automatically</strong> by the setup wizard — it just asks you to message your bot. (You can still set <code>TELEGRAM_USER_ID</code> by hand from <strong>@userinfobot</strong> if you prefer.)</li>
       <li>Verify: <code>bun run test:telegram</code>.</li>
     </ol>
     <h3>WhatsApp</h3>
@@ -442,7 +444,9 @@
     <h3>Commands</h3>
     <div class="tbl-wrap"><table>
       <tr><th>Command</th><th>What it does</th></tr>
-      <tr><td><code>/start</code> / <code>/help</code></td><td>Intro and command list</td></tr>
+      <tr><td><code>/start</code> / <code>/help</code></td><td>Friendly welcome with tappable starter ideas, and plain-language help</td></tr>
+      <tr><td><code>/team</code></td><td>Meet your 24 specialists, grouped by what you want to get done</td></tr>
+      <tr><td><code>/examples</code></td><td>Starter ideas you can tap to run right now</td></tr>
       <tr><td><code>/agents</code></td><td>Browse all 24 agents with one-tap "Use" buttons</td></tr>
       <tr><td><code>/memory</code> / <code>/goals</code> / <code>/tasks</code></td><td>Show stored facts, goals, and agent tasks</td></tr>
       <tr><td><code>/schedule</code>, <code>/schedule list</code></td><td>Manage scheduled tasks</td></tr>

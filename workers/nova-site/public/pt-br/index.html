@@ -475,15 +475,12 @@
 <section id="start">
   <div class="wrap">
     <span class="sec-eyebrow">[início rápido]</span>
-    <h2>Funcionando em cinco comandos.</h2>
+    <h2>Funcionando em dois comandos.</h2>
     <div class="terminal" role="figure" aria-label="Comandos de início rápido">
       <div><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova</div>
-      <div><span class="p">$</span> bun run setup&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c"># instala dependências, cria .env</span></div>
-      <div><span class="p">$</span> vim .env&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c"># adicione seu token de bot do Telegram</span></div>
-      <div><span class="p">$</span> bun run test:telegram&nbsp;<span class="c"># verifica se o bot se conecta</span></div>
-      <div><span class="p">$</span> bun run start</div>
+      <div><span class="p">$</span> bash bootstrap.sh&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c"># instala os pré-requisitos e abre o assistente de configuração</span></div>
     </div>
-    <p class="qs-note">Pré-requisitos: <a href="https://bun.sh" rel="noopener">Bun</a>, a CLI do <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> e um token de bot do Telegram do @BotFather. Tudo mais é opcional e documentado no repositório.</p>
+    <p class="qs-note">O instalador configura o <a href="https://bun.sh" rel="noopener">Bun</a> e a CLI do <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> para você e, em seguida, um assistente guiado conecta o Telegram e seu provedor de IA — sem editar arquivos, e ele detecta seu ID de usuário do Telegram automaticamente. Tudo o que você precisa antes é um token de bot do @BotFather. Todo o resto é opcional e está documentado no repositório.</p>
   </div>
 </section>
 

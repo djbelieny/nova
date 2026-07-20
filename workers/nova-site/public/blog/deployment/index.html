@@ -185,7 +185,7 @@
     <p class="byline">Jake Belieny <span class="dot">·</span> 15 July 2026 <span class="dot">·</span> 10 min read</p>
 
     <div class="prose">
-      <p>Nova is designed to be self-hosted. Your machine, your API keys, your data, your approval gates. This guide walks through every step: from the first `bun run init` to a production instance running on a VPS, with optional features like sandboxed execution and a distributed executive board.</p>
+      <p>Nova is designed to be self-hosted. Your machine, your API keys, your data, your approval gates. This guide walks through every step: from the first `bash bootstrap.sh` to a production instance running on a VPS, with optional features like sandboxed execution and a distributed executive board.</p>
       <p>Most of this takes under five minutes. The optional bits — sandboxing, multi-VPS board coordination, advanced governance — you turn on when you're ready.</p>
 
       <h2>What you'll need</h2>
@@ -193,33 +193,33 @@
       <p>Before you start, gather these pieces:</p>
 
       <div class="cards">
-        <div class="card"><h4>Bun runtime</h4><p>The fast JavaScript runtime Nova runs on. Install from bun.sh — takes about 1 minute.</p></div>
+        <div class="card"><h4>A computer or server</h4><p>macOS, Linux, or Windows via WSL2. The installer sets up everything else — the Bun runtime and the Claude Code CLI are installed for you automatically.</p></div>
         <div class="card"><h4>A Telegram account</h4><p>Nova communicates via Telegram by default (WhatsApp and Slack also work). You'll get a bot token from @BotFather.</p></div>
         <div class="card"><h4>One AI provider key</h4><p>Claude (recommended), Gemini, Codex, or Groq. Start with what you already use; Nova switches providers based on task type.</p></div>
         <div class="card"><h4>MCP credentials (optional)</h4><p>Google Workspace, Notion, Cloudflare, etc. Each one adds a tool to your agents. You can skip these for now and add them later.</p></div>
       </div>
 
-      <h2>The fast path: `bun run init`</h2>
+      <h2>The fast path: `bash bootstrap.sh`</h2>
 
-      <p>Nova ships with a guided setup wizard that asks exactly what it needs and no more. Clone the repo, run the init script, and you're done in about 3 minutes:</p>
+      <p>Nova ships with a one-command installer and a guided setup wizard that asks exactly what it needs and no more. Clone the repo, run one command, and you're done in about 3 minutes:</p>
 
       <div class="callout">
         <p><span class="k">Quick start</span>
         <code>git clone https://github.com/djbelieny/nova.git</code><br>
         <code>cd nova</code><br>
-        <code>bun run init</code></p>
+        <code>bash bootstrap.sh</code></p>
       </div>
 
-      <p>The wizard will ask you for:</p>
+      <p><code>bootstrap.sh</code> installs any missing prerequisites (Bun, the Claude Code CLI), then launches the wizard. It's resumable — close it and re-run to continue — and <code>bash bootstrap.sh --check</code> reports your system without changing anything. The wizard will ask you for:</p>
       <ul>
         <li>A Telegram bot token from @BotFather (follow the prompts)</li>
-        <li>Your Telegram user ID (get it from @userinfobot)</li>
+        <li>That's all you type for Telegram — your user ID is <strong>detected automatically</strong> when you message your bot (no @userinfobot step)</li>
         <li>Which AI provider you want to start with (Claude/Gemini/etc.)</li>
         <li>Your API key for that provider</li>
         <li>Your name and timezone (for personalization)</li>
       </ul>
 
-      <p>It writes a minimal <code>.env</code> file, creates <code>.mcp.json</code> from the example, and verifies the Telegram connection. Then you can send your bot a test message — it should answer immediately.</p>
+      <p>It writes a minimal <code>.env</code> file, creates <code>.mcp.json</code> from the example, and verifies the Telegram connection. When Nova starts, it greets you on Telegram with tappable starter ideas — so your very first interaction works without typing. Run <code>bun run doctor</code> anytime for a health check.</p>
 
       <div class="callout">
         <p><span class="k">That's it</span>You now have a working Nova instance that understands classified requests, routes to the right agent, and asks for approval before anything consequential happens.</p>

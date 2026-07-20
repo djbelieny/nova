@@ -290,18 +290,16 @@
     <h2>Instalación</h2>
     <h3>Requisitos previos</h3>
     <ul>
-      <li><strong><a href="https://bun.sh" rel="noopener">Bun</a> 1.3+</strong> — <code>curl -fsSL https://bun.sh/install | bash</code></li>
-      <li><strong><a href="https://claude.ai/claude-code" rel="noopener">CLI de Claude Code</a></strong>, instalado y autenticado — <code>npm install -g @anthropic-ai/claude-code</code>, luego <code>claude auth</code></li>
       <li>Una <strong>cuenta de Telegram</strong> (para crear tu bot)</li>
-      <li>macOS 13+ o Ubuntu 22.04+; mínimo 2&nbsp;GB de RAM (4&nbsp;GB recomendado)</li>
+      <li>macOS 13+ o Ubuntu 22.04+ (Windows vía WSL2); mínimo 2&nbsp;GB de RAM (4&nbsp;GB recomendado)</li>
     </ul>
-    <p>Las cuentas opcionales desbloquean más: Gemini, Groq (transcripción de voz gratuita), Twilio (llamadas telefónicas), Perplexity (investigación web), Meta, Notion, Google Workspace y más — todo cubierto en <a href="#configuration">Configuración</a>.</p>
+    <p>Eso es todo para empezar — el instalador se encarga del resto. Instala automáticamente <strong><a href="https://bun.sh" rel="noopener">Bun</a></strong> y la <strong>CLI de <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a></strong> si faltan, para que no tengas que configurarlos a mano. Las cuentas opcionales desbloquean más: Gemini, Groq (transcripción de voz gratuita), Twilio (llamadas telefónicas), Perplexity (investigación web), Meta, Notion, Google Workspace y más — todo cubierto en <a href="#configuration">Configuración</a>.</p>
 
-    <h3>Opción A — configuración guiada (recomendado)</h3>
-    <p>Claude Code lee el <code>CLAUDE.md</code> del repositorio y te guía a través de ocho fases: Telegram, base de datos, personalización, primera ejecución, servicios continuos, servicios proactivos, voz e investigación.</p>
+    <h3>Opción A — un solo comando (recomendado)</h3>
+    <p>Un solo comando instala cualquier requisito que falte y luego ejecuta un amigable <strong>asistente de configuración</strong>. El asistente te guía para conectar Telegram y un proveedor de IA — sin editar archivos — e incluso puede <strong>detectar tu ID de usuario de Telegram automáticamente</strong> (solo te pide que le escribas a tu bot). Es <strong>reanudable</strong>: ciérralo y vuelve a ejecutar el mismo comando para retomar donde lo dejaste.</p>
     <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
-<span class="p">$</span> bun run setup          <span class="c"># install deps, create .env</span>
-<span class="p">$</span> claude                 <span class="c"># let Claude guide the rest</span></code></pre>
+<span class="p">$</span> bash bootstrap.sh      <span class="c"># instala los requisitos y luego ejecuta el asistente de configuración</span></code></pre>
+    <p>¿Solo quieres ver qué hay instalado? <code>bash bootstrap.sh --check</code> reporta el estado de tu sistema y no cambia nada.</p>
 
     <h3>Opción B — configuración manual</h3>
     <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
@@ -314,12 +312,16 @@
 <span class="p">$</span> bun run start</code></pre>
     <div class="callout ok">
       <span class="co-label">[primera ejecución]</span>
-      <p>El modelo de embeddings local (all-MiniLM-L6-v2, ~23&nbsp;MB) se descarga en el primer uso. Cuando el relé está activo, envía un mensaje a tu bot en Telegram — deberías recibir una respuesta en segundos. Ejecuta <code>bun run setup:verify</code> para una verificación de salud completa.</p>
+      <p>El modelo de embeddings local (all-MiniLM-L6-v2, ~23&nbsp;MB) se descarga en el primer uso. Cuando Nova arranca, te envía un mensaje de bienvenida en Telegram con ideas para empezar que puedes tocar — así tu primera interacción funciona sin escribir nada. Ejecuta <code>bun run doctor</code> en cualquier momento para una verificación de salud, o <code>bun run update</code> para traer lo último y reinstalar.</p>
     </div>
 
     <h3>Referencia de comandos</h3>
     <div class="tbl-wrap"><table>
       <tr><th>Comando</th><th>Qué hace</th></tr>
+      <tr><td><code>bash bootstrap.sh</code></td><td>Instala los requisitos y ejecuta el asistente de configuración (<code>--check</code> para una prueba en seco)</td></tr>
+      <tr><td><code>bun run init</code></td><td>Ejecuta el asistente de configuración por sí solo (reanudable)</td></tr>
+      <tr><td><code>bun run doctor</code></td><td>Verificación de salud + diagnósticos copiables</td></tr>
+      <tr><td><code>bun run update</code></td><td>Trae lo último y reinstala las dependencias</td></tr>
       <tr><td><code>bun run start</code></td><td>Inicia el relé (proceso principal del bot)</td></tr>
       <tr><td><code>bun run dev</code></td><td>Inicia con recarga automática en cambios de archivos</td></tr>
       <tr><td><code>bun run dashboard</code></td><td>Inicia el panel web en el puerto 3033</td></tr>
@@ -349,7 +351,7 @@
     <div class="tbl-wrap"><table>
       <tr><th>Variable</th><th>Valor por defecto</th><th>Propósito</th></tr>
       <tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td>—</td><td><strong>Requerido.</strong> De @BotFather</td></tr>
-      <tr><td><code>TELEGRAM_USER_ID</code></td><td>—</td><td><strong>Requerido.</strong> Tu ID numérico, de @userinfobot</td></tr>
+      <tr><td><code>TELEGRAM_USER_ID</code></td><td>—</td><td><strong>Requerido.</strong> Tu ID numérico, detectado automáticamente por el asistente (o desde @userinfobot)</td></tr>
       <tr><td><code>NOVA_ENCRYPTION_KEY</code></td><td>—</td><td><strong>Requerido.</strong> 64 caracteres hexadecimales; cifrado de credenciales en reposo</td></tr>
       <tr><td><code>BOT_NAME</code></td><td><code>Nova</code></td><td>El nombre que tu asistente se da a sí mismo</td></tr>
       <tr><td><code>USER_NAME</code></td><td>—</td><td>Tu nombre (recomendado)</td></tr>
@@ -415,7 +417,7 @@
     <ol>
       <li>Envía un mensaje a <strong>@BotFather</strong> → <code>/newbot</code> → elige un nombre de visualización, luego un nombre de usuario terminado en <code>bot</code>.</li>
       <li>Copia el token (se ve como <code>7123…:AAH…</code>) en <code>TELEGRAM_BOT_TOKEN</code>.</li>
-      <li>Envía un mensaje a <strong>@userinfobot</strong> → <code>/start</code> → copia tu ID numérico en <code>TELEGRAM_USER_ID</code>.</li>
+      <li>Tu ID de usuario numérico lo <strong>detecta automáticamente</strong> el asistente de configuración — solo te pide que le escribas a tu bot. (Si prefieres, aún puedes definir <code>TELEGRAM_USER_ID</code> a mano desde <strong>@userinfobot</strong>.)</li>
       <li>Verifica: <code>bun run test:telegram</code>.</li>
     </ol>
     <h3>WhatsApp</h3>
@@ -442,7 +444,9 @@
     <h3>Comandos</h3>
     <div class="tbl-wrap"><table>
       <tr><th>Comando</th><th>Qué hace</th></tr>
-      <tr><td><code>/start</code> / <code>/help</code></td><td>Introducción y lista de comandos</td></tr>
+      <tr><td><code>/start</code> / <code>/help</code></td><td>Bienvenida amigable con ideas para empezar que puedes tocar, y ayuda en lenguaje sencillo</td></tr>
+      <tr><td><code>/team</code></td><td>Conoce a tus 24 especialistas, agrupados según lo que quieras lograr</td></tr>
+      <tr><td><code>/examples</code></td><td>Ideas para empezar que puedes tocar para ejecutar ahora mismo</td></tr>
       <tr><td><code>/agents</code></td><td>Explora los 24 agentes con botones de "Usar" de un toque</td></tr>
       <tr><td><code>/memory</code> / <code>/goals</code> / <code>/tasks</code></td><td>Muestra hechos almacenados, objetivos y tareas de agentes</td></tr>
       <tr><td><code>/schedule</code>, <code>/schedule list</code></td><td>Gestiona tareas programadas</td></tr>
