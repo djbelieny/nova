@@ -650,6 +650,17 @@ class SharedDatabase {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`);
 
+    // Pairing codes — one-time invite codes for self-serve teammate onboarding
+    this.db.run(`CREATE TABLE IF NOT EXISTS pairing_codes (
+      code TEXT PRIMARY KEY,
+      created_by TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      expires_at TEXT NOT NULL,
+      used_by TEXT,
+      used_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`);
+
       this.db.run("COMMIT");
     } catch (err) {
       try { this.db.run("ROLLBACK"); } catch {}
@@ -1814,6 +1825,65 @@ export class Database {
       r.preferences = parseJson(r.preferences, {});
       return r;
     });
+  }
+
+  // ============================================================
+  // Pairing Codes (→ shared.db) — self-serve teammate onboarding
+  // ============================================================
+
+  /** Generate a one-time invite code and store it with a computed expiry. Returns the code. */
+  createPairingCode(createdBy: string, role: "member" | "admin", ttlMinutes: number): string {
+    // Unambiguous alphabet — no 0/O/1/I/l — so codes are easy to read and retype.
+    const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+    let code = "";
+    do {
+      const bytes = randomBytes(8);
+      code = "";
+      for (let i = 0; i < 8; i++) code += alphabet[bytes[i] % alphabet.length];
+    } while (this.shared.db.query(`SELECT 1 FROM pairing_codes WHERE code = ?`).get(code));
+
+    this.shared.db.run(
+      `INSERT INTO pairing_codes (code, created_by, role, expires_at)
+       VALUES (?, ?, ?, datetime('now', ?))`,
+      [code, createdBy, role, `${ttlMinutes} minutes`]
+    );
+    return code;
+  }
+
+  /** Atomically redeem a pairing code. One-time use, safe against double-redeem. */
+  redeemPairingCode(
+    code: string,
+    telegramId: string
+  ): { ok: true; role: string } | { ok: false; error: "invalid" | "expired" | "used" } {
+    const normalized = (code || "").trim().toUpperCase();
+    if (!normalized) return { ok: false, error: "invalid" };
+
+    const row = this.shared.db.query(
+      `SELECT code, role, used_by, expires_at FROM pairing_codes WHERE code = ? LIMIT 1`
+    ).get(normalized) as any;
+    if (!row) return { ok: false, error: "invalid" };
+    if (row.used_by) return { ok: false, error: "used" };
+
+    const expired = this.shared.db.query(
+      `SELECT (expires_at <= datetime('now')) AS expired FROM pairing_codes WHERE code = ?`
+    ).get(normalized) as any;
+    if (expired?.expired) return { ok: false, error: "expired" };
+
+    // Atomic claim: only succeeds if still unused. Guards against a concurrent double-redeem.
+    const changed = this.shared.db.run(
+      `UPDATE pairing_codes SET used_by = ?, used_at = datetime('now')
+       WHERE code = ? AND used_by IS NULL`,
+      [telegramId, normalized]
+    );
+    if (!changed.changes) return { ok: false, error: "used" };
+    return { ok: true, role: row.role };
+  }
+
+  /** Delete expired, unredeemed codes. */
+  pruneExpiredPairingCodes(): void {
+    this.shared.db.run(
+      `DELETE FROM pairing_codes WHERE used_by IS NULL AND expires_at <= datetime('now')`
+    );
   }
 
   getTeamMembers(teamId: string): any[] {
