@@ -65,6 +65,7 @@ export interface RouteRequest {
   userId?: string;
   forceProvider?: string;
   hasMcpConfig?: boolean;
+  requiresTools?: boolean;
   userDefaultProvider?: string;
 }
 
@@ -74,30 +75,43 @@ export interface RouteResult {
   reason: string;
 }
 
-function buildCandidateList(tier: ModelTier, hint?: string, hasMcpConfig?: boolean): AIProvider[] {
-  if (tier === 'fast') {
-    return [
-      getProvider('codex'),
-      getProvider('gemini'),
-      getProvider('claude'),
-      getProvider('kimi'),
-    ].filter(Boolean) as AIProvider[];
+function apiProvidersForTier(tier: ModelTier): AIProvider[] {
+  return getAllProviders().filter((p) => p.kind === 'api' && p.supportedTiers.includes(tier));
+}
+
+function buildCandidateList(
+  tier: ModelTier,
+  hint?: string,
+  hasMcpConfig?: boolean,
+  requiresTools?: boolean,
+): AIProvider[] {
+  // premium tier: claude only
+  if (tier === 'premium') {
+    const claude = getProvider('claude');
+    return claude ? [claude] : [];
   }
 
-  if (tier === 'standard') {
-    const list: AIProvider[] = [];
+  // Subscription CLIs first (cost-ordered). These are all agentic-cli with tools.
+  const clis: AIProvider[] = [];
+  if (tier === 'fast') {
+    for (const name of ['codex', 'gemini', 'claude']) {
+      const p = getProvider(name);
+      if (p) clis.push(p);
+    }
+  } else {
     if (!hasMcpConfig) {
       const g = getProvider('gemini');
-      if (g) list.push(g);
+      if (g) clis.push(g);
     }
     const c = getProvider('claude');
-    if (c) list.push(c);
-    return list;
+    if (c) clis.push(c);
   }
 
-  // premium tier: claude only
-  const claude = getProvider('claude');
-  return claude ? [claude] : [];
+  // Phase 1: API providers are not yet agentic, so tool-requiring routes stay on
+  // the subscription CLIs only. Text routes may append available API providers
+  // AFTER the CLIs so subscription-first cost ordering is preserved.
+  if (requiresTools) return clis;
+  return [...clis, ...apiProvidersForTier(tier)];
 }
 
 /**
@@ -118,7 +132,7 @@ export async function selectProvider(opts: RouteRequest): Promise<RouteResult> {
   }
 
   // 2. Build cost-ordered candidates for this tier
-  const candidates = buildCandidateList(opts.tier, opts.hint, opts.hasMcpConfig);
+  const candidates = buildCandidateList(opts.tier, opts.hint, opts.hasMcpConfig, opts.requiresTools);
 
   // 3. Pick first available, non-rate-limited, not near soft limit
   for (const candidate of candidates) {

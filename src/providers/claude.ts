@@ -10,7 +10,7 @@
 import { spawn } from "bun";
 import { dirname } from "path";
 import { mkdirSync } from "fs";
-import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
+import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass, ProviderKind, ProviderCapabilities } from "../ai-provider.ts";
 import { wrapForExecution } from "../sandbox/index.ts";
 import { planSandboxAuth } from "../sandbox/auth.ts";
 
@@ -25,6 +25,8 @@ export class ClaudeProvider implements AIProvider {
   readonly defaultModel = "sonnet";
   readonly costClass: ProviderCostClass = 'subscription-cli';
   readonly supportedTiers: ModelTier[] = ['fast', 'standard', 'premium'];
+  readonly kind: ProviderKind = 'agentic-cli';
+  readonly capabilities: ProviderCapabilities = { tools: true, mcp: true, streaming: false };
 
   private binaryPath: string;
   private _availCache: { result: boolean; ts: number } | null = null;

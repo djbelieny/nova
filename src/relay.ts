@@ -60,7 +60,8 @@ import {
 import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
 import { CodexProvider } from "./providers/codex.ts";
-import { KimiProvider } from "./providers/kimi.ts";
+import { OpenAICompatibleProvider } from "./providers/openai-compatible.ts";
+import { loadProviderProfiles } from "./provider-registry.ts";
 import { selectProvider, parseProviderPrefix, recordRateLimit, recordUsage } from "./ai-router.ts";
 import {
   markdownToTelegramHTML,
@@ -410,6 +411,52 @@ channels.init(NOVA_DIR);
 // WhatsApp per-user sessions (managed via Mini App, not env flag)
 const whatsappManager = new WhatsAppManager(supabase);
 
+// ============================================================
+// PAIRING AUTH — self-serve teammate onboarding
+// ============================================================
+
+// Matches an 8-char invite code from the unambiguous alphabet (case-insensitive).
+const PAIRING_CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/i;
+const PAIRING_MAX_ATTEMPTS = 5;
+const PAIRING_LOCKOUT_MS = 5 * 60_000; // 5 minutes after too many bad tries
+const pairingAttempts = new Map<string, { count: number; lockedUntil: number }>();
+
+function pairingFirstName(name?: string): string {
+  const cleaned = (name || "there").replace(/[^\p{L}\p{N} _-]/gu, "").trim().slice(0, 32);
+  return cleaned || "there";
+}
+
+function isPairingLockedOut(telegramId: string): boolean {
+  const rec = pairingAttempts.get(telegramId);
+  return !!rec && rec.lockedUntil > Date.now();
+}
+
+function recordPairingAttempt(telegramId: string): void {
+  const rec = pairingAttempts.get(telegramId) || { count: 0, lockedUntil: 0 };
+  rec.count += 1;
+  if (rec.count >= PAIRING_MAX_ATTEMPTS) rec.lockedUntil = Date.now() + PAIRING_LOCKOUT_MS;
+  pairingAttempts.set(telegramId, rec);
+}
+
+function clearPairingAttempts(telegramId: string): void {
+  pairingAttempts.delete(telegramId);
+}
+
+/** Send the first-run welcome to a freshly-paired user and mark them onboarded once. */
+async function sendPairingWelcome(telegramId: string, name: string, userId?: string): Promise<void> {
+  const tg = channels.getTelegram();
+  if (!tg) return;
+  try {
+    await tg.send(telegramId, {
+      text: buildWelcomeMessage(name),
+      buttons: exampleButtons().flat().map((b) => ({ label: b.label, callbackData: b.callbackData })),
+    });
+    if (userId) supabase.setOnboardedAt(userId);
+  } catch (err) {
+    console.warn("[relay] pairing welcome failed:", err);
+  }
+}
+
 // Set up Telegram middleware for user resolution (if Telegram is enabled)
 const telegramAdapter = channels.getTelegram();
 if (telegramAdapter) {
@@ -435,8 +482,51 @@ if (telegramAdapter) {
 
     const user = await resolveUser(telegramId, "telegram");
     if (!user) {
-      console.log(`Unauthorized: ${telegramId}`);
-      await ctx.reply("This bot is private. Ask the admin to add you.");
+      // Unknown DM — run the self-serve pairing flow instead of dead-ending.
+      // Button presses (e.g. "Request access") carry no message text; let them
+      // flow through to the callback handler, which resolves pairing callbacks
+      // before the usual "must be a known user" guard.
+      if (ctx.callbackQuery) {
+        await next();
+        return;
+      }
+
+      const raw = (ctx.message?.text || "").trim();
+      const firstName = pairingFirstName(ctx.from?.first_name);
+
+      // A code-shaped message is treated as a redemption attempt.
+      if (PAIRING_CODE_RE.test(raw)) {
+        if (isPairingLockedOut(telegramId)) {
+          await ctx.reply("Too many attempts. Please wait a few minutes and try your code again.");
+          return;
+        }
+        // Widened at the call site: this project builds with strictNullChecks off,
+        // where discriminated-union narrowing on a boolean flag is unreliable.
+        const result: { ok: boolean; role?: string; error?: "invalid" | "expired" | "used" } =
+          supabase.redeemPairingCode(raw, telegramId);
+        if (!result.ok) {
+          recordPairingAttempt(telegramId);
+          const reason =
+            result.error === "expired" ? "That code has expired. Ask the admin for a fresh invite."
+            : result.error === "used" ? "That code was already used. Ask the admin for a new one."
+            : "That code isn't valid. Double-check it, or tap Request access below.";
+          await ctx.reply(reason, {
+            reply_markup: { inline_keyboard: [[{ text: "Request access", callback_data: `pair_req:${telegramId}:${firstName}` }]] },
+          });
+          return;
+        }
+        clearPairingAttempts(telegramId);
+        const created = supabase.upsertUser({ telegram_id: telegramId, name: firstName, role: result.role });
+        invalidateUserCache(telegramId);
+        await sendPairingWelcome(telegramId, firstName, created?.id);
+        return;
+      }
+
+      console.log(`Unpaired DM: ${telegramId}`);
+      await ctx.reply(
+        "You're not connected to this Nova yet. If you were given an invite code, send it here. Otherwise tap Request access.",
+        { reply_markup: { inline_keyboard: [[{ text: "Request access", callback_data: `pair_req:${telegramId}:${firstName}` }]] } }
+      );
       return;
     }
 
@@ -462,6 +552,32 @@ if (telegramAdapter) {
 // ============================================================
 
 channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply, editOriginal) => {
+  // Pairing request — pressed by an UNKNOWN user, so it must run before the
+  // "must be a known user" guard below. Notifies every admin with Approve/Deny.
+  if (buttonData.startsWith("pair_req:")) {
+    const parts = buttonData.split(":");
+    const requesterTgId = parts[1];
+    const requesterName = pairingFirstName(parts.slice(2).join(":"));
+    const admins = supabase.getUsersByRole("admin");
+    const tg = channels.getTelegram();
+    if (tg && admins?.length) {
+      for (const admin of admins) {
+        if (!admin.telegram_id) continue;
+        await tg.send(admin.telegram_id, {
+          text: `${requesterName} (tg:${requesterTgId}) is requesting access to Nova.`,
+          buttons: [
+            { label: "✅ Approve", callbackData: `pair_ok:${requesterTgId}:${requesterName}` },
+            { label: "❌ Deny", callbackData: `pair_no:${requesterTgId}` },
+          ],
+        }).catch(() => {});
+      }
+      await reply("Thanks! I've let the admin know. You'll hear back here once you're approved.");
+    } else {
+      await reply("Thanks! There's no admin available to approve access right now.");
+    }
+    return;
+  }
+
   // Resolve user from cache (should already be cached from the message that triggered buttons)
   let user: NovaUser | null = null;
   for (const [_key, cached] of userCache) {
@@ -470,6 +586,32 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
   // Fallback: try to resolve by telegram ID
   if (!user) user = await resolveUser(platformUserId, "telegram");
   if (!user) return;
+
+  // Pairing approval/denial — admin-only, extends the existing callback machinery.
+  if (buttonData.startsWith("pair_ok:")) {
+    if (user.role !== "admin") { await reply("Only an admin can approve access."); return; }
+    const parts = buttonData.split(":");
+    const newTgId = parts[1];
+    const newName = pairingFirstName(parts.slice(2).join(":"));
+    if (supabase.getUserByTelegramId(newTgId)) {
+      if (editOriginal) await editOriginal(`${newName} already has access.`);
+      return;
+    }
+    const created = supabase.upsertUser({ telegram_id: newTgId, name: newName, role: "member" });
+    invalidateUserCache(newTgId);
+    await sendPairingWelcome(newTgId, newName, created?.id);
+    if (editOriginal) await editOriginal(`✅ Approved ${newName}. They now have access.`);
+    return;
+  }
+
+  if (buttonData.startsWith("pair_no:")) {
+    if (user.role !== "admin") { await reply("Only an admin can deny access."); return; }
+    const newTgId = buttonData.split(":")[1];
+    const tg = channels.getTelegram();
+    if (tg) await tg.send(newTgId, "Thanks for your interest — the admin isn't able to grant access right now.").catch(() => {});
+    if (editOriginal) await editOriginal("Request denied.");
+    return;
+  }
 
   // Approval buttons (apv:...) are handled directly by the Telegram adapter's onApproval handler
 
@@ -1017,6 +1159,7 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
     userId,
     forceProvider,
     hasMcpConfig: !!mcpConfigPath,
+    requiresTools: !!mcpConfigPath,
     userDefaultProvider: resolvedDefault || undefined,
   });
 
@@ -2744,6 +2887,21 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
     return true;
   }
 
+  if (command === "/invite") {
+    const roleArg = (parts[1] || "member").toLowerCase();
+    const role: "member" | "admin" = roleArg === "admin" ? "admin" : "member";
+    const code = supabase.createPairingCode(user.id, role, 24 * 60);
+    const botUsername = (ctx as any).me?.username || process.env.TELEGRAM_BOT_USERNAME || "the Nova bot";
+    const handle = botUsername.startsWith("@") || botUsername.includes(" ") ? botUsername : `@${botUsername}`;
+    await ctx.reply(
+      `Invite code created (role: ${role}).\n\n` +
+      `Code: ${code}\nExpires in 24 hours.\n\n` +
+      `Forward this to your teammate:\n\n` +
+      `"You've been invited to Nova — message ${handle} and send this code: ${code}"`
+    );
+    return true;
+  }
+
   if (command === "/share") {
     // /share <fact> — shortcut to insert shared memory
     const fact = parts.slice(1).join(" ");
@@ -3447,7 +3605,9 @@ registerProvider(geminiProvider);
 const codexProvider = new CodexProvider();
 registerProvider(codexProvider);
 
-registerProvider(new KimiProvider());
+for (const profile of loadProviderProfiles()) {
+  registerProvider(new OpenAICompatibleProvider(profile));
+}
 
 // Check which providers are actually available
 (async () => {
