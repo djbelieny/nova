@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How Nova works: the architecture under the hood — Nova</title>
+<meta name="description" content="A technical deep dive into Nova's architecture: 3-tier message classification, task decomposition with dependency resolution, parallel execution, two-phase approval gates, split SQLite with vector search, and intelligent AI routing across Claude, Gemini, and Codex.">
+<meta property="og:title" content="How Nova works: the architecture under the hood">
+<meta property="og:description" content="3-tier classification, task decomposition, parallel execution, split SQLite storage, and intelligent AI routing. Here's what makes Nova tick.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/blog/architecture/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/architecture/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/architecture/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/architecture/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/architecture/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/#how">How it works</a>
+      <a href="/#agents">Agents</a>
+      <a href="/#start">Quick start</a>
+      <a href="/blog/">Blog</a>
+      <a href="/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/architecture/" class="en on" hreflang="en">EN</a><a href="/es/blog/architecture/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/architecture/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">How Nova Works</span>
+    <h1>The architecture that ties it all together</h1>
+    <p class="lede">Nova's power comes from how it thinks, not just what it can do. Here's a technical walkthrough of the pipeline that turns a Telegram message into coordinated work across 24 specialist agents, how it learns from patterns, and why it asks before it acts.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 15 July 2026 <span class="dot">·</span> 13 min read</p>
+
+    <div class="prose">
+      <p>A traditional chatbot takes your message and runs it straight to an LLM. Nova takes a longer, smarter route. Every message gets <strong>classified</strong> into one of three buckets, each handled differently. Simple things stay fast. Focused work routes to a specialist. Big decomposable problems get broken into subtasks and run in parallel. And nothing consequential happens until you say so.</p>
+      <p>It's a pipeline, not a black box. At every stage — classification, decomposition, execution — the system makes a deliberate decision. You can read the code. You can change it.</p>
+
+      <h2>How Nova decides what to do with your message</h2>
+      <p>When you send a message, Nova doesn't immediately ask Claude to reason about it. Instead it uses a <strong>3-tier classification system</strong> designed to keep as many requests as possible out of the LLM entirely.</p>
+
+      <h3>Tier 1: The heuristic (instant, zero cost)</h3>
+      <p>Messages under 15 words with no action verbs get a direct answer from Claude. "What time is it?" stays instant. This catches quick lookups, status checks, and casual questions — the kind where routing overhead would be silly.</p>
+
+      <h3>Tier 2: Pattern matching and single-agent routing</h3>
+      <p>Nova remembers successful task decompositions. If you asked "draft a newsletter" last week and got a plan that worked, and you ask something similar today, Nova reuses that same plan without re-running the LLM. For new requests, Nova pattern-matches against known task templates — things like "social media post", "email campaign", "blog article", "ad creative" — and routes them straight to the right specialist agent.</p>
+
+      <h3>Tier 3: LLM classification (only when necessary)</h3>
+      <p>Everything else goes to Claude Sonnet, which classifies it as simple (direct answer), routed (single agent), or complex (decompose and parallelize). This happens once per unique type of request, then gets cached.</p>
+
+      <div class="callout">
+        <p><span class="k">The result</span>Simple messages get answered without an LLM call at all. Repeated tasks reuse a cached plan. Only genuinely new requests pay for a classification call — and each one becomes a pattern that makes the next similar request faster.</p>
+      </div>
+
+      <h2>Breaking complex work into independent pieces</h2>
+      <p>When you ask Nova something big — "plan and launch our Q3 campaign" — the planner takes over. It breaks the request into subtasks, figures out dependencies, and runs everything that can happen in parallel.</p>
+      <p>Some of Nova's most complex workflows are <strong>deterministic pipelines</strong>, not LLM-generated each time. A social media campaign always follows the same shape: research → content → image → preview → publish. A blog post is always research → write → hero image → preview → publish. This means you get a predictable, reproducible process for work you do repeatedly.</p>
+      <p>For truly novel requests, the LLM decomposes the task. It returns JSON: an array of subtasks, each with a description, which agent should handle it, and which other tasks it depends on. Dependencies are resolved, then independent subtasks run at the same time.</p>
+
+      <h2>Two phases: prepare first, ask permission, then execute</h2>
+      <p>The moment a task touches the real world — publish a post, send an email, spend money — it needs approval. Nova implements this as two distinct phases.</p>
+      <p><strong>Prepare</strong> is the safe half. Research, write the copy, generate images, run analytics. Artifacts flow from subtask to subtask. Everything is reversible or at least refundable. This phase produces a summary and artifacts, sent to you in Telegram with three buttons: Approve, Revise, or Cancel.</p>
+      <p><strong>Execute</strong> only runs after you tap Approve. It publishes, sends, creates, spends — all the irreversible stuff. But it runs with full context from prepare: the copy is already written, the image is already generated, the timing is already planned.</p>
+      <p>Users who run the same task weekly can eventually <strong>earn autonomy</strong>. After a few clean executions of "send the newsletter", the system can graduate it: first to "send it and notify you after", then to "send it autonomously up to a $50 budget". One rejection and it drops back to asking. You're always in control of how much rope each task gets.</p>
+
+      <hr class="divider">
+
+      <h2>How Nova stores what it knows</h2>
+      <p>Nova uses a <strong>split SQLite architecture</strong>: one shared database for Nova's own state, and one per-user database for everything private to that user.</p>
+      <div class="cards">
+        <div class="card"><h4>Shared database</h4><p>User accounts, cost tracking, logs, global facts, service state. One instance per Nova deployment.</p></div>
+        <div class="card"><h4>Per-user database</h4><p>Messages, personal memory, agent tasks, approvals, scheduled work, execution patterns. Stays on your machine.</p></div>
+      </div>
+      <p>Both use <code>sqlite-vec</code> for vector search. Every fact, every memory, every message gets embedded with <code>all-MiniLM-L6-v2</code> (384 dimensions). When the planner needs context — "what do we know about pricing strategy?" — it does a semantic search instead of keyword matching. This means Nova can find relevant context even when you don't use the exact same words.</p>
+      <p>Embeddings are cheap to compute locally, and the search results are cached. Your data never leaves your machine. Your keys, your subscription, your database.</p>
+
+      <h2>Choosing the right AI for the job</h2>
+      <p>Nova can route work to Claude, Gemini, Codex, or Groq. The decision happens automatically using <strong>smart routing</strong>: force override (you prefix with <code>/claude</code> or <code>/gemini</code>) beats your default. Your default beats hint-based routing. Hint-based beats rate-limit fallback.</p>
+      <p>The routing logic considers the task type. MCP-heavy work (managing Notion docs, Calendar events, Gmail) routes to Claude because of its native MCP support. Research and web synthesis go to Gemini because of its free tier and strong synthesis. Fast classification goes to whichever provider has the cheapest fast model.</p>
+      <p>Each provider has three tiers: <code>fast</code> (classification, cheap), <code>standard</code> (task execution, balanced), and <code>premium</code> (critical reasoning, best quality). The router picks the tier based on the task criticality.</p>
+
+      <h2>The building blocks: patterns, memory, and integrations</h2>
+
+      <h3>Pattern learning</h3>
+      <p>Every successful task execution gets recorded as a pattern. The next time you ask something similar, Nova scores your request against those patterns by keyword overlap. When a request closely matches a previous plan that already has two or more clean executions, Nova reuses it. This turns repeated tasks into one-step actions — and a pattern that keeps succeeding is eventually promoted into a reusable skill.</p>
+
+      <h3>Persistent memory</h3>
+      <p>Nova embeds everything you tell it to remember. Use <code>[REMEMBER: fact]</code> in a response and it saves the fact, deduplicates against existing memory, and makes it available for semantic search on every future request. You can also set <code>[GOAL: text | DEADLINE: date]</code> to track objectives, and Nova will remind you of progress and blockers.</p>
+
+      <h3>12 MCP integrations</h3>
+      <p>Nova ships pre-configured with Notion, Google Workspace (Gmail, Calendar, Drive, Docs, Sheets), Playwright, Cloudflare Workers, Zoom, Square, ClickUp, GoHighLevel, Firecrawl, Tavily, Exa, and Browserbase. Each agent can access the ones relevant to its domain. You provide the credentials once during setup, and they stay on your machine.</p>
+
+      <h3>Scheduled and proactive work</h3>
+      <p>Nova can run tasks on a schedule: daily briefings, weekly reports, monthly audits. It learns your patterns — when you're most likely to want news, which reports matter most, which team members to loop in — and proactively reaches out. A morning briefing isn't just "here's your calendar", it's "here's your calendar plus the three most important emails plus your top priority for today based on your goals".</p>
+
+      <h2>The executive board: strategy at scale</h2>
+      <p>For the biggest decisions, Nova runs a <strong>board meeting</strong>. Seven executives — CEO, CFO, CMO, CTO, COO, Head of Research, and Critic — each with a distinct persona and priority agents, convene on your strategic question.</p>
+      <p>The meeting follows a structured flow: each executive independently analyzes the question, the Critic identifies failure modes and gives a GO/NO-GO, then Nova synthesizes 3–5 options ranked by confidence. You pick one, the decision gets recorded to the ledger, and the executive team delegates autonomous work based on the decision through the main Nova orchestrator.</p>
+      <p>The executives use different AI providers (Claude for strategy, Gemini for analytics, Codex for technical depth) and coordinate through a shared database. Each executive node runs independently on its own VPS, making it possible to scale across unlimited work without a central bottleneck.</p>
+
+      <hr class="divider">
+
+      <h2>Why this architecture?</h2>
+      <p>Nova's design makes five things possible:</p>
+      <ul>
+        <li><strong>Speed</strong> — many messages never touch an LLM at all. Heuristics and cached patterns keep the fast path fast.</li>
+        <li><strong>Cost efficiency</strong> — Every route chooses the cheapest model adequate for the task. Fast tiers for classification, standard for execution, premium only when reasoning matters.</li>
+        <li><strong>Parallelism</strong> — Independent subtasks run concurrently. A 10-step campaign doesn't take 10× the time; many steps collapse into 2–3 batches.</li>
+        <li><strong>Auditability</strong> — Every decision is logged. You can see why Nova routed to an agent, what the dependencies were, whether it used a cached pattern or called the LLM.</li>
+        <li><strong>Control</strong> — Two-phase execution means consequential work stops for approval. Patterns and autonomy escalation mean you gradually trust more work to run unsupervised as the system proves itself.</li>
+      </ul>
+
+      <div class="end-cta">
+        <h3>Run this architecture yourself</h3>
+        <p>Open source, self-hosted, MIT licensed. Deploy Nova and own the entire pipeline.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Get Nova on GitHub</a>
+          <a class="cta ghost" href="/docs/">Deep dive into the docs</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
+    <span>
+      <a href="/">Home</a> &nbsp;·&nbsp;
+      <a href="/docs/">Documentation</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deploying Nova: A practical guide to self-hosting — Nova</title>
+<meta name="description" content="Self-host Nova in under 5 minutes. From the init wizard to production on a VPS, here's everything you need to know to run your own AI team on your machine, your keys, your approval gates.">
+<meta property="og:title" content="Deploying Nova: A practical guide to self-hosting">
+<meta property="og:description" content="Self-host Nova in under 5 minutes. From the init wizard to production on a VPS, here's everything you need to know to run your own AI team on your machine, your keys, your approval gates.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/blog/deployment/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/deployment/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/deployment/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/deployment/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/deployment/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/#how">How it works</a>
+      <a href="/#agents">Agents</a>
+      <a href="/#start">Quick start</a>
+      <a href="/blog/">Blog</a>
+      <a href="/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/deployment/" class="en on" hreflang="en">EN</a><a href="/es/blog/deployment/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/deployment/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">Deployment Guide</span>
+    <h1>Deploying Nova: A practical guide to self-hosting</h1>
+    <p class="lede">From a fresh clone to running on your machine or VPS. Learn how to initialize Nova, configure it for your AI provider and integrations, enable sandboxing, and set up the executive board — with approval gates that keep you in control.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 15 July 2026 <span class="dot">·</span> 10 min read</p>
+
+    <div class="prose">
+      <p>Nova is designed to be self-hosted. Your machine, your API keys, your data, your approval gates. This guide walks through every step: from the first `bun run init` to a production instance running on a VPS, with optional features like sandboxed execution and a distributed executive board.</p>
+      <p>Most of this takes under five minutes. The optional bits — sandboxing, multi-VPS board coordination, advanced governance — you turn on when you're ready.</p>
+
+      <h2>What you'll need</h2>
+
+      <p>Before you start, gather these pieces:</p>
+
+      <div class="cards">
+        <div class="card"><h4>Bun runtime</h4><p>The fast JavaScript runtime Nova runs on. Install from bun.sh — takes about 1 minute.</p></div>
+        <div class="card"><h4>A Telegram account</h4><p>Nova communicates via Telegram by default (WhatsApp and Slack also work). You'll get a bot token from @BotFather.</p></div>
+        <div class="card"><h4>One AI provider key</h4><p>Claude (recommended), Gemini, Codex, or Groq. Start with what you already use; Nova switches providers based on task type.</p></div>
+        <div class="card"><h4>MCP credentials (optional)</h4><p>Google Workspace, Notion, Cloudflare, etc. Each one adds a tool to your agents. You can skip these for now and add them later.</p></div>
+      </div>
+
+      <h2>The fast path: `bun run init`</h2>
+
+      <p>Nova ships with a guided setup wizard that asks exactly what it needs and no more. Clone the repo, run the init script, and you're done in about 3 minutes:</p>
+
+      <div class="callout">
+        <p><span class="k">Quick start</span>
+        <code>git clone https://github.com/djbelieny/nova.git</code><br>
+        <code>cd nova</code><br>
+        <code>bun run init</code></p>
+      </div>
+
+      <p>The wizard will ask you for:</p>
+      <ul>
+        <li>A Telegram bot token from @BotFather (follow the prompts)</li>
+        <li>Your Telegram user ID (get it from @userinfobot)</li>
+        <li>Which AI provider you want to start with (Claude/Gemini/etc.)</li>
+        <li>Your API key for that provider</li>
+        <li>Your name and timezone (for personalization)</li>
+      </ul>
+
+      <p>It writes a minimal <code>.env</code> file, creates <code>.mcp.json</code> from the example, and verifies the Telegram connection. Then you can send your bot a test message — it should answer immediately.</p>
+
+      <div class="callout">
+        <p><span class="k">That's it</span>You now have a working Nova instance that understands classified requests, routes to the right agent, and asks for approval before anything consequential happens.</p>
+      </div>
+
+      <h2>Configuration: Know your three files</h2>
+
+      <p>Nova's configuration lives in three places. You rarely need to edit them directly — <code>bun run init</code> handles the basics — but understanding them helps when you want to add a feature or debug.</p>
+
+      <h3>.env — Secrets and API keys</h3>
+      <p>Never commit this file. It holds your Telegram bot token, AI provider keys, and any third-party credentials. Start with the example:</p>
+      <div class="callout">
+        <p><span class="k">Essential variables</span>
+        TELEGRAM_BOT_TOKEN=your_token_here<br>
+        TELEGRAM_USER_ID=your_id<br>
+        ANTHROPIC_API_KEY=sk-ant-...<br>
+        USER_NAME=Jake<br>
+        USER_TIMEZONE=America/New_York</p>
+      </div>
+
+      <p>Optional variables enable features as you add them: <code>GROQ_API_KEY</code> for voice transcription, <code>GOOGLE_WORKSPACE_CREDS</code> for Gmail/Drive, <code>CLOUDFLARE_API_TOKEN</code> for workers, and so on.</p>
+
+      <h3>config/profile.md — Who you are</h3>
+      <p>A markdown file describing your context. It gets loaded on every message so Nova understands your goals, constraints, and communication style. Fill it in once:</p>
+      <div class="callout">
+        <p><span class="k">Example profile.md</span>
+        # Your Profile<br>
+        <br>
+        Your name: Jake<br>
+        What you do: Run a SaaS company<br>
+        Your goals: 10x content output, grow to 5k newsletter subscribers<br>
+        Constraints: I have 4 hours a week free<br>
+        Timezone: America/New_York</p>
+      </div>
+
+      <h3>.mcp.json — Integrations and tools</h3>
+      <p>Specifies which MCP servers Nova can connect to: Notion, Google Workspace, Playwright, Cloudflare, Square, GoHighLevel, and 12 others. The init wizard copies <code>.mcp.example.json</code> and sets up placeholders. As you add integrations, uncomment the ones you use and add credentials.</p>
+
+      <h2>Running Nova: Start it, keep it running</h2>
+
+      <p>Once configured, start the bot:</p>
+      <div class="callout">
+        <p><span class="k">Development</span>
+        <code>bun run start</code></p>
+      </div>
+
+      <p>It listens for Telegram messages. Ctrl+C to stop. Test it: send your bot a message on Telegram and wait for it to reply.</p>
+
+      <p>For production — so Nova runs in the background and restarts on crash — use your OS's process manager:</p>
+
+      <h3>macOS: launchd</h3>
+      <div class="callout">
+        <p><span class="k">Set up and enable</span>
+        <code>bun run setup:launchd -- --service core</code></p>
+      </div>
+      <p>This auto-generates a plist file with the right paths and loads it into launchd. Nova runs in the background, starts on boot, and restarts if it crashes. Check status with <code>launchctl list | grep nova</code>.</p>
+
+      <h3>Linux/Windows: PM2</h3>
+      <div class="callout">
+        <p><span class="k">Set up and enable</span>
+        <code>bun run setup:services -- --service core</code></p>
+      </div>
+      <p>Uses PM2 for process management. Verify with <code>npx pm2 status</code>.</p>
+
+      <h2>Sandboxed execution (0.2.0)</h2>
+
+      <p>When agents run tasks, they run in your machine's memory by default. Sandboxing is optional but powerful: it runs each task in a hardened Docker container — read-only filesystem except for a per-task workspace, no access to your credentials, limited system calls.</p>
+
+      <p>A malicious webpage that tries to trick an agent into exfiltrating data can't escape the sandbox. And Nova stays on your subscription: instead of switching to pay-per-token billing, it shares your Claude/Gemini plan into the sandbox.</p>
+
+      <p>To enable sandboxing:</p>
+      <div class="callout">
+        <p><span class="k">Optional: Enable sandboxing</span>
+        <code>NOVA_SANDBOX_BACKEND=docker</code><br>
+        Build the image: <code>bun run sandbox:verify</code><br>
+        Set subscription mode: <code>NOVA_SANDBOX_SHARE_AUTH=true</code></p>
+      </div>
+
+      <p>That's it. Agents now run inside a container. You can see the container logs and tune isolation as needed.</p>
+
+      <h2>The executive board (0.2.0)</h2>
+
+      <p>For hard strategic questions, Nova has an optional executive board: CEO, CFO, CMO, CTO, COO, Head of Research, and a Critic. Each models a different way of thinking. They convene, give independent analysis, the Critic does a pre-mortem to surface failure modes, and Nova synthesizes options with confidence scores.</p>
+
+      <p>The board can run on a single VPS or distributed across 7 separate machines. All 7 executives coordinate through a shared Postgres database.</p>
+
+      <h3>Single-VPS board setup</h3>
+      <p>Run Postgres locally and register it:</p>
+      <div class="callout">
+        <p><span class="k">Board database</span>
+        <code>bash deploy/board/setup.sh</code><br>
+        Set in .env: <code>BOARD_DB_URL=postgres://...your-local-db...</code></p>
+      </div>
+      <p>Then start the executive services:</p>
+      <div class="callout">
+        <p><span class="k">Enable executives</span>
+        <code>bun run setup:launchd -- --service all</code></p>
+      </div>
+
+      <p>Seven new launchd services start: <code>nova-exec-ceo</code>, <code>nova-exec-cfo</code>, and so on. Each one can receive DMs on Telegram (or run autonomously with rate limiting).</p>
+
+      <h3>Multi-VPS board (advanced)</h3>
+      <p>Deploy a PostgREST API on one VPS and point each executive node to it. Each executive runs in a separate container with its own AI provider key. They coordinate entirely through the shared database. This is optional and only worth doing if you need the executives to run independently and scale.</p>
+
+      <h2>Governance: Approval gates and earned autonomy</h2>
+
+      <p>Out of the box, Nova always asks before it publishes, sends, or spends. You tap Approve/Revise/Cancel on Telegram inline buttons.</p>
+
+      <p>As an agent builds a clean track record, it graduates: first to <em>notify you after</em>, then to <em>fully autonomous within a spending cap</em>. One failure and it drops back to asking. You manage autonomy levels from a dashboard:</p>
+      <div class="callout">
+        <p><span class="k">Governance dashboard</span>
+        <code>GET /governance</code><br>
+        View and adjust autonomy levels per agent<br>
+        Set spending budgets<br>
+        Review the audit ledger</p>
+      </div>
+
+      <p>Every action is logged: who ran what, at what cost, whether it succeeded. You can reverse any decision, adjust trust levels, and see a full history.</p>
+
+      <hr class="divider">
+
+      <h2>Security checklist</h2>
+
+      <p>Before you trust Nova with real work:</p>
+
+      <div class="callout">
+        <p><span class="k">Before production</span>
+        Never commit .env or .mcp.json with real credentials<br>
+        Set TELEGRAM_USER_ID so only you can message the bot<br>
+        Use a strong Telegram bot token (if exposed, regenerate from @BotFather)<br>
+        If using sandboxing, verify the Docker image builds and runs<br>
+        Test the approval flow on a low-stakes task first<br>
+        Review the audit ledger for the first week of use<br>
+        Enable spending caps on agents that touch billing APIs</p>
+      </div>
+
+      <p>Nova's approval gates, sandboxing, and audit trails are designed to make consequences reversible. But the starting position is always "ask first, then execute" — you stay in control.</p>
+
+      <h2>Next: Run it, build on it</h2>
+
+      <p>You now have everything you need to run Nova on your machine or on a VPS. Send it a message and watch it work. Turn on sandboxing and the executive board when you're ready. Adjust autonomy levels as you trust it more. Add MCP integrations as you need them.</p>
+
+      <p>Nova is MIT licensed. Read the code, fork it, customize agents, add your own tools. It's your team now.</p>
+
+      <div class="end-cta">
+        <h3>Get Nova running on your machine</h3>
+        <p>Self-hosted, open source, your keys, your approval gates.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Clone from GitHub</a>
+          <a class="cta ghost" href="/docs/">Full Documentation</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
+    <span>
+      <a href="/">Home</a> &nbsp;·&nbsp;
+      <a href="/docs/">Documentation</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

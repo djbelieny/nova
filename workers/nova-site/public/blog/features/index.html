@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Every feature Nova has, and what they're built to do — Nova</title>
+<meta name="description" content="24 specialist agents, an executive board, earned autonomy, two-phase approval, persistent memory with semantic recall, 12 MCP integrations, 45 skills, proactive services, and full audit trails. Here's everything Nova can do.">
+<meta property="og:title" content="Every feature Nova has, and what they're built to do">
+<meta property="og:description" content="The complete Nova feature set: 24 agents, executive board, two-phase approval, earned autonomy, memory, integrations, proactive services, and audit trails.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/blog/features/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/features/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/features/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/features/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/features/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/#how">How it works</a>
+      <a href="/#agents">Agents</a>
+      <a href="/#start">Quick start</a>
+      <a href="/blog/">Blog</a>
+      <a href="/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/features/" class="en on" hreflang="en">EN</a><a href="/es/blog/features/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/features/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">Feature Tour</span>
+    <h1>What you get with Nova: the full feature set</h1>
+    <p class="lede">24 specialist agents, an executive board that reasons strategically, two-phase approval before anything ships, earned autonomy built on trust, persistent memory with semantic recall, 12 MCP integrations, 45 pre-built skills, and complete audit trails. Here's everything Nova has and how it works together.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 15 July 2026 <span class="dot">·</span> 11 min read</p>
+
+    <div class="prose">
+      <h2>24 Specialist Agents</h2>
+      <p>Nova's roster spans almost every function a company needs. Each agent has its own system prompt, dedicated tools, and MCP integrations. Nova routes your request to the specialist without requiring you to know their names — but it helps to see the shape of the team you're hiring.</p>
+
+      <div class="cards">
+        <div class="card"><h4>Growth &amp; marketing</h4><p><strong>Helios</strong> runs paid ads across Google, Facebook, and LinkedIn. <strong>Pixel</strong> manages social media and community growth. <strong>Kai</strong> writes and develops brand narrative. <strong>Orion</strong> designs and executes email campaigns. <strong>Magnus</strong> handles SEO and organic search strategy.</p></div>
+        <div class="card"><h4>Creative &amp; content</h4><p><strong>Morpheus</strong> writes video scripts and storyboards. <strong>Aura</strong> discovers and maintains brand voice and tone guidelines. <strong>Flux</strong> engineers sales funnels and conversion flows. <strong>Cyra</strong> audits and optimizes websites for UX, CRO, and performance.</p></div>
+        <div class="card"><h4>Strategy &amp; operations</h4><p><strong>Athena</strong> owns business strategy and competitive analysis. <strong>Oracle</strong> forecasts trends and plans for the future. <strong>Tesseract</strong> applies systems thinking and identifies leverage points. <strong>Zen</strong> optimizes workflows and productivity. <strong>Bridge</strong> identifies and develops partnerships.</p></div>
+        <div class="card"><h4>Data &amp; engineering</h4><p><strong>Digit</strong> turns data into dashboards and actionable insights. <strong>Cipher</strong> runs machine learning and statistical analysis. <strong>Architect</strong> designs and builds web applications and infrastructure. <strong>Joule</strong> automates workflows and wires together APIs.</p></div>
+        <div class="card"><h4>Risk &amp; voice</h4><p><strong>Rift</strong> audits security and assesses vulnerabilities. <strong>Lex</strong> reviews contracts and handles legal compliance. <strong>Helia</strong> manages public relations and media outreach. <strong>Nexus</strong> builds and moderates online communities.</p></div>
+        <div class="card"><h4>Support &amp; operations</h4><p><strong>Echo</strong> drafts customer support responses and builds knowledge bases. <strong>Quill</strong> writes grant proposals and business funding documents. <strong>Digit</strong> analyzes business metrics and produces reports. Together they handle the work that keeps operations running.</p></div>
+      </div>
+
+      <p>Each agent also has access to a shared library of <strong>45 pre-built skills</strong>: image generation, document creation (DOCX, XLSX, PPTX, PDF), web research, Google Workspace integration, Notion databases, and more. If an agent needs a tool, it already has hands.</p>
+
+      <h2>The Executive Board</h2>
+      <p>For decisions that deserve more than one opinion, Nova convenes an executive board of seven distinct thinkers. Each has its own AI provider, persona, and mental model:</p>
+
+      <ul>
+        <li><strong>CEO</strong> (modeled after Jeff Bezos) focuses on Day-1 thinking and customer obsession. Owns long-term vision and flywheel effects.</li>
+        <li><strong>CFO</strong> (Patrick Campbell) reasons about unit economics, pricing, and capital efficiency. Ensures every dollar compounds.</li>
+        <li><strong>CMO</strong> (Seth Godin) builds remarkable brands and tribes. Focuses on permission marketing and Purple Cow ideas, not incremental campaigns.</li>
+        <li><strong>CTO</strong> (Werner Vogels) designs systems with "everything fails" as the starting point. Ensures technical choices serve business outcomes.</li>
+        <li><strong>COO</strong> tracks execution, finds bottlenecks, and turns strategy into results. The engine that makes things happen.</li>
+        <li><strong>Head of Research</strong> (Ben Thompson) synthesizes trends and platform dynamics. Provides the intellectual foundation for decisions.</li>
+        <li><strong>Critic</strong> (Charlie Munger) does pre-mortems, finds failure modes, and keeps everyone honest. Never executes—only analyzes.</li>
+      </ul>
+
+      <p>Invoke the board with <code>/board your question</code>. The flow: each executive contributes independently, the Critic performs a pre-mortem, Nova synthesizes 3–5 options with confidence scores, and you choose the path. The decision gets recorded and fed to the execution engine.</p>
+
+      <h2>Two-Phase Execution: Approval Before Action</h2>
+      <p>The moment that separates Nova from a blank check is the approval gate. Every consequential action — publish, send, spend, create — happens in two phases:</p>
+
+      <ul>
+        <li><strong>Prepare</strong> — The safe half. Research, draft copy, generate images, analyze data, design pages. Nothing leaves the building yet.</li>
+        <li><strong>Approve</strong> — Nova shows you exactly what it's about to do: preview the email, the social post, the ad creative, the code. Telegram buttons: <em>Approve</em>, <em>Revise</em>, or <em>Cancel</em>.</li>
+        <li><strong>Execute</strong> — Only after your sign-off does it do the irreversible thing.</li>
+      </ul>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · approval gate in action</div>
+        <div class="bubble me"><span class="who">You</span>Draft three new ad creatives for our summer campaign. Target 25-40 year old founders, $800/day budget.</div>
+        <div class="bubble nova"><span class="who">Nova · Helios (ads)</span>Drafted three creatives: two carousel ads emphasizing ROI (based on previous CPC trends), one video intro. Est. cost: $89 to test all three on a 50% sample audience. Preview attached.
+          <div class="approve"><span class="yes">✓ Launch</span><span class="rev">✎ Refine</span><span class="no">✕ Cancel</span></div>
+        </div>
+        <div class="bubble me"><span class="who">You</span>Make the third one less salesy, more story-driven. Then launch.</div>
+        <div class="bubble nova"><span class="who">Nova · Helios</span>Rewrote the video to lead with founder story instead of ROI pitch. Launching all three now. I'll report on performance daily.</div>
+      </div>
+
+      <p>For routine tasks you trust completely, you can auto-approve: messages starting with "just do it", "go ahead", or "ship it" skip the gate. The gate stays closed until you train it otherwise.</p>
+
+      <p>If you tap <em>Revise</em>, the session is saved to the database. Your next message is treated as feedback, and Nova re-runs the prepare phase with your guidance.</p>
+
+      <h2>Earned Autonomy: Trust Built on Track Record</h2>
+      <p>Autonomy isn't a blank check — it's earned. Every type of action starts at <strong>always ask</strong>. As an agent builds a clean track record on a specific task — say, "send the weekly newsletter" — it graduates in stages:</p>
+
+      <ul>
+        <li><strong>Level 0 (Ask)</strong> — Nova prepares and waits for your approval every time.</li>
+        <li><strong>Level 1 (Notify)</strong> — Nova executes and notifies you after. You can still review what happened.</li>
+        <li><strong>Level 2 (Autonomous)</strong> — Nova runs fully on its own, within a spending cap you set per action type.</li>
+      </ul>
+
+      <p>One failure or one rejection and it drops straight back to Level 0. You set the cap (daily spend, email list size, infrastructure cost), and you can change it anytime from the dashboard. It's trust that survives failure.</p>
+
+      <h2>Memory &amp; Goals: Semantic Recall That Compounds</h2>
+      <p>Every conversation feeds a persistent knowledge base. Nova uses a two-part system:</p>
+
+      <p><strong>Intent tags</strong> let you save facts, set goals, create tasks, and schedule work — all via structured tags Nova parses from responses:</p>
+
+      <ul>
+        <li><code>[REMEMBER: fact]</code> — Save a fact with vector embeddings for semantic search.</li>
+        <li><code>[GOAL: grow newsletter to 10k | DEADLINE: 2026-12-31]</code> — Set a goal with optional deadline. Nova checks progress.</li>
+        <li><code>[TASK: Kai | write 3 blog posts on AI trends]</code> — Delegate to a specialist.</li>
+        <li><code>[SCHEDULE: social post | 2026-07-20 at 9am | RECUR: weekly:monday:9am]</code> — One-time or recurring. Conditional rules supported.</li>
+      </ul>
+
+      <p>Nova stores these in SQLite with vector embeddings (all-MiniLM-L6-v2 model, 384 dimensions) and injects relevant facts into every message. So when you ask a question three weeks later, Nova already knows your context — what you're building, what you've tried, what failed, and what's working.</p>
+
+      <h2>Proactive Services: Background Intelligence That Stays Current</h2>
+      <p>Nova doesn't just wait for you to ask. Several proactive services run on schedules you configure:</p>
+
+      <div class="cards">
+        <div class="card"><h4>Morning Briefing</h4><p>Daily digest: key metrics, new leads, support tickets, schedule changes. Delivered to your Telegram before you start work.</p></div>
+        <div class="card"><h4>Smart Check-in</h4><p>Context-aware prompts when you're idle. Offers next actions based on your goals and unfinished tasks — not a dumb "how are you" bot.</p></div>
+        <div class="card"><h4>AI News Monitor</h4><p>Curated news about AI developments and industry trends, parsed so you get signal not noise.</p></div>
+        <div class="card"><h4>Social Post Suggester</h4><p>Ideas for social content based on what's trending in your niche and your brand voice.</p></div>
+        <div class="card"><h4>Lead Suggester</h4><p>Identifies warm leads from your network and explains why they're relevant to your current goals.</p></div>
+        <div class="card"><h4>Meta Ads Report</h4><p>Daily analysis of ad performance, cost per lead trends, and recommendations for pausing or scaling.</p></div>
+      </div>
+
+      <p>Each service is opt-in. Most default to daily or periodic schedules, but you can customize timing, disable, or add conditions (e.g., "only send if there's a crisis").</p>
+
+      <h2>Multi-Channel &amp; Integrations</h2>
+
+      <h3>Talk to Nova where you already are</h3>
+      <p>Nova works via Telegram, WhatsApp, and Slack. The same agent team, the same approval gate, the same memory — you just pick where you want to chat. Messages sync across channels, so you can start a task in Slack and revise it in Telegram.</p>
+
+      <h3>12 MCP integrations built in</h3>
+      <p>Nova connects to the tools your business already uses:</p>
+
+      <ul>
+        <li><strong>Google Workspace</strong> — Gmail, Calendar, Drive, Docs, Sheets. Draft emails, create schedules, pull data.</li>
+        <li><strong>Notion</strong> — Read and write databases, pages, and documentation. Keep institutional knowledge in sync.</li>
+        <li><strong>Playwright</strong> — Browser automation, screenshots, scraping. Agents can log into your apps and take actions.</li>
+        <li><strong>Cloudflare</strong> — Workers, DNS, edge functions. Deploy serverless code and manage infrastructure from Nova.</li>
+        <li><strong>ClickUp</strong> — Task management. Agents create tasks, update statuses, and track dependencies.</li>
+        <li><strong>GoHighLevel</strong> — CRM, campaigns, social publishing. Agents can create leads, launch campaigns, and publish posts.</li>
+        <li><strong>Square</strong> — POS and sales data. Agents can analyze revenue, refunds, and customer transactions.</li>
+        <li><strong>Zoom</strong> — Schedule meetings directly from Nova without leaving Telegram.</li>
+        <li><strong>Firecrawl</strong> — Web scraping at scale. Agents can gather competitor data or customer research.</li>
+        <li><strong>Tavily</strong> — Web search API. Agents research topics, find best practices, and analyze trends.</li>
+        <li><strong>Exa</strong> — Semantic web search. Find papers, articles, and resources by concept, not keywords.</li>
+        <li><strong>Browserbase</strong> — Headless browser sessions. Agents can interact with modern web apps that require JavaScript.</li>
+      </ul>
+
+      <p>Each integration uses your own credentials or API keys — Nova doesn't mediate access. Your data, your rules.</p>
+
+      <h2>Built to Be Trusted: Audit, Sandboxing &amp; Verification</h2>
+
+      <h3>Sandboxed execution</h3>
+      <p>Agent tasks can run inside a hardened container: read-only system, isolated filesystem, no access to your host except a per-task workspace, no path to your credentials. If an agent encounters a malicious webpage or prompt injection, it stays contained. And sandboxing doesn't force you to pay-per-token — Nova runs your subscription inside the sandbox instead of quietly switching billing.</p>
+
+      <h3>Autonomous verification</h3>
+      <p>After each task, the agent automatically verifies its own work. Did the email send? Does the page render? Did the database update? If it fails, you see the error immediately. If it succeeds, you get a signed ledger entry.</p>
+
+      <h3>Complete action ledger</h3>
+      <p>Every consequential action is logged: what ran, which agent, which user approved it, what it cost, when it finished, whether it succeeded. Query the ledger by date range, agent, action type, or cost. Business-grade mostly means <em>answerable after the fact</em>, and Nova is.</p>
+
+      <h3>Governance dashboard</h3>
+      <p>See real-time spending, cost per agent, which tasks are running, which agents have highest error rates, and which operations need your attention. Spend caps are enforced — if an agent hits its budget, it stops and alerts you.</p>
+
+      <div class="callout">
+        <p><span class="k">Why this matters</span>An AI team that can send emails and spend money is only useful if it's also <em>safe</em>. Sandboxing, verification, and audit trails turn "it probably won't do anything dumb" into real guarantees you can defend.</p>
+      </div>
+
+      <hr class="divider">
+
+      <h2>Smart AI Routing</h2>
+      <p>Nova runs on Claude, Gemini, or other providers. Rather than forcing one model for everything, Nova routes based on task type, cost tier, and rate limits. A fast question might go to Haiku. A complex strategic analysis gets Opus. You can override anytime with a prefix: <code>/claude your question</code> forces Claude, <code>/gemini your question</code> forces Gemini.</p>
+
+      <p>This matters because some tasks are cheap to think through and others need the biggest model. Nova makes that choice automatically, but you're never locked in.</p>
+
+      <h2>Pattern Caching: The Same Request, Instantly</h2>
+      <p>Every successful decomposition plan — the breakdown of a complex task into agent subtasks — gets cached with semantic indexing. The next time you ask a similar question, Nova recognizes the pattern and skips classification. This saves both tokens and latency. As you use Nova, it gets faster on your recurring work.</p>
+
+      <div class="end-cta">
+        <h3>See it all working together</h3>
+        <p>Open source, self-hosted, MIT licensed. Clone, customize, run it on your own machine.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Get Nova on GitHub</a>
+          <a class="cta ghost" href="/docs/">Explore the docs</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
+    <span>
+      <a href="/">Home</a> &nbsp;·&nbsp;
+      <a href="/docs/">Documentation</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

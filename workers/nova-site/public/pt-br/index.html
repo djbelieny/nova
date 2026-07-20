@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova — um time de IA de código aberto que você executa pelo Telegram</title>
+<meta name="description" content="Nova é uma plataforma multi-agente auto-hospedada de código aberto: 24 agentes especialistas, decomposição de tarefas e aprovação humana antes de qualquer coisa ser publicada, gasta ou enviada.">
+<meta property="og:title" content="Nova — um time de IA de código aberto que você executa pelo Telegram">
+<meta property="og:description" content="24 agentes especialistas, decomposição de tarefas e aprovação humana antes de qualquer coisa ser publicada, gasta ou enviada. Auto-hospedado, licença MIT.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://mynova.space/pt-br/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--tg);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px;
+  }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark svg { display: block; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px;
+    padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Hero ── */
+  .hero { padding: 84px 0 72px; position: relative; overflow: hidden; }
+  .hero::before {
+    content: "";
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(600px 320px at 78% 18%, rgba(42,171,238,0.10), transparent 70%),
+      radial-gradient(420px 260px at 12% 80%, rgba(240,180,41,0.05), transparent 70%);
+    pointer-events: none;
+  }
+  .hero-grid {
+    display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px;
+    align-items: center; position: relative;
+  }
+  @media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 44px; } }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.04em; margin-bottom: 18px; display: block;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(38px, 5.2vw, 58px);
+    line-height: 1.04; letter-spacing: -0.03em;
+    margin-bottom: 22px;
+  }
+  h1 .accent { color: var(--tg); }
+  .hero p.lede { color: var(--muted); font-size: 19px; max-width: 32em; margin-bottom: 32px; }
+  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+  .cta {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-weight: 600; font-size: 16px;
+    padding: 13px 22px; border-radius: 10px;
+  }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); }
+  .hero-meta {
+    margin-top: 30px; display: flex; gap: 8px 14px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 12.5px; color: var(--faint);
+  }
+  .hero-meta span {
+    border: 1px solid var(--line); border-radius: 99px;
+    padding: 4px 12px;
+  }
+
+  /* ── Signature: the conversation ── */
+  .chat {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+    max-width: 480px;
+    justify-self: end;
+    width: 100%;
+    min-height: 430px;
+  }
+  @media (max-width: 900px) { .chat { justify-self: start; } }
+  .chat-title {
+    display: flex; align-items: center; gap: 9px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--faint);
+    padding-bottom: 14px; margin-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .msg, .log, .approval { opacity: 0; transform: translateY(8px); transition: opacity .45s ease, transform .45s ease; }
+  .shown { opacity: 1; transform: none; }
+  .msg { margin-bottom: 14px; max-width: 92%; }
+  .msg.user {
+    margin-left: auto;
+    background: var(--tg-deep);
+    color: #F2FAFF;
+    padding: 11px 14px; border-radius: 14px 14px 4px 14px;
+    font-size: 14.5px; line-height: 1.5;
+  }
+  .log {
+    font-family: var(--mono); font-size: 12.5px;
+    color: var(--muted); margin: 0 0 10px 4px;
+    display: flex; gap: 8px; align-items: baseline;
+  }
+  .log .tag { color: var(--tg); }
+  .log .ok { color: var(--green); }
+  .agent-name { color: var(--text); font-weight: 500; }
+  .approval {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--amber);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-top: 16px;
+    font-size: 14px;
+  }
+  .approval.approved { border-left-color: var(--green); }
+  .approval .ap-head {
+    font-family: var(--mono); font-size: 12px; color: var(--amber);
+    margin-bottom: 8px; letter-spacing: 0.03em;
+  }
+  .approval.approved .ap-head { color: var(--green); }
+  .approval p { color: var(--muted); margin-bottom: 12px; line-height: 1.55; }
+  .ap-buttons { display: flex; gap: 8px; }
+  .ap-buttons button {
+    font-family: var(--body); font-size: 13.5px; font-weight: 600;
+    padding: 7px 14px; border-radius: 7px; cursor: default;
+    border: 1px solid var(--line); background: transparent; color: var(--muted);
+  }
+  .ap-buttons button.approve { background: var(--green); border-color: var(--green); color: var(--ink); }
+  .ap-done {
+    display: none; font-family: var(--mono); font-size: 12.5px; color: var(--green);
+  }
+  .approval.approved .ap-buttons { display: none; }
+  .approval.approved .ap-done { display: block; }
+
+  /* ── Sections ── */
+  section { padding: 88px 0; border-top: 1px solid var(--line); }
+  .sec-eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--amber);
+    display: block; margin-bottom: 14px;
+  }
+  h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(28px, 3.6vw, 40px);
+    letter-spacing: -0.02em; line-height: 1.1;
+    margin-bottom: 16px; max-width: 22em;
+  }
+  .sec-lede { color: var(--muted); max-width: 38em; margin-bottom: 44px; }
+
+  /* Pipeline */
+  .pipeline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 820px) { .pipeline { grid-template-columns: 1fr; } }
+  .stage {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 24px;
+  }
+  .stage .st-label {
+    font-family: var(--mono); font-size: 12.5px; color: var(--tg);
+    display: block; margin-bottom: 12px;
+  }
+  .stage h3 { font-family: var(--display); font-weight: 700; font-size: 20px; margin-bottom: 10px; }
+  .stage p { color: var(--muted); font-size: 15.5px; }
+
+  /* Trust */
+  .trust-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
+  @media (max-width: 820px) { .trust-grid { grid-template-columns: 1fr; } }
+  .trust-list { list-style: none; display: grid; gap: 18px; }
+  .trust-list li { display: flex; gap: 14px; align-items: baseline; color: var(--muted); font-size: 16px; }
+  .trust-list .mark { font-family: var(--mono); font-size: 13px; color: var(--green); white-space: nowrap; }
+  .trust-list strong { color: var(--text); font-weight: 600; }
+
+  /* Agents */
+  .agent-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    gap: 10px;
+  }
+  .agent {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; background: var(--panel-2);
+    transition: border-color .2s ease;
+  }
+  .agent:hover { border-color: var(--tg); }
+  .agent .a-name {
+    font-family: var(--display); font-weight: 700; font-size: 16px;
+    display: block;
+  }
+  .agent .a-domain { font-size: 13px; color: var(--faint); }
+
+  /* Board */
+  .board-note { font-family: var(--mono); font-size: 13.5px; color: var(--faint); margin-bottom: 28px; }
+  .board-note .cmd { color: var(--amber); }
+  .board-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .exec {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px 20px;
+  }
+  .exec .role { font-family: var(--display); font-weight: 700; font-size: 17px; }
+  .exec .persona { font-size: 14px; color: var(--muted); margin-top: 4px; }
+  .exec .lens { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-top: 10px; }
+
+  /* Stack */
+  .stack-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px 22px; }
+  @media (max-width: 880px) { .stack-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .stack-grid { grid-template-columns: 1fr; } }
+  .stack-item { border-top: 2px solid var(--line); padding-top: 16px; }
+  .stack-item h3 { font-family: var(--display); font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  .stack-item p { font-size: 14.5px; color: var(--muted); }
+
+  /* Quick start */
+  .terminal {
+    background: #070B14; border: 1px solid var(--line);
+    border-radius: 14px; padding: 26px 28px;
+    font-family: var(--mono); font-size: 14.5px; line-height: 2.05;
+    overflow-x: auto; max-width: 720px;
+  }
+  .terminal .c { color: var(--faint); }
+  .terminal .p { color: var(--tg); user-select: none; }
+  .qs-note { margin-top: 20px; color: var(--muted); font-size: 15.5px; max-width: 40em; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; }
+  .foot-inner {
+    display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+    color: var(--faint); font-size: 14.5px;
+  }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .msg, .log, .approval { transition: none; }
+  }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/pt-br/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="#how">Como funciona</a>
+      <a href="#agents">Agentes</a>
+      <a href="#board">O conselho</a>
+      <a href="#start">Início rápido</a>
+      <a href="/pt-br/blog/">Blog</a>
+      <a href="/pt-br/docs/">Documentação</a>
+      <span class="langsw" aria-label="Idioma"><a href="/" class="en" hreflang="en">EN</a><a href="/es/" class="es" hreflang="es">ES</a><a href="/pt-br/" class="pt-br on" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">código aberto · auto-hospedado · MIT</span>
+      <h1>Um time de IA que <span class="accent">pergunta antes de agir.</span></h1>
+      <p class="lede">Nova é uma plataforma multi-agente que você executa e com a qual conversa pelo Telegram, WhatsApp ou Slack. Ela divide requisições grandes em subtarefas, as entrega para 24 agentes especialistas — e nada é publicado, gasto ou enviado sem sua aprovação.</p>
+      <div class="cta-row">
+        <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Ver no GitHub</a>
+        <a class="cta ghost" href="#start">Início rápido</a>
+      </div>
+      <div class="hero-meta">
+        <span>Bun + TypeScript</span>
+        <span>SQLite local</span>
+        <span>suas chaves de API</span>
+        <span>sua máquina</span>
+      </div>
+    </div>
+
+    <div class="chat" id="chat" aria-label="Exemplo de conversa com Nova">
+      <div class="chat-title"><span class="dot" aria-hidden="true"></span> nova · conectado · telegram</div>
+      <div class="msg user">Lance uma promoção de primavera para o estúdio — página de destino, uma sequência de 3 emails e anúncios. Orçamento $400.</div>
+      <div class="log"><span class="tag">[classificar]</span> complexo · 6 subtarefas · 3 agentes</div>
+      <div class="log"><span class="tag">[preparar]</span> <span class="agent-name">Architect</span> — página de destino construída <span class="ok">✓</span></div>
+      <div class="log"><span class="tag">[preparar]</span> <span class="agent-name">Orion</span> — sequência de emails rascunhada <span class="ok">✓</span></div>
+      <div class="log"><span class="tag">[preparar]</span> <span class="agent-name">Helios</span> — conjunto de anúncios pronto, 2 públicos <span class="ok">✓</span></div>
+      <div class="approval" id="approval">
+        <span class="ap-head">[aprovação necessária]</span>
+        <p>Pronto para executar: publicar a página, agendar 3 emails, lançar anúncios com total de $400. Nada foi publicado ainda.</p>
+        <div class="ap-buttons" aria-hidden="true">
+          <button class="approve">Aprovar</button>
+          <button>Revisar</button>
+          <button>Cancelar</button>
+        </div>
+        <span class="ap-done">aprovado · executando… links no tópico ✓</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="how">
+  <div class="wrap">
+    <span class="sec-eyebrow">[fluxo de mensagens]</span>
+    <h2>Cada mensagem passa pelo mesmo pipeline honesto.</h2>
+    <p class="sec-lede">Sem roteador mágico, sem caixa preta. Uma mensagem é classificada, decomposta se for grande, e executada em duas fases — com a metade consequente protegida por você.</p>
+    <div class="pipeline">
+      <div class="stage">
+        <span class="st-label">01 · classificar</span>
+        <h3>Três camadas, mais barato primeiro</h3>
+        <p>Mensagens curtas passam direto para o modelo. Requisições repetidas acertam um cache de padrões de planos que funcionaram. Apenas perguntas genuinamente novas e complexas pagam pela classificação LLM.</p>
+      </div>
+      <div class="stage">
+        <span class="st-label">02 · decompor</span>
+        <h3>Subtarefas com dependências</h3>
+        <p>Requisições complexas viram um plano: subtarefas, ordem de dependência e um agente especialista para cada. Ramos independentes executam em paralelo.</p>
+      </div>
+      <div class="stage">
+        <span class="st-label">03 · preparar → aprovar → executar</span>
+        <h3>Trabalho seguro primeiro, depois a etapa de aprovação</h3>
+        <p>Pesquisa, rascunhos e imagens acontecem livremente. Publicação, envio e gastos esperam pelo cartão de aprovação — Aprovar, Revisar ou Cancelar, do seu chat.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap trust-grid">
+    <div>
+      <span class="sec-eyebrow">[modelo de confiança]</span>
+      <h2>Construído como se lidasse com suas credenciais — porque lida.</h2>
+      <p class="sec-lede">Nova se conecta ao seu email, calendário, CRM e contas de anúncios. A postura de segurança leva isso a sério.</p>
+    </div>
+    <ul class="trust-list">
+      <li><span class="mark">aprovação →</span><span><strong>Execução em duas fases.</strong> Ações consequentes são separadas das seguras e protegidas por aprovação explícita, por categoria, por usuário.</span></li>
+      <li><span class="mark">local →</span><span><strong>Seus dados ficam em casa.</strong> Mensagens, memória e tarefas vivem em SQLite local com isolamento por usuário. Embeddings são computados na sua máquina.</span></li>
+      <li><span class="mark">criptografado →</span><span><strong>Credenciais em repouso.</strong> Tokens OAuth são criptografados com AES-256-GCM; assinaturas de webhook verificadas; sessões de dashboard autenticadas.</span></li>
+      <li><span class="mark">seus →</span><span><strong>Suas chaves, seus modelos.</strong> Roteia entre CLIs Claude, Gemini e Codex em suas próprias contas, com fallback de limite de taxa.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section id="agents">
+  <div class="wrap">
+    <span class="sec-eyebrow">[elenco]</span>
+    <h2>24 especialistas. Um chat.</h2>
+    <p class="sec-lede">Cada agente tem seu próprio prompt de sistema, ferramentas, skills e acesso MCP — um time funcional focado em marketing e operações, e totalmente seu para editar. Adicionar um agente é escrever um arquivo markdown.</p>
+    <div class="agent-grid">
+      <div class="agent"><span class="a-name">Helios</span><span class="a-domain">Publicidade paga</span></div>
+      <div class="agent"><span class="a-name">Pixel</span><span class="a-domain">Redes sociais</span></div>
+      <div class="agent"><span class="a-name">Kai</span><span class="a-domain">Redação de conteúdo</span></div>
+      <div class="agent"><span class="a-name">Orion</span><span class="a-domain">Email marketing</span></div>
+      <div class="agent"><span class="a-name">Morpheus</span><span class="a-domain">Conteúdo de vídeo</span></div>
+      <div class="agent"><span class="a-name">Architect</span><span class="a-domain">Desenvolvimento web</span></div>
+      <div class="agent"><span class="a-name">Athena</span><span class="a-domain">Estratégia empresarial</span></div>
+      <div class="agent"><span class="a-name">Digit</span><span class="a-domain">Análise de dados</span></div>
+      <div class="agent"><span class="a-name">Echo</span><span class="a-domain">Atendimento ao cliente</span></div>
+      <div class="agent"><span class="a-name">Flux</span><span class="a-domain">Engenharia de funil</span></div>
+      <div class="agent"><span class="a-name">Quill</span><span class="a-domain">Redação de subsídios</span></div>
+      <div class="agent"><span class="a-name">Lex</span><span class="a-domain">Jurídico &amp; conformidade</span></div>
+      <div class="agent"><span class="a-name">Helia</span><span class="a-domain">Relações públicas</span></div>
+      <div class="agent"><span class="a-name">Bridge</span><span class="a-domain">Parcerias</span></div>
+      <div class="agent"><span class="a-name">Oracle</span><span class="a-domain">Previsão de tendências</span></div>
+      <div class="agent"><span class="a-name">Cipher</span><span class="a-domain">Ciência de dados</span></div>
+      <div class="agent"><span class="a-name">Rift</span><span class="a-domain">Cibersegurança</span></div>
+      <div class="agent"><span class="a-name">Joule</span><span class="a-domain">Automação de fluxo de trabalho</span></div>
+      <div class="agent"><span class="a-name">Nexus</span><span class="a-domain">Construção de comunidade</span></div>
+      <div class="agent"><span class="a-name">Aura</span><span class="a-domain">Voz da marca</span></div>
+      <div class="agent"><span class="a-name">Zen</span><span class="a-domain">Produtividade</span></div>
+      <div class="agent"><span class="a-name">Tesseract</span><span class="a-domain">Pensamento sistêmico</span></div>
+      <div class="agent"><span class="a-name">Magnus</span><span class="a-domain">SEO</span></div>
+      <div class="agent"><span class="a-name">Cyra</span><span class="a-domain">Otimização de site</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="board">
+  <div class="wrap">
+    <span class="sec-eyebrow">[conselho executivo]</span>
+    <h2>Convoque uma reunião do conselho quando a pergunta é grande o suficiente.</h2>
+    <p class="sec-lede">Uma camada distribuída opcional: sete nós executivos, cada um com sua própria persona de raciocínio, deliberando sobre um banco de dados compartilhado. Análise independente, uma pré-morte adversarial, então opções sintetizadas com pontuações de confiança — você escolhe, ela executa.</p>
+    <p class="board-note"><span class="cmd">/board</span> devemos mudar para precificação baseada em uso?</p>
+    <div class="board-grid">
+      <div class="exec"><span class="role">CEO</span><div class="persona">Pensamento Day-1, flywheels, obsessão pelo cliente</div><div class="lens">visão de longo prazo</div></div>
+      <div class="exec"><span class="role">CFO</span><div class="persona">Economia unitária e disciplina de preços</div><div class="lens">eficiência de capital</div></div>
+      <div class="exec"><span class="role">CMO</span><div class="persona">Notável sobre incremental; tribos sobre funis</div><div class="lens">público &amp; marca</div></div>
+      <div class="exec"><span class="role">CTO</span><div class="persona">Tudo falha; projete para isso</div><div class="lens">arquitetura &amp; confiabilidade</div></div>
+      <div class="exec"><span class="role">COO</span><div class="persona">Rastreamento de execução, caça a gargalos</div><div class="lens">transforma decisões em trabalho</div></div>
+      <div class="exec"><span class="role">Research</span><div class="persona">Teoria de agregação, economia de plataforma</div><div class="lens">inteligência de mercado</div></div>
+      <div class="exec"><span class="role">Critic</span><div class="persona">Inversão e pré-morte; análise apenas</div><div class="lens">mantém todos honestos</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <span class="sec-eyebrow">[o que tem dentro]</span>
+    <h2>Baterias incluídas, nada trancado.</h2>
+    <div class="stack-grid">
+      <div class="stack-item"><h3>Memória persistente</h3><p>Fatos, metas e tarefas com busca de vetor local — Nova se lembra entre conversas e injeta o contexto certo.</p></div>
+      <div class="stack-item"><h3>Aprendizado de padrões</h3><p>Planos bem-sucedidos são cacheados e reutilizados, então requisições repetidas pulam a classificação inteiramente.</p></div>
+      <div class="stack-item"><h3>Agendador &amp; serviços proativos</h3><p>Briefings matinais, check-ins inteligentes, tarefas recorrentes e condicionais — funciona enquanto você não.</p></div>
+      <div class="stack-item"><h3>12 integrações MCP</h3><p>Notion, Google Workspace, Playwright, Cloudflare, Square, GoHighLevel e mais — credenciais por usuário.</p></div>
+      <div class="stack-item"><h3>45 skills</h3><p>Geração de imagem, criação de DOCX/XLSX/PPTX/PDF, redação de pesquisa, extração de anúncios — invocados por agentes conforme necessário.</p></div>
+      <div class="stack-item"><h3>Voz</h3><p>Mensagens de voz transcritas via Groq ou Whisper local; servidor de chamadas telefônicas opcional com extração de tarefas.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <span class="sec-eyebrow">[início rápido]</span>
+    <h2>Funcionando em cinco comandos.</h2>
+    <div class="terminal" role="figure" aria-label="Comandos de início rápido">
+      <div><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova</div>
+      <div><span class="p">$</span> bun run setup&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c"># instala dependências, cria .env</span></div>
+      <div><span class="p">$</span> vim .env&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="c"># adicione seu token de bot do Telegram</span></div>
+      <div><span class="p">$</span> bun run test:telegram&nbsp;<span class="c"># verifica se o bot se conecta</span></div>
+      <div><span class="p">$</span> bun run start</div>
+    </div>
+    <p class="qs-note">Pré-requisitos: <a href="https://bun.sh" rel="noopener">Bun</a>, a CLI do <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> e um token de bot do Telegram do @BotFather. Tudo mais é opcional e documentado no repositório.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — licença MIT. Pegue, customize, faça seu.</span>
+    <span>
+      <a href="/pt-br/blog/">Blog</a> &nbsp;·&nbsp;
+      <a href="/pt-br/docs/">Documentação</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Segurança</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  const steps = document.querySelectorAll("#chat .msg, #chat .log, #chat .approval");
+  const approval = document.getElementById("approval");
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (reduced) {
+    steps.forEach(s => s.classList.add("shown"));
+    approval.classList.add("approved");
+    return;
+  }
+
+  let started = false;
+  function play() {
+    if (started) return;
+    started = true;
+    steps.forEach((step, i) => {
+      setTimeout(() => step.classList.add("shown"), 600 + i * 850);
+    });
+    setTimeout(() => approval.classList.add("approved"), 600 + steps.length * 850 + 1400);
+  }
+
+  const io = new IntersectionObserver(entries => {
+    if (entries.some(e => e.isIntersecting)) { play(); io.disconnect(); }
+  }, { threshold: 0.3 });
+  io.observe(document.getElementById("chat"));
+})();
+</script>
+
+</body>
+</html>

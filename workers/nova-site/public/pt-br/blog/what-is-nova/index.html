@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>O que é Nova? Seu time de IA de código aberto, explicado — Nova</title>
+<meta name="description" content="Nova é um time de IA auto-hospedado de código aberto que você executa pelo Telegram: 24 agentes especialistas, um conselho executivo, aprovação humana antes de qualquer envio ou gasto, execução sandboxed e autonomia conquistada. Aqui está o que faz e como as pessoas usam.">
+<meta property="og:title" content="O que é Nova? Seu time de IA de código aberto, explicado">
+<meta property="og:description" content="24 agentes especialistas, um conselho executivo, etapas de aprovação, execução sandboxed e autonomia conquistada — auto-hospedado e licenciado MIT. O que Nova faz e como usá-la.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/pt-br/blog/what-is-nova/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/what-is-nova/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/what-is-nova/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/what-is-nova/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/what-is-nova/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/pt-br/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/pt-br/#how">Como funciona</a>
+      <a href="/pt-br/#agents">Agentes</a>
+      <a href="/pt-br/#start">Início rápido</a>
+      <a href="/pt-br/blog/">Blog</a>
+      <a href="/pt-br/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/what-is-nova/" class="en" hreflang="en">EN</a><a href="/es/blog/what-is-nova/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/what-is-nova/" class="pt-br on" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">Apresentando Nova</span>
+    <h1>Seu próprio time de IA, executado de um chat do Telegram</h1>
+    <p class="lede">Nova é uma plataforma auto-hospedada de código aberto que transforma um grupo de agentes IA especialistas em algo mais próximo a uma empresa do que a um chatbot — e pede aprovação antes de fazer qualquer coisa que envie, gaste ou comunique.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 15 de julho de 2026 <span class="dot">·</span> 8 min de leitura</p>
+
+    <div class="prose">
+      <p>A maioria dos "assistentes de IA" é um modelo atrás de uma caixa de texto. Você pergunta, ele responde, e cada passo consequente depende de você. Nova tem um formato diferente. É um <strong>organograma</strong>: duas dúzias de especialistas, um conselho executivo que raciocina sobre estratégia e uma camada de coordenação que decompõe uma solicitação em tarefas, as executa em paralelo e pausa para sua aprovação antes de tocar o mundo real.</p>
+      <p>E funciona onde você já está. Você envia mensagens para Nova no Telegram (ou WhatsApp ou Slack) da mesma forma que mandaria para um colega de trabalho — e executa em <strong>sua</strong> máquina, com <strong>suas</strong> chaves de API ou assinaturas, com seus dados mantidos no armazenamento local. É licenciado MIT, então você pode ler cada linha, alterar qualquer coisa e não deve nada a ninguém em taxa por assento.</p>
+
+      <div class="callout">
+        <p><span class="k">A versão de uma linha</span>Nova é staff de IA auto-hospedado: um time de agentes que planejam, rascunham e analisam por conta própria — mas conseguem sua aprovação antes de qualquer coisa sair do prédio.</p>
+      </div>
+
+      <h2>Como uma mensagem se torna trabalho</h2>
+      <p>Quando você envia uma mensagem para Nova, ela primeiro <strong>classifica</strong> o que você está pedindo. Uma pergunta rápida recebe uma resposta direta. Uma tarefa focada é roteada para o especialista certo. Algo grande — "planejar e lançar nossa campanha de primavera" — é <strong>decomposto</strong> em um plano consciente de dependências e executado em vários agentes de uma vez.</p>
+      <p>Depois vem a parte que torna Nova confiável. O trabalho acontece em <strong>duas fases</strong>:</p>
+      <ul>
+        <li><strong>Preparar</strong> — a metade segura. Pesquisar, escrever o conteúdo, gerar a imagem, processar os números. Nada saiu do prédio ainda.</li>
+        <li><strong>Aprovar</strong> — Nova mostra exatamente o que está prestes a fazer, com botões inline: <em>Aprovar</em>, <em>Revisar</em> ou <em>Cancelar</em>.</li>
+        <li><strong>Executar</strong> — apenas depois que você aprova é que faz o que é importante: publicar o post, enviar os e-mails, lançar a campanha, gastar o dinheiro.</li>
+      </ul>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · você e Nova</div>
+        <div class="bubble me"><span class="who">Você</span>Rascunhe o boletim informativo desta semana sobre o novo recurso de exportação e o deixe pronto para enviar para nossa lista.</div>
+        <div class="bubble nova"><span class="who">Nova · Orion (email)</span>Rascunhei um boletim informativo de 320 palavras — linha de assunto "Exporte tudo, em um clique", 3 seções e um botão de CTA. Visualização em anexo. Pronto para enviar para 1.240 assinantes.
+          <div class="approve"><span class="yes">✓ Aprovar e enviar</span><span class="rev">✎ Revisar</span><span class="no">✕ Cancelar</span></div>
+        </div>
+        <div class="bubble me"><span class="who">Você</span>Deixe o tom um pouco mais caloroso e depois envie.</div>
+        <div class="bubble nova"><span class="who">Nova · Orion</span>Aqueci a introdução e a assinatura. Enviado para 1.240 assinantes agora mesmo. Vou relatar as taxas de abertura amanhã de manhã.</div>
+      </div>
+
+      <h2>O time que você está realmente contratando</h2>
+      <p>Sob o capô, Nova é <strong>24 agentes especialistas</strong>, cada um com seu próprio domínio, ferramentas e prompt de sistema. Você não precisa conhecer seus nomes — Nova roteia para o certo — mas ajuda ver o formato do elenco:</p>
+      <div class="cards">
+        <div class="card"><h4>Crescimento e marketing</h4><p>Helios (anúncios pagos), Pixel (redes sociais), Kai (conteúdo), Orion (e-mail), Magnus (SEO), Morpheus (vídeo), Flux (funis).</p></div>
+        <div class="card"><h4>Estratégia e operações</h4><p>Athena (estratégia empresarial), Oracle (previsão de tendências), Tesseract (pensamento sistêmico), Zen (produtividade), Bridge (parcerias).</p></div>
+        <div class="card"><h4>Dados e engenharia</h4><p>Digit (análise), Cipher (ciência de dados), Architect (desenvolvimento web), Joule (automação), Rift (segurança).</p></div>
+        <div class="card"><h4>Voz e suporte</h4><p>Aura (voz da marca), Echo (suporte ao cliente), Helia (RP), Nexus (comunidade), Quill (bolsas), Lex (legal), Cyra (otimização de site).</p></div>
+      </div>
+      <p>Acima dos especialistas fica um <strong>Conselho Executivo</strong> — CEO, CFO, CMO, CTO, COO, Chefe de Pesquisa e um Crítico — cada um modelado em uma forma distinta de pensar. Faça uma pergunta estratégica difícil com <code>/board</code> e eles se reúnem: análise independente, um pré-mortem do Crítico e depois uma síntese de opções com escores de confiança para você escolher.</p>
+
+      <h2>Construído para que você possa realmente confiar a ele as chaves</h2>
+      <p>Um time de IA que pode enviar e-mails e gastar orçamento de anúncios só é útil se também for <em>seguro</em>. O lançamento mais recente de Nova é tudo sobre isso — transformar "provavelmente não fará nada burro" em garantias reais.</p>
+
+      <h3>Execução sandboxed</h3>
+      <p>As tarefas do agente podem ser executadas dentro de um container endurecido — sistema somente leitura, sem acesso aos seus arquivos de host além de um workspace por tarefa, sem caminho para suas credenciais — portanto, uma página da web que tenta sequestrar um agente por meio de um parágrafo bem redigido não pode atingir nada importante. E permanece em sua <strong>assinatura</strong>: Nova compartilha seu plano Claude, OpenAI ou Gemini no sandbox em vez de silenciosamente alternar você para cobrança por token.</p>
+
+      <h3>Autonomia conquistada, não um cheque em branco</h3>
+      <p>Todo tipo de ação começa em <strong>sempre perguntar</strong>. Conforme um agente constrói um histórico limpo em uma tarefa determinada — digamos, "enviar o boletim semanal" — ele se gradua: primeiro para <em>notificá-lo depois</em>, depois para <em>totalmente autônomo dentro de um limite de gasto</em>. Uma falha ou uma rejeição e ele volta direto a perguntar. Você decide quanto de corda cada agente recebe e pode ver e alterar isso a partir de um painel.</p>
+
+      <h3>Uma trilha de auditoria para tudo</h3>
+      <p>Cada ação consequente é gravada em um registro — o que foi executado, qual agente, quanto custou, se funcionou. Depois de cada tarefa, um agente até mesmo <strong>verifica seu próprio trabalho</strong> ("o e-mail foi realmente enviado? a página é renderizada?") antes de relatar conclusão. Nível empresarial significa principalmente <em>respondível após o fato</em>, e Nova é.</p>
+
+      <hr class="divider">
+
+      <h2>Para o que as pessoas a usam</h2>
+      <p>Porque Nova é um time em vez de uma ferramenta única, as solicitações úteis tendem a ser as que você entregaria a um funcionário capaz. Alguns formatos reais:</p>
+
+      <h3>Execute o marketing que funciona conforme agendado</h3>
+      <p>Boletins informativos, calendários de redes sociais, relatórios de anúncios. "Poste três vezes esta semana sobre o lançamento", "resuma o desempenho do gasto com anúncios do mês passado", "transforme este post de blog em um thread do LinkedIn e um carrossel". Nova rascunha, você aprova, publica — e quando você confia em uma tarefa recorrente, deixa funcionar sozinha.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · uma pergunta sobre dados</div>
+        <div class="bubble me"><span class="who">Você</span>Como nossos anúncios Meta saíram o mês passado e onde estamos desperdiçando dinheiro?</div>
+        <div class="bubble nova"><span class="who">Nova · Digit + Helios</span>Gasto $4.820 · 612 leads · $7,88 CPL (queda de 14% MoM). Dois conjuntos de anúncios estão piorando: "Amplo — Interesses" a $19 CPL e uma criatividade obsoleta que está cansada (frequência 4,6). Quer que eu rascunhe pausas + dois criativos frescos para sua aprovação?</div>
+      </div>
+
+      <h3>Transforme um objetivo permanente em trabalho contínuo</h3>
+      <p>Diga a Nova um objetivo — "crescer o boletim para 5.000 assinantes" — e ela não apenas acena. Ela divide o objetivo em tarefas concretas, as agenda, executa por dias e semanas e relata progresso. É a diferença entre uma ferramenta que você opera e staff que persegue um resultado.</p>
+
+      <h3>Faça as grandes chamadas com um board ao seu lado</h3>
+      <p>Para as decisões que merecem mais de uma opinião, o conselho executivo é um parceiro de pensamento genuíno. "Devemos expandir para a UE?" convoca sete perspectivas, expõe os modos de falha que você não pensou e coloca opções avaliadas em suas mãos — não um único palpite confiante.</p>
+
+      <div class="cards">
+        <div class="card"><h4>Fundadores solo</h4><p>Um time inteiro de marketing, dados e operações que você pode pagar — em suas próprias contas, pedindo antes de gastar.</p></div>
+        <div class="card"><h4>Pequenos times</h4><p>Transfira o trabalho repetitivo (relatórios, rascunhos, agendamento) com uma trilha de papel e portas de aprovação que todo o time pode ver.</p></div>
+        <div class="card"><h4>Construtores e curiosos</h4><p>Licenciado MIT e auto-hospedado. Leia, faça fork, adicione seus próprios agentes, acople suas próprias ferramentas.</p></div>
+        <div class="card"><h4>Preocupados com privacidade</h4><p>Seus dados vivem no armazenamento local em sua máquina. Suas chaves, sua assinatura, suas regras.</p></div>
+      </div>
+
+      <h2>Primeiros passos</h2>
+      <p>Nova funciona em <a href="https://bun.sh" rel="noopener">Bun</a> e é projetada para levá-lo do clone à primeira mensagem rapidamente. O assistente <code>nova init</code> solicita um token de bot do Telegram e uma chave de provedor de IA, configura alguns agentes iniciais e verifica a conexão — o resto (o conselho executivo, integrações extras) você pode ligar quando quiser.</p>
+      <ul>
+        <li>Clone o repo e execute <code>bun run init</code>.</li>
+        <li>Envie uma mensagem para seu bot no Telegram e diga olá.</li>
+        <li>Ative sandbox, autonomia e o board auto-hospedado conforme crescem — tudo opcional, nada forçado.</li>
+      </ul>
+
+      <div class="end-cta">
+        <h3>Traga seu próprio time de IA para casa</h3>
+        <p>Código aberto, auto-hospedado, licenciado MIT. Sua máquina, suas chaves, suas portas de aprovação.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Obtenha Nova no GitHub</a>
+          <a class="cta ghost" href="/pt-br/docs/">Leia a documentação</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — Licenciado MIT. Pegue, customize, faça seu.</span>
+    <span>
+      <a href="/pt-br/">Início</a> &nbsp;·&nbsp;
+      <a href="/pt-br/docs/">Documentação</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Segurança</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

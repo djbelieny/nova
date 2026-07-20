@@ -1,0 +1,309 @@
+/**
+ * mcp2cli Utility Module
+ *
+ * Converts MCP server configs from .mcp.nova.json format into mcp2cli CLI commands.
+ * This lets agents call MCP tools via Bash on-demand instead of loading all
+ * 400+ tool schemas into context via --mcp-config (96-99% token savings).
+ *
+ * Usage flow:
+ * 1. Agent prompt includes mcp2cli instructions for its assigned servers
+ * 2. Agent discovers tools: mcp2cli --mcp-stdio "..." --list
+ * 3. Agent calls tools: mcp2cli --mcp-stdio "..." --tool <name> --param key=val
+ */
+
+import { existsSync, readFileSync } from "fs";
+import { spawn } from "bun";
+
+let _available: boolean | null = null;
+
+/**
+ * Check if mcp2cli binary is available on the system.
+ * Cached after first call.
+ */
+export async function isMcp2cliAvailable(): Promise<boolean> {
+  if (_available !== null) return _available;
+  try {
+    const proc = spawn(["which", "mcp2cli"], { stdout: "pipe", stderr: "pipe" });
+    await proc.exited;
+    _available = proc.exitCode === 0;
+  } catch {
+    _available = false;
+  }
+  if (_available) {
+    console.log("[mcp2cli] Binary available");
+  } else {
+    console.warn("[mcp2cli] Binary not found — agents will use --mcp-config fallback");
+  }
+  return _available;
+}
+
+/**
+ * Reset the availability cache (useful for testing).
+ */
+export function resetAvailabilityCache(): void {
+  _available = null;
+}
+
+/**
+ * Represents a parsed MCP server config entry.
+ */
+interface McpServerConfig {
+  type?: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+/**
+ * Build a mcp2cli base command string for a given MCP server config.
+ *
+ * Converts:
+ *   { command: "node", args: ["/path/cli.mjs"], env: { KEY: "${VAR}" } }
+ * To:
+ *   mcp2cli --mcp-stdio "node /path/cli.mjs" --env 'KEY=${VAR}'
+ *
+ * SECURITY: Environment variable placeholders like ${VAR} are intentionally
+ * NOT resolved here. The placeholder name is kept in the command string so
+ * that actual secret values are never embedded in agent system prompts (which
+ * are sent to external LLM providers). mcp2cli inherits the process environment
+ * when spawned, so the MCP server receives the real values at runtime.
+ */
+export function buildMcp2cliCommand(
+  serverName: string,
+  config: McpServerConfig
+): string | null {
+  const cmd = config.command;
+  const args = config.args || [];
+
+  // Build the stdio command string
+  const stdioCmd = [cmd, ...args].map(shellEscape).join(" ");
+
+  const parts = ["mcp2cli", "--mcp-stdio", `"${stdioCmd}"`];
+
+  // Pass env var NAMES (not values) as --env flags so the prompt never
+  // contains secret values. The spawned mcp2cli process inherits the real
+  // values from the current process environment.
+  if (config.env) {
+    for (const [key, value] of Object.entries(config.env)) {
+      // Keep ${VAR} placeholder as-is; strip only if value is already a literal
+      const envRef = isEnvPlaceholder(value) ? value : shellEscape(value);
+      parts.push("--env", `'${key}=${envRef}'`);
+    }
+  }
+
+  return parts.join(" ");
+}
+
+/**
+ * Build prompt instructions teaching an agent how to use mcp2cli for specific servers.
+ * Returns a formatted text block to inject into the agent's system prompt.
+ */
+export function buildMcp2cliInstructions(
+  serverNames: string[],
+  mcpConfig: Record<string, McpServerConfig>
+): string {
+  const commands: { name: string; base: string }[] = [];
+
+  for (const name of serverNames) {
+    const config = mcpConfig[name];
+    if (!config) continue;
+    const base = buildMcp2cliCommand(name, config);
+    if (base) {
+      commands.push({ name, base });
+    }
+  }
+
+  if (commands.length === 0) return "";
+
+  const lines = [
+    "MCP TOOLS — Available via mcp2cli (call from Bash):",
+    "",
+    "DISCOVERY — List all tools for a server:",
+  ];
+
+  for (const { name, base } of commands) {
+    lines.push(`  # ${name}:`);
+    lines.push(`  ${base} --list`);
+  }
+
+  lines.push("");
+  lines.push("USAGE — Call a specific tool:");
+  lines.push("  # After discovering tool names with --list, call them:");
+
+  for (const { name, base } of commands) {
+    lines.push(`  # ${name}:`);
+    lines.push(`  ${base} --tool <tool_name> --param key=value --param key2=value2`);
+  }
+
+  lines.push("");
+  lines.push("HELP — Get parameter details for a tool:");
+  for (const { name, base } of commands) {
+    lines.push(`  # ${name}:`);
+    lines.push(`  ${base} --tool <tool_name> --help`);
+  }
+
+  lines.push("");
+  lines.push("TIPS:");
+  lines.push("- Use --list first to discover available tool names for each server.");
+  lines.push("- Use --help on a tool to see its required and optional parameters.");
+  lines.push("- For complex JSON values, use --stdin and pipe JSON input.");
+  lines.push("- Tool calls are executed via Bash — wrap in Bash tool calls.");
+  lines.push("- Environment variables (e.g. ${NOTION_MCP_HEADERS}) are automatically");
+  lines.push("  inherited from the process — do not expand or log their values.");
+
+  return lines.join("\n");
+}
+
+/**
+ * Generate mcp2cli commands for a specific user's MCP config file.
+ * Returns a map of serverName → mcp2cli base command string.
+ */
+export function generateMcp2cliCommands(
+  mcpConfigPath: string
+): Map<string, string> {
+  const commands = new Map<string, string>();
+
+  if (!existsSync(mcpConfigPath)) return commands;
+
+  try {
+    const raw = readFileSync(mcpConfigPath, "utf-8");
+    const config = JSON.parse(raw);
+    const servers = config.mcpServers || {};
+
+    for (const [name, serverConfig] of Object.entries(servers)) {
+      const cmd = buildMcp2cliCommand(name, serverConfig as McpServerConfig);
+      if (cmd) {
+        commands.set(name, cmd);
+      }
+    }
+  } catch (err) {
+    console.warn(`[mcp2cli] Failed to parse MCP config at ${mcpConfigPath}:`, err);
+  }
+
+  return commands;
+}
+
+/**
+ * Load the project-level MCP config and return the mcpServers record.
+ */
+export function loadProjectMcpConfig(projectRoot: string): Record<string, McpServerConfig> {
+  try {
+    const raw = readFileSync(`${projectRoot}/.mcp.nova.json`, "utf-8");
+    const config = JSON.parse(raw);
+    return config.mcpServers || {};
+  } catch {
+    return {};
+  }
+}
+
+// ============================================================
+// GWS CLI INSTRUCTIONS
+// ============================================================
+
+export interface GwsAccount {
+  label: "personal" | "work";
+  credentialsFile: string;
+  configDir: string;
+  email?: string;
+}
+
+/**
+ * Build prompt instructions teaching an agent how to use the gws CLI for Google Workspace.
+ * Takes an array of connected Google accounts and returns a formatted text block.
+ */
+export function buildGwsInstructions(accounts: GwsAccount[]): string {
+  if (accounts.length === 0) return "";
+
+  const lines: string[] = [
+    "GWS (Google Workspace CLI) — Available via Bash:",
+    "",
+    "SYNTAX: gws <service> <resource> <method> [flags]",
+    "SERVICES: drive, gmail, calendar, sheets, docs, slides, tasks, people, chat, forms",
+    "FLAGS: --params '<JSON>' (query params), --json '<JSON>' (request body), --format json|table|csv",
+    "",
+    "ACCOUNTS:",
+  ];
+
+  for (const acct of accounts) {
+    const envPrefix = [
+      `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="${acct.credentialsFile}"`,
+      `GOOGLE_WORKSPACE_CLI_CONFIG_DIR="${acct.configDir}"`,
+    ].join(" ");
+    const emailNote = acct.email ? ` (${acct.email})` : "";
+
+    lines.push(`  # Google ${acct.label}${emailNote}:`);
+    lines.push(`  ${envPrefix} gws <command>`);
+    lines.push("");
+  }
+
+  const primary = accounts[0];
+  const ex = [
+    `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="${primary.credentialsFile}"`,
+    `GOOGLE_WORKSPACE_CLI_CONFIG_DIR="${primary.configDir}"`,
+  ].join(" ");
+
+  lines.push("EXAMPLES:");
+  lines.push(`  # List recent emails`);
+  lines.push(`  ${ex} gws gmail users messages list --params '{"userId":"me","maxResults":10}'`);
+  lines.push(`  # Read an email`);
+  lines.push(`  ${ex} gws gmail users messages get --params '{"userId":"me","id":"MSG_ID"}'`);
+  lines.push(`  # Send email (base64-encoded RFC 2822)`);
+  lines.push(`  ${ex} gws gmail users messages send --params '{"userId":"me"}' --json '{"raw":"BASE64"}'`);
+  lines.push(`  # List calendar events`);
+  lines.push(`  ${ex} gws calendar events list --params '{"calendarId":"primary","maxResults":10}'`);
+  lines.push(`  # Create calendar event`);
+  lines.push(`  ${ex} gws calendar events insert --params '{"calendarId":"primary"}' --json '{"summary":"Meeting","start":{"dateTime":"..."},"end":{"dateTime":"..."}}'`);
+  lines.push(`  # List Drive files`);
+  lines.push(`  ${ex} gws drive files list --params '{"pageSize":10}'`);
+  lines.push(`  # Read spreadsheet`);
+  lines.push(`  ${ex} gws sheets spreadsheets.values get --params '{"spreadsheetId":"ID","range":"Sheet1!A1:D10"}'`);
+  lines.push("");
+  lines.push("TIPS:");
+  lines.push("- gws handles token refresh automatically");
+  lines.push("- Use --page-all for paginated results");
+  if (accounts.length > 1) {
+    lines.push("- Choose the right account based on context (work email → work, personal → personal)");
+    lines.push("- If ambiguous, default to personal account");
+  }
+
+  return lines.join("\n");
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+/**
+ * Returns true if the value is a ${VAR} environment variable placeholder.
+ * Used to decide whether to keep the placeholder as-is in command strings
+ * rather than resolving it to an actual secret value.
+ */
+function isEnvPlaceholder(value: string): boolean {
+  return /^\$\{(\w+)\}$/.test(value);
+}
+
+/**
+ * Resolve a ${VAR} placeholder from process.env.
+ * Used internally when the actual value is needed for process spawning
+ * (NOT for building prompt strings — use isEnvPlaceholder there instead).
+ * Returns the resolved value or the original string if no placeholder.
+ * Returns empty string if the env var is not set.
+ */
+export function resolveEnvValue(value: string): string {
+  const match = value.match(/^\$\{(\w+)\}$/);
+  if (match) {
+    return process.env[match[1]] || "";
+  }
+  return value;
+}
+
+/**
+ * Shell-escape a string for safe inclusion in a command.
+ */
+function shellEscape(s: string): string {
+  // If the string contains spaces or special chars, wrap in single quotes
+  if (/[^a-zA-Z0-9_\-./=@:]/.test(s)) {
+    return `'${s.replace(/'/g, "'\\''")}'`;
+  }
+  return s;
+}

@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Por que Nova é construído assim — decisões de design — Nova</title>
+<meta name="description" content="A filosofia por trás da arquitetura do Nova: por que um organograma em vez de um chatbot, por que confiança é engineered, por que autonomia deve ser conquistada, e por que sandbox e auditabilidade são não-negociáveis.">
+<meta property="og:title" content="Por que Nova é construído assim — decisões de design">
+<meta property="og:description" content="A filosofia e raciocínio por trás da arquitetura do Nova: organograma, execução duas-fases, autonomia conquistada, auto-hospedado, sandbox, auditabilidade.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/pt-br/blog/design-decisions/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/design-decisions/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/design-decisions/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/design-decisions/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/design-decisions/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/pt-br/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/pt-br/#how">Como funciona</a>
+      <a href="/pt-br/#agents">Agentes</a>
+      <a href="/pt-br/#start">Início rápido</a>
+      <a href="/pt-br/blog/">Blog</a>
+      <a href="/pt-br/docs/">Documentação</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/design-decisions/" class="en" hreflang="en">EN</a><a href="/es/blog/design-decisions/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/design-decisions/" class="pt-br on" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">Como Nova chegou aqui</span>
+    <h1>Por que Nova é construído assim</h1>
+    <p class="lede">Oito decisões de design que tornam Nova confiável, autônomo e verdadeiramente seu. A filosofia por trás de cada escolha, desde arquitetura até autonomia até auditabilidade.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 15 de julho de 2026 <span class="dot">·</span> 12 min de leitura</p>
+
+    <div class="prose">
+      <p>Construir um sistema que pode agir em seu nome não é a mesma coisa que construir um sistema que funciona bem. A forma do Nova vem de sete anos pensando sobre a diferença. Este ensaio descreve por que cada peça está lá e que problema resolve — e onde escolhi um bom design sobre outro melhor, porque "melhor" teria tornado a plataforma inutilizável.</p>
+
+      <h2>Um organograma, não um chatbot</h2>
+      <p>A primeira decisão: Nova não é um modelo jogando o papel de todo trabalho. São 24 especialistas, cada um com um domínio, um playbook e ferramentas dedicadas. Algumas pessoas vêem e perguntam: isso não é só roteamento? Você não ainda precisa do motor de raciocínio geral embaixo?</p>
+      <p>Não. Cada especialista é. Helios conhece anúncios pagos porque todo seu contexto, treinamento e acesso a ferramentas é estruturado em volta disso. Cipher sabe como raciocinar sobre dados porque essa é a forma inteira do seu prompt de sistema. Lex não é um assistente geral lendo linguagem jurídica; ele é um advogado.</p>
+      <p>A alternativa — um modelo roteando para diferentes conjuntos de ferramentas — parece mais simples. Te poupa de gerenciar 24 prompts. Mas perde algo crucial: profundidade. Um modelo geral raciocinando sobre suas campanhas Meta pela primeira vez faz tradeoffs diferentes de um especialista que raciocinou sobre 10.000 campanhas. Eles priorizam diferente. Perguntam questões que você não pensou em perguntar. Detectam riscos porque é tudo que eles monitoram.</p>
+      <p>O tradeoff é complexidade de roteamento. Você tem que classificar cada requisição chegando (heurística → cache de padrão → LLM) e escolher o agente certo. São três camadas de classificação para evitar chamar o caro toda vez. Vale a pena, porque a resposta do especialista é melhor.</p>
+      <p>Acima dos especialistas senta um <strong>Conselho Executivo</strong> — sete papéis, cada um modelado em um jeito diferente de pensar. O CEO pensa em termos de loops de flywheel e questões Dia-1. O CFO pensa em unit economics. O Crítico faz pré-análises. Quando você pergunta algo difícil — "devemos expandir para um novo mercado?" — eles não apenas debatem; raciocinam de seus diferentes primeiros princípios e você consegue sete perspectivas mais uma síntese. Não consenso, mas suporte de decisão.</p>
+
+      <div class="callout">
+        <p><span class="k">Decisão de design</span>Especialistas ganham de generalistas em profundidade. Um motor de raciocínio único perde o rigor que vem da expertise.</p>
+      </div>
+
+      <h2>Confiança é o produto</h2>
+      <p>Você não confia em um sistema porque é confiante. Confia nele porque pergunta antes de fazer qualquer coisa que importa. Execução duas-fases é onde isso vive.</p>
+      <p>Fase um: preparar. Pesquisar, escrever, gerar imagens, rodar análise. Tudo que é seguro e reversível. Nada saiu do prédio. Você consegue ver exatamente o que está prestes a acontecer.</p>
+      <p>Fase dois: executar. Publicar o post. Enviar o email. Gastar o dinheiro. Criar a campanha. Só depois que você toca <em>Aprovar</em> no Telegram.</p>
+      <p>É isso. Esse é o núcleo do mecanismo de confiança. Não "Nova é inteligente o suficiente que não vai fazer nada burro" — isso não é verdade, e não é o ponto. Em vez disso: "Nova faz o trabalho seguro, te mostra o plano, e para até você dizer sim." Nada consequente acontece sem um humano no loop. Nada.</p>
+      <p>A alternativa é autonomia por nível de confiança — algumas ações rodam sem perguntar se Nova tem um histórico limpo. Nova tem isso (autonomia conquistada, descrito abaixo), mas é um power-up. O piso é sempre: pergunte antes de executar.</p>
+      <p>O que faz isso realmente funcionar é que a etapa de aprovação vive em seu app de messaging (Telegram, Slack, WhatsApp). Você não tem que navegar para um dashboard ou lembrar uma senha. Você recebe uma notificação. Lê. Toca um botão. Aprovação sem fricção faz valer a pena: você realmente faz em vez de descartar avisos.</p>
+
+      <h2>Autonomia conquistada, não um cheque em branco</h2>
+      <p>O momento que um sistema nunca pergunta é o momento que você não pode confiar nele. E o momento que pergunta para tudo é o momento que vira um incômodo e você para de pagar atenção.</p>
+      <p>Autonomia conquistada vive no meio. Todo tipo de ação (enviar newsletters, publicar posts nas redes, criar campanhas de anúncios) começa em <em>sempre pergunte</em>. Se um agente constrói um histórico limpo — digamos, três envios de newsletter bem-sucedidos em seguida sem rejeições — se gradua: primeiro para <em>notifique depois que acontece</em>, depois para <em>completamente autônomo dentro de um limite de gasto</em>. Uma falha ou uma rejeição e volta a perguntar imediatamente.</p>
+      <p>Você define as regras. Você decide quanto rope cada agente consegue, por tipo de ação. Você pode ver e mudar no dashboard. O sistema aprende e defere ao seu histórico, mas nunca silenciosamente. Se um agente falha bastante, conquistou sua demissão.</p>
+      <p>Isso resolve o problema real, que não é "a IA deveria ser autônoma?" É "em qual base ela consegue ser autônoma?" A base é confiança conquistada — um histórico naquele tipo de ação específico. Não confiança global. Não um toggle. Não uma prece.</p>
+
+      <h2>Auto-hospedado e local-first</h2>
+      <p>Nova roda na sua máquina. Lê suas mensagens Telegram do seu bot. Armazena seus dados em bancos de dados SQLite locais no seu disco. Suas chaves de API ficam no seu arquivo <code>.env</code>. Você nunca envia seus dados para a nuvem a menos que explicitamente peça a um agente Nova, e mesmo assim só o que é necessário para essa tarefa.</p>
+      <p>Isso não foi a escolha mais fácil. Um serviço hospedado é mais simples de construir, mais simples de escalar e muito mais simples de cobrar. Hospedá-lo significa que viro o controlador de dados — coleo a informação, sou responsável pela segurança, sou processado quando algo quebra. Auto-hospedagem empurra aquela responsabilidade para você. Se Nova vaza seus dados, é porque você não securizou seu VPS adequadamente, não porque tive um incidente de segurança no meu data center.</p>
+      <p>Mas esse é exatamente o ponto. Seus dados deveriam ser sua responsabilidade. Suas mensagens Telegram não deveriam transitar por um servidor que controlo. Seu gasto em anúncios não deveria exigir me dar chaves de API. Você deveria conseguir ler cada linha de código, fazer fork do tudo, e não me dever nada.</p>
+      <p>Auto-hospedagem também torna Nova radicalmente mais barato. Você não está me pagando por-mensagem ou por-mês-por-assento. Está pagando por sua assinatura Claude (ou Gemini ou OpenAI). É isso. Nova apenas usa o que você já tem. Isso só funciona porque Nova é de código aberto e licenciado MIT — você pode pegar, mudar, rodar para sempre.</p>
+
+      <h2>Roteamento subscription-first</h2>
+      <p>Quando Nova classifica uma requisição ou decompõe uma tarefa complexa, tem que chamar um modelo de IA. Três escolhas: use sua assinatura Claude/Gemini/OpenAI existente, ou mude você para faturamento por-token, ou negocie uma taxa wholesale com o provedor.</p>
+      <p>Nova escolhe sua assinatura. Sempre. Se você tem um plano Claude Pro, Nova prefere. Se você tem um plano de negócios Gemini, prefere aquele. Só se você explicitamente configurou uma preferência diferente — ou sua assinatura atinge seu rate limit — Nova recua para um provedor diferente.</p>
+      <p>Esta é uma pequena decisão com consequências grandes. Significa que o custo de rodar Nova não te surpreende. Não aparece em uma fatura separada. Não requer que você configure OAuth e confie uma terceira parte com suas credenciais de API. Você apenas usa o que já está pagando.</p>
+      <p>O tradeoff é que Nova não pode otimizar puramente em custo ou latência. Se você está em Gemini mas Claude seria mais rápido, Nova ainda prefere Gemini porque essa é sua assinatura. Aquela é uma perda deliberada de otimização em troca de transparência e previsibilidade.</p>
+
+      <hr class="divider">
+
+      <h2>Sandbox é o bilhete para autonomia real</h2>
+      <p>Um agente que pode enviar emails ou gastar orçamento de anúncios é aceitável só se não conseguir de alguma forma ler suas chaves SSH, exfiltrar seu banco de dados ou pivotar para outros sistemas. Sandbox é como isso funciona.</p>
+      <p>Quando um agente Nova executa uma tarefa que envolve entrada não confiável — scraping de página web, análise de arquivo que um cliente fez upload, rodando código que alguém te passou — aquela execução acontece dentro de um container hardened. Sistema read-only, sem acesso ao filesystem além de um diretório de staging por-tarefa, sem caminho para suas credenciais. Uma página maliciosa não consegue sequestrar o agente e usá-lo como degrau para sua máquina.</p>
+      <p>Sem sandbox, você não consegue seguramente delegar trabalho consequente a um agente. Um atacante que encontrou um jailbreak no raciocínio da IA poderia potencialmente comprometer seu sistema inteiro. Sandbox não previne o jailbreak, mas limita o raio de explosão: o agente roda em uma gaiola.</p>
+      <p>Isto é não-negociável para qualquer sistema que você está confiando com trabalho real. E é caro — containerização tem overhead, latência de rede, custos de recursos. Mas a alternativa é: não confie o agente com trabalho consequente. Escolhi o caminho caro.</p>
+
+      <h2>Um conselho executivo com personas distintas</h2>
+      <p>Pensamento single-source-of-truth é o que mata empresas. Você toma uma decisão baseado em uma perspectiva, perde o risco e a empresa absorve o golpe. O conselho executivo é a forma do Nova de prevenir isso.</p>
+      <p>Em vez de uma resposta confiante, você consegue sete. O CEO pensa em termos de alavancagem e efeitos de flywheel. O CFO pensa em unit economics. A CMO pensa em tribos e permissão. O CTO pensa em sistemas falhando. O Crítico pensa em o que poderia dar errado. Eles raciocinam de primeiros princípios diferentes. Detectam riscos diferentes. Nenhum é mais inteligente que os outros; eles estão apenas pensando em direções diferentes.</p>
+      <p>Quando você pergunta ao conselho uma questão difícil, volta com três a cinco opções scored, cada uma com um nível de confiança e uma rationale. Você escolhe uma. A decisão é registrada. Importa.</p>
+      <p>O tradeoff é latência e custo — você está rodando sete sessões de raciocínio em vez de uma. E você tem que escolher uma opção você mesmo em vez de conseguir uma recomendação. Mas aquela segunda parte é o ponto inteiro. Para decisões que importam, você deveria ver o raciocínio, pesar as opções e escolher. O conselho te dá a matéria-prima para pensar.</p>
+
+      <h2>Um rastro de auditoria para tudo</h2>
+      <p>Depois que um agente Nova roda uma tarefa, você tem um log do que aconteceu: qual agente, o que fez, quanto tempo levou, quanto custou, se funcionou. Depois que a tarefa completa, o agente até verifica seu próprio trabalho — "o email realmente foi enviado?" "a página renderiza?" — antes de reportar feito. Se verificação falha, a tarefa fica aberta até você decidir o que fazer.</p>
+      <p>Isso não é teatro de segurança. É a fundação da IA de grade comercial. Você não consegue ser responsável por algo que não consegue explicar. Não consegue fazer debug de algo que não mediu. Não consegue defender algo que não consegue descrever.</p>
+      <p>O custo é que cada decisão, cada ação, é escrita em um registro. Mais armazenamento, mais I/O, mais dados para gerenciar. Mais importante, significa que você tem que encarar o que o sistema realmente fez, não o que esperava que fizesse. Isso é desconfortável às vezes. É também a única forma de rodar isso responsavelmente.</p>
+
+      <div class="callout">
+        <p><span class="k">Decisão de design</span>"Grade comercial" principalmente significa respondível depois dos fatos. Auditabilidade não é um recurso; é o requisito.</p>
+      </div>
+
+      <h2>Os tradeoffs são reais</h2>
+      <p>Cada uma dessas decisões custa algo. Especialistas ganham de generalistas mas adicionam complexidade de roteamento. Etapas de aprovação constroem confiança mas adicionam fricção. Autonomia conquistada previne cheques em branco mas requer rastreamento de estado. Sandbox bloqueia ataques mas adiciona latência. Auto-hospedagem é barato mas coloca carga operacional em você. Um conselho executivo previne groupthink mas desacelera decisões. Auditabilidade constrói responsabilidade mas requer logar tudo.</p>
+      <p>Escolhi cada tradeoff porque a alternativa — um sistema de IA confiante, autônomo, alta-velocidade que ninguém realmente confia com nada importante — parecia pior.</p>
+      <p>Nova é mais lenta do que poderia ser. É mais complexo do que poderia ser. Custa mais rodar (na sua infraestrutura, não na minha). Pergunta mais questões do que um sistema otimizado perguntaria. Tudo isso é deliberado. O objetivo não é construir uma IA que se mova rápido. O objetivo é construir um time de IA que realmente funcione, que você possa entregar um problema real, que você confiaria rodar algo importante, e que você possa explicar e defender quando algo der errado.</p>
+      <p>Isso é mais duro. Leva mais tempo. Mas é o único tipo de sistema autônomo que vale a pena construir.</p>
+
+      <div class="end-cta">
+        <h3>Um time que você realmente pode confiar</h3>
+        <p>Oito decisões de design que te colocam no controle sem te tornar um gargalo.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Veja Nova no GitHub</a>
+          <a class="cta ghost" href="/pt-br/docs/">Leia como funciona</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — Licença MIT. Pegue, customize, faça seu.</span>
+    <span>
+      <a href="/pt-br/">Início</a> &nbsp;·&nbsp;
+      <a href="/pt-br/docs/">Documentação</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Segurança</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

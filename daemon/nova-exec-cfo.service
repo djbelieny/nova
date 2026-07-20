@@ -1,0 +1,24 @@
+[Unit]
+Description=Nova Executive - CFO
+After=network-online.target nova.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nova
+Group=nova
+WorkingDirectory=/opt/nova
+EnvironmentFile=/opt/nova/.env.cfo
+Environment=CLAUDE_PATH=/usr/bin/claude
+Environment=PROJECT_DIR=/opt/nova
+Environment=NOVA_DIR=/opt/nova/.nova
+Environment=HOME=/home/nova
+ExecStart=/usr/local/bin/bun run src/executive-node.ts --role cfo
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-exec-cfo
+
+[Install]
+WantedBy=multi-user.target

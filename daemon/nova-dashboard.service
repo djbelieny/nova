@@ -1,0 +1,20 @@
+[Unit]
+Description=Nova Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=nova
+WorkingDirectory=/opt/nova
+EnvironmentFile=/opt/nova/.env
+Environment=HOME=/home/nova
+Environment=PATH=/home/nova/.bun/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/bun run src/dashboard.ts
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nova-dashboard
+
+[Install]
+WantedBy=multi-user.target

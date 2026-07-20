@@ -1,0 +1,38 @@
+# Replace these domains with your own before deploying.
+# Primary domain — web dashboard, voice
+your-domain.com, app.your-domain.com {
+	# Web dashboard (default)
+	reverse_proxy localhost:3033
+
+	# Dashboard under /dashboard
+	handle_path /dashboard/* {
+		reverse_proxy localhost:3033
+	}
+
+	# Voice server under /voice
+	handle /voice/* {
+		reverse_proxy localhost:8080
+	}
+}
+
+# Optional secondary domain for voice/SMS (e.g. a Twilio-dedicated domain)
+voice.your-domain.com {
+	# Voice server (Twilio webhook)
+	handle /voice/* {
+		reverse_proxy localhost:8080
+	}
+
+	# SMS + audio endpoints
+	handle /sms/* {
+		reverse_proxy localhost:8080
+	}
+	handle /audio/* {
+		reverse_proxy localhost:8080
+	}
+	handle /health {
+		reverse_proxy localhost:8080
+	}
+
+	# Fallback to dashboard
+	reverse_proxy localhost:3033
+}

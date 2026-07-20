@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Uma semana lançando um produto com Nova — Estudo de caso Nova</title>
+<meta name="description" content="Como um fundador solo usou Nova para lançar um novo recurso de produto: conselho estratégico, trabalho concorrente de agentes, etapas de aprovação e autonomia conquistada. Uma explicação ilustrativa.">
+<meta property="og:title" content="Uma semana lançando um produto com Nova">
+<meta property="og:description" content="Um detalhamento de como um fundador solo lança um produto com os 24 agentes, conselho executivo, etapas de aprovação e autonomia conquistada do Nova. Um cenário ilustrativo.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/pt-br/blog/case-study/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/case-study/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/case-study/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/case-study/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/case-study/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/pt-br/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/pt-br/#how">Como funciona</a>
+      <a href="/pt-br/#agents">Agentes</a>
+      <a href="/pt-br/#start">Início rápido</a>
+      <a href="/pt-br/blog/">Blog</a>
+      <a href="/pt-br/docs/">Documentação</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/case-study/" class="en" hreflang="en">EN</a><a href="/es/blog/case-study/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/case-study/" class="pt-br on" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">Detalhamento</span>
+    <h1>Lançando um produto com Nova</h1>
+    <p class="lede">Aqui está como um fundador solo pode executar um lançamento de produto ao longo de uma semana usando Nova — do conselho estratégico à execução, das etapas de aprovação à autonomia conquistada. Este é um cenário ilustrativo: não uma história de cliente real, mas um detalhamento sobre como a plataforma realmente funciona.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 15 de julho de 2026 <span class="dot">·</span> 7 min de leitura</p>
+
+    <div class="prose">
+      <h2>Segunda-feira: estratégia e o conselho</h2>
+      <p>É segunda-feira de manhã, e você está lançando um recurso de exportação na sexta-feira. A questão de posicionamento está aberta: você quer liderar com eficiência para usuários avançados ("exportar tudo em um formato") ou enfatizar a amplitude dos destinos ("exportar para 20+ lugares")? Pitch diferente, cliente diferente. Você poderia decidir sozinho, mas o conselho executivo do Nova traz sete perspectivas e uma pré-análise de riscos.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · chamada estratégica</div>
+        <div class="bubble me"><span class="who">Você</span>/conselho Devemos liderar o lançamento do recurso de exportação com eficiência para usuários avançados ou amplitude de plataforma? Qual posicionamento tem o teto mais alto?</div>
+        <div class="bubble nova"><span class="who">Nova · Convocação do Conselho</span>Deixa eu pensar com o conselho completo — CEO, CFO, CMO, CTO, Pesquisa, Crítico e COO. Me dá 3 minutos...</div>
+        <div class="bubble nova"><span class="who">Nova · CEO (modo Bezos)</span>Amplitude nos posiciona como a plataforma que conecta tudo. Eficiência nos posiciona como melhor em classe para usuários avançados. Eu inclino para amplitude — abre novos segmentos.</div>
+        <div class="bubble nova"><span class="who">Nova · CMO (Seth Godin)</span>Amplitude corre o risco de nos tornar commodity (exportação é essencial). Eficiência é a história — "fazer mais com menos" — que cria comunidades. Eu lideraria com eficiência, mencionando amplitude como prova.</div>
+        <div class="bubble nova"><span class="who">Nova · Crítico (pré-análise)</span>O pitch de eficiência falha se adoção é baixa ou casos de uso ficam nicho. O pitch de amplitude falha se não conseguirmos executar — prometeríamos 20+ integrações mas entregamos 15 e perdemos confiança. Ambos arriscam overpromise.</div>
+        <div class="bubble nova"><span class="who">Nova · Síntese do Conselho</span>Três opções classificadas: (1) Eficiência-primeiro, amplitude como prova (confiança: 78%). (2) Amplitude de plataforma, com 3 destinos em destaque (confiança: 71%). (3) Mensagens divididas — eficiência para usuários avançados, amplitude para empresas (confiança: 65%). Escolha uma e vou briefar o time completo.</div>
+        <div class="bubble me"><span class="who">Você</span>Vai com a opção 1. Eficiência-primeiro.</div>
+      </div>
+
+      <p>Em minutos, a direção do seu lançamento está definida, e você tem os modos de falha que o Crítico sinalizou. Agora o time sabe para o que construir.</p>
+
+      <hr class="divider">
+
+      <h2>Terça-feira: trabalho concorrente, uma fila de aprovação</h2>
+      <p>Terça-feira de manhã, você está executando quatro times em paralelo. Conteúdo, email, anúncios e operações. Nova os lança todos de uma vez, e eles se preparam independentemente — nada é lançado até você aprovar.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · preparação de lançamento</div>
+        <div class="bubble me"><span class="who">Você</span>Vamo lá. Brief no time sobre o posicionamento (eficiência-primeiro, exportar para 20+ destinos). Kai, esboça a narrativa de lançamento; Pixel, constrói o calendário social (Twitter, LinkedIn, TikTok); Orion, esboça a sequência de email (anúncio + 3-email nurture); Helios, esboça duas abordagens de anúncios. Todos em modo preparar — nada sai do ar até eu autorizar.</div>
+        <div class="bubble nova"><span class="who">Nova · Orquestrador</span>Despachando Kai, Pixel, Orion e Helios. Volta em 20 minutos.</div>
+      </div>
+
+      <p>Enquanto trabalham, você fica livre para pensar. Sem especular se o rascunho vai precisar de revisões — eles mostram primeiro.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · resultados</div>
+        <div class="bubble nova"><span class="who">Nova · Kai (conteúdo)</span>Narrativa de lançamento esboçada: post de blog 850 palavras, "Exportar tudo em um clique: como estamos devolvendo tempo aos usuários avançados." CTA para docs + vídeo demo. Pronto para review.
+          <div class="approve"><span class="yes">✓ Aprovar</span><span class="rev">✎ Revisar</span><span class="no">✕ Cancelar</span></div>
+        </div>
+        <div class="bubble me"><span class="who">Você</span>✓ Aprovar</div>
+        <div class="bubble nova"><span class="who">Nova · Pixel (redes sociais)</span>Calendário social: 12 posts em 3 semanas. Mix de deep-dives de features, behind-the-scenes, templates de depoimentos de usuários. 6 posts enfileirados para publicar a partir de sexta. Planilha de preview anexada.
+          <div class="approve"><span class="yes">✓ Aprovar</span><span class="rev">✎ Revisar</span><span class="no">✕ Cancelar</span></div>
+        </div>
+        <div class="bubble me"><span class="who">Você</span>Faz os vídeos TikTok mais curtos, mais impactantes. Revisar.
+        </div>
+        <div class="bubble nova"><span class="who">Nova · Pixel (redes sociais)</span>Scripts do TikTok reduzidos para 15-20 segundos, ganchos impactantes. Re-enfileirados. Aprovado para publicar sexta às 9 AM PST.
+          <div class="approve"><span class="yes">✓ Aprovado</span></div>
+        </div>
+        <div class="bubble nova"><span class="who">Nova · Orion (email)</span>Anúncio + sequência de 3-email esboçada. Dia 1: "Exportar tudo, agora." Dia 3: "Como automatizar seus workflows." Dia 7: "Veja o que é possível." Copy, previews de design e segmentação de subscribers anexados. Enviar para 12.340 subscribers quando você aprovar.
+          <div class="approve"><span class="yes">✓ Aprovar &amp; enviar</span><span class="rev">✎ Revisar</span><span class="no">✕ Cancelar</span></div>
+        </div>
+        <div class="bubble me"><span class="who">Você</span>Aquece a voz no email 2. Faz mais conversacional. Depois envia tudo.
+        </div>
+        <div class="bubble nova"><span class="who">Nova · Orion</span>Email 2 aquecido. Enviados os três para sua lista de subscribers. Open rates e dados de cliques chegando — vou reportar diariamente às 8 AM a partir de amanhã.
+          <div class="approve"><span class="yes">✓ Enviado</span></div>
+        </div>
+        <div class="bubble nova"><span class="who">Nova · Helios (anúncios)</span>Dois esboços de campanha: (A) "Usuários avançados, recuperem seu tempo" + vídeo demo, focando audiências de design + dev tools, orçamento $3.000. (B) "Exportar para tudo" + carrossel mostrando 20 logos de destinos, foco empresarial, orçamento $2.000. Audiências, estratégia de lances e CPL esperado anexados.
+          <div class="approve"><span class="yes">✓ Aprovar campanha</span><span class="rev">✎ Revisar</span><span class="no">✕ Cancelar</span></div>
+        </div>
+        <div class="bubble me"><span class="who">Você</span>Campanha A é a escolha certa — é nosso alvo certeiro. Aprova. Deixa eu ver performance semanal e ajustamos quinta.
+        </div>
+        <div class="bubble nova"><span class="who">Nova · Helios</span>Campanha A ao vivo no Facebook e LinkedIn. Orçamento $3.000. Vou reportar diariamente em CTR, CPC e CPL estimado. Primeiros resultados em poucas horas.</div>
+      </div>
+
+      <p>Até 11 AM terça-feira, seu lançamento inteiro está em movimento. Emails enviados, anúncios ao vivo, conteúdo enfileirado. Cada parte passou pela sua etapa de aprovação. Nada aconteceu pelas suas costas.</p>
+
+      <hr class="divider">
+
+      <h2>Quarta-feira: níveis de autonomia e o registro</h2>
+      <p>Quarta-feira, Aura (voz de marca) sinaliza um problema de consistência de tom na copy social. Enquanto isso, o agente Digit (dados) vem rastreando performance, e você quer um sync diário. Uma coisa que você nota: você aprovou "postar nas redes" cinco vezes agora, e cada vez o trabalho é sólido. O sistema de autonomia do Nova vem observando.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · autonomia</div>
+        <div class="bubble nova"><span class="who">Nova · Alerta de Dashboard</span><span style="color: var(--green);">✓ Autonomia conquistada:</span> "Postar nas redes" tem 5 aprovações limpas consecutivas sem rejeições. Graduado para "notificar depois" — vou postar e enviar mensagem, sem aprovação necessária. Você pode mudar isso quando quiser.
+          <div class="approve"><span class="yes">✓ Aceitar</span><span class="rev">✎ Continuar perguntando</span></div>
+        </div>
+        <div class="bubble me"><span class="who">Você</span>✓ Aceitar. Vamo ver como fica.</div>
+        <div class="bubble nova"><span class="who">Nova · Digit (analytics)</span>Campanha A: 1.247 impressões, 31 cliques (2,5% CTR), 7 leads. CPC $10,76. No caminho para $380 CPL se a tendência se mantém. Email dia-1 open: 28% (acima da média de lista 21%). Melhor performer: padrão de subject line "Como automatizar workflows".</div>
+        <div class="bubble nova"><span class="who">Nova · Aura (voz de marca)</span>Verificação de tom nas redes: Três posts inclinam para corporativo. A copy de Pixel acerta em 9 de 12. Quer que eu revise os três, ou mantém como está pela variedade?</div>
+        <div class="bubble me"><span class="who">Você</span>Revisa esses três para combinar com o resto. Mantém a consistência alta.</div>
+      </div>
+
+      <p>Repara no que aconteceu: Pixel conquistou autonomia em posts nas redes porque o padrão foi comprovado. Digit fornece dados ao vivo sem ser pedido. Aura está pegando detalhes que você poderia ter perdido. E tudo se move porque as etapas de aprovação são rápidas e visíveis — você está tomando decisões, não gerenciando processos.</p>
+
+      <hr class="divider">
+
+      <h2>Quinta-feira: verificação e o registro de ações</h2>
+      <p>Por quinta-feira à tarde, quatro dias no lançamento, Nova te mostra o rastro de auditoria completo. Cada ação consequente, quem fez, quanto custou e se realmente funcionou.</p>
+
+      <div class="callout">
+        <p><span class="k">Verificação em ação</span>Quando Orion enviou o email, não apenas disse "email enviado." Verificou se o envio realmente completou, checou se as bounce rates estavam dentro do normal e confirmou que os links eram clicáveis. Quando Helios lançou a campanha de anúncios, verificou se os anúncios apareceram e registrou o targeting exato, lance e gasto. O lançamento inteiro é auditável.</p>
+      </div>
+
+      <p>O registro de ações mostra:</p>
+      <ul>
+        <li><strong>Terça 10:32 AM</strong> — Kai esboçou blog de lançamento (850w) — aprovado por você às 10:45 AM</li>
+        <li><strong>Terça 10:47 AM</strong> — Pixel esboçou calendário social (12 posts, 3 semanas) — revisões solicitadas, re-aprovado 11:02 AM</li>
+        <li><strong>Terça 11:05 AM</strong> — Orion enviou sequência 3-email para 12.340 subscribers — entrega verificada, open link funcionando</li>
+        <li><strong>Terça 11:08 AM</strong> — Helios lançou Campanha A (Facebook + LinkedIn, orçamento $3.000) — anúncios ao vivo verificados, pixels de rastreamento acionados</li>
+        <li><strong>Quarta 9:00 AM</strong> — Pixel postou nas redes (autonomia: "notificar depois") — posts ao vivo verificados em todas as 3 plataformas</li>
+        <li><strong>Quarta 2:15 PM</strong> — Digit entregou report de meio de semana — 7 leads, 2,5% CTR, email open 28%</li>
+        <li><strong>Quinta 4:30 PM</strong> — Você solicitou bloqueio de orçamento em Campanha A pendente review de domingo</li>
+      </ul>
+
+      <p>Nada é uma caixa preta. Se alguém pergunta "O email de lançamento realmente foi enviado?" ou "Quanto gastamos em anúncios?" ou "Quantos leads chegaram?", você tem comprovantes.</p>
+
+      <hr class="divider">
+
+      <h2>Sexta-feira: dia de lançamento, autonomia em movimento</h2>
+      <p>Sexta-feira de manhã, o recurso sai do ar. Posts nas redes publicam automaticamente (Pixel em nível de autonomia "notificar depois"). O blog sai do ar. Helios ajusta lances baseado em dados de performance inicial. Orion monitora métricas de email. Digit sinaliza se algo parece estranho.</p>
+
+      <p>Você não está em modo aprovação constante mais. Você está steering. Checkando. Confiando no time porque você os viu conquistar isso.</p>
+
+      <div class="callout">
+        <p><span class="k">O que mudou desde segunda</span>Segunda-feira você não tinha bandwidth suficiente para rodar marketing, ops e anúncios simultaneamente. Até sexta-feira, você está rodando os três em paralelo, cada decisão é registrada, e os agentes que provaram ser confiáveis se formaram de "perguntar toda vez" para "notificar depois." Você não está contratando staff — está organizando especialistas que você já tem acesso. Você não está gerenciando por comitê — está gerenciando através de etapas rápidas de aprovação e autonomia conquistada.</p>
+      </div>
+
+      <hr class="divider">
+
+      <h2>Por que isso importa</h2>
+      <p>Para fundadores solo, este é o processo de lançamento que costumava exigir um gerente de marketing, uma estrategista de conteúdo, um especialista em ad ops e um analista de dados. Para pequenos times, é a labuta — reports, rascunhos, agendamento — descarregado em agentes que perguntam antes de agir.</p>
+
+      <p>O padrão que você vê aqui é para o que Nova foi construído: <strong>trabalho complexo que exige múltiplos especialistas, etapas de aprovação que mantêm você no controle, e autonomia conquistada que deixa tarefas confiáveis rodar sem supervisão</strong>. Cada ação é registrada. Cada agente verifica seu próprio trabalho. Você não está confiando às cegas — você está verificando, e quando confiança é conquistada, você acelera.</p>
+
+      <p>Isto também é apenas um lançamento. Ao longo de semanas e meses, Nova aprende suas preferências, cacheia planos de tarefas bem-sucedidos e fica mais rápido. Sua fila de aprovação fica mais curta. Seus níveis de autonomia se compõem. E você continua sendo a pessoa que decide — você apenas tem ajuda melhor, e pode realmente ver o que a ajuda está fazendo.</p>
+
+      <div class="end-cta">
+        <h3>Execute seu próprio lançamento</h3>
+        <p>De código aberto, auto-hospedado, licença MIT. Comece com os 24 agentes do Nova e veja o que se torna possível.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Ler Nova no GitHub</a>
+          <a class="cta ghost" href="/pt-br/docs/">Leia a documentação</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — Licença MIT. Pegue, customize, faça seu.</span>
+    <span>
+      <a href="/pt-br/">Início</a> &nbsp;·&nbsp;
+      <a href="/pt-br/docs/">Documentação</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Segurança</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,10 @@
+[Unit]
+Description=DuckDNS IP Update Timer
+
+[Timer]
+OnBootSec=30sec
+OnUnitActiveSec=DUCKDNS_INTERVAL
+Unit=nova-duckdns.service
+
+[Install]
+WantedBy=timers.target

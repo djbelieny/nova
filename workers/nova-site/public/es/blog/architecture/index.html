@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cómo funciona Nova: la arquitectura detrás del telón — Nova</title>
+<meta name="description" content="Un análisis técnico profundo de la arquitectura de Nova: clasificación de mensajes de 3 niveles, descomposición de tareas con resolución de dependencias, ejecución paralela, controles de aprobación en dos fases, SQLite dividido con búsqueda vectorial, y enrutamiento de IA inteligente en Claude, Gemini y Codex.">
+<meta property="og:title" content="Cómo funciona Nova: la arquitectura detrás del telón">
+<meta property="og:description" content="Clasificación de 3 niveles, descomposición de tareas, ejecución paralela, almacenamiento SQLite dividido, y enrutamiento de IA inteligente. Esto es lo que hace que Nova funcione.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/es/blog/architecture/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 26px; }
+  .nav-links a { color: var(--muted); font-size: 15px; font-weight: 500; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 720px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/architecture/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/architecture/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/architecture/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/architecture/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/es/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/es/#how">Cómo funciona</a>
+      <a href="/es/#agents">Agentes</a>
+      <a href="/es/#start">Inicio rápido</a>
+      <a href="/es/blog/">Blog</a>
+      <a href="/es/docs/">Documentos</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/architecture/" class="en" hreflang="en">EN</a><a href="/es/blog/architecture/" class="es on" hreflang="es">ES</a><a href="/pt-br/blog/architecture/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">Cómo funciona Nova</span>
+    <h1>La arquitectura que lo une todo</h1>
+    <p class="lede">El poder de Nova proviene de cómo piensa, no solo de qué puede hacer. Aquí hay un recorrido técnico del pipeline que convierte un mensaje de Telegram en trabajo coordinado en 24 agentes especialistas, cómo aprende de patrones, y por qué pregunta antes de actuar.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 15 de julio de 2026 <span class="dot">·</span> 13 min de lectura</p>
+
+    <div class="prose">
+      <p>Un chatbot tradicional toma tu mensaje y lo ejecuta directamente a un LLM. Nova toma una ruta más larga e inteligente. Cada mensaje se <strong>clasifica</strong> en uno de tres cubos, cada uno manejado diferentemente. Las cosas simples se mantienen rápidas. El trabajo enfocado se enruta a un especialista. Los problemas grandes y descomponibles se dividen en subtareas y se ejecutan en paralelo. Y nada importante sucede hasta que tú lo digas.</p>
+      <p>Es un pipeline, no una caja negra. En cada etapa — clasificación, descomposición, ejecución — el sistema toma una decisión deliberada. Puedes leer el código. Puedes cambiarlo.</p>
+
+      <h2>Cómo Nova decide qué hacer con tu mensaje</h2>
+      <p>Cuando envías un mensaje, Nova no le pide inmediatamente a Claude que reflexione sobre él. En cambio, usa un <strong>sistema de clasificación de 3 niveles</strong> diseñado para mantener tantas solicitudes como sea posible fuera del LLM completamente.</p>
+
+      <h3>Nivel 1: La heurística (instantáneo, costo cero)</h3>
+      <p>Los mensajes con menos de 15 palabras sin verbos de acción obtienen una respuesta directa de Claude. "¿Qué hora es?" permanece instantáneo. Esto captura búsquedas rápidas, verificaciones de estado, y preguntas casuales — el tipo donde el costo de enrutamiento sería tonto.</p>
+
+      <h3>Nivel 2: Coincidencia de patrones y enrutamiento de agente único</h3>
+      <p>Nova recuerda descomposiciones de tareas exitosas. Si pediste "redacta un boletín" la semana pasada y obtuviste un plan que funcionó, y pides algo similar hoy, Nova reutiliza ese mismo plan sin volver a ejecutar el LLM. Para solicitudes nuevas, Nova coincide patrones con plantillas de tareas conocidas — cosas como "publicación de redes sociales", "campaña de correo", "artículo de blog", "creativo publicitario" — y las enruta directamente al agente especialista correcto.</p>
+
+      <h3>Nivel 3: Clasificación LLM (solo cuando sea necesario)</h3>
+      <p>Todo lo demás va a Claude Sonnet, que lo clasifica como simple (respuesta directa), enrutado (agente único), o complejo (descomponer y paralelizar). Esto sucede una vez por tipo único de solicitud, luego se cachea.</p>
+
+      <div class="callout">
+        <p><span class="k">El resultado</span>Los mensajes simples se responden sin una llamada LLM en absoluto. Las tareas repetidas reutilizan un plan cacheado. Solo las solicitudes genuinamente nuevas pagan por una llamada de clasificación — y cada una se convierte en un patrón que hace que la próxima solicitud similar sea más rápida.</p>
+      </div>
+
+      <h2>Dividir el trabajo complejo en piezas independientes</h2>
+      <p>Cuando le pides a Nova algo grande — "planifica y lanza nuestra campaña de Q3" — el planificador toma el control. Divide la solicitud en subtareas, calcula las dependencias, y ejecuta todo lo que puede suceder en paralelo.</p>
+      <p>Algunos de los flujos de trabajo más complejos de Nova son <strong>pipelines determinísticos</strong>, no generados por LLM cada vez. Una campaña de redes sociales siempre sigue la misma forma: investigar → contenido → imagen → vista previa → publicar. Un artículo de blog es siempre investigar → escribir → imagen hero → vista previa → publicar. Esto significa que obtienes un proceso predecible y reproducible para trabajo que haces repetidamente.</p>
+      <p>Para solicitudes verdaderamente nuevas, el LLM descompone la tarea. Devuelve JSON: una matriz de subtareas, cada una con una descripción, qué agente debe manejarla, y qué otras tareas depende. Las dependencias se resuelven, luego las subtareas independientes se ejecutan al mismo tiempo.</p>
+
+      <h2>Dos fases: preparar primero, pedir permiso, luego ejecutar</h2>
+      <p>El momento en que una tarea toca el mundo real — publica una publicación, envía un correo, gasta dinero — necesita aprobación. Nova implementa esto como dos fases distintas.</p>
+      <p><strong>Preparar</strong> es la mitad segura. Investiga, redacta el contenido, genera imágenes, ejecuta análisis. Los artefactos fluyen de subtarea a subtarea. Todo es reversible o al menos reembolsable. Esta fase produce un resumen y artefactos, enviados a ti en Telegram con tres botones: Aprobar, Revisar, o Cancelar.</p>
+      <p><strong>Ejecutar</strong> solo se ejecuta después de que apruebes. Publica, envía, crea, gasta — todas las cosas irreversibles. Pero se ejecuta con contexto completo de preparar: el contenido ya está escrito, la imagen ya está generada, el tiempo ya está planeado.</p>
+      <p>Los usuarios que ejecutan la misma tarea semanalmente pueden eventualmente <strong>ganar autonomía</strong>. Después de algunas ejecuciones limpias de "envía el boletín", el sistema puede graduarlo: primero a "envíalo y notifícame después", luego a "envíalo autónomamente hasta un presupuesto de $50". Un rechazo y vuelve a preguntar. Siempre estás en control de cuánta cuerda obtiene cada tarea.</p>
+
+      <hr class="divider">
+
+      <h2>Cómo Nova almacena lo que sabe</h2>
+      <p>Nova usa una <strong>arquitectura SQLite dividida</strong>: una base de datos compartida para el estado de Nova, y una base de datos por usuario para todo lo privado de ese usuario.</p>
+      <div class="cards">
+        <div class="card"><h4>Base de datos compartida</h4><p>Cuentas de usuario, seguimiento de costos, registros, hechos globales, estado del servicio. Una instancia por implementación de Nova.</p></div>
+        <div class="card"><h4>Base de datos por usuario</h4><p>Mensajes, memoria personal, tareas del agente, aprobaciones, trabajo programado, patrones de ejecución. Permanece en tu máquina.</p></div>
+      </div>
+      <p>Ambas usan <code>sqlite-vec</code> para búsqueda vectorial. Cada hecho, cada memoria, cada mensaje se incrustan con <code>all-MiniLM-L6-v2</code> (384 dimensiones). Cuando el planificador necesita contexto — "¿qué sabemos sobre estrategia de precios?" — hace una búsqueda semántica en lugar de coincidencia de palabras clave. Esto significa que Nova puede encontrar contexto relevante incluso cuando no usas exactamente las mismas palabras.</p>
+      <p>Los embeddings son baratos de computar localmente, y los resultados de búsqueda se cachean. Tus datos nunca salen de tu máquina. Tus claves, tu suscripción, tu base de datos.</p>
+
+      <h2>Elegir la IA correcta para el trabajo</h2>
+      <p>Nova puede enrutar trabajo a Claude, Gemini, Codex, o Groq. La decisión sucede automáticamente usando <strong>enrutamiento inteligente</strong>: invalidación de fuerza (prefijar con <code>/claude</code> o <code>/gemini</code>) vence tu predeterminado. Tu predeterminado vence el enrutamiento basado en pistas. Basado en pistas vence la alternancia de límite de velocidad.</p>
+      <p>La lógica de enrutamiento considera el tipo de tarea. El trabajo pesado en MCP (gestionar documentos de Notion, eventos del calendario, Gmail) se enruta a Claude debido a su soporte nativo de MCP. La investigación y síntesis web van a Gemini debido a su nivel gratuito y síntesis fuerte. La clasificación rápida va al proveedor que tiene el modelo rápido más barato.</p>
+      <p>Cada proveedor tiene tres niveles: <code>fast</code> (clasificación, barato), <code>standard</code> (ejecución de tarea, equilibrado), y <code>premium</code> (razonamiento crítico, mejor calidad). El enrutador elige el nivel basado en la criticidad de la tarea.</p>
+
+      <h2>Los bloques de construcción: patrones, memoria e integraciones</h2>
+
+      <h3>Aprendizaje de patrones</h3>
+      <p>Toda ejecución de tarea exitosa se registra como un patrón. La próxima vez que pidas algo similar, Nova califica tu solicitud contra esos patrones por solapamiento de palabras clave. Cuando una solicitud coincide estrechamente con un plan anterior que ya tiene dos o más ejecuciones limpias, Nova lo reutiliza. Esto convierte tareas repetidas en acciones de un paso — y un patrón que sigue teniendo éxito se promueve eventualmente en una habilidad reutilizable.</p>
+
+      <h3>Memoria persistente</h3>
+      <p>Nova incrustra todo lo que le dices que recuerde. Usa <code>[REMEMBER: fact]</code> en una respuesta y guarda el hecho, desduplicó contra la memoria existente, y lo pone disponible para búsqueda semántica en toda solicitud futura. También puedes establecer <code>[GOAL: text | DEADLINE: date]</code> para rastrear objetivos, y Nova te recordará el progreso y los bloqueadores.</p>
+
+      <h3>12 integraciones MCP</h3>
+      <p>Nova viene preconfigurada con Notion, Google Workspace (Gmail, Calendar, Drive, Docs, Sheets), Playwright, Cloudflare Workers, Zoom, Square, ClickUp, GoHighLevel, Firecrawl, Tavily, Exa, y Browserbase. Cada agente puede acceder a los relevantes para su dominio. Proporcionas las credenciales una vez durante la configuración, y permanecen en tu máquina.</p>
+
+      <h3>Trabajo programado y proactivo</h3>
+      <p>Nova puede ejecutar tareas en un cronograma: resúmenes diarios, reportes semanales, auditorías mensuales. Aprende tus patrones — cuándo es más probable que quieras noticias, qué reportes importan más, qué miembros del equipo incluir — y se comunica proactivamente. Un resumen matutino no es solo "aquí está tu calendario", es "aquí está tu calendario más los tres correos más importantes más tu prioridad principal para hoy basada en tus objetivos".</p>
+
+      <h2>La junta ejecutiva: estrategia a escala</h2>
+      <p>Para las decisiones más grandes, Nova ejecuta una <strong>reunión de junta</strong>. Siete ejecutivos — CEO, CFO, CMO, CTO, COO, Jefe de Investigación, y Crítico — cada uno con una persona distintiva y agentes prioritarios, se reúnen en tu pregunta estratégica.</p>
+      <p>La reunión sigue un flujo estructurado: cada ejecutivo analiza independientemente la pregunta, el Crítico identifica modos de falla y da un IR/NO IR, luego Nova sintetiza 3–5 opciones clasificadas por confianza. Eliges una, la decisión se registra en el registro, y el equipo ejecutivo delega trabajo autónomo basado en la decisión a través del orquestador Nova principal.</p>
+      <p>Los ejecutivos usan diferentes proveedores de IA (Claude para estrategia, Gemini para análisis, Codex para profundidad técnica) y se coordinan a través de una base de datos compartida. Cada nodo ejecutivo se ejecuta independientemente en su propio VPS, haciendo posible escalar a través de trabajo ilimitado sin un cuello de botella central.</p>
+
+      <hr class="divider">
+
+      <h2>¿Por qué esta arquitectura?</h2>
+      <p>El diseño de Nova hace posibles cinco cosas:</p>
+      <ul>
+        <li><strong>Velocidad</strong> — muchos mensajes nunca tocan un LLM en absoluto. Las heurísticas y patrones cacheados mantienen el camino rápido rápido.</li>
+        <li><strong>Eficiencia de costos</strong> — Cada ruta elige el modelo más barato adecuado para la tarea. Niveles rápidos para clasificación, estándar para ejecución, premium solo cuando el razonamiento importa.</li>
+        <li><strong>Paralelismo</strong> — Las subtareas independientes se ejecutan concurrentemente. Una campaña de 10 pasos no toma 10× el tiempo; muchos pasos se colapsan en 2–3 lotes.</li>
+        <li><strong>Auditabilidad</strong> — Toda decisión se registra. Puedes ver por qué Nova enrutó a un agente, cuáles fueron las dependencias, si usó un patrón cacheado o llamó al LLM.</li>
+        <li><strong>Control</strong> — La ejecución de dos fases significa que el trabajo importante se detiene para aprobación. Los patrones y la escalada de autonomía significan que gradualmente confías más trabajo para ejecutarse sin supervisión a medida que el sistema se prueba a sí mismo.</li>
+      </ul>
+
+      <div class="end-cta">
+        <h3>Ejecuta esta arquitectura tú mismo</h3>
+        <p>Código abierto, auto-alojado, con licencia MIT. Despliega Nova y posee todo el pipeline.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Obtén Nova en GitHub</a>
+          <a class="cta ghost" href="/es/docs/">Explora profundamente los documentos</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
+    <span>
+      <a href="/es/">Home</a> &nbsp;·&nbsp;
+      <a href="/es/docs/">Documentation</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,382 @@
+/**
+ * Dream Mode — Nightly Memory Consolidation Service
+ *
+ * Like sleep consolidates memories in humans, this service runs during idle
+ * periods to extract lasting insights from recent conversations and write them
+ * to long-term memory via Memwright.
+ *
+ * Run: bun run services/dream.ts
+ *      bun run services/dream.ts --idle        (only idle users)
+ *      bun run services/dream.ts --user <id>   (specific user)
+ */
+
+import "dotenv/config";
+import { getDb, type Database } from "../src/db.ts";
+import { registerProvider, getDefaultProvider, getProvider } from "../src/ai-provider.ts";
+import { ClaudeProvider } from "../src/providers/claude.ts";
+import { GeminiProvider } from "../src/providers/gemini.ts";
+import { CodexProvider } from "../src/providers/codex.ts";
+import { GroqProvider } from "../src/providers/groq.ts";
+import { memwright } from "../src/memwright-client.ts";
+import { getMemoryContext } from "../src/memory.ts";
+import { saveSchema } from "../src/schema-engine.ts";
+import { generateEmbedding } from "../src/embeddings.ts";
+
+registerProvider(new GroqProvider());
+registerProvider(new ClaudeProvider());
+registerProvider(new GeminiProvider());
+registerProvider(new CodexProvider());
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+
+// ============================================================
+// TYPES
+// ============================================================
+
+interface ProactiveUser {
+  id: string;
+  telegram_id: string;
+  name: string;
+  timezone: string;
+  preferences: Record<string, any>;
+  job_role?: string;
+}
+
+interface DreamState {
+  lastDreamAt: string;
+  lastInsightCount: number;
+}
+
+// ============================================================
+// DB SINGLETON
+// ============================================================
+
+let _db: Database | null = null;
+function getStateDb(): Database {
+  if (!_db) _db = getDb();
+  return _db;
+}
+
+// ============================================================
+// STATE MANAGEMENT (per-user, stored in shared SQLite)
+// ============================================================
+
+function loadDreamState(userId: string): DreamState {
+  const db = getStateDb();
+  const raw = db.getServiceState("dream", userId);
+  if (raw) {
+    try { return JSON.parse(raw); } catch {}
+  }
+  return { lastDreamAt: "", lastInsightCount: 0 };
+}
+
+function saveDreamState(userId: string, state: DreamState): void {
+  const db = getStateDb();
+  db.setServiceState("dream", userId, JSON.stringify(state));
+}
+
+// ============================================================
+// FETCH PROACTIVE USERS
+// ============================================================
+
+function getAllProactiveUsers(db: Database): ProactiveUser[] {
+  const users = db.getAllActiveUsers();
+
+  return users
+    .filter((u: any) => u.preferences?.proactive_checkin !== false)
+    .map((u: any) => ({
+      id: u.id,
+      telegram_id: u.telegram_id,
+      name: u.name,
+      timezone: u.timezone,
+      preferences: u.preferences,
+      job_role: u.job_role || "general",
+    }));
+}
+
+// ============================================================
+// IDLE DETECTION (timezone-aware)
+// ============================================================
+
+function isUserIdle(db: Database, user: ProactiveUser): boolean {
+  const recent = db.getRecentMessages(user.id, 1);
+  if (!recent.length) return false;
+  const hoursSince = (Date.now() - new Date(recent[0].created_at).getTime()) / 3_600_000;
+  const localHour = new Date().toLocaleString("en-US", {
+    timeZone: user.timezone || "UTC",
+    hour: "numeric",
+    hour12: false,
+  });
+  const isDaytime = parseInt(localHour) >= 8 && parseInt(localHour) < 22;
+  return hoursSince >= (isDaytime ? 6 : 10);
+}
+
+// ============================================================
+// TELEGRAM
+// ============================================================
+
+async function sendTelegram(chatId: string, message: string): Promise<boolean> {
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: message }),
+      }
+    );
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================
+// PASS 2: TASK SCHEMA GENERATION
+// ============================================================
+
+async function generateTaskSchemas(
+  userId: string,
+  db: Database,
+  callLLM: (prompt: string) => Promise<string>
+): Promise<void> {
+  let logs: any[] = [];
+  try {
+    logs = db.getEscalationLogs(userId, 50);
+  } catch {
+    return;
+  }
+  if (logs.length < 3) return;
+
+  const logsText = logs
+    .map((l: any) => `Tier ${l.tier_reached} | ${l.execution_plan?.slice(0, 200) || ""}`)
+    .join("\n");
+
+  const prompt = `Analyze these recent task escalation logs and identify recurring task patterns that could be templated for zero-LLM execution next time.
+
+Escalation logs:
+${logsText}
+
+For each distinct recurring pattern you identify (if any), output a JSON object:
+{"name":"...","trigger":"short canonical trigger phrase","compressedContext":"...≤200 tokens of compressed execution context...","executionTemplate":"...compressed plan template...","expectedTools":["tool1","tool2"]}
+
+Output as a JSON array. If no clear patterns emerge, return an empty array [].
+Only output the JSON array, nothing else.`;
+
+  try {
+    const result = await callLLM(prompt);
+    const schemas = JSON.parse(result.trim());
+    if (!Array.isArray(schemas)) return;
+
+    for (const schema of schemas) {
+      if (!schema.name || !schema.trigger || !schema.executionTemplate) continue;
+      try {
+        const embedding = await generateEmbedding(schema.trigger);
+        if (!embedding) continue;
+        await saveSchema(db, userId, {
+          name: schema.name,
+          triggerEmbedding: Buffer.from(new Float32Array(embedding).buffer),
+          compressedContext: schema.compressedContext || "",
+          executionTemplate: schema.executionTemplate,
+          expectedTools: schema.expectedTools || [],
+          successRate: 1.0,
+          useCount: 0,
+          lastUsed: null,
+        });
+        console.log(`[dream] Created task schema: ${schema.name}`);
+      } catch {}
+    }
+  } catch {}
+}
+
+// ============================================================
+// PASS 3: BUSINESS CONTEXT CARD REGENERATION
+// ============================================================
+
+async function regenerateBusinessContextCard(
+  userId: string,
+  db: Database,
+  callLLM: (prompt: string) => Promise<string>
+): Promise<void> {
+  let memContext = "";
+  try {
+    memContext = await getMemoryContext(db, userId, 2000);
+  } catch {}
+
+  if (!memContext || memContext.length < 100) return;
+
+  const prompt = `Generate a compact Business Context Card from this user's memory and context. Maximum 750 tokens.
+
+Source memory:
+${memContext}
+
+Format the card EXACTLY as:
+## Business Context
+**Goals** (active): [bullet list of 3-5 active goals]
+**Active Projects**: [name | status | next action]
+**Key Relationships**: [name | role | last interaction note]
+**Recurring Tasks**: [task | cadence | next due]
+**Decision Rules**: [always/never rules established]
+**Communication Style**: [tone and response preferences]
+**Current Blockers**: [what's stuck and why]
+
+Be specific and concise. Only include sections where there is real data.`;
+
+  try {
+    const card = await callLLM(prompt);
+    db.setServiceState("business_context_card", userId, card.trim());
+    console.log(`[dream] Business context card regenerated for user ${userId}`);
+  } catch {}
+}
+
+// ============================================================
+// DREAM CYCLE (per-user)
+// ============================================================
+
+async function runDreamCycle(db: Database, user: ProactiveUser): Promise<number> {
+  // 1. Rate gate — skip if last dream was less than 6 hours ago
+  const state = loadDreamState(user.id);
+  if (state.lastDreamAt) {
+    const hoursSince = (Date.now() - new Date(state.lastDreamAt).getTime()) / 3_600_000;
+    if (hoursSince < 6) {
+      console.log(`[dream] ${user.name}: skipping — last dream ${hoursSince.toFixed(1)}h ago`);
+      return 0;
+    }
+  }
+
+  // 2. Fetch recent conversation messages chronologically
+  const recentMessages = db.getRecentMessages(user.id, 50);
+  const sorted = [...recentMessages].reverse(); // getRecentMessages returns newest-first, reverse to get oldest-first
+
+  // 3. Format as User/Nova exchanges, capped at 20,000 chars
+  let exchanges = "";
+  for (const msg of sorted) {
+    const prefix = msg.role === "user" ? "User" : "Nova";
+    const line = `${prefix}: ${msg.content}\n`;
+    if ((exchanges + line).length > 20_000) break;
+    exchanges += line;
+  }
+  const formattedExchanges = exchanges.trim() || "(no recent conversation history)";
+
+  // 4. Get existing memory context so Claude knows what NOT to re-record
+  let existingContext = "";
+  try {
+    existingContext = await getMemoryContext(db, user.id, 2000);
+  } catch (err) {
+    console.warn(`[dream] ${user.name}: getMemoryContext failed — ${err}`);
+  }
+
+  // 5. Build dream prompt
+  const dreamPrompt = `You are running ${user.name}'s nightly memory consolidation. Like sleep, extract lasting insights from recent experiences — patterns, not events.
+
+EXISTING LONG-TERM MEMORY (do NOT repeat anything already here):
+${existingContext || "(none yet)"}
+
+RECENT CONVERSATIONS (last 48 hours):
+${formattedExchanges}
+
+Find things NOT already in long-term memory:
+(a) Communication/work patterns
+(b) Implicit goals or concerns
+(c) Preferences revealed through behavior
+(d) Durable facts worth remembering long-term
+
+Rules: skip one-off events, keep insights self-contained, max 8 per cycle.
+
+Format: [INSIGHT: text]
+Nothing new: output only NO_INSIGHTS`;
+
+  // 6. Call Claude Haiku — build reusable callLLM for later passes
+  const claude = getProvider("claude") ?? getDefaultProvider();
+  const callLLM = async (prompt: string): Promise<string> => {
+    const result = await claude.call({
+      prompt,
+      model: claude.mapModelTier("fast"),
+      outputFormat: "text",
+      sandboxed: true,
+    });
+    return result.text;
+  };
+
+  let response = "";
+  try {
+    response = await callLLM(dreamPrompt);
+  } catch (err) {
+    console.error(`[dream] ${user.name}: LLM call failed — ${err}`);
+    return 0;
+  }
+
+  // 7. Parse [INSIGHT: text] tags
+  const insightMatches = [...response.matchAll(/\[INSIGHT:\s*(.+?)\]/gi)];
+  const insights = insightMatches.map(m => m[1].trim()).filter(Boolean);
+
+  if (insights.length === 0) {
+    console.log(`[dream] ${user.name}: no new insights this cycle`);
+    saveDreamState(user.id, { lastDreamAt: new Date().toISOString(), lastInsightCount: 0 });
+    return 0;
+  }
+
+  // 8. Write insights to Memwright
+  let savedCount = 0;
+  try {
+    await memwright.batchAdd(
+      insights.map(text => ({
+        content: text,
+        namespace: `user:${user.id}`,
+        category: "insight",
+        tags: ["dream", new Date().toISOString().slice(0, 10)],
+        metadata: {
+          source: "dream-mode",
+          cycle_date: new Date().toISOString().slice(0, 10),
+        },
+      }))
+    );
+    savedCount = insights.length;
+  } catch (err) {
+    console.warn(`[dream] ${user.name}: batchAdd failed — ${err}. Will retry next cycle.`);
+  }
+
+  // 9. Update state
+  saveDreamState(user.id, { lastDreamAt: new Date().toISOString(), lastInsightCount: savedCount });
+
+  // 10. Pass 2 — task schema generation from escalation logs
+  await generateTaskSchemas(user.id, db, callLLM);
+
+  // 11. Pass 3 — regenerate business context card
+  await regenerateBusinessContextCard(user.id, db, callLLM);
+
+  // 12. Optional Telegram notification
+  if (user.preferences?.dream_notify === true && insights.length >= 3 && BOT_TOKEN) {
+    await sendTelegram(
+      user.telegram_id,
+      `Dream mode ran — extracted ${insights.length} new insights from your recent conversations.`
+    );
+  }
+
+  return insights.length;
+}
+
+// ============================================================
+// MAIN
+// ============================================================
+
+async function main() {
+  const db = getDb();
+  const users = getAllProactiveUsers(db);
+  const idleOnly = process.argv.includes("--idle");
+  const targetUser = process.argv.includes("--user")
+    ? process.argv[process.argv.indexOf("--user") + 1]
+    : null;
+
+  for (const user of users) {
+    if (targetUser && user.id !== targetUser) continue;
+    if (idleOnly && !isUserIdle(db, user)) {
+      console.log(`[dream] Skipping ${user.name} — not idle`);
+      continue;
+    }
+    const count = await runDreamCycle(db, user);
+    console.log(`[dream] ${user.name}: ${count} insights extracted`);
+  }
+}
+
+main().catch(console.error);

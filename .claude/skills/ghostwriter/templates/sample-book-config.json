@@ -1,0 +1,56 @@
+{
+  "title": "The Quiet Harbor",
+  "subtitle": "Finding Stillness in a Noisy World",
+  "author": "Jane Doe",
+  "dedication": "For everyone who taught me that rest is not the absence of work, but the foundation of it.",
+  "copyright": {
+    "year": 2026,
+    "holder": "Jane Doe",
+    "isbn": "978-0-000-00000-0"
+  },
+  "chapters": [
+    {
+      "type": "preface",
+      "title": "Preface",
+      "content": [
+        "This book began as a series of morning notes — small observations about why the busiest seasons of my life produced the least of value.",
+        "I want to share that journey with you, because I suspect I am not the only one who confused motion with progress.",
+        "What follows is part reflection, part practical guide: a way of thinking about attention, rest, and the work that actually matters."
+      ]
+    },
+    {
+      "type": "chapter",
+      "number": 1,
+      "title": "The Day the Noise Won",
+      "subtitle": "How constant urgency quietly replaced deliberate work.",
+      "content": [
+        "The first paragraph of a chapter sets the scene and states the chapter's core idea plainly.",
+        "Subsequent paragraphs are indented automatically by the formatter.",
+        "***Emphasized passages — such as quotations you want set apart — can be wrapped in triple asterisks and will render as centered italic blocks.***",
+        "---",
+        "A horizontal rule string creates a section break within the chapter.",
+        "**Bold sentences render as strong emphasis — useful for the chapter's key takeaway.**"
+      ]
+    },
+    {
+      "type": "chapter",
+      "number": 2,
+      "title": "An Inventory of Attention",
+      "content": [
+        "The first content paragraph of chapter 2 goes here.",
+        "Subsequent paragraphs get automatic first-line indentation.",
+        "> This is an example of a block quote that will render with special indentation.",
+        "Normal text continues after the quote."
+      ]
+    },
+    {
+      "type": "conclusion",
+      "title": "Conclusion",
+      "content": [
+        "This is the book's conclusion.",
+        "Conclusion text follows the same formatting rules as chapters.",
+        "*\"Stillness is not the enemy of ambition; it is what makes ambition aim well.\" — Jane Doe*"
+      ]
+    }
+  ]
+}
