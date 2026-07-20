@@ -8,6 +8,7 @@
 
 import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { stat } from "fs/promises";
+import { getExamplePrompt, NOVA_COMMANDS } from "../onboarding.ts";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -60,6 +61,28 @@ export class TelegramAdapter implements ChannelAdapter {
       // Handle approval buttons directly — they need the raw grammY Context
       if (data.startsWith("apv:") && this.approvalHandler) {
         await this.approvalHandler(data, ctx);
+        return;
+      }
+
+      // Starter-example buttons — tapping one runs a real prompt so the first
+      // interaction succeeds without the user typing anything.
+      if (data.startsWith("nova_ex:")) {
+        try { await ctx.answerCallbackQuery(); } catch {}
+        const prompt = getExamplePrompt(data.slice("nova_ex:".length));
+        if (prompt && this.messageHandler) {
+          const injected: IncomingMessage = {
+            channelType: "telegram",
+            channelMessageId: ctx.callbackQuery.message?.message_id?.toString() || `cb-${chatId}`,
+            channelChatId: chatId,
+            userId: user?.id || "",
+            platformUserId: ctx.from?.id?.toString() || "",
+            text: prompt,
+            isGroup: false,
+          };
+          (injected as any)._platformContext = this.createPlatformContext(ctx as any);
+          const injectedReply: ReplyFn = async (msg) => { await this.send(chatId, msg); };
+          this.messageHandler(injected, injectedReply);
+        }
         return;
       }
 
@@ -257,6 +280,14 @@ export class TelegramAdapter implements ChannelAdapter {
 
   async start(): Promise<void> {
     this.registerHandlers();
+    // Register the native "/" command menu so onboarding surfaces are discoverable by design.
+    try {
+      await this.bot.api.setMyCommands(
+        NOVA_COMMANDS.map((c) => ({ command: c.command, description: c.description }))
+      );
+    } catch (err) {
+      console.warn("[telegram] setMyCommands failed:", err);
+    }
     // Don't await — grammy's bot.start() never resolves (it runs the polling loop)
     this.bot.start({
       onStart: () => {

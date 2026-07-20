@@ -678,6 +678,8 @@ class SharedDatabase {
     try { this.db.run(`ALTER TABLE users ADD COLUMN username TEXT`); } catch {}
     try { this.db.run(`ALTER TABLE users ADD COLUMN password_hash TEXT`); } catch {}
     try { this.db.run(`ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0`); } catch {}
+    // Onboarding: timestamp of the first-run welcome so it fires exactly once
+    try { this.db.run(`ALTER TABLE users ADD COLUMN onboarded_at TEXT`); } catch {}
     try { this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL`); } catch {}
   }
 
@@ -1590,6 +1592,25 @@ export class Database {
     if (!row) return null;
     row.preferences = parseJson(row.preferences, {});
     return row;
+  }
+
+  // ---- Onboarding (first-run welcome) ----
+
+  /** Returns the ISO timestamp of the user's first-run welcome, or null if they haven't been onboarded. */
+  getOnboardedAt(userId: string): string | null {
+    const row = this.shared.db.query(
+      `SELECT onboarded_at FROM users WHERE id = ? LIMIT 1`
+    ).get(userId) as any;
+    return row?.onboarded_at ?? null;
+  }
+
+  /** Marks the user as onboarded (idempotent — only sets the timestamp the first time). */
+  setOnboardedAt(userId: string): void {
+    this.shared.db.run(
+      `UPDATE users SET onboarded_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ? AND onboarded_at IS NULL`,
+      [userId]
+    );
   }
 
   // ---- Approval Rules ----

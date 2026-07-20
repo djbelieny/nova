@@ -14,6 +14,10 @@ import {
   starterAgentsConfig,
   writeConfigFiles,
   answersToEnvVars,
+  loadWizardState,
+  saveWizardState,
+  clearWizardState,
+  captureTelegramUserId,
   type WizardAnswers,
 } from "../src/setup-wizard.ts";
 
@@ -156,4 +160,55 @@ test("writeConfigFiles overwrites when force is set", () => {
   const vars = parseEnvVars(readFileSync(join(root, ".env"), "utf-8"));
   expect(vars.OLD).toBeUndefined();
   expect(vars.TELEGRAM_BOT_TOKEN).toBe(VALID.telegramToken);
+});
+
+// ── Resumable wizard state ──────────────────────────────────────
+test("wizard state round-trips and merges patches", () => {
+  const dir = mkdtempSync(join(tmpdir(), "nova-wiz-"));
+  const prev = process.env.NOVA_SETUP_STATE;
+  process.env.NOVA_SETUP_STATE = join(dir, ".setup-state.json");
+  try {
+    expect(loadWizardState()).toEqual({ completed: [], answers: {} });
+
+    saveWizardState({ completed: ["claude"], answers: { userName: "Jake" } });
+    let s = loadWizardState();
+    expect(s.completed).toEqual(["claude"]);
+    expect(s.answers.userName).toBe("Jake");
+
+    // Merge: new step + new answer, existing preserved, no dup steps
+    saveWizardState({ completed: ["claude", "telegram"], answers: { timezone: "UTC" } });
+    s = loadWizardState();
+    expect(s.completed).toEqual(["claude", "telegram"]);
+    expect(s.answers).toEqual({ userName: "Jake", timezone: "UTC" });
+
+    clearWizardState();
+    expect(loadWizardState()).toEqual({ completed: [], answers: {} });
+  } finally {
+    if (prev === undefined) delete process.env.NOVA_SETUP_STATE;
+    else process.env.NOVA_SETUP_STATE = prev;
+  }
+});
+
+// ── Telegram user-ID auto-capture ───────────────────────────────
+test("captureTelegramUserId returns the newest sender id", async () => {
+  const fakeFetch = async () => ({
+    json: async () => ({
+      ok: true,
+      result: [
+        { message: { from: { id: 111 } } },
+        { message: { from: { id: 222 } } },
+      ],
+    }),
+  });
+  expect(await captureTelegramUserId("tok", fakeFetch)).toBe("222");
+});
+
+test("captureTelegramUserId returns null when no updates", async () => {
+  const fakeFetch = async () => ({ json: async () => ({ ok: true, result: [] }) });
+  expect(await captureTelegramUserId("tok", fakeFetch)).toBeNull();
+});
+
+test("captureTelegramUserId returns null on network error", async () => {
+  const boom = async () => { throw new Error("network"); };
+  expect(await captureTelegramUserId("tok", boom as any)).toBeNull();
 });

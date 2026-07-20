@@ -32,6 +32,13 @@ import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, recoverPendingApprovals } from "./orchestrator.ts";
 import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
+import {
+  buildWelcomeMessage,
+  buildHelpMessage,
+  buildTeamMessage,
+  buildExamplesMessage,
+  exampleButtons,
+} from "./onboarding.ts";
 import { recordSubtaskAction } from "./ledger.ts";
 import { hasUserMcpConfig, getUserMcpConfigPath, getFilteredMcpConfigPath, getIntegrationCredentials, regenerateMcpConfig } from "./integrations.ts";
 import {
@@ -1533,51 +1540,50 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       return;
     }
 
-    // /start — onboarding for first-time users
-    if (text.trim().toLowerCase() === "/start") {
-      const priorMessages = supabase.getRecentMessages(user.id, 1);
-      const isFirstTime = priorMessages.length === 0;
-      if (isFirstTime) {
-        await ctx.reply(
-          `Welcome! I'm ${_botName}.\n\n` +
-          `I'm your personal AI — 24 specialist agents ready to handle tasks across marketing, writing, strategy, development, legal, and more.\n\n` +
-          `<b>Try saying:</b>\n` +
-          `• "Write a LinkedIn post about AI trends"\n` +
-          `• "Research competitors for [your product]"\n` +
-          `• "Help me plan my week"\n\n` +
-          `Type /help to see all commands, or just start chatting!`,
-          { parse_mode: "HTML" }
-        );
-        return;
+    // First-run welcome — fires exactly once, on the user's first non-command message.
+    // Sends the friendly welcome + tappable starter buttons, then continues to process
+    // whatever they actually typed.
+    if (!text.trim().startsWith("/") && !supabase.getOnboardedAt(user.id)) {
+      try {
+        await ctx.reply(buildWelcomeMessage(user.name), {
+          parse_mode: "Markdown",
+          reply_markup: { inline_keyboard: exampleButtons().map((row) => row.map((b) => ({ text: b.label, callback_data: b.callbackData }))) },
+        });
+      } catch (err) {
+        console.warn("[relay] first-run welcome failed:", err);
       }
+      supabase.setOnboardedAt(user.id);
+      // fall through — still handle their message
     }
 
-    // /help — show available commands
+    // /start — always greets and shows starter buttons (replayable anytime).
+    if (text.trim().toLowerCase() === "/start") {
+      await ctx.reply(buildWelcomeMessage(user.name), {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: exampleButtons().map((row) => row.map((b) => ({ text: b.label, callback_data: b.callbackData }))) },
+      });
+      supabase.setOnboardedAt(user.id);
+      return;
+    }
+
+    // /help — friendly, task-oriented help (plain language for non-technical users).
     if (text.trim().toLowerCase() === "/help" || text.trim().toLowerCase() === "/help ") {
-      await ctx.reply(
-        `<b>Available Commands</b>\n\n` +
-        `<b>Core</b>\n` +
-        `/voice — Toggle voice responses\n` +
-        `/agents — Browse 24 specialist agents\n` +
-        `/memory — View &amp; manage your memories\n` +
-        `/goals — View active goals\n` +
-        `/tasks — View pending agent tasks\n` +
-        `/usage — Today's AI spend &amp; quota\n` +
-        `/schedule [list] — View &amp; manage scheduled tasks\n` +
-        `/board &lt;question&gt; — Convene executive board\n` +
-        `/feedback [good|bad] — Rate Nova's last response\n\n` +
-        `<b>Settings</b>\n` +
-        `/settings autopilot — Configure auto-approvals\n` +
-        `/settings role &lt;role&gt; — Set your job role\n` +
-        `/settings access — Grant team access\n\n` +
-        `<b>Admin</b>\n` +
-        `/status — System status\n` +
-        `/reload — Pull &amp; restart Nova\n` +
-        `/budget — View/manage spend rules\n` +
-        `/adduser — Add a team member\n\n` +
-        `Just send a message to chat with Nova or assign tasks to any agent!`,
-        { parse_mode: "HTML" }
-      );
+      await ctx.reply(buildHelpMessage(), { parse_mode: "Markdown" });
+      return;
+    }
+
+    // /team — meet your specialists, grouped by outcome in plain language.
+    if (text.trim().toLowerCase() === "/team") {
+      await ctx.reply(buildTeamMessage(getAllAgents()), { parse_mode: "Markdown" });
+      return;
+    }
+
+    // /examples — starter ideas you can tap to run right now.
+    if (text.trim().toLowerCase() === "/examples") {
+      await ctx.reply(buildExamplesMessage(), {
+        parse_mode: "Markdown",
+        reply_markup: { inline_keyboard: exampleButtons().map((row) => row.map((b) => ({ text: b.label, callback_data: b.callbackData }))) },
+      });
       return;
     }
 
