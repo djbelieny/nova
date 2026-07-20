@@ -58,15 +58,21 @@ User ──▶ Channel ──▶ relay.ts ──▶ orchestrator.ts ──▶ pl
 - **[Claude Code](https://claude.ai/claude-code)** CLI installed and authenticated
 - A **Telegram** account
 
-### Option A: Guided Setup (Recommended)
+### Option A: One-command install (Recommended)
 
 ```bash
 git clone https://github.com/djbelieny/nova.git
 cd nova
-claude
+bash bootstrap.sh
 ```
 
-Claude Code reads `CLAUDE.md` and can guide you through setup. See **[SETUP.md](SETUP.md)** for the full walkthrough.
+`bootstrap.sh` installs any missing prerequisites (Bun, Claude Code CLI), then launches a
+guided **setup wizard** (`bun run init`) that walks you through connecting Telegram and an AI
+provider — no file editing required. It can even **auto-detect your Telegram user ID** (just
+message your bot when prompted). The wizard is resumable: close it and re-run `bash bootstrap.sh`
+to pick up where you left off.
+
+> Just checking prerequisites? `bash bootstrap.sh --check` reports what's installed and changes nothing.
 
 ### Option B: Manual Setup
 
@@ -79,6 +85,19 @@ bun run test:telegram  # Verify bot token
 bun run test:sqlite    # Verify database
 bun run start          # Start the bot
 ```
+
+### Using Nova
+
+Once it's running, just message your bot in plain English. Handy commands appear in Telegram's
+`/` menu:
+
+- **/start** — welcome + tappable starter ideas
+- **/help** — how to use Nova
+- **/team** — meet your 24 specialists, grouped by what you want to get done
+- **/examples** — ideas you can tap to run right now
+
+Something not working? Run **`bun run doctor`** for a health check, or **`bun run update`** to pull
+the latest and reinstall.
 
 ## Commands
 
