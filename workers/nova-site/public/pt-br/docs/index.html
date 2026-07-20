@@ -295,8 +295,10 @@
     </ul>
     <p>É só isso para começar — o instalador cuida do resto. Ele instala automaticamente o <strong><a href="https://bun.sh" rel="noopener">Bun</a></strong> e a <strong>CLI do <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a></strong> caso estejam faltando, então você não precisa configurá-los manualmente. Contas opcionais desbloqueiam mais: Gemini, Groq (transcrição de voz gratuita), Twilio (chamadas telefônicas), Perplexity (pesquisa na web), Meta, Notion, Google Workspace, e mais — tudo coberto em <a href="#configuration">Configuração</a>.</p>
 
-    <h3>Opção A — um comando (recomendado)</h3>
-    <p>Um comando instala qualquer pré-requisito que esteja faltando e, em seguida, abre um amigável <strong>assistente de configuração</strong>. O assistente conduz você pela conexão do Telegram e de um provedor de IA — sem editar arquivos — e pode até <strong>detectar seu ID de usuário do Telegram automaticamente</strong> (ele apenas pede que você mande uma mensagem para o seu bot). Ele é <strong>retomável</strong>: feche-o e execute o mesmo comando novamente para continuar de onde parou.</p>
+    <h3>Opção A — uma linha (recomendado)</h3>
+    <p>Uma única linha clona o Nova em <code>~/nova</code>, instala qualquer pré-requisito que esteja faltando e, em seguida, abre um amigável <strong>assistente de configuração</strong>. O assistente conduz você pela conexão do Telegram e de um provedor de IA — sem editar arquivos — e pode até <strong>detectar seu ID de usuário do Telegram automaticamente</strong> (ele apenas pede que você mande uma mensagem para o seu bot). Ele é <strong>retomável</strong>: feche-o e execute novamente para continuar de onde parou.</p>
+    <pre><code><span class="p">$</span> curl -fsSL https://mynova.space/install | bash</code></pre>
+    <p>Prefere cloná-lo você mesmo? É o mesmo que executar:</p>
     <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
 <span class="p">$</span> bash bootstrap.sh      <span class="c"># instala os pré-requisitos e abre o assistente de configuração</span></code></pre>
     <p>Só quer verificar o que já está instalado? <code>bash bootstrap.sh --check</code> relata o estado do seu sistema e não altera nada.</p>

@@ -295,8 +295,10 @@
     </ul>
     <p>That's it to start — the installer takes care of the rest. It automatically installs <strong><a href="https://bun.sh" rel="noopener">Bun</a></strong> and the <strong><a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a> CLI</strong> if they're missing, so you don't have to set them up by hand. Optional accounts unlock more: Gemini, Groq (free voice transcription), Twilio (phone calls), Perplexity (web research), Meta, Notion, Google Workspace, and more — all covered in <a href="#configuration">Configuration</a>.</p>
 
-    <h3>Option A — one command (recommended)</h3>
-    <p>One command installs any missing prerequisites, then launches a friendly <strong>setup wizard</strong>. The wizard walks you through connecting Telegram and an AI provider — no file editing — and can even <strong>detect your Telegram user ID automatically</strong> (it just asks you to message your bot). It's <strong>resumable</strong>: close it and re-run the same command to pick up where you left off.</p>
+    <h3>Option A — one line (recommended)</h3>
+    <p>A single line clones Nova to <code>~/nova</code>, installs any missing prerequisites, then launches a friendly <strong>setup wizard</strong>. The wizard walks you through connecting Telegram and an AI provider — no file editing — and can even <strong>detect your Telegram user ID automatically</strong> (it just asks you to message your bot). It's <strong>resumable</strong>: close it and re-run to pick up where you left off.</p>
+    <pre><code><span class="p">$</span> curl -fsSL https://mynova.space/install | bash</code></pre>
+    <p>Prefer to clone it yourself? That's the same as running:</p>
     <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
 <span class="p">$</span> bash bootstrap.sh      <span class="c"># installs prerequisites, then runs the setup wizard</span></code></pre>
     <p>Just want to check what's already installed? <code>bash bootstrap.sh --check</code> reports your system and changes nothing.</p>

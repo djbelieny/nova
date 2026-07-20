@@ -295,8 +295,10 @@
     </ul>
     <p>Eso es todo para empezar — el instalador se encarga del resto. Instala automáticamente <strong><a href="https://bun.sh" rel="noopener">Bun</a></strong> y la <strong>CLI de <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a></strong> si faltan, para que no tengas que configurarlos a mano. Las cuentas opcionales desbloquean más: Gemini, Groq (transcripción de voz gratuita), Twilio (llamadas telefónicas), Perplexity (investigación web), Meta, Notion, Google Workspace y más — todo cubierto en <a href="#configuration">Configuración</a>.</p>
 
-    <h3>Opción A — un solo comando (recomendado)</h3>
-    <p>Un solo comando instala cualquier requisito que falte y luego ejecuta un amigable <strong>asistente de configuración</strong>. El asistente te guía para conectar Telegram y un proveedor de IA — sin editar archivos — e incluso puede <strong>detectar tu ID de usuario de Telegram automáticamente</strong> (solo te pide que le escribas a tu bot). Es <strong>reanudable</strong>: ciérralo y vuelve a ejecutar el mismo comando para retomar donde lo dejaste.</p>
+    <h3>Opción A — una sola línea (recomendado)</h3>
+    <p>Una sola línea clona Nova en <code>~/nova</code>, instala cualquier requisito que falte y luego ejecuta un amigable <strong>asistente de configuración</strong>. El asistente te guía para conectar Telegram y un proveedor de IA — sin editar archivos — e incluso puede <strong>detectar tu ID de usuario de Telegram automáticamente</strong> (solo te pide que le escribas a tu bot). Es <strong>reanudable</strong>: ciérralo y vuelve a ejecutarlo para retomar donde lo dejaste.</p>
+    <pre><code><span class="p">$</span> curl -fsSL https://mynova.space/install | bash</code></pre>
+    <p>¿Prefieres clonarlo tú mismo? Es lo mismo que ejecutar:</p>
     <pre><code><span class="p">$</span> git clone https://github.com/djbelieny/nova && cd nova
 <span class="p">$</span> bash bootstrap.sh      <span class="c"># instala los requisitos y luego ejecuta el asistente de configuración</span></code></pre>
     <p>¿Solo quieres ver qué hay instalado? <code>bash bootstrap.sh --check</code> reporta el estado de tu sistema y no cambia nada.</p>

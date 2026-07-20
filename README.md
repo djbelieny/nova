@@ -58,13 +58,14 @@ User ──▶ Channel ──▶ relay.ts ──▶ orchestrator.ts ──▶ pl
 - **[Claude Code](https://claude.ai/claude-code)** CLI installed and authenticated
 - A **Telegram** account
 
-### Option A: One-command install (Recommended)
+### Option A: One-line install (Recommended)
 
 ```bash
-git clone https://github.com/djbelieny/nova.git
-cd nova
-bash bootstrap.sh
+curl -fsSL https://mynova.space/install | bash
 ```
+
+That's the whole thing. It clones Nova to `~/nova`, installs any missing prerequisites, and
+launches the setup wizard. (Prefer to clone yourself? `git clone https://github.com/djbelieny/nova.git && cd nova && bash bootstrap.sh` does the same.)
 
 `bootstrap.sh` installs any missing prerequisites (Bun, Claude Code CLI), then launches a
 guided **setup wizard** (`bun run init`) that walks you through connecting Telegram and an AI
