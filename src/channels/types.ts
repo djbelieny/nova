@@ -6,7 +6,7 @@
  */
 
 export interface IncomingMessage {
-  channelType: "telegram" | "whatsapp" | "slack";
+  channelType: "telegram" | "whatsapp" | "slack" | "cli" | "discord";
   channelMessageId: string;
   channelChatId: string;
   userId: string;           // Nova user UUID (resolved from platform ID)
@@ -30,7 +30,7 @@ export interface OutgoingMessage {
 }
 
 export interface ChannelAdapter {
-  readonly type: "telegram" | "whatsapp" | "slack";
+  readonly type: "telegram" | "whatsapp" | "slack" | "cli" | "discord";
   start(): Promise<void>;
   stop(): Promise<void>;
   send(chatId: string, message: OutgoingMessage): Promise<void>;
@@ -72,7 +72,7 @@ export interface PlatformContext {
   /** Message ID to reply to (for threading) */
   novaReplyTo?: string | number;
   /** Channel type shortcut */
-  channelType: "telegram" | "whatsapp" | "slack";
+  channelType: "telegram" | "whatsapp" | "slack" | "cli" | "discord";
   /** Send a text reply */
   reply(text: string, opts?: any): Promise<{ message_id: number | string }>;
   /** Send typing indicator */

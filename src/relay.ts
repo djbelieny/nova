@@ -294,7 +294,7 @@ const ghlLocationCache = new Map<string, string>();
  * Resolve a user by platform-specific ID.
  * Supports Telegram ID, WhatsApp phone, or Slack user ID.
  */
-async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" | "slack" = "telegram"): Promise<NovaUser | null> {
+async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" | "slack" | "cli" | "discord" = "telegram"): Promise<NovaUser | null> {
   const cacheKey = `${channel}:${platformId}`;
   const cached = userCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < USER_CACHE_TTL_MS) return cached.user;
@@ -304,6 +304,11 @@ async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" 
       telegram: (id) => supabase.getUserByTelegramId(id),
       whatsapp: (id) => supabase.getUserByWhatsappId(id),
       slack: (id) => supabase.getUserBySlackId(id),
+      // CLI is a single local surface → resolve to the owner (admin, else first user).
+      cli: () => supabase.getUsersByRole("admin")?.[0] ?? supabase.getAllActiveUsers()?.[0] ?? null,
+      // TODO: Discord pairing once pairing_codes lands — for now, unknown Discord
+      // users fall through to the existing "This bot is private" reply.
+      discord: (id) => supabase.getUserByDiscordId(id),
     };
 
     const row = lookupMap[channel]?.(platformId);
