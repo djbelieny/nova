@@ -1,110 +1,125 @@
 #!/usr/bin/env bash
-# Nova Bootstrap — sets up prerequisites and launches the AI installer
-# Usage: git clone <repo> nova && cd nova && bash bootstrap.sh
+# Nova Bootstrap — installs prerequisites and launches the setup wizard.
+# Usage:
+#   git clone <repo> nova && cd nova && bash bootstrap.sh
+#   bash bootstrap.sh --check    # detect everything, change nothing (CI-safe)
 
 set -euo pipefail
 
-BLUE='\033[0;34m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+
+CHECK=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) CHECK=1 ;;
+  esac
+done
 
 echo ""
-echo -e "${BLUE}  Nova Bootstrap${NC}"
+if [[ "$CHECK" == "1" ]]; then
+  echo -e "${BLUE}  Nova Bootstrap — preflight check (no changes)${NC}"
+else
+  echo -e "${BLUE}  Nova Bootstrap${NC}"
+fi
 echo "  ─────────────────────────────────"
 echo ""
 
-# ── 1. Detect OS ────────────────────────────────────────────────
+# ── 1. Detect OS (and reject bare Windows shells) ────────────────
 OS="$(uname -s)"
 echo "  OS: $OS"
+case "$OS" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo ""
+    echo -e "  ${RED}Windows shells (Git Bash / MSYS / Cygwin) aren't supported.${NC}"
+    echo "  Nova runs great on Windows via WSL2:"
+    echo "    1. Open PowerShell as Administrator and run:  wsl --install"
+    echo "    2. Reboot, open 'Ubuntu' from the Start menu."
+    echo "    3. Inside Ubuntu, re-run this installer."
+    exit 1
+    ;;
+esac
 
-# ── 2. Install Bun if missing ────────────────────────────────────
-if ! command -v bun &>/dev/null; then
-  echo ""
+# ── helper: report presence in --check mode, install otherwise ───
+have() { command -v "$1" &>/dev/null; }
+
+# ── 2. Bun ───────────────────────────────────────────────────────
+if have bun; then
+  echo -e "  ${GREEN}✓ Bun: $(bun --version)${NC}"
+elif [[ "$CHECK" == "1" ]]; then
+  echo -e "  ${YELLOW}! Bun: not found (would install from bun.sh)${NC}"
+else
   echo -e "  ${YELLOW}Installing Bun...${NC}"
   curl -fsSL https://bun.sh/install | bash
   export PATH="$HOME/.bun/bin:$PATH"
   echo -e "  ${GREEN}✓ Bun installed${NC}"
-else
-  echo -e "  ${GREEN}✓ Bun: $(bun --version)${NC}"
 fi
 
-# ── 3. Install Python if missing (for Memwright) ─────────────────
-if ! command -v python3 &>/dev/null; then
-  echo ""
-  echo -e "  ${YELLOW}Python 3 not found.${NC}"
-  if [[ "$OS" == "Darwin" ]]; then
-    echo "  Install via Homebrew: brew install python3"
+# ── 3. Python (for Memwright memory service) ─────────────────────
+if have python3; then
+  echo -e "  ${GREEN}✓ Python: $(python3 --version 2>&1)${NC}"
+else
+  echo -e "  ${YELLOW}! Python 3: not found${NC}"
+  if [[ "$OS" == "Darwin" ]]; then echo "    Install: brew install python3";
+  else echo "    Install: sudo apt-get install -y python3 python3-pip python3-venv"; fi
+  [[ "$CHECK" == "1" ]] || { echo "  Then re-run bootstrap.sh"; exit 1; }
+fi
+
+# ── 4. Claude Code CLI (Nova's default brain) ────────────────────
+if have claude; then
+  echo -e "  ${GREEN}✓ Claude Code CLI: found${NC}"
+elif have codex || have gemini; then
+  echo -e "  ${GREEN}✓ AI CLI: $(have codex && echo codex || echo gemini) found${NC}"
+elif [[ "$CHECK" == "1" ]]; then
+  echo -e "  ${YELLOW}! Claude Code CLI: not found (would install)${NC}"
+else
+  echo -e "  ${YELLOW}Installing Claude Code CLI...${NC}"
+  if curl -fsSL https://claude.ai/install.sh | bash; then
+    export PATH="$HOME/.local/bin:$PATH"
+    echo -e "  ${GREEN}✓ Claude Code installed${NC}"
+  elif have npm && npm install -g @anthropic-ai/claude-code; then
+    echo -e "  ${GREEN}✓ Claude Code installed (via npm)${NC}"
   else
-    echo "  Install via: sudo apt-get install -y python3 python3-pip python3-venv"
+    echo -e "  ${RED}Could not install Claude Code automatically.${NC}"
+    echo "    Install it manually: npm install -g @anthropic-ai/claude-code"
+    echo "    Then re-run bootstrap.sh"
+    exit 1
   fi
-  echo "  Then re-run bootstrap.sh"
-  exit 1
-else
-  echo -e "  ${GREEN}✓ Python: $(python3 --version)${NC}"
 fi
 
-# ── 4. Install Node deps ──────────────────────────────────────────
+# ── 5. In --check mode we stop here (no mutations) ───────────────
+if [[ "$CHECK" == "1" ]]; then
+  echo ""
+  echo -e "  ${GREEN}Preflight complete — no changes made.${NC}"
+  echo "  Run 'bash bootstrap.sh' to install and set up Nova."
+  exit 0
+fi
+
+# ── 6. Install dependencies ──────────────────────────────────────
 echo ""
 echo "  Installing dependencies..."
 bun install --silent
 echo -e "  ${GREEN}✓ Dependencies installed${NC}"
 
-# ── 5. Install Memwright Python deps ─────────────────────────────
-if [[ ! -d ".venv-memwright" ]]; then
-  echo ""
+if [[ ! -d ".venv-memwright" ]] && have python3; then
   echo "  Setting up Memwright (memory service)..."
   python3 -m venv .venv-memwright
-  .venv-memwright/bin/pip install --quiet "agent-memory-server[all]"
-  echo -e "  ${GREEN}✓ Memwright installed${NC}"
-else
-  echo -e "  ${GREEN}✓ Memwright venv exists${NC}"
+  .venv-memwright/bin/pip install --quiet "agent-memory-server[all]" || \
+    echo -e "  ${YELLOW}! Memwright deps skipped (optional).${NC}"
+  echo -e "  ${GREEN}✓ Memwright ready${NC}"
 fi
 
-# ── 6. Detect AI CLI ──────────────────────────────────────────────
-AI_CLI=""
-if command -v claude &>/dev/null; then
-  AI_CLI="claude"
-elif command -v codex &>/dev/null; then
-  AI_CLI="codex"
-elif command -v gemini &>/dev/null; then
-  AI_CLI="gemini"
-fi
-
+# ── 7. Launch the setup wizard ───────────────────────────────────
 echo ""
 echo "  ─────────────────────────────────"
-
-if [[ -z "$AI_CLI" ]]; then
-  echo -e "  ${RED}No AI CLI found.${NC}"
+echo -e "  ${GREEN}Prerequisites ready.${NC} Starting the Nova setup wizard..."
+echo ""
+if [[ -t 0 ]]; then
+  bun run init
   echo ""
-  echo "  Install one of:"
-  echo "    Claude Code:  npm install -g @anthropic-ai/claude-code"
-  echo "    Codex:        npm install -g @openai/codex"
-  echo "    Gemini CLI:   npm install -g @google-ai/gemini-cli"
-  echo ""
-  echo "  Then run: bash bootstrap.sh"
-  exit 1
+  echo -e "  Done! Start Nova with:  ${BLUE}bun run start${NC}"
+else
+  # No interactive terminal (e.g. piped). Tell the user how to finish.
+  echo "  Finish setup by running:"
+  echo -e "    ${BLUE}bun run init${NC}     # guided setup wizard"
+  echo -e "    ${BLUE}bun run start${NC}    # start Nova"
 fi
-
-echo -e "  ${GREEN}✓ AI CLI: $AI_CLI${NC}"
-echo ""
-echo "  Ready to install. Starting the AI-guided setup..."
-echo ""
-
-# ── 7. Launch installer ───────────────────────────────────────────
-INSTALL_CMD=""
-if [[ "$AI_CLI" == "claude" ]]; then
-  INSTALL_CMD='claude "Read INSTALLER.md and follow it exactly to set up Nova for this user."'
-elif [[ "$AI_CLI" == "codex" ]]; then
-  INSTALL_CMD='codex "Read INSTALLER.md and follow it exactly to set up Nova for this user."'
-elif [[ "$AI_CLI" == "gemini" ]]; then
-  INSTALL_CMD='gemini "Read INSTALLER.md and follow it exactly to set up Nova for this user."'
-fi
-
-echo -e "  Run this command to start the installer:\n"
-echo -e "  ${BLUE}$INSTALL_CMD${NC}"
-echo ""
-echo "  Or press Enter to launch it now (Ctrl+C to cancel):"
-read -r _
-eval "$INSTALL_CMD"
