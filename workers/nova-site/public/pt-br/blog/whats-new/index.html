@@ -3,12 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>O blog da Nova — escrevendo sobre o time de IA de código aberto</title>
-<meta name="description" content="Nova é um time de IA auto-hospedado de código aberto que você executa pelo Telegram: 24 agentes especialistas, um conselho executivo, aprovação humana antes de qualquer coisa ser publicada ou gasta, execução sandboxed e autonomia conquistada. Aqui está o que faz e como as pessoas o usam.">
-<meta property="og:title" content="O blog da Nova">
-<meta property="og:description" content="24 agentes especialistas, um conselho executivo, etapas de aprovação, execução sandboxed e autonomia conquistada — auto-hospedado e licença MIT. O que Nova faz e como usá-la.">
+<title>Agora a Nova fala todos os modelos — e vive no seu terminal — Nova</title>
+<meta name="description" content="Um lote de melhorias: execute qualquer modelo compatível com OpenAI ao lado das CLIs da sua assinatura, um comando nova de verdade com nova connect, canais no terminal + Discord e convites de equipe self-service — sem tocar no modelo de confiança auto-hospedado e com etapas de aprovação.">
+<meta property="og:title" content="Agora a Nova fala todos os modelos — e vive no seu terminal">
+<meta property="og:description" content="Adicione qualquer LLM ao lado das CLIs da sua assinatura, um comando nova de verdade com nova connect, canais no terminal + Discord e convites de equipe self-service. A mesma Nova auto-hospedada e com etapas de aprovação.">
 <meta property="og:type" content="article">
-<meta property="og:url" content="https://mynova.space/pt-br/blog/">
+<meta property="og:url" content="https://mynova.space/pt-br/blog/whats-new/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -158,27 +158,16 @@
   .foot-inner a { color: var(--muted); }
   .foot-inner a:hover { color: var(--text); }
 
-  .blog-head { padding: 56px 0 8px; }
-  .post-list { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 20px 0 40px; }
-  @media (max-width: 720px){ .post-list { grid-template-columns: 1fr; } }
-  a.post { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; transition: border-color .15s, transform .15s; }
-  a.post:hover { border-color: var(--tg); transform: translateY(-2px); text-decoration: none; }
-  a.post .tag { font-family: var(--mono); font-size: 12px; color: var(--tg); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 12px; }
-  a.post h3 { font-family: var(--display); font-weight: 700; font-size: 21px; letter-spacing: -0.02em; color: var(--text); margin-bottom: 8px; line-height: 1.15; }
-  a.post p { color: var(--muted); font-size: 15px; margin: 0 0 16px; flex: 1; }
-  a.post .more { font-size: 14px; font-weight: 600; color: var(--tg); }
-  a.post.feature { grid-column: 1 / -1; background: linear-gradient(180deg, var(--panel), var(--panel-2)); }
-
   .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
   .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
   .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
   .langsw a.on { color:var(--text) !important; background:var(--line); }
   @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
 </style>
-<link rel="alternate" hreflang="en" href="https://mynova.space/blog/">
-<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/">
-<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/">
-<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/">
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/whats-new/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/whats-new/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/whats-new/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/whats-new/">
 </head>
 <body>
 
@@ -193,8 +182,8 @@
       <a href="/pt-br/#agents">Agentes</a>
       <a href="/pt-br/#start">Início rápido</a>
       <a href="/pt-br/blog/">Blog</a>
-      <a href="/pt-br/docs/">Documentação</a>
-      <span class="langsw" aria-label="Idioma"><a href="/blog/" class="en" hreflang="en">EN</a><a href="/es/blog/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/" class="pt-br on" hreflang="pt-BR">PT</a></span>
+      <a href="/pt-br/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/whats-new/" class="en" hreflang="en">EN</a><a href="/es/blog/whats-new/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/whats-new/" class="pt-br on" hreflang="pt-BR">PT</a></span>
       <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
         <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         GitHub
@@ -203,70 +192,77 @@
   </div>
 </nav>
 
-<section class="blog-head">
+<article class="article">
   <div class="wrap">
-    <span class="eyebrow">O blog da Nova</span>
-    <h1>Escrevendo sobre Nova</h1>
-    <p class="lede">O que é Nova, como é construída, como executá-la e as ideias por trás das decisões — um time de IA auto-hospedado de código aberto que você executa pelo Telegram.</p>
-  </div>
-</section>
+    <span class="eyebrow">Novidades</span>
+    <h1>Agora a Nova fala todos os modelos — e vive no seu terminal</h1>
+    <p class="lede">Um lote de melhorias torna a Nova mais flexível e mais fácil de conviver — qualquer modelo, uma CLI de verdade, mais lugares para conversar com ela e acesso de equipe self-service — sem mudar o que ela é.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 20 de julho de 2026 <span class="dot">·</span> 6 min de leitura</p>
 
-<section>
-  <div class="wrap">
-    <div class="post-list">
-    <a class="post feature" href="/pt-br/blog/whats-new/">
-      <span class="tag">Novo</span>
-      <h3>Agora a Nova fala todos os modelos — e vive no seu terminal</h3>
-      <p>Use qualquer LLM ao lado das CLIs da sua assinatura, um comando `nova` de verdade com `nova connect`, canais no terminal + Discord e convites de equipe self-service.</p>
-      <span class="more">Ler →</span>
-    </a>
-    <a class="post" href="/pt-br/blog/what-is-nova/">
-      <span class="tag">Comece aqui</span>
-      <h3>O que é Nova?</h3>
-      <p>Seu próprio time de IA, executado de um chat do Telegram — o organograma, não o chatbot. O que é Nova, como funciona e como as pessoas a usam.</p>
-      <span class="more">Ler →</span>
-    </a>
-    <a class="post" href="/pt-br/blog/architecture/">
-      <span class="tag">Análise profunda</span>
-      <h3>Como Nova funciona</h3>
-      <p>A arquitetura por baixo: fluxo de mensagens, o classificador de 3 camadas, armazenamento split-SQLite, roteamento de provedor e conselho executivo distribuído.</p>
-      <span class="more">Ler →</span>
-    </a>
-    <a class="post" href="/pt-br/blog/features/">
-      <span class="tag">Tour</span>
-      <h3>Todos os recursos que Nova tem</h3>
-      <p>O tour de capacidade completo — 24 agentes especialistas, conselho executivo, etapas de aprovação, autonomia conquistada, memória, serviços proativos e integrações.</p>
-      <span class="more">Ler →</span>
-    </a>
-    <a class="post" href="/pt-br/blog/case-study/">
-      <span class="tag">Passo a passo</span>
-      <h3>Uma semana lançando um produto com Nova</h3>
-      <p>Um cenário end-to-end ilustrativo: estratégia do conselho, conteúdo e email rascunhados para aprovação, anúncios limitados por gastos e autonomia conquistada ao longo da semana.</p>
-      <span class="more">Ler →</span>
-    </a>
-    <a class="post" href="/pt-br/blog/deployment/">
-      <span class="tag">Guia</span>
-      <h3>Implantando Nova</h3>
-      <p>Um guia prático para auto-hospedagem: nova init, configuração, execução, sandboxing e instalação de seu próprio backend de conselho executivo.</p>
-      <span class="more">Ler →</span>
-    </a>
-    <a class="post" href="/pt-br/blog/design-decisions/">
-      <span class="tag">Ideias</span>
-      <h3>Por que Nova é construída da forma que é</h3>
-      <p>As decisões de design e o raciocínio por trás delas — um organograma em vez de um chatbot, confiança como produto, autonomia conquistada e auto-hospedagem.</p>
-      <span class="more">Ler →</span>
-    </a>
+    <div class="prose">
+      <p>A Nova sempre foi um time de IA auto-hospedado e com etapas de aprovação que você executa na sua própria máquina. Este lançamento não mexe em nada disso. O que ele faz é alargar as portas: mais modelos podem conduzir seus agentes, finalmente há um comando de verdade para executá-los, você pode conversar com a Nova a partir de mais lugares, e adicionar um colega de equipe não significa mais editar arquivos de configuração.</p>
+      <p>Quatro temas: <strong>qualquer modelo</strong>, <strong>uma CLI de verdade</strong>, <strong>mais lugares para conversar com ela</strong>, e <strong>configuração e acesso de equipe mais fáceis</strong>. Nada disso muda o modelo de confiança — a Nova ainda pergunta antes de qualquer coisa ser enviada ou gasta.</p>
+
+      <h2>Use qualquer modelo — sem perder a vantagem da assinatura</h2>
+      <p>A Nova já roda nas suas <strong>assinaturas</strong> do Claude, Gemini e Codex conduzindo as CLIs deles diretamente. Esse é todo o truque por trás da sua economia: um custo mensal fixo em vez de uma conta de API medida, e uso agêntico completo de ferramentas — o mesmo plano que você já paga, posto para trabalhar por um time de agentes.</p>
+      <p>Agora você pode adicionar <strong>qualquer modelo compatível com OpenAI</strong> ao lado deles — uma rota do <a href="https://openrouter.ai" rel="noopener">OpenRouter</a>, um modelo da OpenAI, ou uma máquina local com <code>Ollama</code> ou <code>vLLM</code> na sua própria rede. Adicione um com uma única entrada em <code>config/providers.json</code>, com <code>nova providers add</code>, ou com um clique no painel Models do dashboard. As CLIs de assinatura continuam sendo o padrão e continuam em primeiro lugar; novos modelos se encaixam ao lado delas.</p>
+      <p>E modelos de API não são cidadãos de segunda classe. Eles também podem usar suas ferramentas — conduzindo o mesmíssimo sandbox e a mesma ponte MCP que as CLIs usam — então um agente em um modelo local ainda pode navegar, escrever arquivos e chamar integrações sob as mesmas etapas de aprovação.</p>
+      <div class="callout">
+        <p><span class="k">Uma linha de princípio</span>A Nova continua <strong>conduzindo as CLIs oficiais</strong> em vez de coletar tokens da assinatura para acessar endpoints privados. É isso que mantém sua assinatura solidamente dentro dos termos — e qualquer novo modelo que você adiciona usa sua própria chave de API adequada, não uma emprestada.</p>
+      </div>
+
+      <h2>Um comando <code>nova</code> de verdade</h2>
+      <p>Chega de lembrar <code>bun run isto, bun run aquilo</code>. Agora existe uma única CLI <code>nova</code>, instalada no seu PATH, que é a porta de entrada para tudo:</p>
+      <ul>
+        <li><code>nova start</code> — sobe a sua Nova.</li>
+        <li><code>nova doctor</code> — verificação de saúde e diagnósticos copiáveis.</li>
+        <li><code>nova update</code> — baixa a versão mais recente e reinstala.</li>
+        <li><code>nova providers add</code> — conecta um novo modelo.</li>
+        <li><code>nova invite</code> — gera um código para adicionar um colega de equipe.</li>
+      </ul>
+      <p>O destaque é <strong><code>nova connect</code></strong> — um cliente de terminal que se conecta à sua Nova <em>em execução</em>, esteja ela neste laptop ou no seu VPS. Você tem uma visão ao vivo do que seus agentes estão fazendo neste exato momento, e pode <strong>aprovar, alterar ou cancelar</strong> de forma embutida sem sair do terminal. Como a Nova roda sempre ativa, você pode entrar nela a partir de qualquer terminal, em qualquer lugar, e retomar exatamente de onde as coisas estão.</p>
+
+      <h2>Novos lugares para conversar com a Nova</h2>
+      <p>A Nova já era multicanal — Telegram, WhatsApp e Slack alimentam todos o mesmo pipeline. Este lançamento adiciona mais dois:</p>
+      <ul>
+        <li>Seu <strong>terminal</strong> — <code>nova chat</code> te dá uma conversa completa com a Nova direto no shell.</li>
+        <li><strong>Discord</strong> — execute a Nova como um bot do Discord para você ou sua comunidade.</li>
+      </ul>
+      <p>Ambos são apenas novos adaptadores sobre o padrão existente: o mesmo pipeline de mensagens, a mesma classificação, a mesma execução em duas fases, as mesmas etapas de aprovação. Uma solicitação que você faz no Discord é tratada exatamente como uma que você enviaria no Telegram — nada sobre como a Nova decide ou age muda com a superfície.</p>
+
+      <h2>Configuração mais fácil, e adicionar sua equipe</h2>
+      <p>Agora você pode gerenciar modelos, canais e convites a partir do <strong>dashboard</strong> ou da <strong>CLI</strong> — sem editar configuração à mão para ativar algo. Ligue um canal, adicione um modelo, emita um convite, tudo a partir de uma tela ou de um único comando.</p>
+      <p>Adicionar um colega de equipe costumava significar caçar um ID de usuário numérico e colá-lo em um arquivo. Agora você gera um <strong>código de convite</strong> com <code>nova invite</code>, entrega à pessoa, e ela o resgata no Telegram ou no Discord — você aprova com um toque. Os papéis vêm junto: <code>nova invite member</code> ou <code>nova invite admin</code>.</p>
+      <div class="callout">
+        <p><span class="k">Os segredos ficam no lugar</span>Nada disso move suas credenciais para fora do seu servidor. As telas de gerenciamento mostram apenas quais chaves estão <em>definidas</em> — nunca seus valores. Suas chaves nunca saem da máquina em que você executa a Nova.</p>
+      </div>
+
+      <hr class="divider">
+
+      <h2>Ainda a mesma Nova</h2>
+      <p>Tudo que fazia a Nova digna de confiança permanece intocado. Ela continua auto-hospedada e licenciada sob MIT. Ela ainda roda nas suas chaves e na sua máquina. E ela ainda pede sua aprovação antes de qualquer coisa ser publicada, enviada ou gasta.</p>
+      <p>Essas melhorias adicionam alcance e acabamento — mais modelos, um comando de verdade, mais canais, convites self-service — sem tocar no modelo de confiança por baixo. O mesmo time, mais portas.</p>
+
+      <div class="end-cta">
+        <h3>Traga seu próprio time de IA para casa</h3>
+        <p>Código aberto, auto-hospedado, licenciado MIT. Sua máquina, suas chaves, suas portas de aprovação.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Obtenha Nova no GitHub</a>
+          <a class="cta ghost" href="/pt-br/docs/">Leia a documentação</a>
+        </div>
+      </div>
     </div>
   </div>
-</section>
+</article>
 
 <footer>
   <div class="wrap foot-inner">
-    <span>Nova — licença MIT. Pegue, customize, faça seu.</span>
+    <span>Nova — Licenciado MIT. Pegue, customize, faça seu.</span>
     <span>
-      <a href="/pt-br/">Home</a> &nbsp;·&nbsp;
+      <a href="/pt-br/">Início</a> &nbsp;·&nbsp;
       <a href="/pt-br/docs/">Documentação</a> &nbsp;·&nbsp;
-      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a>
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Segurança</a>
     </span>
   </div>
 </footer>

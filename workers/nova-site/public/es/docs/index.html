@@ -314,26 +314,31 @@
 <span class="p">$</span> bun run start</code></pre>
     <div class="callout ok">
       <span class="co-label">[primera ejecución]</span>
-      <p>El modelo de embeddings local (all-MiniLM-L6-v2, ~23&nbsp;MB) se descarga en el primer uso. Cuando Nova arranca, te envía un mensaje de bienvenida en Telegram con ideas para empezar que puedes tocar — así tu primera interacción funciona sin escribir nada. Ejecuta <code>bun run doctor</code> en cualquier momento para una verificación de salud, o <code>bun run update</code> para traer lo último y reinstalar.</p>
+      <p>El modelo de embeddings local (all-MiniLM-L6-v2, ~23&nbsp;MB) se descarga en el primer uso. Cuando Nova arranca, te envía un mensaje de bienvenida en Telegram con ideas para empezar que puedes tocar — así tu primera interacción funciona sin escribir nada. Ejecuta <code>nova doctor</code> en cualquier momento para una verificación de salud, o <code>nova update</code> para traer lo último y reinstalar.</p>
     </div>
 
     <h3>Referencia de comandos</h3>
+    <p>El instalador coloca un comando <code>nova</code> en tu PATH — esa es la puerta de entrada para el uso diario (<code>nova start</code>, <code>nova doctor</code>, <code>nova connect</code> y el resto). Los scripts subyacentes <code>bun run &lt;script&gt;</code> siguen funcionando si los prefieres, y los scripts avanzados (<code>test:*</code>, <code>setup:*</code>, <code>exec:*</code>) solo se exponen a través de <code>bun run</code>.</p>
     <div class="tbl-wrap"><table>
       <tr><th>Comando</th><th>Qué hace</th></tr>
       <tr><td><code>bash bootstrap.sh</code></td><td>Instala los requisitos y ejecuta el asistente de configuración (<code>--check</code> para una prueba en seco)</td></tr>
-      <tr><td><code>bun run init</code></td><td>Ejecuta el asistente de configuración por sí solo (reanudable)</td></tr>
-      <tr><td><code>bun run doctor</code></td><td>Verificación de salud + diagnósticos copiables</td></tr>
-      <tr><td><code>bun run update</code></td><td>Trae lo último y reinstala las dependencias</td></tr>
-      <tr><td><code>bun run start</code></td><td>Inicia el relé (proceso principal del bot)</td></tr>
-      <tr><td><code>bun run dev</code></td><td>Inicia con recarga automática en cambios de archivos</td></tr>
-      <tr><td><code>bun run dashboard</code></td><td>Inicia el panel web en el puerto 3033</td></tr>
-      <tr><td><code>bun run voice</code></td><td>Inicia el servidor de llamadas de voz de Twilio</td></tr>
-      <tr><td><code>bun run setup</code></td><td>Instala dependencias, crea <code>.env</code> desde el ejemplo</td></tr>
+      <tr><td><code>nova init</code></td><td>Ejecuta el asistente de configuración por sí solo (reanudable)</td></tr>
+      <tr><td><code>nova doctor</code></td><td>Verificación de salud + diagnósticos copiables</td></tr>
+      <tr><td><code>nova update</code></td><td>Trae lo último y reinstala las dependencias</td></tr>
+      <tr><td><code>nova start</code></td><td>Inicia el relé (proceso principal del bot)</td></tr>
+      <tr><td><code>nova dev</code></td><td>Inicia con recarga automática en cambios de archivos</td></tr>
+      <tr><td><code>nova chat</code></td><td>Habla con Nova directamente en tu terminal</td></tr>
+      <tr><td><code>nova connect</code></td><td>Conéctate a una Nova en ejecución (local o remota) con vista en vivo y aprobaciones en línea</td></tr>
+      <tr><td><code>nova dashboard</code></td><td>Inicia el panel web en el puerto 3033</td></tr>
+      <tr><td><code>nova providers add</code> / <code>list</code> / <code>test</code> / <code>default</code></td><td>Agrega y gestiona modelos de IA (ver <a href="#providers">Proveedores de IA</a>)</td></tr>
+      <tr><td><code>nova invite [member|admin]</code></td><td>Genera un código de invitación para agregar un compañero</td></tr>
+      <tr><td><code>nova voice</code></td><td>Inicia el servidor de llamadas de voz de Twilio</td></tr>
+      <tr><td><code>nova setup</code></td><td>Instala dependencias, crea <code>.env</code> desde el ejemplo</td></tr>
+      <tr><td><code>nova backup</code></td><td>Archiva <code>data/</code>, <code>config/</code> y <code>.env</code> a <code>~/.nova/backups/</code></td></tr>
       <tr><td><code>bun run test:telegram</code> / <code>test:sqlite</code> / <code>test:voice</code></td><td>Verifica el token de Telegram, base de datos y transcripción de voz</td></tr>
       <tr><td><code>bun run setup:verify</code></td><td>Verificación de salud completa de la instalación</td></tr>
       <tr><td><code>bun run setup:launchd</code> / <code>setup:systemd</code> / <code>setup:services</code></td><td>Configura servicios continuos (macOS / Linux / PM2)</td></tr>
       <tr><td><code>bun run typecheck</code> / <code>bun run test</code></td><td>Verificación de TypeScript; ejecuta la suite de pruebas contra una BD aislada</td></tr>
-      <tr><td><code>bun run backup</code></td><td>Archiva <code>data/</code>, <code>config/</code> y <code>.env</code> a <code>~/.nova/backups/</code></td></tr>
       <tr><td><code>bun run exec:ceo</code> … <code>exec:critic</code></td><td>Inicia un nodo de la junta ejecutiva</td></tr>
     </table></div>
   </section>
@@ -369,6 +374,7 @@
       <tr><td><code>WHATSAPP_WEBHOOK_URL</code></td><td>URL pública donde Kapso publica webhooks de WhatsApp (la clave Kapso por usuario e ID de número telefónico se agregan en el panel)</td></tr>
       <tr><td><code>SLACK_BOT_TOKEN</code></td><td>Token del bot de Slack (<code>xoxb-…</code>), Socket Mode</td></tr>
       <tr><td><code>SLACK_APP_TOKEN</code></td><td>Token de nivel de aplicación de Slack (<code>xapp-…</code>)</td></tr>
+      <tr><td><code>DISCORD_BOT_TOKEN</code></td><td>Token del bot de Discord — habilita el canal de Discord</td></tr>
     </table></div>
 
     <h3>Proveedores de IA e investigación</h3>
@@ -431,6 +437,10 @@
       <li>Agrega scopes del bot <code>channels:history</code>, <code>chat:write</code>, <code>im:history</code>, <code>im:write</code>; instala en tu workspace.</li>
       <li>Copia el token del bot (<code>xoxb-…</code>) → <code>SLACK_BOT_TOKEN</code>.</li>
     </ol>
+    <h3>Terminal</h3>
+    <p>Habla con Nova directamente desde tu shell con <code>nova chat</code> — la misma tubería, clasificación y controles de aprobación que cualquier otro canal, sin token de bot requerido. Para llegar a una Nova que ya está en ejecución (localmente o en tu VPS), usa <code>nova connect</code> (ver <a href="#talking">Hablar con Nova</a>).</p>
+    <h3>Discord</h3>
+    <p>Ejecuta Nova como un bot de Discord: crea una aplicación en <a href="https://discord.com/developers/applications" rel="noopener">discord.com/developers</a>, agrega un bot y establece <code>DISCORD_BOT_TOKEN</code>. Discord usa el mismo patrón de adaptador que Telegram — los mensajes fluyen por la misma tubería de dos fases y con controles de aprobación.</p>
   </section>
 
   <!-- ══════════════ TALKING ══════════════ -->
@@ -443,6 +453,8 @@
       <li><strong>Fuerza un proveedor</strong>: prefija con <code>/claude</code>, <code>/gemini</code> o <code>/codex</code>.</li>
       <li><strong>Los mensajes de voz</strong> se transcriben automáticamente (Groq o Whisper local).</li>
     </ul>
+    <h3>Desde cualquier terminal — <span class="h-mono">nova connect</span></h3>
+    <p>Como Nova se ejecuta siempre activa, puedes entrar a una instancia en ejecución desde cualquier terminal — local o tu VPS — con <code>nova connect --url https://tu-nova</code>. Obtienes una vista en vivo de lo que tus agentes están haciendo y puedes <strong>aprobar, cambiar o cancelar</strong> en línea, directamente desde el shell. Para una conversación simple sin conectarte a una instancia remota, <code>nova chat</code> habla con tu Nova local.</p>
     <h3>Comandos</h3>
     <div class="tbl-wrap"><table>
       <tr><th>Comando</th><th>Qué hace</th></tr>
@@ -464,6 +476,8 @@
     </table></div>
     <h3>Comandos de administrador</h3>
     <p>Los usuarios con el rol <code>admin</code> también obtienen <code>/adduser</code>, <code>/removeuser</code>, <code>/listusers</code>, <code>/share &lt;hecho&gt;</code> (memoria compartida), <code>/status</code>, <code>/reload</code>, <code>/revert</code>, <code>/schedules</code>, <code>/budget</code>, <code>/project</code>, <code>/webhook</code>, <code>/zoom</code> y <code>/reputation</code>.</p>
+    <h3>Agregar compañeros — códigos de invitación</h3>
+    <p>Ya no necesitas buscar un ID de usuario numérico para agregar a alguien. Ejecuta <code>nova invite</code> (<code>nova invite member</code> o <code>nova invite admin</code> para establecer el rol) para generar un código de invitación, entrégaselo a la persona, y lo canjea en <strong>Telegram o Discord</strong> — tú apruebas el emparejamiento con un toque. Las invitaciones también se pueden gestionar desde el panel.</p>
   </section>
 
   <!-- ══════════════ APPROVAL ══════════════ -->
@@ -553,6 +567,8 @@
       <tr><td>Codex</td><td>CLI <code>codex</code></td><td>estándar</td></tr>
       <tr><td>Groq</td><td>API</td><td>Transcripción de voz Whisper</td></tr>
     </table></div>
+    <h3>Agregar cualquier modelo compatible con OpenAI</h3>
+    <p>Más allá de las CLIs de suscripción, puedes agregar <strong>cualquier modelo compatible con OpenAI</strong> — una ruta de OpenRouter, un modelo de OpenAI, o un endpoint local de <code>Ollama</code> / <code>vLLM</code>. Agrega uno con <code>nova providers add</code> (o la sección <strong>Modelos</strong> del panel); gestiona el resto con <code>nova providers list</code>, <code>nova providers test</code> y <code>nova providers default</code>. Las definiciones viven en <code>config/providers.json</code>, y cada modelo usa su propia clave API. Las CLIs de suscripción siguen siendo el valor predeterminado — los modelos agregados se acomodan junto a ellas y pueden impulsar el mismo sandbox y las mismas herramientas MCP.</p>
   </section>
 
   <!-- ══════════════ MCP ══════════════ -->

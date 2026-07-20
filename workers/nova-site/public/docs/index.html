@@ -314,26 +314,31 @@
 <span class="p">$</span> bun run start</code></pre>
     <div class="callout ok">
       <span class="co-label">[first run]</span>
-      <p>The local embedding model (all-MiniLM-L6-v2, ~23&nbsp;MB) downloads on first use. When Nova starts, it sends you a welcome message on Telegram with tappable starter ideas — so your first interaction works without typing anything. Run <code>bun run doctor</code> anytime for a health check, or <code>bun run update</code> to pull the latest and reinstall.</p>
+      <p>The local embedding model (all-MiniLM-L6-v2, ~23&nbsp;MB) downloads on first use. When Nova starts, it sends you a welcome message on Telegram with tappable starter ideas — so your first interaction works without typing anything. Run <code>nova doctor</code> anytime for a health check, or <code>nova update</code> to pull the latest and reinstall.</p>
     </div>
 
     <h3>Command reference</h3>
+    <p>The installer puts a <code>nova</code> command on your PATH — that's the front door for everyday use (<code>nova start</code>, <code>nova doctor</code>, <code>nova connect</code>, and the rest). The underlying <code>bun run &lt;script&gt;</code> scripts still work if you prefer them, and advanced scripts (<code>test:*</code>, <code>setup:*</code>, <code>exec:*</code>) are only exposed through <code>bun run</code>.</p>
     <div class="tbl-wrap"><table>
       <tr><th>Command</th><th>What it does</th></tr>
       <tr><td><code>bash bootstrap.sh</code></td><td>Install prerequisites and launch the setup wizard (<code>--check</code> for a dry run)</td></tr>
-      <tr><td><code>bun run init</code></td><td>Run the setup wizard on its own (resumable)</td></tr>
-      <tr><td><code>bun run doctor</code></td><td>Health check + copyable diagnostics</td></tr>
-      <tr><td><code>bun run update</code></td><td>Pull the latest and reinstall dependencies</td></tr>
-      <tr><td><code>bun run start</code></td><td>Start the relay (main bot process)</td></tr>
-      <tr><td><code>bun run dev</code></td><td>Start with auto-reload on file changes</td></tr>
-      <tr><td><code>bun run dashboard</code></td><td>Start the web dashboard on port 3033</td></tr>
-      <tr><td><code>bun run voice</code></td><td>Start the Twilio voice-call server</td></tr>
-      <tr><td><code>bun run setup</code></td><td>Install dependencies, create <code>.env</code> from the example</td></tr>
+      <tr><td><code>nova init</code></td><td>Run the setup wizard on its own (resumable)</td></tr>
+      <tr><td><code>nova doctor</code></td><td>Health check + copyable diagnostics</td></tr>
+      <tr><td><code>nova update</code></td><td>Pull the latest and reinstall dependencies</td></tr>
+      <tr><td><code>nova start</code></td><td>Start the relay (main bot process)</td></tr>
+      <tr><td><code>nova dev</code></td><td>Start with auto-reload on file changes</td></tr>
+      <tr><td><code>nova chat</code></td><td>Talk to Nova right in your terminal</td></tr>
+      <tr><td><code>nova connect</code></td><td>Connect to a running Nova (local or remote) with a live view and inline approvals</td></tr>
+      <tr><td><code>nova dashboard</code></td><td>Start the web dashboard on port 3033</td></tr>
+      <tr><td><code>nova providers add</code> / <code>list</code> / <code>test</code> / <code>default</code></td><td>Add and manage AI models (see <a href="#providers">AI providers</a>)</td></tr>
+      <tr><td><code>nova invite [member|admin]</code></td><td>Generate an invite code to add a teammate</td></tr>
+      <tr><td><code>nova voice</code></td><td>Start the Twilio voice-call server</td></tr>
+      <tr><td><code>nova setup</code></td><td>Install dependencies, create <code>.env</code> from the example</td></tr>
+      <tr><td><code>nova backup</code></td><td>Archive <code>data/</code>, <code>config/</code>, and <code>.env</code> to <code>~/.nova/backups/</code></td></tr>
       <tr><td><code>bun run test:telegram</code> / <code>test:sqlite</code> / <code>test:voice</code></td><td>Verify Telegram token, database, and voice transcription</td></tr>
       <tr><td><code>bun run setup:verify</code></td><td>Full installation health check</td></tr>
       <tr><td><code>bun run setup:launchd</code> / <code>setup:systemd</code> / <code>setup:services</code></td><td>Configure always-on services (macOS / Linux / PM2)</td></tr>
       <tr><td><code>bun run typecheck</code> / <code>bun run test</code></td><td>TypeScript check; run the test suite against an isolated DB</td></tr>
-      <tr><td><code>bun run backup</code></td><td>Archive <code>data/</code>, <code>config/</code>, and <code>.env</code> to <code>~/.nova/backups/</code></td></tr>
       <tr><td><code>bun run exec:ceo</code> … <code>exec:critic</code></td><td>Start an executive board node</td></tr>
     </table></div>
   </section>
@@ -369,6 +374,7 @@
       <tr><td><code>WHATSAPP_WEBHOOK_URL</code></td><td>Public URL Kapso posts WhatsApp webhooks to (per-user Kapso key + phone-number ID are added in the dashboard)</td></tr>
       <tr><td><code>SLACK_BOT_TOKEN</code></td><td>Slack bot token (<code>xoxb-…</code>), Socket Mode</td></tr>
       <tr><td><code>SLACK_APP_TOKEN</code></td><td>Slack app-level token (<code>xapp-…</code>)</td></tr>
+      <tr><td><code>DISCORD_BOT_TOKEN</code></td><td>Discord bot token — enables the Discord channel</td></tr>
     </table></div>
 
     <h3>AI providers &amp; research</h3>
@@ -431,6 +437,10 @@
       <li>Add bot scopes <code>channels:history</code>, <code>chat:write</code>, <code>im:history</code>, <code>im:write</code>; install to your workspace.</li>
       <li>Copy the bot token (<code>xoxb-…</code>) → <code>SLACK_BOT_TOKEN</code>.</li>
     </ol>
+    <h3>Terminal</h3>
+    <p>Talk to Nova straight from your shell with <code>nova chat</code> — the same pipeline, classification, and approval gates as every other channel, no bot token required. To reach a Nova that's already running (locally or on your VPS), use <code>nova connect</code> (see <a href="#talking">Talking to Nova</a>).</p>
+    <h3>Discord</h3>
+    <p>Run Nova as a Discord bot: create an application at <a href="https://discord.com/developers/applications" rel="noopener">discord.com/developers</a>, add a bot, and set <code>DISCORD_BOT_TOKEN</code>. Discord uses the same adapter pattern as Telegram — messages flow through the identical two-phase, approval-gated pipeline.</p>
   </section>
 
   <!-- ══════════════ TALKING ══════════════ -->
@@ -443,6 +453,8 @@
       <li><strong>Force a provider</strong>: prefix with <code>/claude</code>, <code>/gemini</code>, or <code>/codex</code>.</li>
       <li><strong>Voice messages</strong> are transcribed automatically (Groq or local Whisper).</li>
     </ul>
+    <h3>From any terminal — <span class="h-mono">nova connect</span></h3>
+    <p>Because Nova runs always-on, you can drop into a running instance from any terminal — local or your VPS — with <code>nova connect --url https://your-nova</code>. You get a live view of what your agents are doing and can <strong>approve, change, or cancel</strong> inline, right from the shell. For a plain conversation without connecting to a remote instance, <code>nova chat</code> talks to your local Nova.</p>
     <h3>Commands</h3>
     <div class="tbl-wrap"><table>
       <tr><th>Command</th><th>What it does</th></tr>
@@ -464,6 +476,8 @@
     </table></div>
     <h3>Admin commands</h3>
     <p>Users with the <code>admin</code> role also get <code>/adduser</code>, <code>/removeuser</code>, <code>/listusers</code>, <code>/share &lt;fact&gt;</code> (shared memory), <code>/status</code>, <code>/reload</code>, <code>/revert</code>, <code>/schedules</code>, <code>/budget</code>, <code>/project</code>, <code>/webhook</code>, <code>/zoom</code>, and <code>/reputation</code>.</p>
+    <h3>Adding teammates — invite codes</h3>
+    <p>You no longer need to look up a numeric user ID to add someone. Run <code>nova invite</code> (<code>nova invite member</code> or <code>nova invite admin</code> to set the role) to generate an invite code, hand it to the person, and they redeem it on <strong>Telegram or Discord</strong> — you approve the pairing with a tap. Invites can also be managed from the dashboard.</p>
   </section>
 
   <!-- ══════════════ APPROVAL ══════════════ -->
@@ -553,6 +567,8 @@
       <tr><td>Codex</td><td><code>codex</code> CLI</td><td>standard</td></tr>
       <tr><td>Groq</td><td>API</td><td>Whisper voice transcription</td></tr>
     </table></div>
+    <h3>Adding any OpenAI-compatible model</h3>
+    <p>Beyond the subscription CLIs, you can add <strong>any OpenAI-compatible model</strong> — an OpenRouter route, an OpenAI model, or a local <code>Ollama</code> / <code>vLLM</code> endpoint. Add one with <code>nova providers add</code> (or the dashboard's <strong>Models</strong> panel); manage the rest with <code>nova providers list</code>, <code>nova providers test</code>, and <code>nova providers default</code>. Definitions live in <code>config/providers.json</code>, and each model uses its own API key. The subscription CLIs remain the default — added models slot in alongside them and can drive the same sandbox and MCP tools.</p>
   </section>
 
   <!-- ══════════════ MCP ══════════════ -->
