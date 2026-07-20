@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/relay.ts",
+    "chat": "NOVA_CHANNELS=cli NOVA_CLI=1 bun run src/relay.ts",
     "dev": "bun run --watch src/relay.ts",
     "test": "NODE_ENV=test NOVA_DB_DIR=./data/test-run bun test tests/",
     "typecheck": "tsc --noEmit",

@@ -10,10 +10,12 @@
 import type { ChannelAdapter, MessageHandler, ButtonHandler } from "./types.ts";
 import { TelegramAdapter } from "./telegram.ts";
 import { SlackAdapter } from "./slack.ts";
+import { CliAdapter } from "./cli.ts";
 
 export { TelegramAdapter } from "./telegram.ts";
 export { WhatsAppAdapter } from "./whatsapp.ts";
 export { SlackAdapter } from "./slack.ts";
+export { CliAdapter } from "./cli.ts";
 export type {
   ChannelAdapter,
   IncomingMessage,
@@ -34,21 +36,35 @@ export class ChannelRegistry {
    * Does NOT start them — call start() separately after registering handlers.
    */
   init(novaDir: string): void {
+    // Optional allowlist: if NOVA_CHANNELS is set (comma-separated types), only
+    // register adapters whose type is in the list. Default unset = all configured.
+    const allowlist = (process.env.NOVA_CHANNELS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const allowed = (type: string) => allowlist.length === 0 || allowlist.includes(type);
+
     // Telegram
-    if (process.env.TELEGRAM_BOT_TOKEN) {
+    if (allowed("telegram") && process.env.TELEGRAM_BOT_TOKEN) {
       this.telegramAdapter = new TelegramAdapter(process.env.TELEGRAM_BOT_TOKEN);
       this.adapters.push(this.telegramAdapter);
       console.log("[channels] Telegram adapter initialized");
     }
 
     // Slack
-    if (process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
+    if (allowed("slack") && process.env.SLACK_BOT_TOKEN && process.env.SLACK_APP_TOKEN) {
       const slack = new SlackAdapter(
         process.env.SLACK_BOT_TOKEN,
         process.env.SLACK_APP_TOKEN,
       );
       this.adapters.push(slack);
       console.log("[channels] Slack adapter initialized");
+    }
+
+    // CLI (local/dev REPL)
+    if (allowed("cli") && process.env.NOVA_CLI === "1") {
+      this.adapters.push(new CliAdapter());
+      console.log("[channels] CLI adapter initialized");
     }
 
     // Note: WhatsApp is managed per-user via WhatsAppManager + Mini App
@@ -108,6 +124,7 @@ export class ChannelRegistry {
     return [
       ["Telegram", !!this.telegramAdapter],
       ["Slack", this.adapters.some((a) => a.type === "slack")],
+      ["CLI", this.adapters.some((a) => a.type === "cli")],
     ];
   }
 }
