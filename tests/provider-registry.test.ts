@@ -167,7 +167,7 @@ test("call() hits chat/completions and computes cost from prices (kimi-parity)",
     pricePerMTokOut: 2.0,
   });
 
-  const result = await provider.call({ prompt: "hi", systemPrompt: "be brief" });
+  const result = await provider.call({ prompt: "hi", systemPrompt: "be brief", noMcp: true });
 
   expect(capturedUrl).toBe("https://api.moonshot.cn/v1/chat/completions");
   expect(capturedAuth).toBe("Bearer test-key");
@@ -206,7 +206,7 @@ test("call() expands ${ENV} in custom headers and merges extraBody", async () =>
     extraBody: { top_p: 0.9 },
   });
 
-  await provider.call({ prompt: "hi" });
+  await provider.call({ prompt: "hi", noMcp: true });
   expect(capturedHeaders["HTTP-Referer"]).toBe("https://mynova.space");
   expect(capturedBody.top_p).toBe(0.9);
   delete process.env.OR_KEY;
@@ -225,7 +225,7 @@ test("call() with no price fields leaves cost_usd undefined", async () => {
     defaultModel: "m",
     costClass: "cheap-api",
   });
-  const result = await provider.call({ prompt: "hi" });
+  const result = await provider.call({ prompt: "hi", noMcp: true });
   expect(result.cost_usd).toBeUndefined();
   delete process.env.NOPRICE_KEY;
 });

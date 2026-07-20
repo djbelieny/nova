@@ -18,6 +18,12 @@ import type {
   ProviderCostClass,
   ProviderKind,
 } from "../ai-provider.ts";
+import {
+  runApiAgentLoop,
+  chatCompletionsUrl,
+  buildProviderHeaders,
+  computeApiCost,
+} from "../api-agent-loop.ts";
 
 export interface ProviderProfile {
   name: string;
@@ -35,10 +41,6 @@ export interface ProviderProfile {
 }
 
 const DEFAULT_CAPABILITIES: ProviderCapabilities = { tools: true, mcp: false, streaming: false };
-
-function expandEnv(value: string): string {
-  return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_m, name) => process.env[name] ?? "");
-}
 
 export class OpenAICompatibleProvider implements AIProvider {
   readonly kind: ProviderKind = "api";
@@ -69,6 +71,24 @@ export class OpenAICompatibleProvider implements AIProvider {
   }
 
   async call(opts: AIProviderCallOpts): Promise<AIProviderResult> {
+    // One-shot completion when tools aren't wanted/available; otherwise drive the
+    // agentic bash + mcp2cli loop (honoring the same flags the CLIs honor).
+    if (opts.noMcp || opts.sandboxed || !this.capabilities.tools) {
+      return this.oneShot(opts);
+    }
+    return runApiAgentLoop({
+      profile: this.profile,
+      model: opts.model ?? this.profile.defaultModel,
+      systemPrompt: opts.systemPrompt,
+      userPrompt: opts.prompt,
+      mcpConfigPath: opts.mcpConfigPath,
+      userId: opts.userId,
+      maxTurns: opts.maxTurns ?? 25,
+      sandboxed: !!opts.sandboxed,
+    });
+  }
+
+  private async oneShot(opts: AIProviderCallOpts): Promise<AIProviderResult> {
     const apiKey = process.env[this.profile.apiKeyEnv];
     if (!apiKey) throw new Error(`${this.profile.apiKeyEnv} not set`);
 
@@ -79,20 +99,9 @@ export class OpenAICompatibleProvider implements AIProvider {
     if (opts.systemPrompt) messages.push({ role: "system", content: opts.systemPrompt });
     messages.push({ role: "user", content: opts.prompt });
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    };
-    if (this.profile.headers) {
-      for (const [k, v] of Object.entries(this.profile.headers)) {
-        headers[k] = expandEnv(v);
-      }
-    }
-
-    const url = `${this.profile.baseUrl.replace(/\/$/, "")}/chat/completions`;
-    const res = await fetch(url, {
+    const res = await fetch(chatCompletionsUrl(this.profile), {
       method: "POST",
-      headers,
+      headers: buildProviderHeaders(this.profile, apiKey),
       body: JSON.stringify({
         model,
         messages,
@@ -113,13 +122,6 @@ export class OpenAICompatibleProvider implements AIProvider {
     const inputTokens: number = json?.usage?.prompt_tokens ?? 0;
     const outputTokens: number = json?.usage?.completion_tokens ?? 0;
 
-    let costUsd: number | undefined;
-    if (this.profile.pricePerMTokIn != null || this.profile.pricePerMTokOut != null) {
-      costUsd =
-        (inputTokens / 1_000_000) * (this.profile.pricePerMTokIn ?? 0) +
-        (outputTokens / 1_000_000) * (this.profile.pricePerMTokOut ?? 0);
-    }
-
     return {
       text,
       model,
@@ -128,7 +130,7 @@ export class OpenAICompatibleProvider implements AIProvider {
         input_tokens: inputTokens,
         output_tokens: outputTokens,
       },
-      cost_usd: costUsd,
+      cost_usd: computeApiCost(this.profile, inputTokens, outputTokens),
       duration_ms: Math.round(durationMs),
     };
   }
