@@ -2,6 +2,9 @@
   "name": "nova",
   "version": "1.0.0",
   "type": "module",
+  "bin": {
+    "nova": "src/cli.ts"
+  },
   "scripts": {
     "start": "bun run src/relay.ts",
     "chat": "NOVA_CHANNELS=cli NOVA_CLI=1 bun run src/relay.ts",

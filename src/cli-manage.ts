@@ -1,15 +1,15 @@
 /**
- * Nova — Management CLI (`bun run providers`, `bun run invite`)
+ * Nova — Management CLI (`nova providers`, `nova invite`)
  *
  * A thin, arg-parsed CLI over the same provider-registry + db helpers the dashboard
  * uses — no parallel config system. Commands:
  *
- *   bun run providers list
- *   bun run providers add            (interactive prompts, reuses the wizard's ask())
- *   bun run providers remove <name>
- *   bun run providers test <name>
- *   bun run providers default <name>
- *   bun run invite [member|admin]
+ *   nova providers list
+ *   nova providers add            (interactive prompts, reuses the wizard's ask())
+ *   nova providers remove <name>
+ *   nova providers test <name>
+ *   nova providers default <name>
+ *   nova invite [member|admin]
  *
  * Secrets are never printed: only the env-var name + whether it is currently set.
  */
@@ -33,7 +33,7 @@ const VALID_COST_CLASSES = ["subscription-cli", "cheap-api", "standard-api", "pr
 /** Render the configured providers (config file only) as a human-readable string. */
 export function renderProviders(configPath: string, defaultName?: string | null): string {
   const profiles = readConfigProfiles(configPath);
-  if (!profiles.length) return "No custom providers configured. Add one with: bun run providers add";
+  if (!profiles.length) return "No custom providers configured. Add one with: nova providers add";
   const lines = profiles.map((p) => {
     const set = !!process.env[p.apiKeyEnv];
     const marker = defaultName && p.name === defaultName ? "*" : " ";
@@ -114,7 +114,7 @@ async function runProviders(args: string[]): Promise<number> {
 
   if (sub === "remove") {
     const name = args[1];
-    if (!name) { console.error("  Usage: bun run providers remove <name>"); return 1; }
+    if (!name) { console.error("  Usage: nova providers remove <name>"); return 1; }
     removeProvider(name, configPath);
     console.log(`  ✓ Removed "${name}"`);
     return 0;
@@ -122,7 +122,7 @@ async function runProviders(args: string[]): Promise<number> {
 
   if (sub === "test") {
     const name = args[1];
-    if (!name) { console.error("  Usage: bun run providers test <name>"); return 1; }
+    if (!name) { console.error("  Usage: nova providers test <name>"); return 1; }
     const profile = loadProviderProfiles(configPath).find((p) => p.name === name);
     if (!profile) { console.error(`  Unknown provider: ${name}`); return 1; }
     const { OpenAICompatibleProvider } = await import("./providers/openai-compatible.ts");
@@ -141,13 +141,13 @@ async function runProviders(args: string[]): Promise<number> {
 
   if (sub === "default") {
     const name = args[1];
-    if (!name) { console.error("  Usage: bun run providers default <name>"); return 1; }
+    if (!name) { console.error("  Usage: nova providers default <name>"); return 1; }
     const n = setDefaultProviderPref(name, getDb());
     console.log(`  ✓ Default model → ${name} (updated ${n} admin ${n === 1 ? "user" : "users"})`);
     return 0;
   }
 
-  console.error(`  Unknown subcommand: ${sub}\n  Usage: bun run providers list|add|remove <name>|test <name>|default <name>`);
+  console.error(`  Unknown subcommand: ${sub}\n  Usage: nova providers list|add|remove <name>|test <name>|default <name>`);
   return 1;
 }
 
@@ -165,7 +165,7 @@ async function main(): Promise<void> {
   if (command === "providers") code = await runProviders(rest);
   else if (command === "invite") code = await runInvite(rest);
   else {
-    console.error("  Usage:\n    bun run providers list|add|remove <name>|test <name>|default <name>\n    bun run invite [member|admin]");
+    console.error("  Usage:\n    nova providers list|add|remove <name>|test <name>|default <name>\n    nova invite [member|admin]");
     code = 1;
   }
   process.exit(code);
