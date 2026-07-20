@@ -306,8 +306,8 @@ async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" 
       slack: (id) => supabase.getUserBySlackId(id),
       // CLI is a single local surface → resolve to the owner (admin, else first user).
       cli: () => supabase.getUsersByRole("admin")?.[0] ?? supabase.getAllActiveUsers()?.[0] ?? null,
-      // TODO: Discord pairing once pairing_codes lands — for now, unknown Discord
-      // users fall through to the existing "This bot is private" reply.
+      // Unknown Discord users are routed into the self-serve pairing flow by the
+      // message handler (see handleUnknownDiscordUser).
       discord: (id) => supabase.getUserByDiscordId(id),
     };
 
@@ -425,6 +425,11 @@ const PAIRING_CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/i;
 const PAIRING_MAX_ATTEMPTS = 5;
 const PAIRING_LOCKOUT_MS = 5 * 60_000; // 5 minutes after too many bad tries
 const pairingAttempts = new Map<string, { count: number; lockedUntil: number }>();
+// Discord pairing requests awaiting admin approval. Keyed by Discord user id →
+// the DM channel to welcome/deny them in and their display name. In-memory
+// (consistent with pairingAttempts); a restart drops pending requests, after
+// which the requester simply re-sends their code / re-taps Request access.
+const discordPairRequests = new Map<string, { channelId: string; name: string }>();
 
 function pairingFirstName(name?: string): string {
   const cleaned = (name || "there").replace(/[^\p{L}\p{N} _-]/gu, "").trim().slice(0, 32);
@@ -460,6 +465,60 @@ async function sendPairingWelcome(telegramId: string, name: string, userId?: str
   } catch (err) {
     console.warn("[relay] pairing welcome failed:", err);
   }
+}
+
+/** Send the first-run welcome to a freshly-paired Discord user via their reply channel. */
+async function sendDiscordPairingWelcome(reply: (m: any) => Promise<void>, name: string, userId?: string): Promise<void> {
+  try {
+    await reply({
+      text: buildWelcomeMessage(name),
+      buttons: exampleButtons().flat().map((b) => ({ label: b.label, callbackData: b.callbackData })),
+    });
+    if (userId) supabase.setOnboardedAt(userId);
+  } catch (err) {
+    console.warn("[relay] discord pairing welcome failed:", err);
+  }
+}
+
+/**
+ * Self-serve pairing for an unknown Discord DM — the Discord equivalent of the
+ * Telegram middleware's pairing entry. A valid code pairs immediately; anything
+ * else offers the Request-access → admin-approval flow. Reuses the shared
+ * pairing helpers (redeemPairingCode/upsertUser/pair_* callbacks) — no fork.
+ */
+async function handleUnknownDiscordUser(msg: IncomingMessage, reply: (m: any) => Promise<void>): Promise<void> {
+  const discordId = msg.platformUserId;
+  const name = pairingFirstName(msg.senderName);
+  const raw = (msg.text || "").trim();
+
+  if (PAIRING_CODE_RE.test(raw)) {
+    if (isPairingLockedOut(discordId)) {
+      await reply({ text: "Too many attempts. Please wait a few minutes and try your code again." });
+      return;
+    }
+    const result: { ok: boolean; role?: string; error?: "invalid" | "expired" | "used" } =
+      supabase.redeemPairingCode(raw, discordId, "discord");
+    if (!result.ok) {
+      recordPairingAttempt(discordId);
+      const reason =
+        result.error === "expired" ? "That code has expired. Ask the admin for a fresh invite."
+        : result.error === "used" ? "That code was already used. Ask the admin for a new one."
+        : "That code isn't valid. Double-check it, or tap Request access below.";
+      await reply({ text: reason, buttons: [{ label: "Request access", callbackData: `pair_req:discord:${discordId}:${name}` }] });
+      return;
+    }
+    clearPairingAttempts(discordId);
+    const created = supabase.upsertUser({ discord_id: discordId, name, role: result.role });
+    invalidateUserCache(discordId);
+    await sendDiscordPairingWelcome(reply, name, created?.id);
+    return;
+  }
+
+  console.log(`Unpaired Discord DM: ${discordId}`);
+  await reply({
+    text: "You're not connected to this Nova yet. If you were given an invite code, send it here. Otherwise tap Request access.",
+    buttons: [{ label: "Request access", callbackData: `pair_req:discord:${discordId}:${name}` }],
+  });
 }
 
 // Set up Telegram middleware for user resolution (if Telegram is enabled)
@@ -560,19 +619,30 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
   // Pairing request — pressed by an UNKNOWN user, so it must run before the
   // "must be a known user" guard below. Notifies every admin with Approve/Deny.
   if (buttonData.startsWith("pair_req:")) {
+    // Telegram (legacy): pair_req:<tgId>:<name>. Discord: pair_req:discord:<discordId>:<name>.
+    // Discord ids never look numeric like a Telegram id, so a "discord" marker in
+    // slot 1 unambiguously selects the channel while keeping Telegram byte-identical.
     const parts = buttonData.split(":");
-    const requesterTgId = parts[1];
-    const requesterName = pairingFirstName(parts.slice(2).join(":"));
+    const isDiscord = parts[1] === "discord";
+    const requesterPlatformId = isDiscord ? parts[2] : parts[1];
+    const requesterName = pairingFirstName((isDiscord ? parts.slice(3) : parts.slice(2)).join(":"));
+    if (isDiscord) {
+      // Remember where to welcome/deny them once an admin decides.
+      discordPairRequests.set(requesterPlatformId, { channelId: chatId, name: requesterName });
+    }
+    const okData = isDiscord ? `pair_ok:discord:${requesterPlatformId}` : `pair_ok:${requesterPlatformId}:${requesterName}`;
+    const noData = isDiscord ? `pair_no:discord:${requesterPlatformId}` : `pair_no:${requesterPlatformId}`;
+    const originLabel = isDiscord ? `discord:${requesterPlatformId}` : `tg:${requesterPlatformId}`;
     const admins = supabase.getUsersByRole("admin");
     const tg = channels.getTelegram();
     if (tg && admins?.length) {
       for (const admin of admins) {
         if (!admin.telegram_id) continue;
         await tg.send(admin.telegram_id, {
-          text: `${requesterName} (tg:${requesterTgId}) is requesting access to Nova.`,
+          text: `${requesterName} (${originLabel}) is requesting access to Nova.`,
           buttons: [
-            { label: "✅ Approve", callbackData: `pair_ok:${requesterTgId}:${requesterName}` },
-            { label: "❌ Deny", callbackData: `pair_no:${requesterTgId}` },
+            { label: "✅ Approve", callbackData: okData },
+            { label: "❌ Deny", callbackData: noData },
           ],
         }).catch(() => {});
       }
@@ -596,6 +666,31 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
   if (buttonData.startsWith("pair_ok:")) {
     if (user.role !== "admin") { await reply("Only an admin can approve access."); return; }
     const parts = buttonData.split(":");
+    // Discord variant: pair_ok:discord:<discordId> (name/channel come from the pending map).
+    if (parts[1] === "discord") {
+      const newDiscordId = parts[2];
+      const pending = discordPairRequests.get(newDiscordId);
+      const newName = pending?.name || pairingFirstName();
+      if (supabase.getUserByDiscordId(newDiscordId)) {
+        discordPairRequests.delete(newDiscordId);
+        if (editOriginal) await editOriginal(`${newName} already has access.`);
+        return;
+      }
+      const created = supabase.upsertUser({ discord_id: newDiscordId, name: newName, role: "member" });
+      invalidateUserCache(newDiscordId);
+      // Welcome the requester in their Discord DM if we still know where they are.
+      const discord = channels.get("discord");
+      if (pending?.channelId && discord) {
+        await discord.send(pending.channelId, {
+          text: buildWelcomeMessage(newName),
+          buttons: exampleButtons().flat().map((b) => ({ label: b.label, callbackData: b.callbackData })),
+        }).catch(() => {});
+        if (created?.id) supabase.setOnboardedAt(created.id);
+      }
+      discordPairRequests.delete(newDiscordId);
+      if (editOriginal) await editOriginal(`✅ Approved ${newName}. They now have access.`);
+      return;
+    }
     const newTgId = parts[1];
     const newName = pairingFirstName(parts.slice(2).join(":"));
     if (supabase.getUserByTelegramId(newTgId)) {
@@ -611,7 +706,19 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
 
   if (buttonData.startsWith("pair_no:")) {
     if (user.role !== "admin") { await reply("Only an admin can deny access."); return; }
-    const newTgId = buttonData.split(":")[1];
+    const parts = buttonData.split(":");
+    if (parts[1] === "discord") {
+      const newDiscordId = parts[2];
+      const pending = discordPairRequests.get(newDiscordId);
+      const discord = channels.get("discord");
+      if (pending?.channelId && discord) {
+        await discord.send(pending.channelId, { text: "Thanks for your interest — the admin isn't able to grant access right now." }).catch(() => {});
+      }
+      discordPairRequests.delete(newDiscordId);
+      if (editOriginal) await editOriginal("Request denied.");
+      return;
+    }
+    const newTgId = parts[1];
     const tg = channels.getTelegram();
     if (tg) await tg.send(newTgId, "Thanks for your interest — the admin isn't able to grant access right now.").catch(() => {});
     if (editOriginal) await editOriginal("Request denied.");
@@ -1642,6 +1749,11 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
   } else {
     user = await resolveUser(msg.platformUserId, msg.channelType);
     if (!user) {
+      // Discord: run the same self-serve pairing the Telegram middleware offers.
+      if (msg.channelType === "discord") {
+        await handleUnknownDiscordUser(msg, reply);
+        return;
+      }
       console.log(`Unauthorized ${msg.channelType}: ${msg.platformUserId}`);
       await reply({ text: "This bot is private. Ask the admin to add you." });
       return;

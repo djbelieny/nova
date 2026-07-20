@@ -76,6 +76,7 @@ export function toIncomingMessage(discordMsg: any, botUserId?: string): Incoming
     userId: "", // resolved by relay.ts
     platformUserId: discordMsg.author?.id || "",
     text: discordMsg.content || "",
+    senderName: discordMsg.author?.globalName || discordMsg.author?.username || undefined,
     isGroup,
     groupId: isGroup ? channelId : undefined,
     isMentioned,

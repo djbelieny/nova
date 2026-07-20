@@ -1702,7 +1702,7 @@ export class Database {
   }
 
   upsertUser(data: {
-    telegram_id: string;
+    telegram_id?: string;
     name: string;
     timezone?: string;
     phone?: string;
@@ -1712,6 +1712,11 @@ export class Database {
     profile_text?: string;
     discord_id?: string;
   }): any {
+    // telegram_id is NOT NULL UNIQUE and is the conflict key. Discord-only users
+    // (paired from Discord, no Telegram) get a namespaced placeholder so the
+    // constraint holds while resolution still happens via discord_id.
+    const telegramId = data.telegram_id ?? (data.discord_id ? `discord:${data.discord_id}` : undefined);
+    if (!telegramId) throw new Error("upsertUser requires telegram_id or discord_id");
     const id = uuid();
     this.shared.db.run(`
       INSERT INTO users (id, telegram_id, name, timezone, phone, pin, role, preferences, profile_text, discord_id)
@@ -1725,7 +1730,7 @@ export class Database {
         updated_at = datetime('now')
     `, [
       id,
-      data.telegram_id,
+      telegramId,
       data.name,
       data.timezone || "UTC",
       data.phone || null,
@@ -1735,7 +1740,9 @@ export class Database {
       data.profile_text || "",
       data.discord_id || null,
     ]);
-    return this.getUserByTelegramId(data.telegram_id);
+    return data.discord_id && !data.telegram_id
+      ? this.getUserByDiscordId(data.discord_id)
+      : this.getUserByTelegramId(telegramId);
   }
 
   updateUserPreference(userId: string, key: string, value: any): void {
@@ -1865,10 +1872,16 @@ export class Database {
     return code;
   }
 
-  /** Atomically redeem a pairing code. One-time use, safe against double-redeem. */
+  /**
+   * Atomically redeem a pairing code. One-time use, safe against double-redeem.
+   * On success, provisions the redeeming user on the given channel: Telegram
+   * (default, current behavior) sets telegram_id; Discord sets discord_id.
+   * The caller may re-upsert afterwards to attach a proper display name.
+   */
   redeemPairingCode(
     code: string,
-    telegramId: string
+    platformId: string,
+    channel: "telegram" | "discord" = "telegram"
   ): { ok: true; role: string } | { ok: false; error: "invalid" | "expired" | "used" } {
     const normalized = (code || "").trim().toUpperCase();
     if (!normalized) return { ok: false, error: "invalid" };
@@ -1888,9 +1901,17 @@ export class Database {
     const changed = this.shared.db.run(
       `UPDATE pairing_codes SET used_by = ?, used_at = datetime('now')
        WHERE code = ? AND used_by IS NULL`,
-      [telegramId, normalized]
+      [platformId, normalized]
     );
     if (!changed.changes) return { ok: false, error: "used" };
+
+    // Provision the user on the redeeming channel (name defaults to the platform
+    // id; the relay re-upserts with the real display name once known).
+    if (channel === "discord") {
+      this.upsertUser({ discord_id: platformId, name: platformId, role: row.role });
+    } else {
+      this.upsertUser({ telegram_id: platformId, name: platformId, role: row.role });
+    }
     return { ok: true, role: row.role };
   }
 

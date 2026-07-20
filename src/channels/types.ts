@@ -12,6 +12,7 @@ export interface IncomingMessage {
   userId: string;           // Nova user UUID (resolved from platform ID)
   platformUserId: string;   // raw platform ID (telegram ID, phone number, etc.)
   text?: string;
+  senderName?: string;      // platform display name (used for self-serve pairing greetings)
   voice?: { buffer: Buffer; durationSec: number };
   image?: { buffer: Buffer; caption?: string; filePath?: string };
   document?: { buffer: Buffer; filename: string; caption?: string; filePath?: string };
