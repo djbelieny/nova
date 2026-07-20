@@ -9,6 +9,8 @@
     "test": "NODE_ENV=test NOVA_DB_DIR=./data/test-run bun test tests/",
     "typecheck": "tsc --noEmit",
     "init": "bun run src/setup-wizard.ts",
+    "providers": "bun run src/cli-manage.ts providers",
+    "invite": "bun run src/cli-manage.ts invite",
     "doctor": "bun run src/doctor.ts",
     "update": "git pull --ff-only && bun install && echo 'Nova updated. Restart it to apply (bun run start, or restart the service).'",
     "setup": "bun run setup/install.ts",

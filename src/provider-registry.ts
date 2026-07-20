@@ -9,7 +9,7 @@
  * router references keep resolving even without a config file.
  */
 
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import type { ProviderProfile } from "./providers/openai-compatible.ts";
 
@@ -86,4 +86,79 @@ export function loadProviderProfiles(
   }
   for (const p of readConfigProfiles(path)) byName.set(p.name, p);
   return Array.from(byName.values());
+}
+
+/**
+ * Return a human-readable validation error for a profile, or null if valid.
+ * Same required-field rules the loader enforces, but with field-level messages
+ * so writers (dashboard/CLI) can surface actionable errors.
+ */
+export function validateProfile(p: any): string | null {
+  if (!p || typeof p !== "object") return "profile must be an object";
+  if (typeof p.name !== "string" || !p.name.trim()) return "name is required";
+  if (typeof p.baseUrl !== "string" || !p.baseUrl.trim()) return "baseUrl is required";
+  if (typeof p.apiKeyEnv !== "string" || !p.apiKeyEnv.trim()) return "apiKeyEnv is required";
+  if (!Array.isArray(p.models) || p.models.length === 0) return "models must be a non-empty array";
+  if (p.models.some((m: any) => typeof m !== "string" || !m.trim())) return "models must be non-empty strings";
+  if (typeof p.defaultModel !== "string" || !p.defaultModel.trim()) return "defaultModel is required";
+  if (typeof p.costClass !== "string" || !VALID_COST_CLASSES.has(p.costClass)) {
+    return `costClass must be one of: ${Array.from(VALID_COST_CLASSES).join(", ")}`;
+  }
+  return null;
+}
+
+/**
+ * Atomically write the full set of provider profiles to config/providers.json in
+ * the `{ providers: [...] }` shape the loader reads. Validates every profile first,
+ * then writes to a temp file and renames into place so readers never see a partial file.
+ */
+export function writeProviderProfiles(
+  profiles: ProviderProfile[],
+  path: string = DEFAULT_CONFIG_PATH,
+): void {
+  for (const p of profiles) {
+    const err = validateProfile(p);
+    if (err) throw new Error(`invalid provider profile "${p?.name ?? "?"}": ${err}`);
+  }
+  const json = JSON.stringify({ providers: profiles }, null, 2) + "\n";
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tmp, json, "utf8");
+  renameSync(tmp, path);
+}
+
+/**
+ * Add or replace (by name) a single profile in config/providers.json.
+ * Load → mutate → validate → write. Returns the new full list.
+ */
+export function upsertProviderProfile(
+  profile: ProviderProfile,
+  path: string = DEFAULT_CONFIG_PATH,
+): ProviderProfile[] {
+  const err = validateProfile(profile);
+  if (err) throw new Error(`invalid provider profile "${profile?.name ?? "?"}": ${err}`);
+  const existing = readConfigProfiles(path);
+  const next = existing.filter((p) => p.name !== profile.name);
+  next.push(profile);
+  writeProviderProfiles(next, path);
+  return next;
+}
+
+/**
+ * Remove a profile by name from config/providers.json. Returns the new full list.
+ * Removing a name that isn't present is a no-op (still rewrites the file).
+ */
+export function removeProviderProfile(
+  name: string,
+  path: string = DEFAULT_CONFIG_PATH,
+): ProviderProfile[] {
+  const existing = readConfigProfiles(path);
+  const next = existing.filter((p) => p.name !== name);
+  writeProviderProfiles(next, path);
+  return next;
+}
+
+/** The default config path, exported so callers can honor an env override consistently. */
+export function providerConfigPath(): string {
+  return process.env.NOVA_PROVIDERS_CONFIG || DEFAULT_CONFIG_PATH;
 }

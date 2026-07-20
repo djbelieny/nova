@@ -1922,6 +1922,23 @@ export class Database {
     );
   }
 
+  /** List active (unexpired, unredeemed) invite codes, newest first. */
+  getActivePairingCodes(): Array<{ code: string; role: string; created_by: string; created_at: string; expires_at: string }> {
+    return this.shared.db.query(
+      `SELECT code, role, created_by, created_at, expires_at FROM pairing_codes
+       WHERE used_by IS NULL AND expires_at > datetime('now')
+       ORDER BY created_at DESC`
+    ).all() as any[];
+  }
+
+  /** Revoke a single invite code by deleting its row. */
+  deletePairingCode(code: string): void {
+    this.shared.db.run(
+      `DELETE FROM pairing_codes WHERE code = ?`,
+      [(code || "").trim().toUpperCase()]
+    );
+  }
+
   getTeamMembers(teamId: string): any[] {
     const rows = this.shared.db.query(
       `SELECT * FROM users WHERE team_id = ? AND active = 1`

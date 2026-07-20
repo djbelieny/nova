@@ -398,7 +398,7 @@ const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
 };
 
-function ask(question: string, fallback = ""): string {
+export function ask(question: string, fallback = ""): string {
   const suffix = fallback ? c.dim(` [${fallback}]`) : "";
   const answer = (globalThis as any).prompt?.(`  ${question}${suffix}`) ?? "";
   return (answer || fallback).trim();
@@ -511,6 +511,7 @@ async function main(): Promise<void> {
   console.log(c.dim("    3. Optional: enable the dashboard (DASHBOARD_PASS in .env), then bun run dashboard"));
   console.log(c.dim("    4. Optional: add more MCP servers from .mcp.example.json, or the exec board."));
   console.log(c.dim("    To add teammates later, message Nova /invite."));
+  console.log(c.dim("    Add AI models later with: bun run providers add"));
   console.log("");
 }
 

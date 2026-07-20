@@ -17,7 +17,15 @@ import { createSSEStream, getActiveAgents, getSSEConnectionCount, initEventBus, 
 import { orchestrate, initOrchestrator, type WebContext } from "./orchestrator.ts";
 import { transcribe } from "./transcribe.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
-import { registerProvider, getProvider } from "./ai-provider.ts";
+import { registerProvider, getProvider, setDefaultProvider, getDefaultProvider } from "./ai-provider.ts";
+import {
+  readConfigProfiles,
+  loadProviderProfiles,
+  upsertProviderProfile,
+  removeProviderProfile,
+  validateProfile,
+  providerConfigPath,
+} from "./provider-registry.ts";
 import { ExecComms } from "./exec-comms.ts";
 import { isBoardConfigured } from "./board-config.ts";
 import { initBoard, conveneBoard, startBoardPoller } from "./board.ts";
@@ -4440,6 +4448,18 @@ export function renderDashboard(): string {
         </button>
       </div>
 
+      <div class="nav-section">
+        <div class="nav-section-label">Management</div>
+        <button class="nav-item dock-tab" data-panel="models-dock">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>
+          Models
+        </button>
+        <button class="nav-item dock-tab" data-panel="channels-dock">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 019 9M4 4a16 16 0 0116 16"/><circle cx="5" cy="19" r="1"/></svg>
+          Channels &amp; Access
+        </button>
+      </div>
+
       <!-- Services status pinned to bottom -->
       <div class="nav-footer">
         <div class="nav-section-label">Services</div>
@@ -4522,6 +4542,8 @@ export function renderDashboard(): string {
         <div class="dock-panel" id="resources-dock"></div>
         <div class="dock-panel" id="skills-dock"></div>
         <div class="dock-panel" id="alerts-dock"></div>
+        <div class="dock-panel" id="models-dock"></div>
+        <div class="dock-panel" id="channels-dock"></div>
 
       </div>
     </main>
@@ -5208,6 +5230,8 @@ function loadDockPanel(panel) {
     case 'resources-dock': loadResources(); break;
     case 'skills-dock': loadSkills(); break;
     case 'alerts-dock': loadAlertRules(); break;
+    case 'models-dock': loadModels(); break;
+    case 'channels-dock': loadChannels(); break;
   }
 }
 
@@ -5756,6 +5780,202 @@ async function triggerAlertCheck() {
     await fetch(BASE + '/api/alerts/trigger-check', { method: 'POST' });
     showToast('Alert check triggered', 'success');
   } catch(e) { showToast('Error triggering check', 'error'); }
+}
+
+// ==== Management: AI Models + Channels & Access ====
+const MGMT_INPUT = 'background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12px;font-family:inherit;width:100%';
+const MGMT_BTN = 'background:var(--bg);color:var(--text-dim);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer';
+const MGMT_BTN_PRIMARY = 'background:var(--teal);color:#000;border:none;padding:6px 14px;border-radius:4px;font-size:11px;cursor:pointer;text-transform:uppercase;letter-spacing:1px';
+
+async function loadModels() {
+  const el = $('models-dock');
+  el.innerHTML = '<div style="color:var(--text-dim)">Loading…</div>';
+  try {
+    const r = await fetch(BASE + '/api/providers');
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div style="color:var(--error)">' + esc(d.error) + '</div>'; return; }
+    const provs = d.providers || [];
+    let html = '<div style="padding:8px;max-width:860px">';
+    html += '<div style="color:var(--warning);font-size:10px;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">AI Models</div>';
+    if (!provs.length) {
+      html += '<div style="color:var(--text-dim);margin-bottom:12px">No custom providers configured. Add one below.</div>';
+    } else {
+      html += '<table class="data-table"><tr><th>Default</th><th>Name</th><th>Base URL</th><th>Key</th><th>Model</th><th></th></tr>';
+      for (const p of provs) {
+        const keyBadge = p.apiKeySet
+          ? '<span style="color:var(--success)">✓ ' + esc(p.apiKeyEnv) + '</span>'
+          : '<span style="color:var(--error)">✗ ' + esc(p.apiKeyEnv) + '</span>';
+        html += '<tr>'
+          + '<td><input type="radio" name="prov-default" data-default="' + esc(p.name) + '"' + (p.name === d.default ? ' checked' : '') + '></td>'
+          + '<td style="color:var(--indigo)">' + esc(p.name) + '</td>'
+          + '<td style="color:var(--text-dim)">' + esc(p.baseUrl) + '</td>'
+          + '<td>' + keyBadge + '</td>'
+          + '<td style="color:var(--text-dim)">' + esc(p.defaultModel) + '</td>'
+          + '<td style="white-space:nowrap"><button data-test="' + esc(p.name) + '" style="' + MGMT_BTN + '">Test</button> '
+          + '<button data-remove="' + esc(p.name) + '" style="' + MGMT_BTN + '">Remove</button></td>'
+          + '</tr>';
+      }
+      html += '</table>';
+    }
+    html += '<div style="margin-top:16px;color:var(--warning);font-size:10px;text-transform:uppercase;letter-spacing:1px">Add provider</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;max-width:640px;margin-top:8px">';
+    html += '<input id="pm-name" placeholder="Name (e.g. openrouter)" style="' + MGMT_INPUT + '">';
+    html += '<input id="pm-baseUrl" placeholder="Base URL (…/v1)" style="' + MGMT_INPUT + '">';
+    html += '<input id="pm-apiKeyEnv" placeholder="API key env var (e.g. OPENROUTER_API_KEY)" style="' + MGMT_INPUT + '">';
+    html += '<input id="pm-models" placeholder="Models (comma-separated)" style="' + MGMT_INPUT + '">';
+    html += '<input id="pm-defaultModel" placeholder="Default model (optional)" style="' + MGMT_INPUT + '">';
+    html += '<select id="pm-costClass" style="' + MGMT_INPUT + '">'
+      + '<option value="cheap-api">cheap-api</option>'
+      + '<option value="standard-api">standard-api</option>'
+      + '<option value="premium-api">premium-api</option>'
+      + '<option value="subscription-cli">subscription-cli</option>'
+      + '</select>';
+    html += '</div>';
+    html += '<button id="pm-add" style="' + MGMT_BTN_PRIMARY + ';margin-top:10px">Add provider</button>';
+    html += '<div style="color:var(--text-dim);font-size:11px;margin-top:8px">API keys live in .env as the named env var — Nova only stores the variable name, never the secret.</div>';
+    html += '<div id="pm-test-result" style="margin-top:10px;font-size:12px"></div>';
+    html += '</div>';
+    el.innerHTML = html;
+    el.querySelectorAll('[data-test]').forEach(b => { b.onclick = () => testProvider(b.dataset.test); });
+    el.querySelectorAll('[data-remove]').forEach(b => { b.onclick = () => removeProvider(b.dataset.remove); });
+    el.querySelectorAll('[data-default]').forEach(b => { b.onchange = () => setProviderDefault(b.dataset.default); });
+    const addBtn = $('pm-add'); if (addBtn) addBtn.onclick = addProvider;
+  } catch(e) { el.innerHTML = '<div style="color:var(--error)">Error loading providers</div>'; }
+}
+
+async function addProvider() {
+  const body = {
+    name: $('pm-name').value.trim(),
+    baseUrl: $('pm-baseUrl').value.trim(),
+    apiKeyEnv: $('pm-apiKeyEnv').value.trim(),
+    models: $('pm-models').value.split(',').map(s => s.trim()).filter(Boolean),
+    defaultModel: $('pm-defaultModel').value.trim(),
+    costClass: $('pm-costClass').value,
+  };
+  if (!body.name || !body.baseUrl || !body.apiKeyEnv || !body.models.length) {
+    showToast('Fill name, base URL, key env, and models', 'error'); return;
+  }
+  try {
+    const r = await fetch(BASE + '/api/providers', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (d.ok) { showToast('Provider added', 'success'); loadModels(); }
+    else showToast(d.error || 'Failed to add', 'error');
+  } catch(e) { showToast('Error adding provider', 'error'); }
+}
+
+async function testProvider(name) {
+  const out = $('pm-test-result');
+  if (out) { out.style.color = 'var(--text-dim)'; out.textContent = 'Testing ' + name + '…'; }
+  try {
+    const r = await fetch(BASE + '/api/providers/' + encodeURIComponent(name) + '/test', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      if (out) { out.style.color = 'var(--success)'; out.textContent = '✓ ' + name + ' ok (' + d.ms + 'ms) ' + (d.detail || ''); }
+      showToast(name + ' reachable', 'success');
+    } else {
+      if (out) { out.style.color = 'var(--error)'; out.textContent = '✗ ' + name + ': ' + (d.error || 'failed'); }
+      showToast(name + ' test failed', 'error');
+    }
+  } catch(e) { showToast('Error testing provider', 'error'); }
+}
+
+async function removeProvider(name) {
+  if (!(await confirmAction('Remove provider "' + name + '"?'))) return;
+  try {
+    const r = await fetch(BASE + '/api/providers/' + encodeURIComponent(name), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) { showToast('Removed ' + name, 'success'); loadModels(); }
+    else showToast(d.error || 'Failed to remove', 'error');
+  } catch(e) { showToast('Error removing provider', 'error'); }
+}
+
+async function setProviderDefault(name) {
+  try {
+    const r = await fetch(BASE + '/api/providers/default', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name }) });
+    const d = await r.json();
+    if (d.ok) showToast('Default model → ' + name, 'success');
+    else showToast(d.error || 'Failed', 'error');
+  } catch(e) { showToast('Error setting default', 'error'); }
+}
+
+async function loadChannels() {
+  const el = $('channels-dock');
+  el.innerHTML = '<div style="color:var(--text-dim)">Loading…</div>';
+  try {
+    const [cr, ir] = await Promise.all([fetch(BASE + '/api/channels'), fetch(BASE + '/api/invites')]);
+    const cd = await cr.json();
+    const idata = await ir.json();
+    let html = '<div style="padding:8px;max-width:720px">';
+    html += '<div style="color:var(--warning);font-size:10px;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">Channels</div>';
+    html += '<table class="data-table"><tr><th>Channel</th><th>Status</th><th>Token env</th></tr>';
+    for (const c of (cd.channels || [])) {
+      const status = c.enabled ? '<span style="color:var(--success)">enabled</span>' : '<span style="color:var(--text-dim)">off</span>';
+      const tok = c.tokenSet
+        ? '<span style="color:var(--success)">✓ ' + esc(c.tokenEnv) + '</span>'
+        : '<span style="color:var(--text-dim)">✗ ' + esc(c.tokenEnv) + '</span>';
+      html += '<tr><td style="color:var(--indigo)">' + esc(c.type) + '</td><td>' + status + '</td><td>' + tok + '</td></tr>';
+    }
+    html += '</table>';
+    html += '<div style="color:var(--text-dim);font-size:11px;margin-top:6px">Set the token env var in .env, then restart Nova to enable a channel.</div>';
+    html += '<div style="margin-top:16px;color:var(--warning);font-size:10px;text-transform:uppercase;letter-spacing:1px">Access — invite codes</div>';
+    html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px">';
+    html += '<select id="inv-role" style="' + MGMT_INPUT + ';width:auto"><option value="member">member</option><option value="admin">admin</option></select>';
+    html += '<button id="inv-gen" style="' + MGMT_BTN_PRIMARY + '">Generate invite</button>';
+    html += '</div>';
+    html += '<div id="inv-new" style="margin-top:8px;font-size:12px"></div>';
+    html += '<div id="inv-list" style="margin-top:12px"></div>';
+    html += '</div>';
+    el.innerHTML = html;
+    const gen = $('inv-gen'); if (gen) gen.onclick = generateInvite;
+    renderInvites(idata.invites || []);
+  } catch(e) { el.innerHTML = '<div style="color:var(--error)">Error loading channels</div>'; }
+}
+
+function renderInvites(list) {
+  const el = $('inv-list');
+  if (!el) return;
+  if (!list.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:12px">No active invites.</div>'; return; }
+  let html = '<table class="data-table"><tr><th>Code</th><th>Role</th><th>Expires</th><th></th></tr>';
+  for (const i of list) {
+    html += '<tr><td style="font-family:monospace;color:var(--accent)">' + esc(i.code) + '</td>'
+      + '<td>' + esc(i.role) + '</td>'
+      + '<td style="color:var(--text-dim)">' + esc(i.expires_at) + '</td>'
+      + '<td><button data-revoke="' + esc(i.code) + '" style="' + MGMT_BTN + '">Revoke</button></td></tr>';
+  }
+  html += '</table>';
+  el.innerHTML = html;
+  el.querySelectorAll('[data-revoke]').forEach(b => { b.onclick = () => revokeInvite(b.dataset.revoke); });
+}
+
+async function loadInvites() {
+  try { const r = await fetch(BASE + '/api/invites'); const d = await r.json(); renderInvites(d.invites || []); } catch(e) {}
+}
+
+async function generateInvite() {
+  try {
+    const role = $('inv-role').value;
+    const r = await fetch(BASE + '/api/invite', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ role }) });
+    const d = await r.json();
+    if (d.code) {
+      $('inv-new').innerHTML = '<div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:6px;padding:10px">'
+        + '<span style="font-family:monospace;font-size:15px;color:var(--accent)">' + esc(d.code) + '</span> '
+        + '<button id="inv-copy" style="' + MGMT_BTN + '">Copy</button>'
+        + '<div style="color:var(--text-dim);margin-top:6px;white-space:pre-wrap">' + esc(d.message) + '</div></div>';
+      const cp = $('inv-copy');
+      if (cp) cp.onclick = () => { navigator.clipboard.writeText(d.code).then(() => showToast('Copied', 'success')); };
+      loadInvites();
+    } else showToast(d.error || 'Failed', 'error');
+  } catch(e) { showToast('Error generating invite', 'error'); }
+}
+
+async function revokeInvite(code) {
+  if (!(await confirmAction('Revoke code ' + code + '?'))) return;
+  try {
+    const r = await fetch(BASE + '/api/invites/' + encodeURIComponent(code), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.ok) { showToast('Revoked', 'success'); loadInvites(); }
+    else showToast('Failed to revoke', 'error');
+  } catch(e) { showToast('Error revoking', 'error'); }
 }
 
 // Metrics (for sidebar stats)
@@ -6555,6 +6775,126 @@ const server = Bun.serve({
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 500);
       }
+    }
+
+    // ── AI Models (provider registry) — admin only ──────────────────────────
+    // Secrets are never returned: only the env-var name + whether it is set.
+    if (path === "/api/providers" && req.method === "GET") {
+      const g = adminApi(); if (g) return g;
+      const profiles = readConfigProfiles(providerConfigPath());
+      const masked = profiles.map((p) => ({
+        name: p.name,
+        baseUrl: p.baseUrl,
+        models: p.models,
+        defaultModel: p.defaultModel,
+        costClass: p.costClass,
+        capabilities: p.capabilities ?? null,
+        apiKeyEnv: p.apiKeyEnv,
+        apiKeySet: !!process.env[p.apiKeyEnv],
+      }));
+      const admin = supabase.getUsersByRole("admin")[0];
+      let def = admin?.ai_provider || null;
+      if (!def) { try { def = getDefaultProvider().name; } catch { def = null; } }
+      return jsonResponse({ providers: masked, default: def });
+    }
+    if (path === "/api/providers" && req.method === "POST") {
+      const g = adminApi(); if (g) return g;
+      const b = await req.json().catch(() => ({}));
+      const profile = {
+        name: String(b.name || "").trim(),
+        baseUrl: String(b.baseUrl || "").trim(),
+        apiKeyEnv: String(b.apiKeyEnv || "").trim(),
+        models: Array.isArray(b.models)
+          ? b.models.map((m: any) => String(m).trim()).filter(Boolean)
+          : String(b.models || "").split(",").map((m) => m.trim()).filter(Boolean),
+        defaultModel: String(b.defaultModel || "").trim(),
+        costClass: String(b.costClass || "").trim(),
+        ...(b.capabilities && typeof b.capabilities === "object" ? { capabilities: b.capabilities } : {}),
+      } as any;
+      if (!profile.defaultModel && profile.models.length) profile.defaultModel = profile.models[0];
+      const err = validateProfile(profile);
+      if (err) return jsonResponse({ error: err }, 400);
+      try {
+        upsertProviderProfile(profile, providerConfigPath());
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    const provTestM = path.match(/^\/api\/providers\/([^/]+)\/test$/);
+    if (provTestM && req.method === "POST") {
+      const g = adminApi(); if (g) return g;
+      const name = decodeURIComponent(provTestM[1]);
+      const profile = loadProviderProfiles(providerConfigPath()).find((p) => p.name === name);
+      if (!profile) return jsonResponse({ ok: false, error: "unknown provider" }, 404);
+      const start = performance.now();
+      try {
+        const { OpenAICompatibleProvider } = await import("./providers/openai-compatible.ts");
+        const prov = new OpenAICompatibleProvider(profile);
+        if (!(await prov.isAvailable())) {
+          return jsonResponse({ ok: false, error: `${profile.apiKeyEnv} not set`, ms: Math.round(performance.now() - start) });
+        }
+        const r = await prov.call({ prompt: "ping", noMcp: true, maxTurns: 1 });
+        return jsonResponse({ ok: true, detail: String(r.text || "").slice(0, 120), ms: Math.round(performance.now() - start) });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message, ms: Math.round(performance.now() - start) });
+      }
+    }
+    if (path === "/api/providers/default" && req.method === "POST") {
+      const g = adminApi(); if (g) return g;
+      const b = await req.json().catch(() => ({}));
+      const name = String(b.name || "").trim();
+      if (!name) return jsonResponse({ error: "name required" }, 400);
+      for (const admin of supabase.getUsersByRole("admin")) {
+        supabase.updateUser(admin.id, { ai_provider: name });
+      }
+      try { setDefaultProvider(name); } catch { /* provider not registered in this process — DB pref still updated */ }
+      return jsonResponse({ ok: true, default: name });
+    }
+    const provDelM = path.match(/^\/api\/providers\/([^/]+)$/);
+    if (provDelM && req.method === "DELETE") {
+      const g = adminApi(); if (g) return g;
+      removeProviderProfile(decodeURIComponent(provDelM[1]), providerConfigPath());
+      return jsonResponse({ ok: true });
+    }
+
+    // ── Channels & Access — admin only ──────────────────────────────────────
+    // Channel token editing is out of scope: status only, never token values.
+    if (path === "/api/channels" && req.method === "GET") {
+      const g = adminApi(); if (g) return g;
+      const allowlist = (process.env.NOVA_CHANNELS || "").split(",").map((s) => s.trim()).filter(Boolean);
+      const allowed = (t: string) => allowlist.length === 0 || allowlist.includes(t);
+      const defs: Array<{ type: string; tokenEnv: string }> = [
+        { type: "telegram", tokenEnv: "TELEGRAM_BOT_TOKEN" },
+        { type: "slack", tokenEnv: "SLACK_BOT_TOKEN" },
+        { type: "whatsapp", tokenEnv: "WHATSAPP_WEBHOOK_URL" },
+        { type: "discord", tokenEnv: "DISCORD_BOT_TOKEN" },
+        { type: "cli", tokenEnv: "NOVA_CLI" },
+      ];
+      const channels = defs.map((d) => {
+        const tokenSet = !!process.env[d.tokenEnv];
+        return { type: d.type, enabled: allowed(d.type) && tokenSet, tokenEnv: d.tokenEnv, tokenSet };
+      });
+      return jsonResponse({ channels });
+    }
+    if (path === "/api/invite" && req.method === "POST") {
+      const g = adminApi(); if (g) return g;
+      const b = await req.json().catch(() => ({}));
+      const role = b.role === "admin" ? "admin" : "member";
+      const adminId = me?.userId || supabase.getUsersByRole("admin")[0]?.id || "__master__";
+      const code = supabase.createPairingCode(adminId, role, 24 * 60);
+      const message = `Your Nova invite code: ${code}\nSend it to Nova (or use "request access") to join. Expires in 24 hours.`;
+      return jsonResponse({ code, role, message });
+    }
+    if (path === "/api/invites" && req.method === "GET") {
+      const g = adminApi(); if (g) return g;
+      return jsonResponse({ invites: supabase.getActivePairingCodes() });
+    }
+    const inviteDelM = path.match(/^\/api\/invites\/([^/]+)$/);
+    if (inviteDelM && req.method === "DELETE") {
+      const g = adminApi(); if (g) return g;
+      supabase.deletePairingCode(decodeURIComponent(inviteDelM[1]));
+      return jsonResponse({ ok: true });
     }
 
     return new Response("Not found", { status: 404 });
