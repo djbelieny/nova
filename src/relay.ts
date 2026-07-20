@@ -60,7 +60,8 @@ import {
 import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
 import { CodexProvider } from "./providers/codex.ts";
-import { KimiProvider } from "./providers/kimi.ts";
+import { OpenAICompatibleProvider } from "./providers/openai-compatible.ts";
+import { loadProviderProfiles } from "./provider-registry.ts";
 import { selectProvider, parseProviderPrefix, recordRateLimit, recordUsage } from "./ai-router.ts";
 import {
   markdownToTelegramHTML,
@@ -1017,6 +1018,7 @@ async function _callAIOnce(prompt: string, model?: LegacyModelTier | ModelTier, 
     userId,
     forceProvider,
     hasMcpConfig: !!mcpConfigPath,
+    requiresTools: !!mcpConfigPath,
     userDefaultProvider: resolvedDefault || undefined,
   });
 
@@ -3447,7 +3449,9 @@ registerProvider(geminiProvider);
 const codexProvider = new CodexProvider();
 registerProvider(codexProvider);
 
-registerProvider(new KimiProvider());
+for (const profile of loadProviderProfiles()) {
+  registerProvider(new OpenAICompatibleProvider(profile));
+}
 
 // Check which providers are actually available
 (async () => {

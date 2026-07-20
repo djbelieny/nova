@@ -8,7 +8,7 @@
  * Models: llama-3.3-70b-versatile (standard/premium), llama-3.1-8b-instant (fast)
  */
 
-import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
+import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass, ProviderKind, ProviderCapabilities } from "../ai-provider.ts";
 
 const MODEL_MAP: Record<string, string> = {
   fast: "llama-3.1-8b-instant",
@@ -22,6 +22,8 @@ export class GroqProvider implements AIProvider {
   readonly defaultModel = "llama-3.1-8b-instant";
   readonly costClass: ProviderCostClass = "standard-api";
   readonly supportedTiers: ModelTier[] = ["fast", "standard", "premium"];
+  readonly kind: ProviderKind = "api";
+  readonly capabilities: ProviderCapabilities = { tools: false, mcp: false, streaming: false };
 
   mapModelTier(tier: ModelTier): string {
     return MODEL_MAP[tier] ?? this.defaultModel;
