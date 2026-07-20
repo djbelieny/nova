@@ -17,6 +17,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
+import { runAllChecks } from "./doctor.ts";
 
 export type ProviderKey = "claude" | "anthropic" | "gemini" | "groq" | "openai";
 
@@ -129,6 +130,87 @@ export function answersToEnvVars(answers: WizardAnswers): Record<string, string>
   const envVar = providerEnvVar(answers.provider);
   if (envVar && answers.providerKey) vars[envVar] = answers.providerKey.trim();
   return vars;
+}
+
+// ============================================================
+// Resumable wizard state — checkpoints so the wizard can be closed and re-run.
+// ============================================================
+
+export interface WizardState {
+  /** Steps the user has completed, e.g. ["claude", "telegram", "personalize"]. */
+  completed: string[];
+  /** Partial answers collected so far (never includes secrets we can re-read from .env). */
+  answers: Partial<WizardAnswers>;
+}
+
+/** Path to the checkpoint file. Honors NOVA_SETUP_STATE (tests) then NOVA_DB_DIR, else data/. */
+export function wizardStatePath(): string {
+  if (process.env.NOVA_SETUP_STATE) return process.env.NOVA_SETUP_STATE;
+  const dir = process.env.NOVA_DB_DIR || "data";
+  return join(dir, ".setup-state.json");
+}
+
+/** Loads the checkpoint, or a fresh empty state if none/unreadable. */
+export function loadWizardState(): WizardState {
+  const path = wizardStatePath();
+  try {
+    if (existsSync(path)) {
+      const parsed = JSON.parse(readFileSync(path, "utf8"));
+      return { completed: parsed.completed ?? [], answers: parsed.answers ?? {} };
+    }
+  } catch {}
+  return { completed: [], answers: {} };
+}
+
+/** Merges a patch into the checkpoint and persists it. Returns the merged state. */
+export function saveWizardState(patch: Partial<WizardState>): WizardState {
+  const current = loadWizardState();
+  const merged: WizardState = {
+    completed: Array.from(new Set([...current.completed, ...(patch.completed ?? [])])),
+    answers: { ...current.answers, ...(patch.answers ?? {}) },
+  };
+  const path = wizardStatePath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(merged, null, 2));
+  return merged;
+}
+
+/** Clears the checkpoint (called when setup completes successfully). */
+export function clearWizardState(): void {
+  try {
+    const path = wizardStatePath();
+    if (existsSync(path)) writeFileSync(path, JSON.stringify({ completed: [], answers: {} }, null, 2));
+  } catch {}
+}
+
+// ============================================================
+// Telegram user-ID auto-capture — removes the @userinfobot step.
+// ============================================================
+
+type FetchLike = (url: string) => Promise<{ json: () => Promise<any> }>;
+
+/**
+ * Polls getUpdates once and returns the sender ID of the most recent message to the bot,
+ * or null if nobody has messaged it yet. The wizard tells the user "message your bot now",
+ * then calls this — so their user ID is captured automatically instead of via @userinfobot.
+ */
+export async function captureTelegramUserId(
+  token: string,
+  fetchImpl: FetchLike = fetch as unknown as FetchLike
+): Promise<string | null> {
+  try {
+    const res = await fetchImpl(`https://api.telegram.org/bot${token}/getUpdates`);
+    const body = await res.json();
+    if (!body?.ok || !Array.isArray(body.result) || body.result.length === 0) return null;
+    // Walk newest-first for the first real message sender.
+    for (let i = body.result.length - 1; i >= 0; i--) {
+      const from = body.result[i]?.message?.from;
+      if (from?.id != null) return String(from.id);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /** Build a minimal, clearly-sectioned .env from scratch. */
@@ -323,7 +405,7 @@ function ask(question: string, fallback = ""): string {
 }
 
 /** Collect answers: env vars first (docker/CI), then interactive prompts on a TTY. */
-export function readAnswers(): WizardAnswers {
+export async function readAnswers(): Promise<WizardAnswers> {
   const envProvider = (process.env.NOVA_INIT_PROVIDER || "").toLowerCase();
   const provider: ProviderKey = envProvider in PROVIDERS ? (envProvider as ProviderKey) : "claude";
 
@@ -341,9 +423,28 @@ export function readAnswers(): WizardAnswers {
   }
 
   // Interactive path.
-  console.log(c.dim("\n  Get a bot token from @BotFather, and your user ID from @userinfobot.\n"));
+  console.log(c.dim("\n  Get a bot token from @BotFather. Your user ID can be detected automatically.\n"));
   const telegramToken = ask("Telegram bot token:");
-  const telegramUserId = ask("Your Telegram user ID:");
+
+  // User ID: auto-detect (message the bot) or type it manually.
+  let telegramUserId = ask("Your Telegram user ID:", "auto");
+  if (telegramUserId.toLowerCase() === "auto" || telegramUserId === "") {
+    console.log(c.dim("\n  Auto-detecting… open Telegram and send any message to your bot now."));
+    telegramUserId = "";
+    for (let attempt = 1; attempt <= 3 && !telegramUserId; attempt++) {
+      ask(c.dim(`  Sent your bot a message? Press Enter to check (try ${attempt}/3):`));
+      const captured = await captureTelegramUserId(telegramToken);
+      if (captured) {
+        telegramUserId = captured;
+        console.log(`    ${c.green("✓")} Detected your user ID: ${captured}`);
+      } else {
+        console.log(c.yellow("    Didn't see a message yet."));
+      }
+    }
+    if (!telegramUserId) {
+      telegramUserId = ask("  Enter your user ID manually (from @userinfobot):");
+    }
+  }
   console.log(c.dim("\n  Choose one AI provider:"));
   const keys = Object.keys(PROVIDERS) as ProviderKey[];
   keys.forEach((k, i) => console.log(`    ${i + 1}) ${PROVIDERS[k].label}`));
@@ -371,15 +472,24 @@ async function main(): Promise<void> {
   console.log(c.bold("  Nova — nova init"));
   console.log(c.dim("  Minimal setup: Telegram + one AI provider + three starter agents.\n"));
 
-  const answers = readAnswers();
+  // Preflight: warn (don't block) if core tools are missing.
+  const preflight = await runAllChecks(process.env);
+  for (const chk of preflight.filter((x) => !x.ok && ["Bun", "Claude Code CLI", "git"].includes(x.name))) {
+    console.log(`  ${c.yellow("!")} ${chk.name}: ${chk.detail}${chk.fix ? c.dim(` — ${chk.fix}`) : ""}`);
+  }
+
+  const answers = await readAnswers();
   const { ok, errors } = validateAnswers(answers);
   if (!ok) {
     console.log(c.red("\n  Setup incomplete:"));
     for (const e of errors) console.log(`    ${c.red("✗")} ${e}`);
+    // Persist what we have so a re-run resumes instead of starting over.
+    saveWizardState({ answers: { telegramToken: answers.telegramToken, telegramUserId: answers.telegramUserId, provider: answers.provider, userName: answers.userName, timezone: answers.timezone } });
     process.exit(1);
   }
 
   const report = writeConfigFiles(root, answers, { force });
+  saveWizardState({ completed: ["config"], answers: { provider: answers.provider, userName: answers.userName, timezone: answers.timezone } });
   console.log(`\n${c.cyan("  Config written:")}`);
   console.log(`    ${c.green("✓")} .env — ${report.envReason}`);
   console.log(`    ${report.mcpWritten ? c.green("✓") : c.yellow("!")} .mcp.json — ${report.mcpReason}`);
@@ -394,6 +504,7 @@ async function main(): Promise<void> {
     console.log(c.dim("      Fix the token in .env, then run: bun run test:telegram"));
   }
 
+  clearWizardState(); // setup finished — nothing to resume
   console.log(`\n${c.bold("  Next steps:")}`);
   console.log(`    1. Start Nova:        ${c.cyan("bun run start")}`);
   console.log(`    2. Message your bot on Telegram to confirm it responds.`);
