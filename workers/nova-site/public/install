@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# ============================================================
+# Nova — one-line installer
+#   curl -fsSL https://mynova.space/install | bash
+# ============================================================
+# Clones Nova to ~/nova (override with NOVA_DIR=/path) and launches the
+# guided setup wizard. The only prerequisite is git — bootstrap.sh installs
+# everything else (Bun, the Claude Code CLI) for you.
+# ============================================================
+
+set -euo pipefail
+
+BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+
+REPO="${NOVA_REPO:-https://github.com/djbelieny/nova.git}"
+DIR="${NOVA_DIR:-$HOME/nova}"
+
+echo ""
+echo -e "${BLUE}  Nova installer${NC}"
+echo "  ─────────────────────────────────"
+
+# ── Reject bare Windows shells (Git Bash / MSYS / Cygwin) ────────
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    echo -e "  ${RED}Windows shells aren't supported.${NC} Nova runs on Windows via WSL2:"
+    echo "    1. In an admin PowerShell:  wsl --install"
+    echo "    2. Reboot, open 'Ubuntu' from the Start menu."
+    echo "    3. Re-run this command inside Ubuntu."
+    exit 1 ;;
+esac
+
+# ── git is the one hard prerequisite (bootstrap installs the rest) ─
+if ! command -v git >/dev/null 2>&1; then
+  echo -e "  ${RED}git is required but not installed.${NC}"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo "    Install it with:  xcode-select --install   (or: brew install git)"
+  else
+    echo "    Install it with:  sudo apt-get update && sudo apt-get install -y git"
+  fi
+  exit 1
+fi
+
+# ── Clone, or update an existing install ─────────────────────────
+if [ -d "$DIR/.git" ]; then
+  echo -e "  ${YELLOW}Existing Nova found at $DIR — updating…${NC}"
+  git -C "$DIR" pull --ff-only || echo -e "  ${YELLOW}!${NC} Couldn't fast-forward; continuing with the current checkout."
+elif [ -e "$DIR" ]; then
+  echo -e "  ${RED}$DIR already exists and isn't a Nova clone.${NC}"
+  echo "    Move it aside, or choose another path:  NOVA_DIR=~/nova2 curl -fsSL https://mynova.space/install | bash"
+  exit 1
+else
+  echo "  Cloning Nova into $DIR…"
+  git clone "$REPO" "$DIR"
+fi
+
+cd "$DIR"
+echo -e "  ${GREEN}✓ Nova is in $DIR${NC}"
+echo ""
+
+# ── Hand off to the bootstrapper ─────────────────────────────────
+# Piping through `curl | bash` means our stdin is the pipe, not the keyboard.
+# Reconnect it to the terminal so the interactive setup wizard works; if there
+# is no terminal (CI, non-interactive), bootstrap.sh detects that and prints
+# the two commands to finish by hand.
+if [ -r /dev/tty ]; then
+  exec bash bootstrap.sh < /dev/tty
+else
+  bash bootstrap.sh
+fi
