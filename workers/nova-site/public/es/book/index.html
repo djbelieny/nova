@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nova speaks every model now — and lives in your terminal — Nova</title>
-<meta name="description" content="A batch of upgrades: run any OpenAI-compatible model alongside your subscription CLIs, a real nova command with nova connect, terminal + Discord channels, and self-serve team invites — without touching the self-hosted, approval-gated trust model.">
-<meta property="og:title" content="Nova speaks every model now — and lives in your terminal">
-<meta property="og:description" content="Add any LLM alongside your subscription CLIs, a real nova command with nova connect, terminal + Discord channels, and self-serve team invites. Same self-hosted, approval-gated Nova.">
-<meta property="og:type" content="article">
-<meta property="og:url" content="https://mynova.space/blog/whats-new/">
+<title>Reserva una consulta pagada — Nova</title>
+<meta name="description" content="¿Quieres Nova funcionando para tu negocio sin construirla tú mismo? Elige un horario y definimos tu configuración, asesoría o un desarrollo a medida — y te armamos un plan.">
+<meta property="og:title" content="Reserva una consulta pagada — Nova">
+<meta property="og:description" content="¿Quieres Nova funcionando para tu negocio sin construirla tú mismo? Elige un horario y definimos tu configuración, asesoría o un desarrollo a medida.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://mynova.space/es/book/">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -164,26 +164,22 @@
   .langsw a.on { color:var(--text) !important; background:var(--line); }
   @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
 </style>
-<link rel="alternate" hreflang="en" href="https://mynova.space/blog/whats-new/">
-<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/whats-new/">
-<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/whats-new/">
-<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/whats-new/">
 </head>
 <body>
 
 <nav>
   <div class="wrap nav-inner">
-    <a class="wordmark" href="/" aria-label="Nova home">
+    <a class="wordmark" href="/es/" aria-label="Nova home">
       <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
       Nova
     </a>
     <div class="nav-links">
-      <a href="/#how">How it works</a>
-      <a href="/#agents">Agents</a>
-      <a href="/#start">Quick start</a>
-      <a href="/blog/">Blog</a>
-      <a href="/docs/">Docs</a>
-      <span class="langsw" aria-label="Language"><a href="/blog/whats-new/" class="en on" hreflang="en">EN</a><a href="/es/blog/whats-new/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/whats-new/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a href="/es/#how">Cómo funciona</a>
+      <a href="/es/#agents">Agentes</a>
+      <a href="/es/#start">Inicio rápido</a>
+      <a href="/es/blog/">Blog</a>
+      <a href="/es/docs/">Documentos</a>
+      <span class="langsw" aria-label="Language"><a href="/book/" class="en" hreflang="en">EN</a><a href="/es/book/" class="es on" hreflang="es">ES</a><a href="/pt-br/book/" class="pt-br" hreflang="pt-BR">PT</a></span>
       <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
         <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         GitHub
@@ -194,65 +190,11 @@
 
 <article class="article">
   <div class="wrap">
-    <span class="eyebrow">What's new</span>
-    <h1>Nova speaks every model now — and lives in your terminal</h1>
-    <p class="lede">A batch of upgrades makes Nova more flexible and easier to live with — any model, a real CLI, more places to talk to it, and self-serve team access — without changing what it is.</p>
-    <p class="byline">Jake Belieny <span class="dot">·</span> 20 July 2026 <span class="dot">·</span> 6 min read</p>
+    <span class="eyebrow">Trabaja conmigo</span>
+    <h1>Reserva una consulta pagada</h1>
+    <p class="lede">¿Quieres Nova funcionando para tu negocio sin construirla tú mismo? Elige un horario abajo y definiremos tu configuración, asesoría o un desarrollo a medida — y te armamos un plan. — Jake</p>
 
-    <div class="prose">
-      <p>Nova has always been a self-hosted, approval-gated AI team you run on your own machine. This release doesn't touch any of that. What it does is widen the doors: more models can drive your agents, there's finally a real command to run them, you can talk to Nova from more places, and adding a teammate no longer means editing config files.</p>
-      <p>Four themes: <strong>any model</strong>, <strong>a real CLI</strong>, <strong>more places to talk to it</strong>, and <strong>easier setup and team access</strong>. None of it changes the trust model — Nova still asks before anything ships or spends.</p>
-
-      <h2>Use any model — without losing the subscription advantage</h2>
-      <p>Nova already runs on your Claude, Gemini, and Codex <strong>subscriptions</strong> by driving their CLIs directly. That's the whole trick behind its economics: a flat monthly cost instead of a metered API bill, and full agentic tool use — the same plan you already pay for, put to work by a team of agents.</p>
-      <p>Now you can add <strong>any OpenAI-compatible model</strong> alongside them — an <a href="https://openrouter.ai" rel="noopener">OpenRouter</a> route, an OpenAI model, or a local <code>Ollama</code> or <code>vLLM</code> box on your own network. Add one with a single entry in <code>config/providers.json</code>, with <code>nova providers add</code>, or with a click in the dashboard's Models panel. The subscription CLIs stay the default and stay first; new models slot in beside them.</p>
-      <p>And API models aren't second-class citizens. They can use your tools too — driving the very same sandbox and MCP bridge the CLIs use — so an agent on a local model can still browse, write files, and call integrations under the same approval gates.</p>
-      <div class="callout">
-        <p><span class="k">A principled line</span>Nova keeps <strong>driving the official CLIs</strong> rather than harvesting subscription tokens to hit private endpoints. That's what keeps your subscription squarely within terms — and any new model you add uses its own proper API key, not a borrowed one.</p>
-      </div>
-
-      <h2>A real <code>nova</code> command</h2>
-      <p>No more remembering <code>bun run this, bun run that</code>. There's now one <code>nova</code> CLI, installed on your PATH, that fronts everything:</p>
-      <ul>
-        <li><code>nova start</code> — bring your Nova up.</li>
-        <li><code>nova doctor</code> — health check and copyable diagnostics.</li>
-        <li><code>nova update</code> — pull the latest and reinstall.</li>
-        <li><code>nova providers add</code> — wire in a new model.</li>
-        <li><code>nova invite</code> — generate a code to add a teammate.</li>
-      </ul>
-      <p>The standout is <strong><code>nova connect</code></strong> — a terminal client that connects to your <em>running</em> Nova, whether it's on this laptop or on your VPS. You get a live view of what your agents are doing right now, and you can <strong>approve, change, or cancel</strong> inline without leaving the terminal. Because Nova runs always-on, you can drop into it from any terminal, anywhere, and pick up exactly where things are.</p>
-
-      <h2>New places to talk to Nova</h2>
-      <p>Nova was already multi-channel — Telegram, WhatsApp, and Slack all feed the same pipeline. This release adds two more:</p>
-      <ul>
-        <li>Your <strong>terminal</strong> — <code>nova chat</code> gives you a full conversation with Nova right in the shell.</li>
-        <li><strong>Discord</strong> — run Nova as a Discord bot for you or your community.</li>
-      </ul>
-      <p>Both are just new adapters on the existing pattern: same message pipeline, same classification, same two-phase execution, same approval gates. A request you make in Discord is handled exactly like one you'd send in Telegram — nothing about how Nova decides or acts changes with the surface.</p>
-
-      <h2>Easier setup, and adding your team</h2>
-      <p>You can now manage models, channels, and invites from the <strong>dashboard</strong> or the <strong>CLI</strong> — no hand-editing config to turn something on. Flip a channel, add a model, issue an invite, all from a screen or a single command.</p>
-      <p>Adding a teammate used to mean tracking down a numeric user ID and pasting it into a file. Now you generate an <strong>invite code</strong> with <code>nova invite</code>, hand it to the person, and they redeem it on Telegram or Discord — you approve with a tap. Roles come along for the ride: <code>nova invite member</code> or <code>nova invite admin</code>.</p>
-      <div class="callout">
-        <p><span class="k">Secrets stay put</span>Nothing about this moves your credentials off your server. The management screens show only which keys are <em>set</em> — never their values. Your keys never leave the machine you run Nova on.</p>
-      </div>
-
-      <hr class="divider">
-
-      <h2>Still the same Nova</h2>
-      <p>Everything that made Nova worth trusting is untouched. It's still self-hosted and MIT licensed. It still runs on your keys and your machine. And it still asks for your approval before anything ships, sends, or spends.</p>
-      <p>These upgrades add reach and polish — more models, a real command, more channels, self-serve invites — without touching the trust model underneath. Same team, more doors.</p>
-
-      <div class="end-cta">
-        <h3>Bring your own AI team home</h3>
-        <p>Open source, self-hosted, MIT licensed. Your machine, your keys, your approval gates.</p>
-        <div class="cta-row">
-          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Get Nova on GitHub</a>
-          <a class="cta ghost" href="/docs/">Read the docs</a>
-          <a class="cta ghost" href="/book/" rel="noopener">Want it done for you?</a>
-        </div>
-      </div>
-    </div>
+    <div style="margin-top:28px;"><iframe src="https://link.salee.ai/widget/booking/YIn2CTjDicWlCcWxrMqy" style="width:100%;min-height:720px;border:none;overflow:hidden;" scrolling="no" id="YIn2CTjDicWlCcWxrMqy_1784580260807"></iframe><br><script src="https://link.salee.ai/js/form_embed.js" type="text/javascript"></script></div>
   </div>
 </article>
 
@@ -260,8 +202,8 @@
   <div class="wrap foot-inner">
     <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
     <span>
-      <a href="/">Home</a> &nbsp;·&nbsp;
-      <a href="/docs/">Documentation</a> &nbsp;·&nbsp;
+      <a href="/es/">Home</a> &nbsp;·&nbsp;
+      <a href="/es/docs/">Documentation</a> &nbsp;·&nbsp;
       <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
       <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
     </span>
