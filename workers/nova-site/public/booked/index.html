@@ -190,10 +190,10 @@
 
 <article class="article">
   <div class="wrap">
-    <span class="eyebrow">you're booked</span>
-    <h1>You're all set ✅</h1>
-    <p class="lede">Thanks — your consult is confirmed. You'll get a calendar invite and the details by email shortly. Talk soon. — Jake</p>
-    <div class="cta-row" style="margin-top:24px;"><a class="cta primary" href="/">Back to Nova</a> <a class="cta ghost" href="/docs/">Read the docs</a> <a class="cta ghost" href="https://github.com/djbelieny/nova" rel="noopener">Nova on GitHub</a></div>
+    <span class="eyebrow" id="bk-eyebrow">you're booked</span>
+    <h1 id="bk-h1">You're all set ✅</h1>
+    <p class="lede" id="bk-lede">Thanks — your consult is confirmed. You'll get a calendar invite and the details by email shortly. Talk soon. — Jake</p>
+    <div class="cta-row" style="margin-top:24px;"><a class="cta primary" href="/" id="bk-back">Back to Nova</a> <a class="cta ghost" href="/docs/" id="bk-docs">Read the docs</a> <a class="cta ghost" href="https://github.com/djbelieny/nova" rel="noopener">Nova on GitHub</a></div>
   </div>
 </article>
 
@@ -208,6 +208,31 @@
     </span>
   </div>
 </footer>
+
+<script>
+  // Localize the confirmation from the ?lang= the booking widget flows through (en | sp | pt).
+  (function () {
+    var L = {
+      en: { eyebrow: "you're booked", h1: "You're all set ✅", lede: "Thanks — your consult is confirmed. You'll get a calendar invite and the details by email shortly. Talk soon. — Jake", back: "Back to Nova", docs: "Read the docs", title: "You're booked — Nova", htmlLang: "en" },
+      sp: { eyebrow: "reservado", h1: "¡Todo listo! ✅", lede: "Gracias — tu consulta está confirmada. Recibirás una invitación de calendario y los detalles por correo en breve. Hablamos pronto. — Jake", back: "Volver a Nova", docs: "Leer la documentación", title: "Reservado — Nova", htmlLang: "es" },
+      pt: { eyebrow: "agendado", h1: "Tudo certo! ✅", lede: "Obrigado — sua consultoria está confirmada. Você receberá um convite de calendário e os detalhes por e-mail em breve. Até já. — Jake", back: "Voltar para o Nova", docs: "Ler a documentação", title: "Agendado — Nova", htmlLang: "pt-BR" }
+    };
+    var q = (new URLSearchParams(location.search).get("lang") || "en").toLowerCase();
+    var t = L[q] || L.en;
+    var set = function (id, val) { var el = document.getElementById(id); if (el) el.textContent = val; };
+    set("bk-eyebrow", t.eyebrow);
+    set("bk-h1", t.h1);
+    set("bk-lede", t.lede);
+    set("bk-back", t.back);
+    set("bk-docs", t.docs);
+    document.title = t.title;
+    document.documentElement.lang = t.htmlLang;
+    // Point the two internal links at the matching language home/docs.
+    var base = q === "sp" ? "/es" : q === "pt" ? "/pt-br" : "";
+    var back = document.getElementById("bk-back"); if (back) back.setAttribute("href", base + "/");
+    var docs = document.getElementById("bk-docs"); if (docs) docs.setAttribute("href", base + "/docs/");
+  })();
+</script>
 
 </body>
 </html>
