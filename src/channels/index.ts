@@ -11,11 +11,13 @@ import type { ChannelAdapter, MessageHandler, ButtonHandler } from "./types.ts";
 import { TelegramAdapter } from "./telegram.ts";
 import { SlackAdapter } from "./slack.ts";
 import { CliAdapter } from "./cli.ts";
+import { DiscordAdapter } from "./discord.ts";
 
 export { TelegramAdapter } from "./telegram.ts";
 export { WhatsAppAdapter } from "./whatsapp.ts";
 export { SlackAdapter } from "./slack.ts";
 export { CliAdapter } from "./cli.ts";
+export { DiscordAdapter } from "./discord.ts";
 export type {
   ChannelAdapter,
   IncomingMessage,
@@ -65,6 +67,12 @@ export class ChannelRegistry {
     if (allowed("cli") && process.env.NOVA_CLI === "1") {
       this.adapters.push(new CliAdapter());
       console.log("[channels] CLI adapter initialized");
+    }
+
+    // Discord
+    if (allowed("discord") && process.env.DISCORD_BOT_TOKEN) {
+      this.adapters.push(new DiscordAdapter(process.env.DISCORD_BOT_TOKEN));
+      console.log("[channels] Discord adapter initialized");
     }
 
     // Note: WhatsApp is managed per-user via WhatsAppManager + Mini App
@@ -125,6 +133,7 @@ export class ChannelRegistry {
       ["Telegram", !!this.telegramAdapter],
       ["Slack", this.adapters.some((a) => a.type === "slack")],
       ["CLI", this.adapters.some((a) => a.type === "cli")],
+      ["Discord", this.adapters.some((a) => a.type === "discord")],
     ];
   }
 }

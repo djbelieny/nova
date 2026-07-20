@@ -305,6 +305,9 @@ async function resolveUser(platformId: string, channel: "telegram" | "whatsapp" 
       slack: (id) => supabase.getUserBySlackId(id),
       // CLI is a single local surface → resolve to the owner (admin, else first user).
       cli: () => supabase.getUsersByRole("admin")?.[0] ?? supabase.getAllActiveUsers()?.[0] ?? null,
+      // TODO: Discord pairing once pairing_codes lands — for now, unknown Discord
+      // users fall through to the existing "This bot is private" reply.
+      discord: (id) => supabase.getUserByDiscordId(id),
     };
 
     const row = lookupMap[channel]?.(platformId);

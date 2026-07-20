@@ -681,6 +681,9 @@ class SharedDatabase {
     // Onboarding: timestamp of the first-run welcome so it fires exactly once
     try { this.db.run(`ALTER TABLE users ADD COLUMN onboarded_at TEXT`); } catch {}
     try { this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL`); } catch {}
+    // Discord channel: raw Discord user ID for message resolution
+    try { this.db.run(`ALTER TABLE users ADD COLUMN discord_id TEXT`); } catch {}
+    try { this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id)`); } catch {}
   }
 
   close(): void {
@@ -1585,6 +1588,15 @@ export class Database {
     return row;
   }
 
+  getUserByDiscordId(discordId: string): any | null {
+    const row = this.shared.db.query(
+      `SELECT * FROM users WHERE discord_id = ? LIMIT 1`
+    ).get(discordId) as any;
+    if (!row) return null;
+    row.preferences = parseJson(row.preferences, {});
+    return row;
+  }
+
   getUserById(userId: string): any | null {
     const row = this.shared.db.query(
       `SELECT * FROM users WHERE id = ? LIMIT 1`
@@ -1687,16 +1699,18 @@ export class Database {
     role?: string;
     preferences?: Record<string, any>;
     profile_text?: string;
+    discord_id?: string;
   }): any {
     const id = uuid();
     this.shared.db.run(`
-      INSERT INTO users (id, telegram_id, name, timezone, phone, pin, role, preferences, profile_text)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, telegram_id, name, timezone, phone, pin, role, preferences, profile_text, discord_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (telegram_id) DO UPDATE SET
         name = COALESCE(excluded.name, users.name),
         timezone = COALESCE(excluded.timezone, users.timezone),
         phone = COALESCE(excluded.phone, users.phone),
         pin = COALESCE(excluded.pin, users.pin),
+        discord_id = COALESCE(excluded.discord_id, users.discord_id),
         updated_at = datetime('now')
     `, [
       id,
@@ -1708,6 +1722,7 @@ export class Database {
       data.role || "member",
       JSON.stringify(data.preferences || {}),
       data.profile_text || "",
+      data.discord_id || null,
     ]);
     return this.getUserByTelegramId(data.telegram_id);
   }
