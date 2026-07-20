@@ -398,7 +398,7 @@ const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
 };
 
-function ask(question: string, fallback = ""): string {
+export function ask(question: string, fallback = ""): string {
   const suffix = fallback ? c.dim(` [${fallback}]`) : "";
   const answer = (globalThis as any).prompt?.(`  ${question}${suffix}`) ?? "";
   return (answer || fallback).trim();
@@ -506,11 +506,12 @@ async function main(): Promise<void> {
 
   clearWizardState(); // setup finished — nothing to resume
   console.log(`\n${c.bold("  Next steps:")}`);
-  console.log(`    1. Start Nova:        ${c.cyan("bun run start")}`);
+  console.log(`    1. Start Nova:        ${c.cyan("nova start")}`);
   console.log(`    2. Message your bot on Telegram to confirm it responds.`);
-  console.log(c.dim("    3. Optional: enable the dashboard (DASHBOARD_PASS in .env), then bun run dashboard"));
+  console.log(c.dim("    3. Optional: enable the dashboard (DASHBOARD_PASS in .env), then `nova dashboard`"));
   console.log(c.dim("    4. Optional: add more MCP servers from .mcp.example.json, or the exec board."));
-  console.log(c.dim("    To add teammates later, message Nova /invite."));
+  console.log(c.dim("    Add AI models with:  nova providers add   ·   Add teammates with:  nova invite"));
+  console.log(c.dim("    Run `nova help` to see all commands."));
   console.log("");
 }
 

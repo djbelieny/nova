@@ -100,6 +100,13 @@ echo "  Installing dependencies..."
 bun install --silent
 echo -e "  ${GREEN}✓ Dependencies installed${NC}"
 
+# Put the `nova` command on PATH (best-effort; falls back to `bun run` if it fails).
+if bun link &>/dev/null; then
+  echo -e "  ${GREEN}✓ 'nova' command installed${NC} — try: nova help"
+else
+  echo -e "  ${YELLOW}!${NC} Could not register the 'nova' command globally; use 'bun run <cmd>' instead."
+fi
+
 if [[ ! -d ".venv-memwright" ]] && have python3; then
   echo "  Setting up Memwright (memory service)..."
   python3 -m venv .venv-memwright

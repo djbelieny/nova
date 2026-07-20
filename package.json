@@ -2,6 +2,9 @@
   "name": "nova",
   "version": "1.0.0",
   "type": "module",
+  "bin": {
+    "nova": "src/cli.ts"
+  },
   "scripts": {
     "start": "bun run src/relay.ts",
     "chat": "NOVA_CHANNELS=cli NOVA_CLI=1 bun run src/relay.ts",
@@ -9,6 +12,9 @@
     "test": "NODE_ENV=test NOVA_DB_DIR=./data/test-run bun test tests/",
     "typecheck": "tsc --noEmit",
     "init": "bun run src/setup-wizard.ts",
+    "providers": "bun run src/cli-manage.ts providers",
+    "invite": "bun run src/cli-manage.ts invite",
+    "connect": "bun run src/connect/index.tsx",
     "doctor": "bun run src/doctor.ts",
     "update": "git pull --ff-only && bun install && echo 'Nova updated. Restart it to apply (bun run start, or restart the service).'",
     "setup": "bun run setup/install.ts",
@@ -49,6 +55,8 @@
     "dotenv": "^17.3.1",
     "grammy": "^1.21.1",
     "groq-sdk": "^0.8.0",
+    "ink": "^7.1.1",
+    "ink-text-input": "^6.0.0",
     "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5",
     "playwright": "^1.58.2",
@@ -63,6 +71,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^19.2.17",
     "typescript": "^7.0.2"
   }
 }

@@ -21,6 +21,38 @@ test("create → redeem happy path returns the role and creates the user", () =>
   expect(user.role).toBe("member");
 });
 
+test("redeem with channel 'discord' creates a user resolvable by discord id", () => {
+  const db = getDb();
+  const admin = db.upsertUser({ telegram_id: "tg-pair-admin-dc", name: "AdminDC", role: "admin" });
+  const code = db.createPairingCode(admin.id, "member", 60);
+
+  const result = db.redeemPairingCode(code, "discord-123", "discord");
+  expect(result).toEqual({ ok: true, role: "member" });
+
+  const user = db.getUserByDiscordId("discord-123");
+  expect(user).not.toBeNull();
+  expect(user.discord_id).toBe("discord-123");
+  expect(user.role).toBe("member");
+
+  // A Telegram user was NOT created for this discord id.
+  expect(db.getUserByTelegramId("discord-123")).toBeNull();
+});
+
+test("discord redemption is idempotent-safe: double-redeem rejected as used", () => {
+  const db = getDb();
+  const admin = db.upsertUser({ telegram_id: "tg-pair-admin-dc2", name: "AdminDC2", role: "admin" });
+  const code = db.createPairingCode(admin.id, "member", 60);
+
+  const first = db.redeemPairingCode(code, "discord-dup", "discord");
+  expect(first).toEqual({ ok: true, role: "member" });
+
+  const second = db.redeemPairingCode(code, "discord-dup-2", "discord");
+  expect(second).toEqual({ ok: false, error: "used" });
+
+  // No user was created for the rejected second redemption.
+  expect(db.getUserByDiscordId("discord-dup-2")).toBeNull();
+});
+
 test("redeeming the same code twice → second is rejected as used", () => {
   const db = getDb();
   const admin = db.upsertUser({ telegram_id: "tg-pair-admin-2", name: "Admin2", role: "admin" });
