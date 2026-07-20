@@ -1,0 +1,34 @@
+{
+  "providers": [
+    {
+      "name": "openrouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "models": ["anthropic/claude-3.5-sonnet", "meta-llama/llama-3.3-70b"],
+      "defaultModel": "meta-llama/llama-3.3-70b",
+      "costClass": "cheap-api",
+      "capabilities": { "tools": true },
+      "headers": { "HTTP-Referer": "https://mynova.space" },
+      "pricePerMTokIn": 0.12,
+      "pricePerMTokOut": 0.3
+    },
+    {
+      "name": "local",
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKeyEnv": "OLLAMA_API_KEY",
+      "models": ["qwen2.5"],
+      "defaultModel": "qwen2.5",
+      "costClass": "cheap-api"
+    },
+    {
+      "name": "kimi",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "apiKeyEnv": "KIMI_API_KEY",
+      "models": ["kimi-k2-5"],
+      "defaultModel": "kimi-k2-5",
+      "costClass": "cheap-api",
+      "pricePerMTokIn": 1.5,
+      "pricePerMTokOut": 2.0
+    }
+  ]
+}

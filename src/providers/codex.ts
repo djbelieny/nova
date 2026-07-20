@@ -15,7 +15,7 @@ import { join } from "path";
 import { mkdirSync } from "fs";
 import { resolveSandboxBackend, wrapForExecution } from "../sandbox/index.ts";
 import { planSandboxAuth } from "../sandbox/auth.ts";
-import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
+import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass, ProviderKind, ProviderCapabilities } from "../ai-provider.ts";
 
 export class CodexProvider implements AIProvider {
   readonly name = "codex";
@@ -23,6 +23,8 @@ export class CodexProvider implements AIProvider {
   readonly defaultModel = "o4-mini";
   readonly costClass: ProviderCostClass = 'subscription-cli';
   readonly supportedTiers: ModelTier[] = ['fast', 'standard'];
+  readonly kind: ProviderKind = 'agentic-cli';
+  readonly capabilities: ProviderCapabilities = { tools: true, mcp: true, streaming: false };
 
   private binaryPath: string;
   private _availCache: { result: boolean; ts: number } | null = null;

@@ -18,7 +18,7 @@ import { wrapForExecution } from "../sandbox/index.ts";
 import { planSandboxAuth } from "../sandbox/auth.ts";
 import { join } from "path";
 import { readFileSync, readdirSync, copyFileSync } from "fs";
-import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass } from "../ai-provider.ts";
+import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass, ProviderKind, ProviderCapabilities } from "../ai-provider.ts";
 
 export class GeminiProvider implements AIProvider {
   readonly name = "gemini";
@@ -26,6 +26,8 @@ export class GeminiProvider implements AIProvider {
   readonly defaultModel = "gemini-2.5-flash";
   readonly costClass: ProviderCostClass = 'subscription-cli';
   readonly supportedTiers: ModelTier[] = ['fast', 'standard'];
+  readonly kind: ProviderKind = 'agentic-cli';
+  readonly capabilities: ProviderCapabilities = { tools: true, mcp: true, streaming: false };
 
   private binaryPath: string;
   private _availCache: { result: boolean; ts: number } | null = null;

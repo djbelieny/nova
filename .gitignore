@@ -12,6 +12,7 @@ node_modules/
 # Personal config (keep examples, ignore actual)
 config/profile.md
 config/schedule.json
+config/providers.json
 
 # Runtime files
 data/

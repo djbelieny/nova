@@ -510,6 +510,7 @@ async function main(): Promise<void> {
   console.log(`    2. Message your bot on Telegram to confirm it responds.`);
   console.log(c.dim("    3. Optional: enable the dashboard (DASHBOARD_PASS in .env), then bun run dashboard"));
   console.log(c.dim("    4. Optional: add more MCP servers from .mcp.example.json, or the exec board."));
+  console.log(c.dim("    To add teammates later, message Nova /invite."));
   console.log("");
 }
 

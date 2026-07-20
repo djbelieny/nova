@@ -14,6 +14,14 @@ export type ProviderCostClass =
   | 'standard-api'
   | 'premium-api'
 
+export type ProviderKind = 'agentic-cli' | 'api';
+
+export interface ProviderCapabilities {
+  tools: boolean;
+  mcp: boolean;
+  streaming: boolean;
+}
+
 export interface AIProviderCallOpts {
   prompt: string;
   systemPrompt?: string;
@@ -58,6 +66,8 @@ export interface AIProvider {
   readonly defaultModel: string;
   readonly costClass: ProviderCostClass;
   readonly supportedTiers: ModelTier[];
+  readonly kind: ProviderKind;
+  readonly capabilities: ProviderCapabilities;
 
   call(opts: AIProviderCallOpts): Promise<AIProviderResult>;
   isAvailable(): Promise<boolean>;
