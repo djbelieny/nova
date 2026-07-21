@@ -552,6 +552,28 @@ function applyExtractionSchema(db: BunDatabase): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_extractions_user ON extractions(user_id, created_at DESC)`);
 }
 
+/**
+ * ROI events — quantified business value delivered by an action (value $ influenced, minutes
+ * saved), tagged by agent/department. Per-user db. Rolled up alongside action_ledger cost.
+ */
+function applyRoiSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS roi_events (
+      id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id       TEXT NOT NULL,
+      agent         TEXT,
+      department    TEXT,
+      value_usd     REAL DEFAULT 0,
+      minutes_saved REAL DEFAULT 0,
+      note          TEXT,
+      created_at    TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_roi_user ON roi_events(user_id, created_at DESC)`);
+}
+
+export interface RoiEvent { id: string; userId: string; agent: string | null; department: string | null; valueUsd: number; minutesSaved: number; note: string | null; createdAt?: string; }
+
 export interface ExtractField { name: string; type?: 'string' | 'number' | 'boolean' | 'date' | 'array'; description?: string; required?: boolean; }
 export interface ExtractSchema { id: string; userId: string; name: string; fields: ExtractField[]; destination: string | null; createdAt?: string; }
 export interface Extraction { id: string; userId: string; schemaId: string | null; schemaName: string | null; source: string | null; data: Record<string, any>; status: string; createdAt?: string; }
@@ -1801,6 +1823,8 @@ class UserDatabase {
     applyProcessSchema(this.db);
     // Document extraction — per-user db
     applyExtractionSchema(this.db);
+    // ROI events — per-user db
+    applyRoiSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -5514,6 +5538,47 @@ export class Database {
       `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM action_ledger WHERE phase = 'execute' AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')`
     ).get() as any;
     return row?.total ?? 0;
+  }
+
+  // ============================================================
+  // ROI events — per-user db
+  // ============================================================
+
+  insertRoiEvent(userId: string, e: { agent?: string | null; department?: string | null; valueUsd?: number; minutesSaved?: number; note?: string | null }): RoiEvent {
+    const id = crypto.randomUUID();
+    this.getUserDb(userId).db.run(
+      `INSERT INTO roi_events (id, user_id, agent, department, value_usd, minutes_saved, note) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, e.agent ?? null, e.department ?? null, e.valueUsd ?? 0, e.minutesSaved ?? 0, e.note ?? null]
+    );
+    const r = this.getUserDb(userId).db.query(`SELECT * FROM roi_events WHERE id = ?`).get(id) as any;
+    return { id: r.id, userId: r.user_id, agent: r.agent ?? null, department: r.department ?? null, valueUsd: r.value_usd, minutesSaved: r.minutes_saved, note: r.note ?? null, createdAt: r.created_at };
+  }
+
+  /** Sum ROI events since N days ago, grouped optionally. */
+  getRoiSince(userId: string, days: number): { valueUsd: number; minutesSaved: number; count: number; byAgent: Record<string, { valueUsd: number; minutesSaved: number }>; byDepartment: Record<string, { valueUsd: number; minutesSaved: number }> } {
+    const rows = this.getUserDb(userId).db.query(
+      `SELECT agent, department, value_usd, minutes_saved FROM roi_events WHERE created_at >= datetime('now', ?)`
+    ).all(`-${days} days`) as any[];
+    const acc = { valueUsd: 0, minutesSaved: 0, count: rows.length, byAgent: {} as Record<string, any>, byDepartment: {} as Record<string, any> };
+    for (const r of rows) {
+      acc.valueUsd += r.value_usd || 0;
+      acc.minutesSaved += r.minutes_saved || 0;
+      const a = r.agent || 'unknown';
+      (acc.byAgent[a] ||= { valueUsd: 0, minutesSaved: 0 });
+      acc.byAgent[a].valueUsd += r.value_usd || 0; acc.byAgent[a].minutesSaved += r.minutes_saved || 0;
+      const d = r.department || 'unassigned';
+      (acc.byDepartment[d] ||= { valueUsd: 0, minutesSaved: 0 });
+      acc.byDepartment[d].valueUsd += r.value_usd || 0; acc.byDepartment[d].minutesSaved += r.minutes_saved || 0;
+    }
+    return acc;
+  }
+
+  /** Count of successful execute-phase actions (tasks automated) + total cost, since N days. */
+  getExecuteStatsSince(userId: string, days: number): { tasksAutomated: number; costUsd: number } {
+    const row = this.getUserDb(userId).db.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS cost FROM action_ledger WHERE phase = 'execute' AND outcome = 'success' AND created_at >= datetime('now', ?)`
+    ).get(`-${days} days`) as any;
+    return { tasksAutomated: row?.n ?? 0, costUsd: row?.cost ?? 0 };
   }
 }
 

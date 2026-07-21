@@ -246,6 +246,12 @@ export async function processMemoryIntents(
 
   let clean = response;
 
+  // [VALUE: $X | SAVED: Ymin | DEPT: z] — record quantified business value (ROI ledger), then strip
+  try {
+    const { recordValueFromText } = await import("./roi.ts");
+    clean = recordValueFromText(db, userId, clean, agentContext?.agentSlug);
+  } catch { /* ROI is best-effort */ }
+
   // [REMEMBER: fact to store] — summarize before storing
   for (const match of response.matchAll(/\[REMEMBER:\s*(.+?)\]/gi)) {
     const fact = await summarizeForStorage(match[1], "fact");

@@ -2021,6 +2021,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/processes">Processes</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/extraction">Extraction</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/policies">Policies</a>
+<a class="hub-link" href="${DASHBOARD_BASE}/roi">ROI</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -4193,6 +4194,169 @@ export function renderPoliciesPage(): string {
 }
 
 // ============================================================
+// ROI PAGE
+// ============================================================
+
+export function renderRoiPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — ROI</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#57C785;--red:#E86A84;--yellow:#F0B429;--blue:#2AABEE;--grid:rgba(255,255,255,.07)}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:.5rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.8rem 0 .8rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1.2rem}
+  .hint code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:5px;font-size:.76rem;color:var(--text)}
+  .periods{display:flex;gap:8px;margin-bottom:1.4rem}
+  .period{padding:5px 15px;border-radius:20px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--dim);font-size:.78rem;cursor:pointer;font-family:inherit}
+  .period:hover{color:var(--text)}
+  .period.active{border-color:rgba(42,171,238,.5);color:var(--blue);background:rgba(42,171,238,.12);font-weight:600}
+  .tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+  @media (max-width:760px){.tiles{grid-template-columns:repeat(2,1fr)}}
+  .tile{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
+  .tile .num{font-size:1.7rem;font-weight:700;line-height:1.1;letter-spacing:-.02em}
+  .tile .lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-top:6px}
+  .tile.accent .num{color:var(--blue)}
+  .tile.net-pos .num{color:var(--green)}
+  .tile.net-neg .num{color:var(--red)}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:18px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.cols{grid-template-columns:1fr}}
+  h3{font-size:.82rem;font-weight:600;color:var(--text);margin-bottom:.9rem}
+  .empty{color:var(--dim);font-size:.82rem;padding:24px 4px;text-align:center}
+  svg{width:100%;height:auto;display:block}
+  .bar-label{fill:var(--dim);font-size:12px;font-family:Inter,system-ui,sans-serif}
+  .bar-val{fill:var(--text);font-size:12px;font-weight:600;font-family:Inter,system-ui,sans-serif}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>ROI</h1>
+  <p class="hint">Business-outcome observability. Value is captured when agents tag outcomes with <code>[VALUE: $X | SAVED: Ymin]</code>; cost comes from the action ledger.</p>
+
+  <div class="periods" id="periods">
+    <button class="period" data-days="7">7 days</button>
+    <button class="period" data-days="30">30 days</button>
+    <button class="period" data-days="90">90 days</button>
+  </div>
+
+  <div class="tiles" id="tiles">
+    <div class="tile"><div class="num" id="t_tasks">–</div><div class="lbl">Tasks automated</div></div>
+    <div class="tile"><div class="num" id="t_hours">–</div><div class="lbl">Hours saved</div></div>
+    <div class="tile accent"><div class="num" id="t_value">–</div><div class="lbl">Value influenced</div></div>
+    <div class="tile"><div class="num" id="t_cost">–</div><div class="lbl">AI cost</div></div>
+    <div class="tile" id="t_net_tile"><div class="num" id="t_net">–</div><div class="lbl">Net</div></div>
+  </div>
+
+  <div class="cols">
+    <div>
+      <h2>Value by department</h2>
+      <div class="card"><div id="chart_dept"><p class="empty">Loading…</p></div></div>
+    </div>
+    <div>
+      <h2>Hours saved by agent</h2>
+      <div class="card"><div id="chart_agent"><p class="empty">Loading…</p></div></div>
+    </div>
+  </div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  // Nova brand chart palette — assigned by category in fixed order, never cycled.
+  var PALETTE = ['#2AABEE', '#F0B429', '#57C785', '#E86A84', '#8A97B0'];
+  var days = 7;
+
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function fmtMoney(n){ return '$' + Math.round(n||0).toLocaleString(); }
+  function fmtHours(n){ return (Math.round((n||0)*10)/10) + 'h'; }
+
+  // Hand-built horizontal SVG bar chart. Single measure, categorical colors in fixed order.
+  function barChart(entries, fmt){
+    if (!entries.length) return '<p class="empty">No data yet.</p>';
+    var W = 680, rowH = 34, barH = 15, labelW = 150, valW = 74;
+    var pad = 8, chartX = labelW, chartW = W - labelW - valW - pad;
+    var H = entries.length * rowH + 10;
+    var max = 0; entries.forEach(function(e){ if (e.value > max) max = e.value; });
+    if (max <= 0) max = 1;
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" preserveAspectRatio="xMinYMin meet">';
+    // recessive grid: vertical lines at 25/50/75/100%
+    [0.25,0.5,0.75,1].forEach(function(f){
+      var x = chartX + chartW * f;
+      svg += '<line x1="' + x + '" y1="4" x2="' + x + '" y2="' + (H - 6) + '" stroke="var(--grid)" stroke-width="1"/>';
+    });
+    entries.forEach(function(e, i){
+      var cy = 5 + i * rowH + rowH / 2;
+      var w = Math.max(2, chartW * (e.value / max));
+      var color = PALETTE[i % PALETTE.length];
+      // label (truncated, right-aligned)
+      var lbl = e.label.length > 20 ? e.label.slice(0, 19) + '…' : e.label;
+      svg += '<text class="bar-label" x="' + (labelW - 12) + '" y="' + (cy + 4) + '" text-anchor="end">' + esc(lbl) + '</text>';
+      // bar — thin, 4px rounded data-end
+      svg += '<rect x="' + chartX + '" y="' + (cy - barH / 2) + '" width="' + w + '" height="' + barH + '" rx="4" fill="' + color + '"/>';
+      // direct value label
+      svg += '<text class="bar-val" x="' + (chartX + w + 8) + '" y="' + (cy + 4) + '">' + esc(fmt(e.value)) + '</text>';
+    });
+    svg += '</svg>';
+    return svg;
+  }
+
+  function toEntries(obj, key){
+    return Object.keys(obj || {})
+      .map(function(k){ return { label: k, value: (obj[k] && obj[k][key]) || 0 }; })
+      .filter(function(e){ return e.value > 0; })
+      .sort(function(a, b){ return b.value - a.value; });
+  }
+
+  function render(r){
+    document.getElementById('t_tasks').textContent = (r.tasksAutomated || 0).toLocaleString();
+    document.getElementById('t_hours').textContent = fmtHours(r.hoursSaved);
+    document.getElementById('t_value').textContent = fmtMoney(r.valueUsd);
+    document.getElementById('t_cost').textContent = fmtMoney(r.costUsd);
+    document.getElementById('t_net').textContent = fmtMoney(r.netUsd);
+    var netTile = document.getElementById('t_net_tile');
+    netTile.className = 'tile ' + ((r.netUsd || 0) >= 0 ? 'net-pos' : 'net-neg');
+    document.getElementById('chart_dept').innerHTML = barChart(toEntries(r.byDepartment, 'valueUsd'), fmtMoney);
+    document.getElementById('chart_agent').innerHTML = barChart(toEntries(r.byAgent, 'hoursSaved'), fmtHours);
+  }
+
+  function load(){
+    fetch(BASE + '/api/roi?days=' + days).then(function(res){ return res.json(); }).then(function(r){
+      if (r.error) {
+        document.getElementById('chart_dept').innerHTML = '<p class="empty">' + esc(r.error) + '</p>';
+        document.getElementById('chart_agent').innerHTML = '<p class="empty">' + esc(r.error) + '</p>';
+        return;
+      }
+      render(r);
+    }).catch(function(e){
+      document.getElementById('chart_dept').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
+    });
+  }
+
+  var periodsEl = document.getElementById('periods');
+  function setActive(){
+    Array.prototype.forEach.call(periodsEl.children, function(b){
+      b.classList.toggle('active', Number(b.getAttribute('data-days')) === days);
+    });
+  }
+  periodsEl.addEventListener('click', function(e){
+    var d = e.target && e.target.getAttribute && e.target.getAttribute('data-days');
+    if (!d) return;
+    days = Number(d);
+    setActive();
+    load();
+  });
+
+  setActive();
+  load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
 // TASK HISTORY PAGE
 // ============================================================
 
@@ -5910,6 +6074,7 @@ export function renderDashboard(): string {
       <a href="/processes" class="topbar-action">Processes</a>
       <a href="/extraction" class="topbar-action">Extraction</a>
       <a href="/policies" class="topbar-action">Policies</a>
+      <a href="/roi" class="topbar-action">ROI</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -7871,6 +8036,17 @@ const server = Bun.serve({
       });
     }
 
+    // ROI page (all authenticated users)
+    if (path === "/roi") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderRoiPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -8318,6 +8494,16 @@ const server = Bun.serve({
         return jsonResponse({ success: true });
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/roi" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const { rollupRoi } = await import("./roi.ts");
+        const days = Number(url.searchParams.get("days"));
+        return jsonResponse(rollupRoi(supabase, userId, Number(days) || 7));
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 500);
       }
     }
     if (path === "/api/ledger") {
