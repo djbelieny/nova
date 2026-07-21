@@ -4927,9 +4927,11 @@ export class Database {
   }
 
   /** Fast guard: does this user have any retrievable KB docs (personal + team + agent pack)? */
-  hasKbDocs(userId: string, agentSlug?: string): boolean {
-    const personal = this.getUserDb(userId).db.query(`SELECT 1 FROM kb_docs WHERE scope = 'personal' AND status = 'ready' LIMIT 1`).get();
-    if (personal) return true;
+  hasKbDocs(userId: string | undefined, agentSlug?: string): boolean {
+    if (userId) {
+      const personal = this.getUserDb(userId).db.query(`SELECT 1 FROM kb_docs WHERE scope = 'personal' AND status = 'ready' LIMIT 1`).get();
+      if (personal) return true;
+    }
     const shared = agentSlug
       ? this.shared.db.query(`SELECT 1 FROM kb_docs WHERE status = 'ready' AND (scope = 'team' OR (scope = 'agent' AND agent_slug = ?)) LIMIT 1`).get(agentSlug)
       : this.shared.db.query(`SELECT 1 FROM kb_docs WHERE status = 'ready' AND scope = 'team' LIMIT 1`).get();
@@ -4937,10 +4939,12 @@ export class Database {
   }
 
   /** All docs a user can see: their personal docs + team + (optionally) a given agent's pack. */
-  listKbDocsVisible(userId: string, agentSlug?: string): KbDoc[] {
-    const personal = (this.getUserDb(userId).db
-      .query(`SELECT * FROM kb_docs WHERE scope = 'personal' AND user_id = ? ORDER BY created_at DESC`)
-      .all(userId) as any[]).map(mapKbDoc);
+  listKbDocsVisible(userId: string | undefined, agentSlug?: string): KbDoc[] {
+    const personal = userId
+      ? (this.getUserDb(userId).db
+          .query(`SELECT * FROM kb_docs WHERE scope = 'personal' AND user_id = ? ORDER BY created_at DESC`)
+          .all(userId) as any[]).map(mapKbDoc)
+      : [];
     const sharedRows = agentSlug
       ? this.shared.db.query(`SELECT * FROM kb_docs WHERE scope = 'team' OR (scope = 'agent' AND agent_slug = ?) ORDER BY created_at DESC`).all(agentSlug) as any[]
       : this.shared.db.query(`SELECT * FROM kb_docs WHERE scope IN ('team','agent') ORDER BY created_at DESC`).all() as any[];
@@ -4968,12 +4972,12 @@ export class Database {
    * personal (per-user db) + team + that agent's pack (shared db). Merged, sorted by
    * similarity, top `limit`.
    */
-  searchKb(queryEmbedding: Float32Array, opts: { userId: string; agentSlug?: string; limit?: number }): KbChunkHit[] {
+  searchKb(queryEmbedding: Float32Array, opts: { userId?: string; agentSlug?: string; limit?: number }): KbChunkHit[] {
     const limit = opts.limit ?? 5;
     const blob = Buffer.from(queryEmbedding.buffer);
     const hits: KbChunkHit[] = [];
     // Personal — per-user db
-    hits.push(...this.searchKbHandle(this.getUserDb(opts.userId).db, blob, `c.scope = 'personal'`, [], limit));
+    if (opts.userId) hits.push(...this.searchKbHandle(this.getUserDb(opts.userId).db, blob, `c.scope = 'personal'`, [], limit));
     // Team + agent pack — shared db
     if (opts.agentSlug) {
       hits.push(...this.searchKbHandle(this.shared.db, blob, `c.scope = 'team' OR (c.scope = 'agent' AND c.agent_slug = ?)`, [opts.agentSlug], limit));

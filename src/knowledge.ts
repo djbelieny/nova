@@ -150,7 +150,7 @@ export function parseKbCaption(caption: string): { wants: boolean; scope: KbScop
 }
 
 export interface SearchOpts {
-  userId: string;
+  userId?: string;
   agentSlug?: string;
   limit?: number;
   threshold?: number;

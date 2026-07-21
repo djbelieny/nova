@@ -46,7 +46,14 @@ function resolveUserId(db: DatabaseType, scope: KbScope): string {
     if (!admin) throw new Error("No user found — run `nova init` first (personal docs attach to your account).");
     return admin.id;
   }
+  // team/agent are stored in shared.db; the uploader id is only a tag. Fall back to the
+  // admin id when present, else a synthetic non-UUID tag (never used to open a per-user db).
   return admin?.id || "cli";
+}
+
+/** The admin user's id, or undefined on a fresh install (personal scope simply absent). */
+function optionalUserId(db: DatabaseType): string | undefined {
+  return db.getUsersByRole("admin")[0]?.id;
 }
 
 function isUrl(s: string): boolean {
@@ -93,8 +100,7 @@ async function runAdd(rest: string[]): Promise<number> {
 function runList(rest: string[]): number {
   const flags = parseKbArgs(rest);
   const db = getDb();
-  const userId = resolveUserId(db, "team"); // any real/placeholder id; list unions scopes
-  let docs = db.listKbDocsVisible(userId, flags.agent);
+  let docs = db.listKbDocsVisible(optionalUserId(db), flags.agent);
   if (flags.positional.length === 0 && rest.includes("--scope")) docs = docs.filter(d => d.scope === flags.scope);
   if (!docs.length) { console.log("  No knowledge documents yet. Add one: nova kb add <file|url>"); return 0; }
   for (const d of docs) {
@@ -123,8 +129,7 @@ async function runSearch(rest: string[]): Promise<number> {
   const query = flags.positional.join(" ");
   if (!query) { console.error("  Usage: nova kb search <query> [--agent <slug>]"); return 1; }
   const db = getDb();
-  const userId = resolveUserId(db, "team");
-  const hits = await searchKnowledge(db, query, { userId, agentSlug: flags.agent, limit: 5 });
+  const hits = await searchKnowledge(db, query, { userId: optionalUserId(db), agentSlug: flags.agent, limit: 5 });
   if (!hits.length) { console.log("  No matches."); return 0; }
   hits.forEach((h, i) => {
     console.log(`  ${i + 1}. [${h.title}] (${(h.similarity * 100).toFixed(0)}%) ${h.text.replace(/\s+/g, " ").slice(0, 160)}…`);
