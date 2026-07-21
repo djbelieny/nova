@@ -78,6 +78,7 @@ import { getReputationContext, getWeeklyReputationReport, recordTaskOutcome } fr
 import { listProjects, getProjectBrief, createProject } from "./projects.ts";
 import { runCognitiveCascade } from "./cognitive-cascade.ts";
 import { rateLastPattern } from "./patterns.ts";
+import { approveProposal, rejectProposal, parseProposalCallback } from "./learning-loop.ts";
 import { triggerPredictions } from "./predictor.ts";
 import { initCallProcessor, processCallTranscript } from "../services/call-processor.ts";
 import { searchZoomRecordings, processRecordingById, type ZoomMeeting } from "../services/zoom-transcript-poller.ts";
@@ -722,6 +723,26 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
     const tg = channels.getTelegram();
     if (tg) await tg.send(newTgId, "Thanks for your interest — the admin isn't able to grant access right now.").catch(() => {});
     if (editOriginal) await editOriginal("Request denied.");
+    return;
+  }
+
+  // Skill-proposal review (prop:<id>:approve | prop:<id>:reject) — admin-guarded,
+  // extends the existing callback machinery like the pair_* handlers above.
+  if (buttonData.startsWith("prop:")) {
+    if (user.role !== "admin") { await reply("Only an admin can review skill ideas."); return; }
+    const parsed = parseProposalCallback(buttonData);
+    if (!parsed) { await reply("Invalid proposal action."); return; }
+    if (parsed.action === "approve") {
+      const res = await approveProposal(supabase, user.id, parsed.id);
+      const msg = res.ok
+        ? (res.slug ? "✓ Saved as a learned skill." : "✓ Saved to memory.")
+        : "Couldn't save that idea — it may already have been decided.";
+      if (editOriginal) await editOriginal(msg); else await reply(msg);
+    } else {
+      await rejectProposal(supabase, user.id, parsed.id);
+      const msg = "Dismissed.";
+      if (editOriginal) await editOriginal(msg); else await reply(msg);
+    }
     return;
   }
 
@@ -3016,6 +3037,35 @@ async function handleAdminCommand(ctx: Context, text: string, user: NovaUser): P
       `Forward this to your teammate:\n\n` +
       `"You've been invited to Nova — message ${handle} and send this code: ${code}"`
     );
+    return true;
+  }
+
+  if (command === "/proposals") {
+    // Reflective learning loop: list pending skill ideas with Approve / Reject buttons.
+    const proposals = supabase.getPendingProposals(user.id);
+    if (!proposals.length) {
+      await ctx.reply("No skill ideas to review right now.");
+      return true;
+    }
+    const esc = (s: string) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    for (const p of proposals) {
+      const kindLabel = p.kind === "memory" ? "memory" : "skill";
+      const rationale = (p.rationale || "").trim();
+      const lines = [
+        `💡 <b>${esc(p.title)}</b> <i>(${kindLabel})</i>`,
+        p.description ? esc(p.description) : "",
+        rationale ? `\n<i>${esc(rationale.slice(0, 300))}</i>` : "",
+      ].filter(Boolean);
+      await ctx.reply(lines.join("\n"), {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "✅ Approve", callback_data: `prop:${p.id}:approve` },
+            { text: "❌ Reject", callback_data: `prop:${p.id}:reject` },
+          ]],
+        },
+      });
+    }
     return true;
   }
 

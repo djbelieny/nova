@@ -1382,6 +1382,24 @@ class UserDatabase {
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_learned_skills_source ON learned_skills(source_signature)`);
 
     this.db.run(`
+      CREATE TABLE IF NOT EXISTS skill_proposals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'skill',
+        title TEXT NOT NULL,
+        description TEXT,
+        body TEXT,
+        source_signature TEXT,
+        rationale TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT DEFAULT (datetime('now')),
+        decided_at TEXT
+      )
+    `);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_skill_proposals_status ON skill_proposals(status)`);
+    this.db.run(`CREATE INDEX IF NOT EXISTS idx_skill_proposals_source ON skill_proposals(source_signature)`);
+
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS user_projects (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -2998,6 +3016,71 @@ export class Database {
       if (triggers.some((t) => normalized.includes(t))) return skill;
     }
     return null;
+  }
+
+  // ============================================================
+  // Skill Proposals (reflective learning loop → user DB)
+  // ============================================================
+
+  insertSkillProposal(userId: string, data: {
+    kind: string;
+    title: string;
+    description?: string;
+    body?: string;
+    source_signature?: string;
+    rationale?: string;
+  }): number {
+    const udb = this.getUserDb(userId);
+    udb.db.run(`
+      INSERT INTO skill_proposals (user_id, kind, title, description, body, source_signature, rationale, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+    `, [
+      userId,
+      data.kind,
+      data.title,
+      data.description ?? null,
+      data.body ?? null,
+      data.source_signature ?? null,
+      data.rationale ?? null,
+    ]);
+    const row = udb.db.query(`SELECT last_insert_rowid() AS id`).get() as { id: number };
+    return row.id;
+  }
+
+  getPendingProposals(userId: string, limit = 20): any[] {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(
+      `SELECT * FROM skill_proposals WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?`
+    ).all(limit) as any[];
+  }
+
+  getProposal(userId: string, id: number): any | null {
+    const udb = this.getUserDb(userId);
+    return udb.db.query(`SELECT * FROM skill_proposals WHERE id = ?`).get(id) as any | null;
+  }
+
+  decideProposal(userId: string, id: number, status: "approved" | "rejected"): void {
+    const udb = this.getUserDb(userId);
+    udb.db.run(
+      `UPDATE skill_proposals SET status = ?, decided_at = datetime('now') WHERE id = ?`,
+      [status, id]
+    );
+  }
+
+  countPendingProposals(userId: string): number {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(
+      `SELECT COUNT(*) AS n FROM skill_proposals WHERE status = 'pending'`
+    ).get() as { n: number };
+    return row.n;
+  }
+
+  proposalExistsForSignature(userId: string, sig: string): boolean {
+    const udb = this.getUserDb(userId);
+    const row = udb.db.query(
+      `SELECT 1 FROM skill_proposals WHERE source_signature = ? AND status = 'pending' LIMIT 1`
+    ).get(sig);
+    return !!row;
   }
 
   // ============================================================
