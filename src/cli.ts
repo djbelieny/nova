@@ -44,6 +44,7 @@ const COMMANDS: Record<string, Omit<RunSpec, "kind" | "args"> & { aliases?: stri
   automation:{ file: "src/cli-automation.ts", description: "Manage automations (event → workflow)" },
   process:   { file: "src/cli-process.ts", description: "Manage durable processes (list/show/cancel/start)" },
   extract:   { file: "src/cli-extract.ts", description: "Extract structured data from documents" },
+  policy:    { file: "src/cli-policy.ts", description: "Manage compliance policies (spend/approval/content)" },
   voice:     { file: "src/voice-server.ts", description: "Start the voice-call server" },
   backup:    { file: "scripts/backup.ts", description: "Back up data, config, and .env" },
 };

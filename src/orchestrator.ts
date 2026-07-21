@@ -21,6 +21,7 @@
 import { type Context, InlineKeyboard } from "grammy";
 import type { Database } from "./db.ts";
 import type { ApprovalRule } from "./db.ts";
+import { getDb } from "./db.ts";
 import type { ModelTier } from "./ai-provider.ts";
 import { logError } from "./error-handler.ts";
 import { mkdir, readdir, rename, stat } from "fs/promises";
@@ -44,6 +45,7 @@ import {
 } from "./planner.ts";
 import type { SubtaskResult, Artifact, ProgressCallback } from "./planner.ts";
 import { decideGate, recordOutcome, type GateMode } from "./autonomy.ts";
+import { evaluatePolicies, policyForcesApproval } from "./policy.ts";
 import { deriveActionType } from "./ledger.ts";
 import {
   processMemoryIntents,
@@ -953,6 +955,14 @@ function resolveExecuteGate(userId: string, executeTasks: LadderExecuteTask[]): 
       const spent = d.spentToday != null ? `$${d.spentToday.toFixed(2)} spent today, ` : "";
       spentContext = `Spend cap reached for ${agent} / ${actionType}: ${spent}cap $${d.cap.toFixed(2)}.`;
     }
+    // Compliance layer: policies can only ADD friction (force approval). No policies → no-op.
+    try {
+      const pol = evaluatePolicies(getDb(), { userId, agent, actionType, estimateUsd: LADDER_EST_COST_USD, content: t.description });
+      if (policyForcesApproval(pol)) {
+        if (rank["ask"] > rank[worst]) worst = "ask";
+        if (pol.reasons.length) spentContext = `${spentContext ? spentContext + " " : ""}Policy: ${pol.reasons.join("; ")}.`;
+      }
+    } catch { /* policy evaluation is best-effort; never blocks the gate on error */ }
     if (rank[d.mode] > rank[worst]) worst = d.mode;
   }
   return { mode: worst, spentContext };

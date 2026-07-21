@@ -436,6 +436,31 @@ function applyAutomationSchema(db: BunDatabase): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_automation_runs_auto ON automation_runs(automation_id, fired_at DESC)`);
 }
 
+/**
+ * Policy / compliance layer. Restrictive-only: policies add friction (require approval /
+ * block / warn) but never grant more autonomy than the ladder allows. All in shared.db.
+ */
+function applyPolicySchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS policies (
+      id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id    TEXT NOT NULL,
+      scope      TEXT NOT NULL DEFAULT 'org',
+      scope_ref  TEXT,
+      kind       TEXT NOT NULL,
+      config     TEXT NOT NULL,
+      enabled    INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_policies_user ON policies(user_id, enabled)`);
+}
+
+export interface Policy { id: string; userId: string; scope: string; scopeRef: string | null; kind: string; config: Record<string, any>; enabled: boolean; createdAt?: string; }
+function mapPolicy(r: any): Policy {
+  return { id: r.id, userId: r.user_id, scope: r.scope, scopeRef: r.scope_ref ?? null, kind: r.kind, config: parseJson(r.config, {}), enabled: !!r.enabled, createdAt: r.created_at };
+}
+
 export interface AutomationInput {
   userId: string;
   name: string;
@@ -989,6 +1014,8 @@ class SharedDatabase {
     applyPlaybookSchema(this.db);
     // Automation engine — all automations live in shared.db
     applyAutomationSchema(this.db);
+    // Policy / compliance layer — all in shared.db
+    applyPolicySchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -5447,6 +5474,46 @@ export class Database {
       ? this.getUserDb(userId).db.query(`SELECT * FROM extractions WHERE user_id = ? AND schema_name = ? ORDER BY created_at DESC LIMIT ?`).all(userId, schemaName, limit)
       : this.getUserDb(userId).db.query(`SELECT * FROM extractions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`).all(userId, limit);
     return (q as any[]).map(mapExtraction);
+  }
+
+  // ============================================================
+  // Policies (compliance layer) — shared.db
+  // ============================================================
+
+  insertPolicy(p: { userId: string; scope?: string; scopeRef?: string | null; kind: string; config: Record<string, any> }): Policy {
+    const id = crypto.randomUUID();
+    this.shared.db.run(`INSERT INTO policies (id, user_id, scope, scope_ref, kind, config) VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, p.userId, p.scope ?? 'org', p.scopeRef ?? null, p.kind, JSON.stringify(p.config)]);
+    return mapPolicy(this.shared.db.query(`SELECT * FROM policies WHERE id = ?`).get(id));
+  }
+
+  listPolicies(userId: string, onlyEnabled = false): Policy[] {
+    const sql = `SELECT * FROM policies WHERE user_id = ?${onlyEnabled ? ' AND enabled = 1' : ''} ORDER BY created_at DESC`;
+    return (this.shared.db.query(sql).all(userId) as any[]).map(mapPolicy);
+  }
+
+  setPolicyEnabled(userId: string, id: string, enabled: boolean): void {
+    this.shared.db.run(`UPDATE policies SET enabled = ? WHERE id = ? AND user_id = ?`, [enabled ? 1 : 0, id, userId]);
+  }
+
+  deletePolicy(userId: string, id: string): void {
+    this.shared.db.run(`DELETE FROM policies WHERE id = ? AND user_id = ?`, [id, userId]);
+  }
+
+  /** Total execute-phase spend today for a user (org-wide budget checks). */
+  getDailySpendTotal(userId: string): number {
+    const row = this.getUserDb(userId).db.query(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM action_ledger WHERE phase = 'execute' AND date(created_at) = date('now')`
+    ).get() as any;
+    return row?.total ?? 0;
+  }
+
+  /** Total execute-phase spend this month for a user. */
+  getMonthlySpendTotal(userId: string): number {
+    const row = this.getUserDb(userId).db.query(
+      `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM action_ledger WHERE phase = 'execute' AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')`
+    ).get() as any;
+    return row?.total ?? 0;
   }
 }
 

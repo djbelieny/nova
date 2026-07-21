@@ -1931,6 +1931,22 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       }
     }
 
+    // /policies — list your compliance policies (restrictive-only guardrails).
+    if (text.trim().toLowerCase() === "/policies" || text.trim().toLowerCase() === "/policy") {
+      const policies = supabase.listPolicies(user.id);
+      if (!policies.length) {
+        await ctx.reply("🛡️ *No policies set.* Nova follows the earned-autonomy ladder alone.\n\nPolicies add guardrails: `nova policy add spend-cap --cap 500 --period month`, `… approval --action email.send --approver <id>`, `… content-check --checks pii --on-fail block`. They can only *add* friction, never remove it.", { parse_mode: "Markdown" });
+        return;
+      }
+      const lines = ["🛡️ *Compliance policies*", "", ...policies.map(p => {
+        const c: any = p.config;
+        const d = p.kind === "spend_cap" ? `cap $${c.capUsd}/${c.period}` : p.kind === "approval_matrix" ? `approval${c.actionType ? ` for ${c.actionType}` : ""}` : `check [${(c.checks || []).join(",")}] → ${c.onFail}`;
+        return `${p.enabled ? "●" : "○"} *${p.kind}* — ${d}`;
+      })];
+      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+      return;
+    }
+
     // /automations — list your event-driven automations.
     if (text.trim().toLowerCase() === "/automations" || text.trim().toLowerCase() === "/automation") {
       const autos = supabase.listAutomations(user.id);
