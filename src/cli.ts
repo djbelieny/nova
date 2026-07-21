@@ -47,6 +47,7 @@ const COMMANDS: Record<string, Omit<RunSpec, "kind" | "args"> & { aliases?: stri
   policy:    { file: "src/cli-policy.ts", description: "Manage compliance policies (spend/approval/content)" },
   roi:       { file: "src/cli-roi.ts", description: "Show ROI: tasks automated, hours saved, value vs cost" },
   connector: { file: "src/cli-connector.ts", description: "Manage business connectors (Stripe/Shopify/Zendesk/HubSpot)" },
+  call:      { file: "src/cli-call.ts", description: "Place an outbound voice call that speaks a message" },
   voice:     { file: "src/voice-server.ts", description: "Start the voice-call server" },
   backup:    { file: "scripts/backup.ts", description: "Back up data, config, and .env" },
 };
