@@ -495,6 +495,48 @@ function applyProcessSchema(db: BunDatabase): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_process_wait ON process_instances(state, wait_until)`);
 }
 
+/**
+ * Structured document → data extraction (invoices, receipts, forms, contracts). Per-user db.
+ * Complements RAG (retrieval) with capture: define a schema of fields, extract them from a
+ * document, optionally push to a destination.
+ */
+function applyExtractionSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS extract_schemas (
+      id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id     TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      fields      TEXT NOT NULL,
+      destination TEXT,
+      created_at  TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, name)
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS extractions (
+      id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id    TEXT NOT NULL,
+      schema_id  TEXT,
+      schema_name TEXT,
+      source     TEXT,
+      data       TEXT NOT NULL,
+      status     TEXT DEFAULT 'extracted',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_extractions_user ON extractions(user_id, created_at DESC)`);
+}
+
+export interface ExtractField { name: string; type?: 'string' | 'number' | 'boolean' | 'date' | 'array'; description?: string; required?: boolean; }
+export interface ExtractSchema { id: string; userId: string; name: string; fields: ExtractField[]; destination: string | null; createdAt?: string; }
+export interface Extraction { id: string; userId: string; schemaId: string | null; schemaName: string | null; source: string | null; data: Record<string, any>; status: string; createdAt?: string; }
+function mapExtractSchema(r: any): ExtractSchema {
+  return { id: r.id, userId: r.user_id, name: r.name, fields: parseJson(r.fields, []), destination: r.destination ?? null, createdAt: r.created_at };
+}
+function mapExtraction(r: any): Extraction {
+  return { id: r.id, userId: r.user_id, schemaId: r.schema_id ?? null, schemaName: r.schema_name ?? null, source: r.source ?? null, data: parseJson(r.data, {}), status: r.status, createdAt: r.created_at };
+}
+
 export interface ProcessStep { type: 'action' | 'wait'; agent?: string; description?: string; until?: string; event?: string; }
 export interface ProcessInstance {
   id: string; userId: string; playbookId: string | null; name: string;
@@ -1730,6 +1772,8 @@ class UserDatabase {
     applyPlaybookSchema(this.db);
     // Durable processes — per-user db
     applyProcessSchema(this.db);
+    // Document extraction — per-user db
+    applyExtractionSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -5357,6 +5401,52 @@ export class Database {
     return this.queryAllUserDbs((db) =>
       (db.query(`SELECT * FROM process_instances WHERE state = 'waiting' AND wait_event = ?`).all(eventName) as any[]).map(mapProcess)
     );
+  }
+
+  // ============================================================
+  // Document extraction — per-user db
+  // ============================================================
+
+  upsertExtractSchema(userId: string, s: { name: string; fields: ExtractField[]; destination?: string | null }): ExtractSchema {
+    const db = this.getUserDb(userId).db;
+    const existing = db.query(`SELECT id FROM extract_schemas WHERE user_id = ? AND name = ?`).get(userId, s.name) as any;
+    if (existing) {
+      db.run(`UPDATE extract_schemas SET fields = ?, destination = ? WHERE id = ?`, [JSON.stringify(s.fields), s.destination ?? null, existing.id]);
+      return this.getExtractSchema(userId, s.name)!;
+    }
+    const id = crypto.randomUUID();
+    db.run(`INSERT INTO extract_schemas (id, user_id, name, fields, destination) VALUES (?, ?, ?, ?, ?)`,
+      [id, userId, s.name, JSON.stringify(s.fields), s.destination ?? null]);
+    return this.getExtractSchema(userId, s.name)!;
+  }
+
+  getExtractSchema(userId: string, name: string): ExtractSchema | null {
+    const row = this.getUserDb(userId).db.query(`SELECT * FROM extract_schemas WHERE user_id = ? AND name = ?`).get(userId, name) as any;
+    return row ? mapExtractSchema(row) : null;
+  }
+
+  listExtractSchemas(userId: string): ExtractSchema[] {
+    return (this.getUserDb(userId).db.query(`SELECT * FROM extract_schemas WHERE user_id = ? ORDER BY name`).all(userId) as any[]).map(mapExtractSchema);
+  }
+
+  deleteExtractSchema(userId: string, name: string): void {
+    this.getUserDb(userId).db.run(`DELETE FROM extract_schemas WHERE user_id = ? AND name = ?`, [userId, name]);
+  }
+
+  insertExtraction(userId: string, e: { schemaId?: string | null; schemaName?: string | null; source?: string | null; data: Record<string, any>; status?: string }): Extraction {
+    const id = crypto.randomUUID();
+    this.getUserDb(userId).db.run(
+      `INSERT INTO extractions (id, user_id, schema_id, schema_name, source, data, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, e.schemaId ?? null, e.schemaName ?? null, e.source ?? null, JSON.stringify(e.data), e.status ?? 'extracted']
+    );
+    return mapExtraction(this.getUserDb(userId).db.query(`SELECT * FROM extractions WHERE id = ?`).get(id));
+  }
+
+  listExtractions(userId: string, schemaName?: string, limit = 100): Extraction[] {
+    const q = schemaName
+      ? this.getUserDb(userId).db.query(`SELECT * FROM extractions WHERE user_id = ? AND schema_name = ? ORDER BY created_at DESC LIMIT ?`).all(userId, schemaName, limit)
+      : this.getUserDb(userId).db.query(`SELECT * FROM extractions WHERE user_id = ? ORDER BY created_at DESC LIMIT ?`).all(userId, limit);
+    return (q as any[]).map(mapExtraction);
   }
 }
 
