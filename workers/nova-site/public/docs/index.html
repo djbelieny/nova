@@ -241,6 +241,7 @@
     <a href="#agents">The 24 agents</a>
     <a href="#skills">Skills</a>
     <a href="#memory">Memory &amp; intent tags</a>
+    <a href="#knowledge">Knowledge base</a>
     <a href="#scheduling">Scheduling &amp; proactive</a>
     <a href="#providers">AI providers &amp; routing</a>
   </div>
@@ -332,6 +333,7 @@
       <tr><td><code>nova dashboard</code></td><td>Start the web dashboard on port 3033</td></tr>
       <tr><td><code>nova providers add</code> / <code>list</code> / <code>test</code> / <code>default</code></td><td>Add and manage AI models (see <a href="#providers">AI providers</a>)</td></tr>
       <tr><td><code>nova invite [member|admin]</code></td><td>Generate an invite code to add a teammate</td></tr>
+      <tr><td><code>nova kb add</code> / <code>list</code> / <code>search</code> / <code>remove</code> / <code>reindex</code></td><td>Feed and manage the knowledge base (see <a href="#knowledge">Knowledge base</a>)</td></tr>
       <tr><td><code>nova voice</code></td><td>Start the Twilio voice-call server</td></tr>
       <tr><td><code>nova setup</code></td><td>Install dependencies, create <code>.env</code> from the example</td></tr>
       <tr><td><code>nova backup</code></td><td>Archive <code>data/</code>, <code>config/</code>, and <code>.env</code> to <code>~/.nova/backups/</code></td></tr>
@@ -463,6 +465,7 @@
       <tr><td><code>/examples</code></td><td>Starter ideas you can tap to run right now</td></tr>
       <tr><td><code>/agents</code></td><td>Browse all 24 agents with one-tap "Use" buttons</td></tr>
       <tr><td><code>/memory</code> / <code>/goals</code> / <code>/tasks</code></td><td>Show stored facts, goals, and agent tasks</td></tr>
+      <tr><td><code>/knowledge</code> / <code>/kb</code></td><td>List the documents in your knowledge base, grouped by scope</td></tr>
       <tr><td><code>/schedule</code>, <code>/schedule list</code></td><td>Manage scheduled tasks</td></tr>
       <tr><td><code>/usage</code></td><td>Cost and usage summary</td></tr>
       <tr><td><code>/board &lt;question&gt;</code></td><td>Convene the executive board (if configured)</td></tr>
@@ -531,6 +534,45 @@
 [DEVTASK: project | description]      <span class="c">queue a background dev task</span></code></pre>
     <h3>Recurrence DSL</h3>
     <p><code>daily:HH:MM</code> · <code>weekly:DAY:HH:MM</code> (0=Sunday) · <code>weekdays:HH:MM</code> · <code>interval:SECONDS</code></p>
+  </section>
+
+  <!-- ══════════════ KNOWLEDGE ══════════════ -->
+  <section id="knowledge">
+    <span class="sec-eyebrow">[knowledge]</span>
+    <h2>Knowledge base</h2>
+    <p>Where memory holds what Nova <em>learns</em>, the knowledge base holds what you already <em>have</em>. Feed it a document, file, or URL and Nova ingests it — extracting text (PDF, DOCX, Markdown, plain text, or a web page), splitting it into overlapping passages, and turning each into a vector with a model that runs <strong>on your own machine</strong> (all-MiniLM, the same local embedder used for memory). Nothing is sent to a third-party embedding API. When you ask a question, Nova pulls the closest passages into the answer and <strong>cites the source document</strong>.</p>
+
+    <h3>Three scopes</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Scope</th><th>Who sees it</th><th>Good for</th></tr>
+      <tr><td><code>personal</code></td><td>Only you (stored in your own per-user database)</td><td>Your notes, drafts, private research</td></tr>
+      <tr><td><code>team</code></td><td>Everyone on your Nova (shared database)</td><td>Handbook, brand guide, pricing — shared truth</td></tr>
+      <tr><td><code>agent</code></td><td>One specialist's pack, plus that user's personal + team docs</td><td>Contracts for Lex, brand voice for Aura, API docs for Architect</td></tr>
+    </table></div>
+    <p>An agent retrieves from your <em>personal</em> docs, the <em>team</em> base, <em>and</em> its own pack — never another agent's pack. Personal + team passages are also auto-injected into ordinary conversations, so recall is effortless.</p>
+
+    <h3>Four ways to feed it</h3>
+    <ul>
+      <li><strong>Drop a file in Telegram</strong> — send a document with a caption like <code>add to knowledge</code>, <code>add to team knowledge</code>, or <code>for Lex's pack</code>, and it's ingested with that scope on the spot.</li>
+      <li><strong>Dashboard</strong> — the <a href="#dashboard">web dashboard</a> has a <strong>Knowledge</strong> panel: drag files in, set each one's scope, search, and delete.</li>
+      <li><strong>The <code>nova kb</code> command</strong> — manage the whole lifecycle from a terminal (below).</li>
+      <li><strong>A watched folder</strong> — anything dropped into <code>~/.nova/knowledge/</code> is ingested automatically; subfolders set the scope (<code>team/</code>, <code>agents/&lt;slug&gt;/</code>). Delete a file and its passages leave the base. Disable with <code>NOVA_KB_WATCH=false</code>.</li>
+    </ul>
+
+    <h3>The <span class="h-mono">nova kb</span> command</h3>
+    <pre><code>nova kb add report.pdf --scope team          <span class="c">add a file to the team base</span>
+nova kb add https://example.com/spec --agent architect
+nova kb add notes.md                          <span class="c">defaults to personal scope</span>
+nova kb list                                  <span class="c">list docs, grouped by scope</span>
+nova kb search "refund window"                <span class="c">search across visible scopes</span>
+nova kb remove &lt;id&gt; --scope team
+nova kb reindex --all                         <span class="c">re-embed after edits</span></code></pre>
+    <p>In chat, <code>/knowledge</code> (or <code>/kb</code>) lists everything Nova currently knows, grouped by scope.</p>
+
+    <div class="callout">
+      <span class="co-label">[safe by design]</span>
+      <p>Retrieved passages are <strong>injection-scanned</strong> before they reach a prompt — a document that tries to smuggle in instructions is dropped. Your files are treated as data, never as commands. Re-ingesting an edited file replaces the old version in place (no duplicates), and embeddings never leave your machine.</p>
+    </div>
   </section>
 
   <!-- ══════════════ SCHEDULING ══════════════ -->

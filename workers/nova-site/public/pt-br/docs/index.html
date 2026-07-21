@@ -241,6 +241,7 @@
     <a href="#agents">Os 24 agentes</a>
     <a href="#skills">Skills</a>
     <a href="#memory">Memória &amp; tags de intenção</a>
+    <a href="#knowledge">Base de conhecimento</a>
     <a href="#scheduling">Agendamento &amp; proativo</a>
     <a href="#providers">Provedores de IA &amp; roteamento</a>
   </div>
@@ -332,6 +333,7 @@
       <tr><td><code>nova dashboard</code></td><td>Inicia o dashboard web na porta 3033</td></tr>
       <tr><td><code>nova providers add</code> / <code>list</code> / <code>test</code> / <code>default</code></td><td>Adiciona e gerencia modelos de IA (ver <a href="#providers">Provedores de IA</a>)</td></tr>
       <tr><td><code>nova invite [member|admin]</code></td><td>Gera um código de convite para adicionar um colega de equipe</td></tr>
+      <tr><td><code>nova kb add</code> / <code>list</code> / <code>search</code> / <code>remove</code> / <code>reindex</code></td><td>Alimenta e gerencia a base de conhecimento (ver <a href="#knowledge">Base de conhecimento</a>)</td></tr>
       <tr><td><code>nova voice</code></td><td>Inicia o servidor de chamada de voz Twilio</td></tr>
       <tr><td><code>nova setup</code></td><td>Instala dependências, cria <code>.env</code> a partir do exemplo</td></tr>
       <tr><td><code>nova backup</code></td><td>Arquiva <code>data/</code>, <code>config/</code>, e <code>.env</code> para <code>~/.nova/backups/</code></td></tr>
@@ -463,6 +465,7 @@
       <tr><td><code>/examples</code></td><td>Ideias iniciais que você pode tocar para executar agora mesmo</td></tr>
       <tr><td><code>/agents</code></td><td>Navegue todos os 24 agentes com botões "Use" de um toque</td></tr>
       <tr><td><code>/memory</code> / <code>/goals</code> / <code>/tasks</code></td><td>Mostrar fatos armazenados, objetivos e tarefas de agentes</td></tr>
+      <tr><td><code>/knowledge</code> / <code>/kb</code></td><td>Lista os documentos da sua base de conhecimento, agrupados por escopo</td></tr>
       <tr><td><code>/schedule</code>, <code>/schedule list</code></td><td>Gerenciar tarefas agendadas</td></tr>
       <tr><td><code>/usage</code></td><td>Resumo de custo e uso</td></tr>
       <tr><td><code>/board &lt;question&gt;</code></td><td>Convocar o conselho executivo (se configurado)</td></tr>
@@ -531,6 +534,45 @@
 [DEVTASK: project | description]      <span class="c">queue a background dev task</span></code></pre>
     <h3>DSL de recorrência</h3>
     <p><code>daily:HH:MM</code> · <code>weekly:DAY:HH:MM</code> (0=Sunday) · <code>weekdays:HH:MM</code> · <code>interval:SECONDS</code></p>
+  </section>
+
+  <!-- ══════════════ KNOWLEDGE ══════════════ -->
+  <section id="knowledge">
+    <span class="sec-eyebrow">[conhecimento]</span>
+    <h2>Base de conhecimento</h2>
+    <p>Enquanto a memória guarda o que a Nova <em>aprende</em>, a base de conhecimento guarda o que você <em>já tem</em>. Alimente-a com um documento, arquivo ou URL e a Nova o ingere — extraindo o texto (PDF, DOCX, Markdown, texto simples ou uma página web), dividindo-o em passagens sobrepostas e transformando cada uma em um vetor com um modelo que roda <strong>na sua própria máquina</strong> (all-MiniLM, o mesmo embedder local usado pela memória). Nada é enviado a uma API de embedding de terceiros. Quando você faz uma pergunta, a Nova traz as passagens mais próximas para a resposta e <strong>cita o documento de origem</strong>.</p>
+
+    <h3>Três escopos</h3>
+    <div class="tbl-wrap"><table>
+      <tr><th>Escopo</th><th>Quem vê</th><th>Bom para</th></tr>
+      <tr><td><code>personal</code></td><td>Só você (armazenado no seu próprio banco de dados por usuário)</td><td>Suas notas, rascunhos, pesquisa privada</td></tr>
+      <tr><td><code>team</code></td><td>Todos na sua Nova (banco de dados compartilhado)</td><td>Manual, guia de marca, preços — verdade compartilhada</td></tr>
+      <tr><td><code>agent</code></td><td>O pacote de um especialista, mais os documentos pessoais + de equipe daquele usuário</td><td>Contratos para Lex, voz de marca para Aura, docs de API para Architect</td></tr>
+    </table></div>
+    <p>Um agente recupera dos seus documentos <em>pessoais</em>, da base de <em>equipe</em> <em>e</em> do seu próprio pacote — nunca do pacote de outro agente. Passagens pessoais + de equipe também são injetadas automaticamente em conversas comuns, então a recuperação é natural.</p>
+
+    <h3>Quatro formas de alimentá-la</h3>
+    <ul>
+      <li><strong>Solte um arquivo no Telegram</strong> — envie um documento com uma legenda como <code>add to knowledge</code>, <code>add to team knowledge</code> ou <code>for Lex's pack</code>, e ele é ingerido com aquele escopo na hora.</li>
+      <li><strong>Dashboard</strong> — o <a href="#dashboard">dashboard web</a> tem um painel <strong>Knowledge</strong>: arraste arquivos, defina o escopo de cada um, pesquise e apague.</li>
+      <li><strong>O comando <code>nova kb</code></strong> — gerencie todo o ciclo de vida a partir de um terminal (abaixo).</li>
+      <li><strong>Uma pasta monitorada</strong> — qualquer coisa solta em <code>~/.nova/knowledge/</code> é ingerida automaticamente; as subpastas definem o escopo (<code>team/</code>, <code>agents/&lt;slug&gt;/</code>). Apague um arquivo e suas passagens saem da base. Desative com <code>NOVA_KB_WATCH=false</code>.</li>
+    </ul>
+
+    <h3>O comando <span class="h-mono">nova kb</span></h3>
+    <pre><code>nova kb add report.pdf --scope team          <span class="c">adiciona um arquivo à base de equipe</span>
+nova kb add https://example.com/spec --agent architect
+nova kb add notes.md                          <span class="c">padrão é o escopo personal</span>
+nova kb list                                  <span class="c">lista os docs, agrupados por escopo</span>
+nova kb search "refund window"                <span class="c">busca nos escopos visíveis</span>
+nova kb remove &lt;id&gt; --scope team
+nova kb reindex --all                         <span class="c">re-embeda após edições</span></code></pre>
+    <p>No chat, <code>/knowledge</code> (ou <code>/kb</code>) lista tudo o que a Nova sabe no momento, agrupado por escopo.</p>
+
+    <div class="callout">
+      <span class="co-label">[seguro por design]</span>
+      <p>As passagens recuperadas passam por <strong>varredura contra injeção</strong> antes de chegarem a um prompt — um documento que tente contrabandear instruções é descartado. Seus arquivos são tratados como dados, nunca como comandos. Reingerir um arquivo editado substitui a versão antiga no lugar (sem duplicatas), e os embeddings nunca saem da sua máquina.</p>
+    </div>
   </section>
 
   <!-- ══════════════ SCHEDULING ══════════════ -->

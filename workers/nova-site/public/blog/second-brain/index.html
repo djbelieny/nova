@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Give Nova a second brain: feed it your documents with RAG — Nova</title>
+<meta name="description" content="Nova now has a scoped knowledge base — a second brain. Drop in PDFs, docs, notes, or URLs and Nova learns them: chunked, embedded locally, and retrieved across every agent with source citations. Personal, team, and per-agent scopes. Four ways to feed it.">
+<meta property="og:title" content="Give Nova a second brain: feed it your documents with RAG">
+<meta property="og:description" content="Drop in PDFs, docs, notes, or URLs and Nova learns them — embedded locally, retrieved across every agent with citations. Personal, team, and per-agent knowledge. Four ways to feed it.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/blog/second-brain/">
+<meta property="og:site_name" content="Nova">
+<meta property="og:image" content="https://mynova.space/blog/second-brain/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Nova Knowledge — a scoped second brain you feed with your own documents">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mynova.space/blog/second-brain/og.jpg">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 18px; }
+  .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 960px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/second-brain/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/second-brain/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/second-brain/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/second-brain/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/#how">How it works</a>
+      <a href="/#agents">Agents</a>
+      <a href="/#start">Quick start</a>
+      <a href="/blog/">Blog</a>
+      <a href="/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/second-brain/" class="en on" hreflang="en">EN</a><a href="/es/blog/second-brain/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/second-brain/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">New in Nova</span>
+    <h1>Give Nova a second brain</h1>
+    <p class="lede">Nova now has a knowledge base you feed yourself. Drop in a PDF, a doc, a note, or a URL and Nova learns it — chunked, embedded on your own machine, and pulled back into any agent's answer with a citation. Personal, team-wide, or tied to one specialist.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 21 July 2026 <span class="dot">·</span> 7 min read</p>
+
+    <div class="prose">
+      <p>Nova has always had a memory — it remembers facts about you and your work and pulls them into a conversation when they're relevant. But memory is for the things Nova <em>learns</em> in passing. It was never a place to put the things you already <em>have</em>: the contract, the brand guide, the product spec, the 40-page research report you want every answer to be grounded in.</p>
+      <p>That's what shipped this week. Nova now has a proper <strong>knowledge base</strong> — a second brain you feed on purpose. Hand it a document and it becomes something Nova can quote, reason over, and cite, across every agent, on every channel.</p>
+
+      <div class="callout">
+        <p><span class="k">The one-line version</span>Drop in a PDF, doc, note, or URL. Nova splits it into passages, embeds them locally, and stores them. From then on your agents answer <em>from your material</em> — and tell you which document each fact came from.</p>
+      </div>
+
+      <h2>How it actually works</h2>
+      <p>When a document arrives, Nova runs it through a small, boring, reliable pipeline — the kind you want handling your data:</p>
+      <ul>
+        <li><strong>Extract</strong> — text is pulled out of PDFs, Word docs, Markdown, plain text, or a web page.</li>
+        <li><strong>Chunk</strong> — the text is split into overlapping passages of a few hundred words, so a match returns a focused, quotable snippet rather than a whole file.</li>
+        <li><strong>Embed</strong> — each passage is turned into a vector by a model that runs <strong>on your own machine</strong> (all-MiniLM, the same local embedder Nova already uses). No document ever leaves for a third-party embedding API.</li>
+        <li><strong>Store &amp; retrieve</strong> — passages live in Nova's local vector store. When you ask something, Nova embeds your question, finds the closest passages, and folds them into the answer.</li>
+      </ul>
+      <p>Retrieval is <strong>hybrid</strong>, which is the part that makes it feel effortless. The most relevant passage or two is injected automatically into the conversation — you don't ask Nova to "search the knowledge base," it just knows. And when an agent needs to dig deeper, it can query the base directly. Either way, what comes back carries its source, so Nova can say <em>"(from contract-v3.pdf)"</em> instead of asking you to take its word for it.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · grounded in your docs</div>
+        <div class="bubble me"><span class="who">You</span>What's our refund window, and can a reseller offer a longer one?</div>
+        <div class="bubble nova"><span class="who">Nova · Lex (legal)</span>Your policy is a 30-day refund, no questions asked <em>(from refund-policy.pdf)</em>. Resellers are capped at your terms unless you sign an addendum — clause 7.2 forbids them extending it unilaterally <em>(from reseller-agreement.docx)</em>. Want me to draft that addendum?</div>
+      </div>
+
+      <h2>Personal, team, and per-agent — one base, three scopes</h2>
+      <p>Not every document belongs to everyone. Nova's knowledge base has three scopes, and they compose:</p>
+      <div class="cards">
+        <div class="card"><h4>Personal</h4><p>Yours alone. Your notes, your drafts, the research only you should see. It lives in your own local database and no teammate can retrieve it.</p></div>
+        <div class="card"><h4>Team</h4><p>Shared across everyone on your Nova. The handbook, the brand guide, the pricing — the things you want every answer to respect.</p></div>
+        <div class="card"><h4>Per-agent</h4><p>A pack tied to one specialist. Contracts for Lex, the brand voice for Aura, the API docs for Architect — so the right expert carries the right material and no one else is cluttered by it.</p></div>
+      </div>
+      <p>When an agent answers, it draws on your personal docs, the team base, <em>and</em> its own pack — but never another agent's pack. A specialist stays specialized.</p>
+
+      <h2>Four ways to feed it</h2>
+      <p>The best knowledge base is the one you actually keep current, so Nova gives you four doors — use whichever fits the moment:</p>
+
+      <h3>1 · Drop a file in Telegram</h3>
+      <p>Send Nova a document with a caption like <em>"add to knowledge"</em> — or <em>"add to team knowledge"</em>, or <em>"for Lex's pack"</em> — and it's ingested on the spot, scope and all. <code>/knowledge</code> lists everything Nova currently knows, grouped by scope.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · feeding the brain</div>
+        <div class="bubble me"><span class="who">You</span>📎 brand-guide-2026.pdf<br>add to team knowledge</div>
+        <div class="bubble nova"><span class="who">Nova</span>📚 Added <strong>brand-guide-2026.pdf</strong> to team knowledge (18 chunks). I'll use it automatically and cite it.</div>
+      </div>
+
+      <h3>2 · The dashboard</h3>
+      <p>The web dashboard has a <strong>Knowledge</strong> panel: drag files in, set each one's scope, search across everything, and delete what's stale. It's the comfortable place to manage a growing base.</p>
+
+      <h3>3 · The <code>nova kb</code> command</h3>
+      <p>Prefer the terminal? The unified CLI covers the whole lifecycle:</p>
+      <ul>
+        <li><code>nova kb add report.pdf --scope team</code></li>
+        <li><code>nova kb add https://example.com/spec --agent architect</code></li>
+        <li><code>nova kb list</code> · <code>nova kb search "refund window"</code> · <code>nova kb reindex --all</code></li>
+      </ul>
+
+      <h3>4 · A watched folder</h3>
+      <p>Point-and-forget: anything you drop into <code>~/.nova/knowledge/</code> is ingested automatically, and subfolders set the scope — <code>team/</code> for team, <code>agents/lex/</code> for an agent pack. Delete a file and its passages leave the base. It turns your knowledge base into a folder you already know how to use.</p>
+
+      <hr class="divider">
+
+      <h2>Built to the same standard as the rest of Nova</h2>
+      <p>A second brain is only worth having if you can trust what it feeds back. So the knowledge base inherits Nova's guardrails:</p>
+      <ul>
+        <li><strong>Injection-scanned.</strong> A document that tries to smuggle in instructions — <em>"ignore your previous rules…"</em> hidden in a paragraph — is caught and dropped before it can reach a prompt. Your files are treated as <em>data</em>, never as commands.</li>
+        <li><strong>Local and private.</strong> Extraction and embeddings run on your machine. Your documents don't get shipped to anyone's API to be indexed.</li>
+        <li><strong>Clean re-ingests.</strong> Re-add a file you've edited and Nova replaces the old version in place — no duplicates, no stale passages lingering.</li>
+      </ul>
+      <p>It also reuses the machinery Nova already had — the same local embedder, the same vector store, the same document parsers — rather than bolting on a parallel system. Less to break, and it behaves like the Nova you already know.</p>
+
+      <h2>Where this goes</h2>
+      <p>A knowledge base changes what you can hand Nova. Instead of pasting the relevant paragraph into every request, you load the source once and every agent is grounded in it from then on. Support answers match your real policies. Legal reads your real contracts. Your brand voice is <em>your</em> brand guide, not a generic guess. The team stops re-explaining the same context and starts building on it.</p>
+      <p>It's the difference between an assistant that's smart in general and a team that's smart about <em>your</em> business.</p>
+
+      <div class="end-cta">
+        <h3>Feed your team's brain</h3>
+        <p>Open source, self-hosted, MIT licensed. Your documents, embedded on your machine, cited in every answer.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Get Nova on GitHub</a>
+          <a class="cta ghost" href="/docs/">Read the docs</a>
+          <a class="cta ghost" href="/book/" rel="noopener">Want it set up for you?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
+    <span>
+      <a href="/">Home</a> &nbsp;·&nbsp;
+      <a href="/docs/">Documentation</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

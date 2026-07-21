@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dale a Nova un segundo cerebro: aliméntalo con tus documentos usando RAG — Nova</title>
+<meta name="description" content="Nova ahora tiene una base de conocimiento con alcances — un segundo cerebro. Suelta PDFs, documentos, notas o URLs y Nova los aprende: fragmentados, incrustados localmente y recuperados en cada agente con citas de la fuente. Alcances personal, de equipo y por agente. Cuatro formas de alimentarlo.">
+<meta property="og:title" content="Dale a Nova un segundo cerebro: aliméntalo con tus documentos usando RAG">
+<meta property="og:description" content="Suelta PDFs, documentos, notas o URLs y Nova los aprende — incrustados localmente, recuperados en cada agente con citas. Conocimiento personal, de equipo y por agente. Cuatro formas de alimentarlo.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/es/blog/second-brain/">
+<meta property="og:site_name" content="Nova">
+<meta property="og:image" content="https://mynova.space/es/blog/second-brain/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Nova Knowledge — un segundo cerebro con alcances que alimentas con tus propios documentos">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mynova.space/es/blog/second-brain/og.jpg">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 18px; }
+  .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 960px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/second-brain/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/second-brain/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/second-brain/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/second-brain/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/es/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/es/#how">Cómo funciona</a>
+      <a href="/es/#agents">Agentes</a>
+      <a href="/es/#start">Inicio rápido</a>
+      <a href="/es/blog/">Blog</a>
+      <a href="/es/docs/">Documentos</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/second-brain/" class="en" hreflang="en">EN</a><a href="/es/blog/second-brain/" class="es on" hreflang="es">ES</a><a href="/pt-br/blog/second-brain/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">Nuevo en Nova</span>
+    <h1>Dale a Nova un segundo cerebro</h1>
+    <p class="lede">Nova ahora tiene una base de conocimiento que alimentas tú mismo. Suelta un PDF, un documento, una nota o una URL y Nova la aprende — fragmentada, incrustada en tu propia máquina, y traída de vuelta a la respuesta de cualquier agente con una cita. Personal, para todo el equipo, o atada a un solo especialista.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 21 de julio de 2026 <span class="dot">·</span> 7 min de lectura</p>
+
+    <div class="prose">
+      <p>Nova siempre ha tenido memoria — recuerda datos sobre ti y tu trabajo y los trae a una conversación cuando son relevantes. Pero la memoria es para las cosas que Nova <em>aprende</em> de pasada. Nunca fue un lugar para poner las cosas que ya <em>tienes</em>: el contrato, la guía de marca, la especificación del producto, el informe de investigación de 40 páginas en el que quieres que se base cada respuesta.</p>
+      <p>Eso es lo que se lanzó esta semana. Nova ahora tiene una <strong>base de conocimiento</strong> propiamente dicha — un segundo cerebro que alimentas a propósito. Entrégale un documento y se convierte en algo que Nova puede citar, razonar y referenciar, en cada agente, en cada canal.</p>
+
+      <div class="callout">
+        <p><span class="k">La versión de una línea</span>Suelta un PDF, documento, nota o URL. Nova lo divide en pasajes, los incrusta localmente y los almacena. A partir de entonces tus agentes responden <em>desde tu material</em> — y te dicen de qué documento vino cada dato.</p>
+      </div>
+
+      <h2>Cómo funciona en realidad</h2>
+      <p>Cuando llega un documento, Nova lo pasa por un flujo pequeño, aburrido y confiable — del tipo que quieres que maneje tus datos:</p>
+      <ul>
+        <li><strong>Extraer</strong> — el texto se saca de PDFs, documentos de Word, Markdown, texto plano o una página web.</li>
+        <li><strong>Fragmentar</strong> — el texto se divide en pasajes solapados de unos pocos cientos de palabras, para que una coincidencia devuelva un fragmento enfocado y citable en lugar de un archivo entero.</li>
+        <li><strong>Incrustar</strong> — cada pasaje se convierte en un vector mediante un modelo que se ejecuta <strong>en tu propia máquina</strong> (<code>all-MiniLM</code>, el mismo incrustador local que Nova ya usa). Ningún documento sale jamás hacia una API de incrustación de terceros.</li>
+        <li><strong>Almacenar y recuperar</strong> — los pasajes viven en el almacén de vectores local de Nova. Cuando preguntas algo, Nova incrusta tu pregunta, encuentra los pasajes más cercanos y los integra en la respuesta.</li>
+      </ul>
+      <p>La recuperación es <strong>híbrida</strong>, que es la parte que la hace sentir sin esfuerzo. El pasaje o los dos pasajes más relevantes se inyectan automáticamente en la conversación — no le pides a Nova que "busque en la base de conocimiento", simplemente lo sabe. Y cuando un agente necesita profundizar, puede consultar la base directamente. En cualquier caso, lo que regresa lleva su fuente, así que Nova puede decir <em>"(de contract-v3.pdf)"</em> en lugar de pedirte que le creas sin pruebas.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · fundamentado en tus documentos</div>
+        <div class="bubble me"><span class="who">Tú</span>¿Cuál es nuestra ventana de reembolso, y puede un revendedor ofrecer una más larga?</div>
+        <div class="bubble nova"><span class="who">Nova · Lex (legal)</span>Tu política es un reembolso de 30 días, sin preguntas <em>(de refund-policy.pdf)</em>. Los revendedores están limitados a tus términos a menos que firmes un anexo — la cláusula 7.2 les prohíbe extenderlo unilateralmente <em>(de reseller-agreement.docx)</em>. ¿Quieres que redacte ese anexo?</div>
+      </div>
+
+      <h2>Personal, de equipo y por agente — una base, tres alcances</h2>
+      <p>No todos los documentos son de todos. La base de conocimiento de Nova tiene tres alcances, y se combinan:</p>
+      <div class="cards">
+        <div class="card"><h4>Personal</h4><p>Solo tuyo. Tus notas, tus borradores, la investigación que solo tú deberías ver. Vive en tu propia base de datos local y ningún compañero puede recuperarla.</p></div>
+        <div class="card"><h4>De equipo</h4><p>Compartido entre todos en tu Nova. El manual, la guía de marca, los precios — las cosas que quieres que cada respuesta respete.</p></div>
+        <div class="card"><h4>Por agente</h4><p>Un paquete atado a un solo especialista. Los contratos para Lex, la voz de marca para Aura, la documentación de la API para Architect — para que el experto correcto lleve el material correcto y nadie más se sature con él.</p></div>
+      </div>
+      <p>Cuando un agente responde, se apoya en tus documentos personales, la base del equipo <em>y</em> su propio paquete — pero nunca el paquete de otro agente. Un especialista sigue siendo especializado.</p>
+
+      <h2>Cuatro formas de alimentarla</h2>
+      <p>La mejor base de conocimiento es la que realmente mantienes al día, así que Nova te da cuatro puertas — usa la que encaje en el momento:</p>
+
+      <h3>1 · Suelta un archivo en Telegram</h3>
+      <p>Envíale a Nova un documento con un pie de foto como <em>"añadir a conocimiento"</em> — o <em>"añadir a conocimiento del equipo"</em>, o <em>"para el paquete de Lex"</em> — y se ingiere en el acto, con alcance y todo. <code>/knowledge</code> lista todo lo que Nova conoce actualmente, agrupado por alcance.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · alimentando el cerebro</div>
+        <div class="bubble me"><span class="who">Tú</span>📎 brand-guide-2026.pdf<br>añadir a conocimiento del equipo</div>
+        <div class="bubble nova"><span class="who">Nova</span>📚 Añadí <strong>brand-guide-2026.pdf</strong> al conocimiento del equipo (18 fragmentos). Lo usaré automáticamente y lo citaré.</div>
+      </div>
+
+      <h3>2 · El panel</h3>
+      <p>El panel web tiene una sección de <strong>Conocimiento</strong>: arrastra archivos, fija el alcance de cada uno, busca en todo y elimina lo que está desactualizado. Es el lugar cómodo para gestionar una base que crece.</p>
+
+      <h3>3 · El comando <code>nova kb</code></h3>
+      <p>¿Prefieres la terminal? La CLI unificada cubre todo el ciclo de vida:</p>
+      <ul>
+        <li><code>nova kb add report.pdf --scope team</code></li>
+        <li><code>nova kb add https://example.com/spec --agent architect</code></li>
+        <li><code>nova kb list</code> · <code>nova kb search "refund window"</code> · <code>nova kb reindex --all</code></li>
+      </ul>
+
+      <h3>4 · Una carpeta vigilada</h3>
+      <p>Apunta y olvida: cualquier cosa que sueltes en <code>~/.nova/knowledge/</code> se ingiere automáticamente, y las subcarpetas fijan el alcance — <code>team/</code> para el equipo, <code>agents/lex/</code> para un paquete de agente. Elimina un archivo y sus pasajes salen de la base. Convierte tu base de conocimiento en una carpeta que ya sabes usar.</p>
+
+      <hr class="divider">
+
+      <h2>Construida con el mismo estándar que el resto de Nova</h2>
+      <p>Un segundo cerebro solo vale la pena si puedes confiar en lo que te devuelve. Así que la base de conocimiento hereda las salvaguardas de Nova:</p>
+      <ul>
+        <li><strong>Escaneada contra inyección.</strong> Un documento que intente colar instrucciones — <em>"ignora tus reglas anteriores…"</em> escondido en un párrafo — es detectado y descartado antes de que pueda llegar a un prompt. Tus archivos se tratan como <em>datos</em>, nunca como comandos.</li>
+        <li><strong>Local y privada.</strong> La extracción y las incrustaciones se ejecutan en tu máquina. Tus documentos no se envían a la API de nadie para ser indexados.</li>
+        <li><strong>Re-ingestas limpias.</strong> Vuelve a añadir un archivo que hayas editado y Nova reemplaza la versión anterior en su lugar — sin duplicados, sin pasajes obsoletos rezagados.</li>
+      </ul>
+      <p>También reutiliza la maquinaria que Nova ya tenía — el mismo incrustador local, el mismo almacén de vectores, los mismos analizadores de documentos — en lugar de atornillar un sistema paralelo. Menos cosas que se rompan, y se comporta como la Nova que ya conoces.</p>
+
+      <h2>Hacia dónde va esto</h2>
+      <p>Una base de conocimiento cambia lo que puedes entregarle a Nova. En lugar de pegar el párrafo relevante en cada solicitud, cargas la fuente una vez y cada agente queda fundamentado en ella a partir de entonces. Las respuestas de soporte coinciden con tus políticas reales. Legal lee tus contratos reales. Tu voz de marca es <em>tu</em> guía de marca, no una conjetura genérica. El equipo deja de reexplicar el mismo contexto y empieza a construir sobre él.</p>
+      <p>Es la diferencia entre un asistente que es inteligente en general y un equipo que es inteligente sobre <em>tu</em> negocio.</p>
+
+      <div class="end-cta">
+        <h3>Alimenta el cerebro de tu equipo</h3>
+        <p>Código abierto, auto-alojado, con licencia MIT. Tus documentos, incrustados en tu máquina, citados en cada respuesta.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Obtén Nova en GitHub</a>
+          <a class="cta ghost" href="/es/docs/">Leer los documentos</a>
+          <a class="cta ghost" href="/es/book/" rel="noopener">¿Quieres que te lo configure?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — licencia MIT. Tómalo, personalízalo, hazlo tuyo.</span>
+    <span>
+      <a href="/es/">Inicio</a> &nbsp;·&nbsp;
+      <a href="/es/docs/">Documentación</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Seguridad</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
