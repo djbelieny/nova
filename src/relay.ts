@@ -1932,6 +1932,17 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       }
     }
 
+    // /connectors — business systems Nova can read/write (Stripe, Shopify, Zendesk, HubSpot).
+    if (text.trim().toLowerCase() === "/connectors" || text.trim().toLowerCase() === "/connector") {
+      const { listConnectors, isConnectorConfigured } = await import("./connectors/registry.ts");
+      const lines = ["🔌 *Connectors*", "", ...listConnectors().map(c => {
+        const ok = isConnectorConfigured(c, supabase);
+        return `${ok ? "●" : "○"} *${c.id}* — ${c.label}${ok ? "" : `  _(set ${c.credEnv.join(", ")})_`}`;
+      }), "", "_Manage from a terminal:_ `nova connector list|test <id>|run <id> <action>`"];
+      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+      return;
+    }
+
     // /roi — business value delivered (tasks automated, hours saved, $ vs cost).
     if (text.trim().toLowerCase() === "/roi" || text.trim().toLowerCase().startsWith("/roi ")) {
       const m = text.trim().match(/\/roi\s+(\d+)/);

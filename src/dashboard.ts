@@ -2022,6 +2022,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/extraction">Extraction</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/policies">Policies</a>
 <a class="hub-link" href="${DASHBOARD_BASE}/roi">ROI</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/connectors">Connectors</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -4357,6 +4358,162 @@ export function renderRoiPage(): string {
 }
 
 // ============================================================
+// CONNECTORS PAGE
+// ============================================================
+
+export function renderConnectorsPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Connectors</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#57C785;--red:#E86A84;--yellow:#F0B429;--blue:#2AABEE}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:.5rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1.4rem}
+  .hint code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:5px;font-size:.76rem;color:var(--text)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:18px}
+  .card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:.7rem}
+  .card-head h3{font-size:.95rem;font-weight:700}
+  .kind{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+  .badge{font-size:.7rem;font-weight:600;padding:3px 10px;border-radius:20px;border:1px solid var(--border);white-space:nowrap}
+  .badge.on{color:var(--green);border-color:rgba(87,199,133,.4);background:rgba(87,199,133,.12)}
+  .badge.off{color:var(--dim)}
+  .sec{font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:1rem 0 .5rem}
+  .env-list{display:flex;flex-wrap:wrap;gap:6px;margin-top:.4rem}
+  .env{font-family:ui-monospace,monospace;font-size:.72rem;background:rgba(255,255,255,.06);border:1px solid var(--border);padding:2px 8px;border-radius:6px;color:var(--text)}
+  .act{display:flex;align-items:center;gap:8px;font-size:.8rem;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+  .act:last-child{border-bottom:none}
+  .act .aname{font-weight:600}
+  .act .adesc{color:var(--dim);font-size:.74rem}
+  .chip{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:1px 7px;border-radius:5px}
+  .chip.write{color:var(--red);background:rgba(232,106,132,.14);border:1px solid rgba(232,106,132,.4)}
+  .chip.read{color:var(--blue);background:rgba(42,171,238,.12);border:1px solid rgba(42,171,238,.3)}
+  .chip.trig{color:var(--yellow);background:rgba(240,180,41,.12);border:1px solid rgba(240,180,41,.3)}
+  .run{margin-top:1rem;border-top:1px solid var(--border);padding-top:1rem}
+  label{display:block;font-size:.72rem;color:var(--dim);margin-bottom:.35rem}
+  select,textarea{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:.8rem;padding:8px 10px;margin-bottom:.7rem}
+  textarea{font-family:ui-monospace,monospace;resize:vertical;min-height:64px}
+  .confirm{display:flex;align-items:center;gap:8px;font-size:.76rem;color:var(--red);margin-bottom:.7rem}
+  .confirm input{width:auto;margin:0}
+  button{background:var(--blue);color:#04121c;border:none;border-radius:8px;font-family:inherit;font-weight:600;font-size:.8rem;padding:8px 18px;cursor:pointer}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  pre.out{background:rgba(0,0,0,.35);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:.7rem;font-family:ui-monospace,monospace;font-size:.72rem;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto}
+  .empty{color:var(--dim);font-size:.82rem;padding:24px 4px;text-align:center}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Connectors</h1>
+  <p class="hint">Connect Nova to business systems (Stripe, Shopify, Zendesk, HubSpot). Credentials live in <b>env vars</b> (self-host) or the shared credentials store — never entered here. <b style="color:var(--red)">Write actions are consequential</b> (they charge, refund, create, or modify records); they require a confirm step before running.</p>
+  <div class="grid" id="grid"><p class="empty">Loading…</p></div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+
+  function cardHtml(c){
+    var badge = c.configured
+      ? '<span class="badge on">● configured</span>'
+      : '<span class="badge off">○ not configured</span>';
+    var h = '<div class="card" data-id="' + esc(c.id) + '">';
+    h += '<div class="card-head"><div><h3>' + esc(c.label) + '</h3><div class="kind">' + esc(c.authKind) + '</div></div>' + badge + '</div>';
+
+    if (!c.configured) {
+      h += '<div class="sec">Set these in .env</div><div class="env-list">';
+      (c.credEnv || []).forEach(function(e){ h += '<span class="env">' + esc(e) + '</span>'; });
+      h += '</div>';
+    }
+
+    h += '<div class="sec">Actions</div>';
+    (c.actions || []).forEach(function(a){
+      var chip = a.write ? '<span class="chip write">write</span>' : '<span class="chip read">read</span>';
+      h += '<div class="act">' + chip + '<span class="aname">' + esc(a.name) + '</span><span class="adesc">' + esc(a.description) + '</span></div>';
+    });
+
+    if ((c.triggers || []).length) {
+      h += '<div class="sec">Triggers</div>';
+      c.triggers.forEach(function(t){
+        h += '<div class="act"><span class="chip trig">event</span><span class="aname">' + esc(t.event) + '</span><span class="adesc">' + esc(t.description) + '</span></div>';
+      });
+    }
+
+    if (c.configured && (c.actions || []).length) {
+      var opts = c.actions.map(function(a){
+        return '<option value="' + esc(a.name) + '" data-write="' + (a.write ? '1' : '') + '">' + esc(a.name) + (a.write ? ' (write)' : '') + '</option>';
+      }).join('');
+      h += '<div class="run">'
+        + '<label>Run action</label>'
+        + '<select class="a-sel">' + opts + '</select>'
+        + '<label>Input (JSON)</label>'
+        + '<textarea class="a-in">{}</textarea>'
+        + '<div class="confirm" style="display:none"><input type="checkbox" class="a-confirm"> I understand this is a consequential write action.</div>'
+        + '<button class="a-run">Run</button>'
+        + '<pre class="out" style="display:none"></pre>'
+        + '</div>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function wire(card){
+    var sel = card.querySelector('.a-sel');
+    if (!sel) return;
+    var confirmWrap = card.querySelector('.confirm');
+    var confirmBox = card.querySelector('.a-confirm');
+    var runBtn = card.querySelector('.a-run');
+    var inEl = card.querySelector('.a-in');
+    var outEl = card.querySelector('.out');
+
+    function isWrite(){ var o = sel.options[sel.selectedIndex]; return o && o.getAttribute('data-write') === '1'; }
+    function sync(){
+      var w = isWrite();
+      confirmWrap.style.display = w ? 'flex' : 'none';
+      runBtn.disabled = w && !confirmBox.checked;
+    }
+    sel.addEventListener('change', function(){ confirmBox.checked = false; sync(); });
+    confirmBox.addEventListener('change', sync);
+    sync();
+
+    runBtn.addEventListener('click', function(){
+      var input;
+      try { input = JSON.parse(inEl.value || '{}'); }
+      catch (e) { outEl.style.display = 'block'; outEl.textContent = 'Invalid JSON: ' + e.message; return; }
+      runBtn.disabled = true;
+      outEl.style.display = 'block';
+      outEl.textContent = 'Running…';
+      fetch(BASE + '/api/connectors/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: card.getAttribute('data-id'), action: sel.value, input: input })
+      }).then(function(r){ return r.json(); }).then(function(r){
+        outEl.textContent = JSON.stringify(r, null, 2);
+      }).catch(function(e){
+        outEl.textContent = 'Error: ' + e.message;
+      }).then(function(){ sync(); });
+    });
+  }
+
+  fetch(BASE + '/api/connectors').then(function(r){ return r.json(); }).then(function(r){
+    var grid = document.getElementById('grid');
+    if (r.error) { grid.innerHTML = '<p class="empty">' + esc(r.error) + '</p>'; return; }
+    var list = r.connectors || [];
+    if (!list.length) { grid.innerHTML = '<p class="empty">No connectors registered.</p>'; return; }
+    grid.innerHTML = list.map(cardHtml).join('');
+    Array.prototype.forEach.call(grid.querySelectorAll('.card'), wire);
+  }).catch(function(e){
+    document.getElementById('grid').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
+  });
+</script>
+</body></html>`;
+}
+
+// ============================================================
 // TASK HISTORY PAGE
 // ============================================================
 
@@ -6075,6 +6232,7 @@ export function renderDashboard(): string {
       <a href="/extraction" class="topbar-action">Extraction</a>
       <a href="/policies" class="topbar-action">Policies</a>
       <a href="/roi" class="topbar-action">ROI</a>
+      <a href="/connectors" class="topbar-action">Connectors</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -8047,6 +8205,17 @@ const server = Bun.serve({
       });
     }
 
+    // Connectors page (all authenticated users)
+    if (path === "/connectors") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderConnectorsPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -8504,6 +8673,38 @@ const server = Bun.serve({
         return jsonResponse(rollupRoi(supabase, userId, Number(days) || 7));
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 500);
+      }
+    }
+    // ── Connectors (business systems: Stripe/Shopify/Zendesk/HubSpot) ──
+    if (path === "/api/connectors" && req.method === "GET") {
+      try {
+        const { listConnectors, isConnectorConfigured } = await import("./connectors/registry.ts");
+        return jsonResponse({
+          connectors: listConnectors().map((c) => ({
+            id: c.id,
+            label: c.label,
+            authKind: c.authKind,
+            credEnv: c.credEnv,
+            configured: isConnectorConfigured(c, supabase),
+            actions: Object.entries(c.actions).map(([name, a]) => ({ name, description: a.description, write: !!a.write })),
+            triggers: (c.triggers || []).map((t) => ({ event: t.event, description: t.description })),
+          })),
+        });
+      } catch (e: any) {
+        return jsonResponse({ connectors: [], error: e.message }, 500);
+      }
+    }
+    if (path === "/api/connectors/run" && req.method === "POST") {
+      const body = await req.json().catch(() => ({}));
+      const id = String(body.id || "");
+      const action = String(body.action || "");
+      if (!id) return jsonResponse({ ok: false, error: "id required" }, 400);
+      if (!action) return jsonResponse({ ok: false, error: "action required" }, 400);
+      try {
+        const { runConnectorAction } = await import("./connectors/registry.ts");
+        return jsonResponse(await runConnectorAction(supabase, id, action, body.input || {}));
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message }, 500);
       }
     }
     if (path === "/api/ledger") {
