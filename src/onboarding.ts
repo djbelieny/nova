@@ -166,6 +166,8 @@ export const NOVA_COMMANDS: { command: string; description: string }[] = [
   { command: "examples", description: "Ideas to try right now" },
   { command: "knowledge", description: "See what's in your knowledge base" },
   { command: "playbooks", description: "Run a saved workflow (SOP)" },
+  { command: "automations", description: "Event-driven automations" },
+  { command: "processes", description: "Long-running processes" },
   { command: "status", description: "Check that Nova is running" },
   { command: "settings", description: "Change your name, timezone, or style" },
 ];

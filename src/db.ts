@@ -469,6 +469,47 @@ function mapAutomation(r: any): Automation {
   };
 }
 
+/**
+ * Durable long-running processes (waits, timers, resume). Per-user db. A process is a
+ * sequence of action/wait steps with accumulated context; it survives restarts (state in
+ * SQLite) and resumes on a due timer or a named event.
+ */
+function applyProcessSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS process_instances (
+      id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id      TEXT NOT NULL,
+      playbook_id  TEXT,
+      name         TEXT NOT NULL,
+      state        TEXT NOT NULL DEFAULT 'running',
+      current_step INTEGER NOT NULL DEFAULT 0,
+      context      TEXT NOT NULL DEFAULT '{}',
+      steps        TEXT NOT NULL,
+      wait_until   TEXT,
+      wait_event   TEXT,
+      created_at   TEXT DEFAULT (datetime('now')),
+      updated_at   TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_process_state ON process_instances(state)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_process_wait ON process_instances(state, wait_until)`);
+}
+
+export interface ProcessStep { type: 'action' | 'wait'; agent?: string; description?: string; until?: string; event?: string; }
+export interface ProcessInstance {
+  id: string; userId: string; playbookId: string | null; name: string;
+  state: 'running' | 'waiting' | 'done' | 'failed' | 'cancelled';
+  currentStep: number; context: Record<string, any>; steps: ProcessStep[];
+  waitUntil: string | null; waitEvent: string | null; createdAt?: string; updatedAt?: string;
+}
+function mapProcess(r: any): ProcessInstance {
+  return {
+    id: r.id, userId: r.user_id, playbookId: r.playbook_id ?? null, name: r.name, state: r.state,
+    currentStep: r.current_step, context: parseJson(r.context, {}), steps: parseJson(r.steps, []),
+    waitUntil: r.wait_until ?? null, waitEvent: r.wait_event ?? null, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
 export type PlaybookScope = 'personal' | 'team';
 
 export interface PlaybookVar { name: string; required?: boolean; default?: string; description?: string; }
@@ -1687,6 +1728,8 @@ class UserDatabase {
     applyKbSchema(this.db);
     // Playbooks — personal scope lives in the per-user db
     applyPlaybookSchema(this.db);
+    // Durable processes — per-user db
+    applyProcessSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -5263,6 +5306,57 @@ export class Database {
       `SELECT 1 FROM automation_runs WHERE automation_id = ? AND dedupe_key = ? AND fired_at >= datetime('now', ?) LIMIT 1`
     ).get(automationId, dedupeKey, `-${minutes} minutes`);
     return !!row;
+  }
+
+  // ============================================================
+  // Durable processes — per-user db
+  // ============================================================
+
+  insertProcess(p: { userId: string; name: string; steps: ProcessStep[]; context?: Record<string, any>; playbookId?: string | null }): ProcessInstance {
+    const id = crypto.randomUUID();
+    this.getUserDb(p.userId).db.run(
+      `INSERT INTO process_instances (id, user_id, playbook_id, name, steps, context) VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, p.userId, p.playbookId ?? null, p.name, JSON.stringify(p.steps), JSON.stringify(p.context ?? {})]
+    );
+    return this.getProcess(p.userId, id)!;
+  }
+
+  getProcess(userId: string, id: string): ProcessInstance | null {
+    const row = this.getUserDb(userId).db.query(`SELECT * FROM process_instances WHERE id = ?`).get(id) as any;
+    return row ? mapProcess(row) : null;
+  }
+
+  listProcesses(userId: string, state?: string): ProcessInstance[] {
+    const q = state
+      ? this.getUserDb(userId).db.query(`SELECT * FROM process_instances WHERE state = ? ORDER BY updated_at DESC`).all(state)
+      : this.getUserDb(userId).db.query(`SELECT * FROM process_instances ORDER BY updated_at DESC`).all();
+    return (q as any[]).map(mapProcess);
+  }
+
+  updateProcess(userId: string, id: string, patch: Partial<Pick<ProcessInstance, 'state' | 'currentStep' | 'context' | 'waitUntil' | 'waitEvent'>>): void {
+    const sets: string[] = ["updated_at = datetime('now')"];
+    const vals: any[] = [];
+    if (patch.state !== undefined) { sets.push("state = ?"); vals.push(patch.state); }
+    if (patch.currentStep !== undefined) { sets.push("current_step = ?"); vals.push(patch.currentStep); }
+    if (patch.context !== undefined) { sets.push("context = ?"); vals.push(JSON.stringify(patch.context)); }
+    if (patch.waitUntil !== undefined) { sets.push("wait_until = ?"); vals.push(patch.waitUntil); }
+    if (patch.waitEvent !== undefined) { sets.push("wait_event = ?"); vals.push(patch.waitEvent); }
+    vals.push(id);
+    this.getUserDb(userId).db.run(`UPDATE process_instances SET ${sets.join(', ')} WHERE id = ?`, vals);
+  }
+
+  /** Waiting processes whose timer is due, across all user dbs (for the dispatcher). */
+  getDueTimerProcesses(): ProcessInstance[] {
+    return this.queryAllUserDbs((db) =>
+      (db.query(`SELECT * FROM process_instances WHERE state = 'waiting' AND wait_until IS NOT NULL AND wait_until <= datetime('now')`).all() as any[]).map(mapProcess)
+    );
+  }
+
+  /** Waiting processes listening for a named event, across all user dbs. */
+  getEventWaitingProcesses(eventName: string): ProcessInstance[] {
+    return this.queryAllUserDbs((db) =>
+      (db.query(`SELECT * FROM process_instances WHERE state = 'waiting' AND wait_event = ?`).all(eventName) as any[]).map(mapProcess)
+    );
   }
 }
 

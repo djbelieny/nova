@@ -2018,6 +2018,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/knowledge">Knowledge</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/playbooks">Playbooks</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/automations">Automations</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/processes">Processes</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -3343,6 +3344,231 @@ export function renderAutomationsPage(): string {
   });
 
   syncActionFields();
+  load();
+</script>
+</body></html>`;
+}
+
+export function renderProcessesPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Processes</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:660px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:1.4rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.4rem 0 .7rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1rem}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:block;margin-bottom:5px}
+  select,input[type=text],textarea{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.82rem;font-family:inherit;width:100%}
+  textarea{resize:vertical;min-height:70px;line-height:1.5;font-family:ui-monospace,monospace}
+  .field{margin-bottom:12px}
+  .row{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:10px}
+  .rowhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap;cursor:pointer}
+  .title{font-weight:600;flex:1;min-width:120px;font-size:.9rem;color:var(--indigo)}
+  .meta{font-size:.75rem;color:var(--dim)}
+  .tag{font-size:.68rem;padding:2px 8px;border-radius:5px;border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+  .badge{font-size:.68rem;padding:2px 8px;border-radius:5px;text-transform:uppercase;letter-spacing:.04em;font-weight:600}
+  .badge.running{background:rgba(99,102,241,.15);color:var(--indigo)}
+  .badge.waiting{background:rgba(245,158,11,.15);color:var(--yellow)}
+  .badge.done{background:rgba(34,197,94,.15);color:var(--green)}
+  .badge.failed{background:rgba(239,68,68,.15);color:var(--red)}
+  .badge.cancelled{background:rgba(255,255,255,.08);color:var(--dim)}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit}
+  .btn:hover{background:rgba(255,255,255,.10)}
+  .btn.danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(239,68,68,.1)}
+  .btn.primary{border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600}
+  .msg{margin:1rem 0;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .msg.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .empty{color:var(--dim);font-size:.85rem}
+  .steps{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:none}
+  .steps.open{display:block}
+  .step{display:flex;gap:8px;font-size:.8rem;padding:3px 0;color:var(--dim)}
+  .step.cur{color:var(--text)}
+  .step .mark{width:14px;flex-shrink:0;text-align:center}
+  .step.done .mark{color:var(--green)}
+  .step.cur .mark{color:var(--indigo)}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Processes</h1>
+  <p class="hint">Processes are durable, long-running workflows. Each step is either an <strong>action</strong> (runs as a normal agent task — consequential ones pass the approval gate) or a <strong>wait</strong> (pauses on a timer or an external event). Processes resume automatically when a timer elapses, or via <code>/process signal &lt;event&gt;</code> in chat.</p>
+  <div id="msg" class="msg"></div>
+
+  <h2>Your Processes</h2>
+  <div id="list"><p class="empty">Loading…</p></div>
+
+  <h2>Create Process</h2>
+  <div class="card">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="name" placeholder="e.g. contract-signature-chase">
+    </div>
+    <div class="field">
+      <label>Steps — one per line: <code>action|&lt;agent&gt;|&lt;description&gt;</code>, <code>wait|until|+2d</code> (or ISO date), or <code>wait|event|&lt;name&gt;</code></label>
+      <textarea id="steps" placeholder="action|orion|Send the contract to {{client}}.&#10;wait|until|+2d&#10;wait|event|signature.done&#10;action|athena|Draft a kickoff plan."></textarea>
+    </div>
+    <button class="btn primary" id="createBtn">Create Process</button>
+  </div>
+
+  <h2>Start from Playbook</h2>
+  <div class="card">
+    <div class="field">
+      <label>Process name</label>
+      <input type="text" id="pbProcName" placeholder="e.g. acme-onboarding">
+    </div>
+    <div class="field">
+      <label>Playbook name</label>
+      <input type="text" id="pbName" placeholder="e.g. client-onboarding">
+    </div>
+    <button class="btn primary" id="fromPlaybookBtn">Start from Playbook</button>
+  </div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
+  var msgEl = document.getElementById('msg');
+  var listEl = document.getElementById('list');
+
+  function showMsg(text, ok) {
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){msgEl.style.display='none';}, 4000);
+  }
+
+  function parseSteps(raw){
+    return (raw||'').split('\\n').map(function(l){return l.trim();}).filter(Boolean).map(function(l){
+      var parts = l.split('|');
+      var type = (parts[0]||'').trim().toLowerCase();
+      if (type === 'wait') {
+        var kind = (parts[1]||'').trim().toLowerCase();
+        var val = parts.slice(2).join('|').trim();
+        if (kind === 'event') return { type: 'wait', event: val };
+        return { type: 'wait', until: val };
+      }
+      var agent = (parts[1]||'').trim();
+      var description = parts.slice(2).join('|').trim();
+      var step = { type: 'action', description: description };
+      if (agent) step.agent = agent;
+      return step;
+    }).filter(function(s){ return s.type === 'wait' ? (s.until || s.event) : s.description; });
+  }
+
+  function stepLabel(s){
+    if (s.type === 'wait') {
+      if (s.event) return 'wait for event ' + esc(s.event);
+      return 'wait until ' + esc(s.until || '?');
+    }
+    return (s.agent ? esc(s.agent) + ': ' : '') + esc(s.description || '');
+  }
+
+  function waitInfo(p){
+    if (p.state !== 'waiting') return '';
+    if (p.waitEvent) return '<span class="meta">⏸ event: ' + esc(p.waitEvent) + '</span>';
+    if (p.waitUntil) return '<span class="meta">⏱ ' + esc(p.waitUntil) + '</span>';
+    return '';
+  }
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target;
+    if (!btn || !btn.classList) return;
+    if (btn.classList.contains('action-cancel')) {
+      e.stopPropagation();
+      var id = btn.getAttribute('data-id');
+      var name = btn.getAttribute('data-name') || 'this process';
+      if (!id) return;
+      if (!confirm('Cancel "' + name + '"?')) return;
+      fetch(BASE + '/api/processes/cancel', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+        .then(function(r){ return r.json(); })
+        .then(function(data){ if (data.error) { showMsg(data.error, false); } else { showMsg('Cancelled', true); load(); } })
+        .catch(function(err){ showMsg(err.message || 'Cancel failed', false); });
+      return;
+    }
+    var head = btn.closest ? btn.closest('.rowhead') : null;
+    if (head) {
+      var steps = head.parentNode.querySelector('.steps');
+      if (steps) steps.classList.toggle('open');
+    }
+  });
+
+  function load(){
+    fetch(BASE + '/api/processes').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { listEl.innerHTML = '<p class="empty">'+esc(data.error)+'</p>'; return; }
+      var items = data.processes || [];
+      if (!items.length) { listEl.innerHTML = '<p class="empty">No processes yet. Create one below.</p>'; return; }
+      var html = '';
+      items.forEach(function(p){
+        var id = escAttr(p.id);
+        var steps = p.steps || [];
+        var cur = typeof p.currentStep === 'number' ? p.currentStep : 0;
+        var active = p.state === 'running' || p.state === 'waiting';
+        html += '<div class="row">';
+        html += '<div class="rowhead">';
+        html += '<span class="title">'+esc(p.name)+'</span>';
+        html += '<span class="badge '+esc(p.state)+'">'+esc(p.state)+'</span>';
+        html += '<span class="meta">step '+Math.min(cur+ (p.state==='done'?0:1), steps.length)+'/'+steps.length+'</span>';
+        html += waitInfo(p);
+        if (active) html += '<button class="btn danger action-cancel" data-id="'+id+'" data-name="'+escAttr(p.name)+'">Cancel</button>';
+        html += '</div>';
+        html += '<div class="steps">';
+        steps.forEach(function(s, i){
+          var cls = 'step';
+          var mark = '○';
+          if (p.state === 'done' || i < cur) { cls += ' done'; mark = '✓'; }
+          else if (i === cur && active) { cls += ' cur'; mark = '▶'; }
+          html += '<div class="'+cls+'"><span class="mark">'+mark+'</span><span>'+stepLabel(s)+'</span></div>';
+        });
+        html += '</div>';
+        html += '</div>';
+      });
+      listEl.innerHTML = html;
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">'+esc(e.message)+'</p>'; });
+  }
+
+  document.getElementById('createBtn').addEventListener('click', function(){
+    var name = document.getElementById('name').value.trim();
+    if (!name) { showMsg('Name is required', false); return; }
+    var steps = parseSteps(document.getElementById('steps').value);
+    if (!steps.length) { showMsg('At least one step is required', false); return; }
+    fetch(BASE + '/api/processes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name, steps: steps }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { showMsg(data.error, false); return; }
+        showMsg('Created ' + esc(data.name||name), true);
+        document.getElementById('name').value = '';
+        document.getElementById('steps').value = '';
+        load();
+      })
+      .catch(function(e){ showMsg(e.message || 'Create failed', false); });
+  });
+
+  document.getElementById('fromPlaybookBtn').addEventListener('click', function(){
+    var name = document.getElementById('pbProcName').value.trim();
+    var playbook = document.getElementById('pbName').value.trim();
+    if (!name) { showMsg('Process name is required', false); return; }
+    if (!playbook) { showMsg('Playbook name is required', false); return; }
+    fetch(BASE + '/api/processes/from-playbook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name, playbook: playbook }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { showMsg(data.error, false); return; }
+        showMsg('Started ' + esc(data.name||name), true);
+        document.getElementById('pbProcName').value = '';
+        document.getElementById('pbName').value = '';
+        load();
+      })
+      .catch(function(e){ showMsg(e.message || 'Start failed', false); });
+  });
+
   load();
 </script>
 </body></html>`;
@@ -5063,6 +5289,7 @@ export function renderDashboard(): string {
       <a href="/knowledge" class="topbar-action">Knowledge</a>
       <a href="/playbooks" class="topbar-action">Playbooks</a>
       <a href="/automations" class="topbar-action">Automations</a>
+      <a href="/processes" class="topbar-action">Processes</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -6991,6 +7218,17 @@ const server = Bun.serve({
       });
     }
 
+    // Processes page (all authenticated users)
+    if (path === "/processes") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderProcessesPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -7252,6 +7490,53 @@ const server = Bun.serve({
         const b = await req.json();
         if (!b.id) return jsonResponse({ error: "id required" }, 400);
         supabase.deleteAutomation(userId, String(b.id));
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    // ── Processes (durable long-running workflows) ──
+    if (path === "/api/processes" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        return jsonResponse({ processes: supabase.listProcesses(userId) });
+      } catch (e: any) {
+        return jsonResponse({ processes: [], error: e.message });
+      }
+    }
+    if (path === "/api/processes" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.name) return jsonResponse({ error: "name required" }, 400);
+        if (!Array.isArray(b.steps) || !b.steps.length) return jsonResponse({ error: "steps required" }, 400);
+        const result = supabase.insertProcess({ userId, name: String(b.name), steps: b.steps });
+        return jsonResponse(result);
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/processes/from-playbook" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.name) return jsonResponse({ error: "name required" }, 400);
+        if (!b.playbook) return jsonResponse({ error: "playbook required" }, 400);
+        const pb = supabase.findPlaybook(userId, String(b.playbook));
+        if (!pb) return jsonResponse({ error: "playbook not found" }, 404);
+        const steps = (pb.steps || []).map((s: any) => ({ type: "action" as const, agent: s.agent, description: s.description }));
+        const result = supabase.insertProcess({ userId, name: String(b.name), steps, playbookId: pb.id });
+        return jsonResponse(result);
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/processes/cancel" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        supabase.updateProcess(userId, String(b.id), { state: "cancelled" });
         return jsonResponse({ success: true });
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 400);
