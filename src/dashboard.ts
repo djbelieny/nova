@@ -2019,6 +2019,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/playbooks">Playbooks</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/automations">Automations</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/processes">Processes</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/extraction">Extraction</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -3570,6 +3571,308 @@ export function renderProcessesPage(): string {
   });
 
   load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
+// EXTRACTION PAGE
+// ============================================================
+
+export function renderExtractionPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Extraction</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:1.4rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.4rem 0 .7rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1rem}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:block;margin-bottom:5px}
+  select,input[type=text],textarea{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.82rem;font-family:inherit;width:100%}
+  textarea{resize:vertical;min-height:90px;line-height:1.5;font-family:ui-monospace,monospace}
+  .field{margin-bottom:12px}
+  .row{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:10px}
+  .rowhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .title{font-weight:600;flex:1;min-width:120px;font-size:.9rem;color:var(--indigo)}
+  .meta{font-size:.75rem;color:var(--dim)}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block}
+  .btn:hover{background:rgba(255,255,255,.10)}
+  .btn.danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(239,68,68,.1)}
+  .btn.primary{border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600}
+  .btn.sm{padding:3px 10px;font-size:.72rem}
+  .msg{margin:1rem 0;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .msg.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .empty{color:var(--dim);font-size:.85rem}
+  .fields{margin-top:8px;font-size:.78rem;color:var(--dim);line-height:1.5}
+  .drop{border:1px dashed var(--border);border-radius:9px;padding:22px;text-align:center;color:var(--dim);font-size:.82rem;cursor:pointer;transition:border-color .15s,background .15s}
+  .drop.over{border-color:var(--indigo);background:rgba(99,102,241,.08)}
+  .kv{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:.82rem}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--dim);min-width:130px;font-family:ui-monospace,monospace}
+  .kv .v{flex:1;word-break:break-word}
+  .kv.miss .k,.kv.miss .v{color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:.78rem}
+  th{text-align:left;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;font-size:.68rem;font-weight:600;padding:6px 8px;border-bottom:1px solid var(--border)}
+  td{padding:6px 8px;border-bottom:1px solid var(--border);color:var(--text);word-break:break-word}
+  .tablewrap{overflow-x:auto}
+  .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:.7rem}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Extraction</h1>
+  <p class="hint">Turn documents into structured data. Define a <strong>schema</strong> (a set of fields), then upload a file — extraction reads PDFs, DOCX and plain text locally and structures them against your schema. Stored rows can be exported to CSV.</p>
+  <div id="msg" class="msg"></div>
+
+  <div class="cols">
+    <div>
+      <h2>Schemas</h2>
+      <div id="list"><p class="empty">Loading…</p></div>
+
+      <h2>Create / Edit Schema</h2>
+      <div class="card">
+        <div class="field">
+          <label>Name</label>
+          <input type="text" id="sName" placeholder="e.g. invoice">
+        </div>
+        <div class="field">
+          <label>Fields — one per line: <code>name:type:required?</code> (type = string·number·boolean·date·array; add <code>:required</code> to require)</label>
+          <textarea id="sFields" placeholder="invoice_number:string:required&#10;total:number:required&#10;due_date:date&#10;line_items:array&#10;paid:boolean"></textarea>
+        </div>
+        <div class="field">
+          <label>Destination (optional)</label>
+          <input type="text" id="sDest" placeholder="e.g. sheet name or notion db">
+        </div>
+        <button class="btn primary" id="saveBtn">Save Schema</button>
+      </div>
+    </div>
+
+    <div>
+      <h2>Run Extraction</h2>
+      <div class="card">
+        <div class="field">
+          <label>Schema</label>
+          <select id="runSchema"></select>
+        </div>
+        <div class="field">
+          <div class="drop" id="drop">Drag &amp; drop a file here, or click to choose</div>
+          <input type="file" id="file" style="display:none">
+          <div class="meta" id="fileName" style="margin-top:6px"></div>
+        </div>
+        <button class="btn primary" id="runBtn">Extract</button>
+        <div id="result" style="margin-top:12px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <h2 style="margin:0">Stored Extractions</h2>
+    <a class="btn sm" id="exportLink" href="#" style="display:none">Export CSV</a>
+  </div>
+  <div class="tablewrap"><div id="rows"><p class="empty">Pick a schema to view rows.</p></div></div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
+  var msgEl = document.getElementById('msg');
+  var listEl = document.getElementById('list');
+  var runSchemaEl = document.getElementById('runSchema');
+  var rowsEl = document.getElementById('rows');
+  var exportLink = document.getElementById('exportLink');
+  var schemas = [];
+  var pendingFile = null;
+
+  function showMsg(text, ok) {
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){msgEl.style.display='none';}, 4000);
+  }
+
+  var TYPES = ['string','number','boolean','date','array'];
+  function parseFields(raw){
+    return (raw||'').split('\\n').map(function(l){return l.trim();}).filter(Boolean).map(function(l){
+      var parts = l.split(':').map(function(p){return p.trim();});
+      var name = parts[0];
+      var type = (parts[1]||'').toLowerCase();
+      if (TYPES.indexOf(type) < 0) type = 'string';
+      var reqTok = (parts[2]||'').toLowerCase();
+      var required = reqTok === 'required' || reqTok === 'req' || reqTok === 'true' || reqTok === '*' || reqTok === 'yes';
+      var f = { name: name, type: type };
+      if (required) f.required = true;
+      return f;
+    }).filter(function(f){ return f.name; });
+  }
+  function fieldsToText(fields){
+    return (fields||[]).map(function(f){ return f.name + ':' + (f.type||'string') + (f.required ? ':required' : ''); }).join('\\n');
+  }
+  function fieldSummary(fields){
+    return (fields||[]).map(function(f){ return esc(f.name) + '<span style="opacity:.6">:' + esc(f.type||'string') + (f.required?'*':'') + '</span>'; }).join(', ');
+  }
+
+  function renderList(){
+    if (!schemas.length) { listEl.innerHTML = '<p class="empty">No schemas yet. Create one below.</p>'; return; }
+    var html = '';
+    schemas.forEach(function(s){
+      var name = escAttr(s.name);
+      html += '<div class="row">';
+      html += '<div class="rowhead">';
+      html += '<span class="title">'+esc(s.name)+'</span>';
+      html += '<button class="btn sm action-edit" data-name="'+name+'">Edit</button>';
+      html += '<button class="btn sm danger action-del" data-name="'+name+'">Delete</button>';
+      html += '</div>';
+      html += '<div class="fields">'+ (fieldSummary(s.fields) || '<span class="empty">no fields</span>') +'</div>';
+      html += '</div>';
+    });
+    listEl.innerHTML = html;
+  }
+
+  function renderSchemaOptions(){
+    var prev = runSchemaEl.value;
+    runSchemaEl.innerHTML = '';
+    schemas.forEach(function(s){
+      var o = document.createElement('option');
+      o.value = s.name; o.textContent = s.name;
+      runSchemaEl.appendChild(o);
+    });
+    if (prev && schemas.some(function(s){return s.name===prev;})) runSchemaEl.value = prev;
+    onSchemaChange();
+  }
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target;
+    if (!btn || !btn.getAttribute) return;
+    var name = btn.getAttribute('data-name');
+    if (!name) return;
+    if (btn.classList.contains('action-edit')) {
+      var s = schemas.filter(function(x){return x.name===name;})[0];
+      if (!s) return;
+      document.getElementById('sName').value = s.name;
+      document.getElementById('sFields').value = fieldsToText(s.fields);
+      document.getElementById('sDest').value = s.destination || '';
+      window.scrollTo(0,0);
+    } else if (btn.classList.contains('action-del')) {
+      if (!confirm('Delete schema "'+name+'"?')) return;
+      fetch(BASE + '/api/extract/schemas/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name }) })
+        .then(function(r){ return r.json(); })
+        .then(function(data){ if (data.error) { showMsg(data.error, false); } else { showMsg('Deleted', true); loadSchemas(); } })
+        .catch(function(err){ showMsg(err.message || 'Delete failed', false); });
+    }
+  });
+
+  document.getElementById('saveBtn').addEventListener('click', function(){
+    var name = document.getElementById('sName').value.trim();
+    if (!name) { showMsg('Name is required', false); return; }
+    var fields = parseFields(document.getElementById('sFields').value);
+    if (!fields.length) { showMsg('At least one field is required', false); return; }
+    var destination = document.getElementById('sDest').value.trim();
+    fetch(BASE + '/api/extract/schemas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name, fields: fields, destination: destination || null }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { showMsg(data.error, false); return; }
+        showMsg('Saved ' + esc(name), true);
+        document.getElementById('sName').value = '';
+        document.getElementById('sFields').value = '';
+        document.getElementById('sDest').value = '';
+        loadSchemas();
+      })
+      .catch(function(e){ showMsg(e.message || 'Save failed', false); });
+  });
+
+  // Run panel — file drag/drop
+  var drop = document.getElementById('drop');
+  var fileInput = document.getElementById('file');
+  var fileNameEl = document.getElementById('fileName');
+  function setFile(f){ pendingFile = f || null; fileNameEl.textContent = f ? f.name : ''; }
+  drop.addEventListener('click', function(){ fileInput.click(); });
+  fileInput.addEventListener('change', function(){ setFile(fileInput.files[0]); });
+  ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('over'); }); });
+  ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.remove('over'); }); });
+  drop.addEventListener('drop', function(e){ if (e.dataTransfer && e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); });
+
+  document.getElementById('runBtn').addEventListener('click', function(){
+    var schema = runSchemaEl.value;
+    if (!schema) { showMsg('Pick a schema', false); return; }
+    if (!pendingFile) { showMsg('Choose a file', false); return; }
+    var fd = new FormData();
+    fd.append('file', pendingFile);
+    fd.append('schema', schema);
+    var resEl = document.getElementById('result');
+    resEl.innerHTML = '<p class="empty">Extracting…</p>';
+    fetch(BASE + '/api/extract/run', { method: 'POST', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { resEl.innerHTML = ''; showMsg(data.error, false); return; }
+        var missing = data.missing || [];
+        var d = data.data || {};
+        var html = '<div class="meta" style="margin-bottom:6px">status: '+esc(data.status)+'</div>';
+        Object.keys(d).forEach(function(k){
+          var miss = missing.indexOf(k) >= 0;
+          var v = d[k]; if (Array.isArray(v)) v = v.join('; ');
+          html += '<div class="kv'+(miss?' miss':'')+'"><span class="k">'+esc(k)+'</span><span class="v">'+esc(v==null||v===''?'—':v)+'</span></div>';
+        });
+        if (missing.length) html += '<div class="meta" style="color:var(--red);margin-top:6px">Missing: '+esc(missing.join(', '))+'</div>';
+        resEl.innerHTML = html;
+        showMsg('Extracted', true);
+        loadRows();
+      })
+      .catch(function(e){ resEl.innerHTML = ''; showMsg(e.message || 'Extraction failed', false); });
+  });
+
+  function onSchemaChange(){
+    var name = runSchemaEl.value;
+    if (name) { exportLink.href = BASE + '/api/extract/export?schema=' + encodeURIComponent(name); exportLink.style.display = 'inline-block'; }
+    else exportLink.style.display = 'none';
+    loadRows();
+  }
+  runSchemaEl.addEventListener('change', onSchemaChange);
+
+  function loadRows(){
+    var name = runSchemaEl.value;
+    if (!name) { rowsEl.innerHTML = '<p class="empty">Pick a schema to view rows.</p>'; return; }
+    var schema = schemas.filter(function(s){return s.name===name;})[0];
+    var fields = (schema && schema.fields) || [];
+    fetch(BASE + '/api/extract/rows?schema=' + encodeURIComponent(name)).then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { rowsEl.innerHTML = '<p class="empty">'+esc(data.error)+'</p>'; return; }
+      var items = data.rows || [];
+      if (!items.length) { rowsEl.innerHTML = '<p class="empty">No extractions yet for this schema.</p>'; return; }
+      var html = '<table><thead><tr>';
+      fields.forEach(function(f){ html += '<th>'+esc(f.name)+'</th>'; });
+      html += '<th>status</th><th>when</th></tr></thead><tbody>';
+      items.forEach(function(it){
+        var d = it.data || {};
+        html += '<tr>';
+        fields.forEach(function(f){ var v = d[f.name]; if (Array.isArray(v)) v = v.join('; '); html += '<td>'+esc(v==null||v===''?'—':v)+'</td>'; });
+        html += '<td>'+esc(it.status||'')+'</td><td>'+esc(it.createdAt||'')+'</td>';
+        html += '</tr>';
+      });
+      html += '</tbody></table>';
+      rowsEl.innerHTML = html;
+    }).catch(function(e){ rowsEl.innerHTML = '<p class="empty">'+esc(e.message)+'</p>'; });
+  }
+
+  function loadSchemas(){
+    fetch(BASE + '/api/extract/schemas').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error && !data.schemas) { listEl.innerHTML = '<p class="empty">'+esc(data.error)+'</p>'; return; }
+      schemas = data.schemas || [];
+      renderList();
+      renderSchemaOptions();
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">'+esc(e.message)+'</p>'; });
+  }
+
+  loadSchemas();
 </script>
 </body></html>`;
 }
@@ -5290,6 +5593,7 @@ export function renderDashboard(): string {
       <a href="/playbooks" class="topbar-action">Playbooks</a>
       <a href="/automations" class="topbar-action">Automations</a>
       <a href="/processes" class="topbar-action">Processes</a>
+      <a href="/extraction" class="topbar-action">Extraction</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -7229,6 +7533,17 @@ const server = Bun.serve({
       });
     }
 
+    // Extraction page (all authenticated users)
+    if (path === "/extraction") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderExtractionPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -7538,6 +7853,94 @@ const server = Bun.serve({
         if (!b.id) return jsonResponse({ error: "id required" }, 400);
         supabase.updateProcess(userId, String(b.id), { state: "cancelled" });
         return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    // ── Structured extraction (document → data) ──
+    if (path === "/api/extract/schemas" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        return jsonResponse({ schemas: supabase.listExtractSchemas(userId) });
+      } catch (e: any) {
+        return jsonResponse({ schemas: [], error: e.message });
+      }
+    }
+    if (path === "/api/extract/schemas" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.name) return jsonResponse({ error: "name required" }, 400);
+        if (!Array.isArray(b.fields) || !b.fields.length) return jsonResponse({ error: "fields required" }, 400);
+        return jsonResponse(supabase.upsertExtractSchema(userId, { name: String(b.name), fields: b.fields, destination: b.destination ?? null }));
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/extract/schemas/delete" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.name) return jsonResponse({ error: "name required" }, 400);
+        supabase.deleteExtractSchema(userId, String(b.name));
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/extract/rows" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const schema = url.searchParams.get("schema") || undefined;
+        return jsonResponse({ rows: supabase.listExtractions(userId, schema) });
+      } catch (e: any) {
+        return jsonResponse({ rows: [], error: e.message });
+      }
+    }
+    if (path === "/api/extract/export" && req.method === "GET") {
+      if (!userId) return new Response("userId required", { status: 400 });
+      try {
+        const name = url.searchParams.get("schema") || "";
+        const schema = supabase.getExtractSchema(userId, name);
+        if (!schema) return new Response("schema not found", { status: 404 });
+        const rows = supabase.listExtractions(userId, name);
+        const { extractionsToCsv } = await import("./extraction.ts");
+        const csv = extractionsToCsv(schema.fields, rows);
+        return new Response(csv, {
+          headers: { "Content-Type": "text/csv", "Content-Disposition": `attachment; filename="${name || "extractions"}.csv"` },
+        });
+      } catch (e: any) {
+        return new Response(e.message, { status: 400 });
+      }
+    }
+    if (path === "/api/extract/run" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const form = await req.formData();
+        const file = form.get("file") as File;
+        const schemaName = String(form.get("schema") || "");
+        if (!file) return jsonResponse({ error: "file required" }, 400);
+        if (!schemaName) return jsonResponse({ error: "schema required" }, 400);
+        const schema = supabase.getExtractSchema(userId, schemaName);
+        if (!schema) return jsonResponse({ error: "schema not found" }, 404);
+        const { extractStructured } = await import("./extraction.ts");
+        const { sourceTypeFromName } = await import("./text-chunk.ts");
+        const { getProvider, getDefaultProvider } = await import("./ai-provider.ts");
+        const claude = getProvider("claude") ?? getDefaultProvider();
+        const callLLM = async (p: string) => (await claude.call({ prompt: p, model: claude.mapModelTier("standard"), maxTurns: 1, outputFormat: "text" })).text;
+        const st = sourceTypeFromName(file.name);
+        const bytes = Buffer.from(await file.arrayBuffer());
+        const isText = st === "md" || st === "txt";
+        const result = await extractStructured({
+          db: supabase,
+          userId,
+          schema,
+          source: file.name,
+          sourceType: st,
+          ...(isText ? { text: bytes.toString("utf8") } : { bytes }),
+          callLLM,
+        });
+        return jsonResponse(result);
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 400);
       }

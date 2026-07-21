@@ -2578,6 +2578,38 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
 
       const caption = msg.document.caption || `Analyze: ${msg.document.filename}`;
 
+      // Document extraction — caption like "extract as invoice". Runs a defined schema.
+      const { parseExtractCaption } = await import("./extraction.ts");
+      const exIntent = parseExtractCaption(caption);
+      if (exIntent.wants && exIntent.schema) {
+        const schema = supabase.getExtractSchema(user.id, exIntent.schema);
+        if (!schema) {
+          await ctx.reply(`No extraction schema *${exIntent.schema}*. Define one first: \`nova extract schema add ${exIntent.schema} --field …\``, { parse_mode: "Markdown" });
+          await unlink(filePath).catch(() => {});
+          return;
+        }
+        try {
+          const { extractStructured } = await import("./extraction.ts");
+          const { sourceTypeFromName } = await import("./text-chunk.ts");
+          const st = sourceTypeFromName(rawName);
+          const isText = st === "md" || st === "txt";
+          const claude = getProvider("claude") ?? getDefaultProvider();
+          const callLLM = async (prompt: string) => (await claude.call({ prompt, model: claude.mapModelTier("standard"), maxTurns: 1, outputFormat: "text" })).text;
+          const r = await extractStructured({ db: supabase, userId: user.id, schema, source: `telegram:${msg.channelMessageId}`, sourceType: st, bytes: isText ? undefined : msg.document.buffer, text: isText ? msg.document.buffer.toString("utf8") : undefined, callLLM });
+          if (r.status === "error") await ctx.reply(`Couldn't extract: ${r.error}`);
+          else {
+            const rows = schema.fields.map(f => `• *${f.name}*: ${r.data[f.name] ?? "—"}`).join("\n");
+            const warn = r.missing.length ? `\n\n⚠ missing: ${r.missing.join(", ")}` : "";
+            await ctx.reply(`📄 Extracted *${schema.name}* from ${rawName}:\n\n${rows}${warn}`, { parse_mode: "Markdown" });
+          }
+        } catch (e) {
+          console.error("[extract] telegram error:", e);
+          await ctx.reply("Couldn't extract that document.");
+        }
+        await unlink(filePath).catch(() => {});
+        return;
+      }
+
       // Knowledge-base ingestion — caption like "add to knowledge", "remember this file",
       // "add to team knowledge", "for lex's knowledge". Ingests the buffer directly.
       const { parseKbCaption } = await import("./knowledge.ts");
