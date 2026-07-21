@@ -1932,6 +1932,34 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       }
     }
 
+    // /assign @user <task search> [--sla <min>] — hand a task to a teammate with an optional SLA.
+    if (text.trim().toLowerCase().startsWith("/assign")) {
+      const m = text.match(/\/assign\s+(@?[\w.-]+)\s+(.+)/i);
+      if (!m) { await ctx.reply("Usage: `/assign @teammate <task description or id> [--sla 60]`", { parse_mode: "Markdown" }); return; }
+      const ref = m[1];
+      let rest2 = m[2].trim();
+      const slaMatch = rest2.match(/--sla\s+(\d+)/);
+      const slaMinutes = slaMatch ? Number(slaMatch[1]) : null;
+      rest2 = rest2.replace(/--sla\s+\d+/, "").trim();
+      const { assignTaskTo } = await import("./task-routing.ts");
+      // Resolve the task: exact id, else the first active task matching the text.
+      let task = supabase.getTaskById(rest2, user.id);
+      if (!task) {
+        const tasks = supabase.getActiveTasks(user.id) || [];
+        task = tasks.find((t: any) => (t.description || "").toLowerCase().includes(rest2.toLowerCase())) || tasks[0];
+      }
+      if (!task) { await ctx.reply("No matching task to assign. Send /tasks to see them."); return; }
+      const r = assignTaskTo(supabase, user.id, task.id, ref, { slaMinutes });
+      if (!r.ok) { await ctx.reply(`Couldn't assign: ${r.error}`); return; }
+      await ctx.reply(`✓ Assigned "*${(task.description || "").slice(0, 60)}*" to *${r.assignee!.name}*${slaMinutes ? ` (SLA ${slaMinutes}m)` : ""}.`, { parse_mode: "Markdown" });
+      // Notify the assignee if reachable.
+      const mate = supabase.getUserById(r.assignee!.userId);
+      if (mate?.telegram_id && telegramAdapter) {
+        await telegramAdapter.getBot()?.api.sendMessage(mate.telegram_id, `📌 ${user.name} assigned you a task: "${(task.description || "").slice(0, 120)}"${slaMinutes ? ` (due in ${slaMinutes}m)` : ""}`).catch(() => {});
+      }
+      return;
+    }
+
     // /connectors — business systems Nova can read/write (Stripe, Shopify, Zendesk, HubSpot).
     if (text.trim().toLowerCase() === "/connectors" || text.trim().toLowerCase() === "/connector") {
       const { listConnectors, isConnectorConfigured } = await import("./connectors/registry.ts");

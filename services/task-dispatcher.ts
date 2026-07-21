@@ -21,6 +21,7 @@ registerProvider(new GeminiProvider());
 registerProvider(new CodexProvider());
 import { computeNextTrigger } from "../src/memory.ts";
 import { resumeDueTimers, type RunStepFn } from "../src/process-engine.ts";
+import { sweepOverdueTasks } from "../src/task-routing.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -243,6 +244,17 @@ async function main() {
     if (resumed) console.log(`Resumed ${resumed} durable process(es)`);
   } catch (err) {
     console.error("Process resume error:", err);
+  }
+
+  // Escalate assigned tasks past their SLA (DM assignee + owner, once each)
+  try {
+    const escalated = await sweepOverdueTasks(db, async (recipientUserId, message) => {
+      const info = getUserInfo(db, recipientUserId);
+      if (info?.telegram_id) await sendTelegram(info.telegram_id, message);
+    });
+    if (escalated) console.log(`Escalated ${escalated} overdue task(s)`);
+  } catch (err) {
+    console.error("Task escalation error:", err);
   }
 
   // Fetch due tasks

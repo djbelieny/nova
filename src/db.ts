@@ -1854,6 +1854,11 @@ class UserDatabase {
     try { this.db.run(`ALTER TABLE execution_patterns ADD COLUMN rated_at DATETIME`); } catch {}
     try { this.db.run("ALTER TABLE agent_tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'standard'"); } catch {}
     try { this.db.run("ALTER TABLE agent_tasks ADD COLUMN project_id TEXT"); } catch {}
+    // Human task routing — assign a task to a teammate with an optional SLA
+    try { this.db.run("ALTER TABLE agent_tasks ADD COLUMN assignee_user_id TEXT"); } catch {}
+    try { this.db.run("ALTER TABLE agent_tasks ADD COLUMN due_at TEXT"); } catch {}
+    try { this.db.run("ALTER TABLE agent_tasks ADD COLUMN sla_minutes INTEGER"); } catch {}
+    try { this.db.run("ALTER TABLE agent_tasks ADD COLUMN escalated_at TEXT"); } catch {}
     // user_projects: ticket-pipeline config columns
     try { this.db.run(`ALTER TABLE user_projects ADD COLUMN test_command TEXT`); } catch {}
     try { this.db.run(`ALTER TABLE user_projects ADD COLUMN build_command TEXT`); } catch {}
@@ -2198,6 +2203,11 @@ export class Database {
 
   getUserByUsername(username: string): any | null {
     return this.shared.db.query(`SELECT * FROM users WHERE username = ? AND active = 1`).get(username) as any ?? null;
+  }
+
+  /** All active users (for teammate resolution / assignment). */
+  getAllUsers(): any[] {
+    return this.shared.db.query(`SELECT * FROM users WHERE active = 1`).all() as any[];
   }
 
   setUsername(userId: string, username: string): void {
@@ -5579,6 +5589,43 @@ export class Database {
       `SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS cost FROM action_ledger WHERE phase = 'execute' AND outcome = 'success' AND created_at >= datetime('now', ?)`
     ).get(`-${days} days`) as any;
     return { tasksAutomated: row?.n ?? 0, costUsd: row?.cost ?? 0 };
+  }
+
+  // ============================================================
+  // Human task routing — agent_tasks assignment (per-user db)
+  // ============================================================
+
+  assignTask(ownerUserId: string, taskId: string, assigneeUserId: string, opts?: { dueAt?: string | null; slaMinutes?: number | null }): void {
+    this.getUserDb(ownerUserId).db.run(
+      `UPDATE agent_tasks SET assignee_user_id = ?, due_at = ?, sla_minutes = ?, escalated_at = NULL, updated_at = datetime('now') WHERE id = ?`,
+      [assigneeUserId, opts?.dueAt ?? null, opts?.slaMinutes ?? null, taskId]
+    );
+  }
+
+  /** Tasks assigned to a given user (across all owner dbs). */
+  getTasksAssignedTo(assigneeUserId: string): any[] {
+    return this.queryAllUserDbs((db) =>
+      db.query(`SELECT * FROM agent_tasks WHERE assignee_user_id = ? AND status NOT IN ('done','completed','cancelled') ORDER BY due_at ASC`).all(assigneeUserId) as any[]
+    );
+  }
+
+  /** Assigned, unfinished tasks past their SLA and not yet escalated (across all dbs). */
+  getOverdueAssignedTasks(): Array<{ ownerUserId: string; task: any }> {
+    const out: Array<{ ownerUserId: string; task: any }> = [];
+    for (const ownerUserId of this.getAllUserIds()) {
+      const rows = this.getUserDb(ownerUserId).db.query(
+        `SELECT * FROM agent_tasks WHERE assignee_user_id IS NOT NULL AND escalated_at IS NULL
+         AND status NOT IN ('done','completed','cancelled')
+         AND ((due_at IS NOT NULL AND due_at <= datetime('now'))
+              OR (sla_minutes IS NOT NULL AND datetime(created_at, '+' || sla_minutes || ' minutes') <= datetime('now')))`
+      ).all() as any[];
+      for (const task of rows) out.push({ ownerUserId, task });
+    }
+    return out;
+  }
+
+  markTaskEscalated(ownerUserId: string, taskId: string): void {
+    this.getUserDb(ownerUserId).db.run(`UPDATE agent_tasks SET escalated_at = datetime('now') WHERE id = ?`, [taskId]);
   }
 }
 
