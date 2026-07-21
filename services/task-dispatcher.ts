@@ -20,6 +20,7 @@ registerProvider(new ClaudeProvider());
 registerProvider(new GeminiProvider());
 registerProvider(new CodexProvider());
 import { computeNextTrigger } from "../src/memory.ts";
+import { resumeDueTimers, type RunStepFn } from "../src/process-engine.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -213,6 +214,19 @@ function advanceTask(
 // MAIN
 // ============================================================
 
+/** Run a single durable-process action step via the fast provider (pre-authorized, like scheduled tasks). */
+const runProcessStep: RunStepFn = async (userId, description, agent) => {
+  try {
+    const claude = getProvider("claude") ?? getDefaultProvider();
+    const who = getUserInfo(getDb(), userId)?.name || "the user";
+    const prompt = `${agent ? `Acting as the ${agent} specialist. ` : ""}This is one step of a longer automated process for ${who}.\n\nTASK:\n${description}\n\nBe concise; complete the step.`;
+    const result = await claude.call({ prompt, model: claude.mapModelTier("fast"), maxTurns: 5, outputFormat: "text" });
+    return { success: true, result: result.text };
+  } catch (error) {
+    return { success: false, result: String(error) };
+  }
+};
+
 async function main() {
   console.log("Running task dispatcher...");
 
@@ -222,6 +236,14 @@ async function main() {
   }
 
   const db = getDb();
+
+  // Resume durable processes whose timers are now due (runs regardless of scheduled tasks)
+  try {
+    const resumed = await resumeDueTimers(db, runProcessStep);
+    if (resumed) console.log(`Resumed ${resumed} durable process(es)`);
+  } catch (err) {
+    console.error("Process resume error:", err);
+  }
 
   // Fetch due tasks
   const dueTasks = db.getDueTasks();

@@ -1902,6 +1902,35 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       }
     }
 
+    // /processes — list durable processes; /process signal <event> resumes those waiting on it.
+    {
+      const lc = text.trim().toLowerCase();
+      if (lc === "/processes" || lc === "/process") {
+        const procs = supabase.listProcesses(user.id);
+        if (!procs.length) {
+          await ctx.reply("⏳ *No durable processes.*\n\nProcesses run multi-step work that spans time — with waits for a timer or an external event. Start one from a playbook: `nova process start <name> --from-playbook <pb>`, or design one in the dashboard.", { parse_mode: "Markdown" });
+          return;
+        }
+        const lines = ["⏳ *Durable processes*", "", ...procs.slice(0, 20).map(p => {
+          const wait = p.state === "waiting" ? (p.waitUntil ? ` ⏱ ${p.waitUntil}` : p.waitEvent ? ` ⏸ ${p.waitEvent}` : "") : "";
+          return `${p.state === "done" ? "✓" : p.state === "waiting" ? "⏸" : p.state === "failed" ? "✗" : "▶"} *${p.name}* — step ${p.currentStep}/${p.steps.length}${wait}`;
+        })];
+        await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+        return;
+      }
+      const sig = text.trim().match(/^\/process\s+signal\s+([\w.:-]+)/i);
+      if (sig) {
+        const { resumeOnEvent } = await import("./process-engine.ts");
+        const runStep = async (uid: string, description: string, agent: string | undefined) => {
+          const taskId = await dispatchAutonomousTask(uid, agent || "general", description, "process").catch(() => null);
+          return { success: true, result: taskId || "dispatched" };
+        };
+        const n = await resumeOnEvent(supabase, sig[1], runStep).catch(() => 0);
+        await ctx.reply(n ? `▶️ Resumed ${n} process(es) waiting on \`${sig[1]}\`.` : `No processes were waiting on \`${sig[1]}\`.`, { parse_mode: "Markdown" });
+        return;
+      }
+    }
+
     // /automations — list your event-driven automations.
     if (text.trim().toLowerCase() === "/automations" || text.trim().toLowerCase() === "/automation") {
       const autos = supabase.listAutomations(user.id);
