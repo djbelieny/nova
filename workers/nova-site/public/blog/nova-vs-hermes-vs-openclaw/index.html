@@ -287,7 +287,7 @@
           <tr><td>Multi-agent</td><td>Session routing</td><td>Subagents + code-mode</td><td>24 specialists + executive board</td></tr>
           <tr><td>Human approval before acting</td><td class="no">✗ off by default</td><td class="no">✗ off by default</td><td class="yes">✓ on by default</td></tr>
           <tr><td>Proactive / autonomous</td><td>Heartbeat, every 30 min</td><td>Background review + cron</td><td>Scheduler + services <span class="mid">(gated)</span></td></tr>
-          <tr><td>Self-improving skills</td><td class="no">✗ static</td><td class="yes">✓ auto-created</td><td class="mid">~ pattern cache</td></tr>
+          <tr><td>Self-improving skills</td><td class="no">✗ static</td><td class="yes">✓ auto-created</td><td class="yes">✓ promotes proven wins</td></tr>
           <tr><td>Default execution surface</td><td class="mid">host (sandbox opt-in)</td><td>sandbox backends</td><td class="yes">Docker sandbox + gate</td></tr>
           <tr><td>Backing</td><td>Foundation (creator → OpenAI)</td><td>Nous Research lab</td><td>Solo (Jake)</td></tr>
           <tr><td>Maturity</td><td>Battle-tested, huge</td><td>Research-grade, active</td><td>New (2026)</td></tr>
@@ -340,9 +340,9 @@
 
       <h3 class="who c-nova"><span class="chip" style="background:#2AABEE"></span>Nova</h3>
       <div class="gbu">
-        <div class="item"><span class="tag good">Good</span><p>The whole thing is built around <strong>not</strong> trusting the AI blindly. Two-phase execution means nothing ships, sends, or spends until you approve it — with a readable preview of what's about to happen. It reads like an org chart (24 specialists plus an executive board), drives your subscription CLIs <em>within their terms</em> (no token games), and it's a coherent Bun/TypeScript codebase you can actually sit down and read.</p></div>
+        <div class="item"><span class="tag good">Good</span><p>The whole thing is built around <strong>not</strong> trusting the AI blindly. Two-phase execution means nothing ships, sends, or spends until you approve it — with a readable preview of what's about to happen. It reads like an org chart (24 specialists plus an executive board), drives your subscription CLIs <em>within their terms</em> (no token games), and it's a coherent Bun/TypeScript codebase you can actually sit down and read. And it quietly <strong>learns</strong>: repeat a task enough and Nova promotes the winning plan into a reusable skill, reassigns and self-heals failed steps mid-run, and tracks which specialists perform.</p></div>
         <div class="item"><span class="tag bad">Bad</span><p>It's brand-new and tiny. Essentially zero stars, a community of roughly one, thinner docs, fewer integrations, and none of the free battle-testing a 200k-star project gets. Fewer channels than OpenClaw. If you want a huge skill marketplace <em>today</em>, it isn't here yet.</p></div>
-        <div class="item"><span class="tag ugly">Ugly</span><p>The org-chart model is overkill for "just answer my question" — 24 agents and an executive board is a lot of machinery when you wanted a one-line reply, and that structure is more to learn. The approval gate that makes Nova safe also makes it <em>slower</em> and more hands-on than an agent that simply goes. That's the trade, on purpose — but if hands-off autonomy is what you want above all, Nova is the wrong tool.</p></div>
+        <div class="item"><span class="tag ugly">Ugly</span><p>Its learning is earned, not instant — Nova promotes a skill only after a handful of <em>successful</em> runs, so it improves through repetition rather than the on-the-fly reflection Hermes does. The org-chart model has a learning curve, and while simple asks take a fast path (not the full board), the default posture is hands-on: the approval gate keeps you in the loop, and you loosen it with autopilot and earned autonomy as trust grows. If you want a fully hands-off agent from minute one, that deliberate caution will feel like friction.</p></div>
       </div>
 
       <h2>So which should you pick?</h2>
