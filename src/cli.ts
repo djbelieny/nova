@@ -41,6 +41,7 @@ const COMMANDS: Record<string, Omit<RunSpec, "kind" | "args"> & { aliases?: stri
   invite:    { file: "src/cli-manage.ts", description: "Create a pairing invite code" },
   kb:        { file: "src/cli-kb.ts", description: "Manage the knowledge base (list/add/remove/search/reindex)" },
   playbook:  { file: "src/cli-playbook.ts", description: "Manage playbooks (list/seed/show/remove)" },
+  automation:{ file: "src/cli-automation.ts", description: "Manage automations (event → workflow)" },
   voice:     { file: "src/voice-server.ts", description: "Start the voice-call server" },
   backup:    { file: "scripts/backup.ts", description: "Back up data, config, and .env" },
 };

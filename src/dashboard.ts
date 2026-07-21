@@ -2017,6 +2017,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/skills">Skills</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/knowledge">Knowledge</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/playbooks">Playbooks</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/automations">Automations</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -3080,6 +3081,268 @@ export function renderPlaybooksPage(): string {
       .catch(function(e){ showMsg(e.message || 'Create failed', false); });
   });
 
+  load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
+// AUTOMATIONS PAGE
+// ============================================================
+
+export function renderAutomationsPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Automations</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:660px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:1.4rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.4rem 0 .7rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1rem}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:block;margin-bottom:5px}
+  select,input[type=text],input[type=number],textarea{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.82rem;font-family:inherit;width:100%}
+  textarea{resize:vertical;min-height:70px;line-height:1.5}
+  .field{margin-bottom:12px}
+  .row{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .title{font-weight:600;flex:1;min-width:120px;font-size:.9rem;color:var(--indigo)}
+  .meta{font-size:.75rem;color:var(--dim)}
+  .tag{font-size:.68rem;padding:2px 8px;border-radius:5px;border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit}
+  .btn:hover{background:rgba(255,255,255,.10)}
+  .btn.danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(239,68,68,.1)}
+  .btn.primary{border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600}
+  .msg{margin:1rem 0;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .msg.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .empty{color:var(--dim);font-size:.85rem}
+  .webhook{width:100%;margin-top:6px;font-size:.72rem;color:var(--dim);word-break:break-all;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:6px 8px;display:none}
+  .webhook code{color:var(--text)}
+  .reveal{background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.35);border-radius:8px;padding:10px 12px;margin:1rem 0;display:none}
+  .reveal .k{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-bottom:4px}
+  .reveal code{display:block;font-size:.74rem;color:var(--text);word-break:break-all;background:rgba(0,0,0,.25);border-radius:5px;padding:6px 8px;margin-bottom:8px}
+  .switch{display:inline-flex;align-items:center;gap:6px;font-size:.72rem;color:var(--dim);cursor:pointer}
+  .switch input{width:auto}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Automations</h1>
+  <p class="hint">Automations turn an incoming event (a webhook or a metric threshold) into an agent task or a playbook run. Every automation fires through the approval gate — nothing consequential runs without your OK.</p>
+  <div id="msg" class="msg"></div>
+  <div id="reveal" class="reveal"></div>
+
+  <h2>Your Automations</h2>
+  <div id="list"><p class="empty">Loading…</p></div>
+
+  <h2>Create Automation</h2>
+  <div class="card">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="name" placeholder="e.g. new-lead-followup">
+    </div>
+    <div class="field">
+      <label>Source type</label>
+      <select id="sourceType">
+        <option value="webhook">Webhook</option>
+        <option value="metric">Metric</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Action type</label>
+      <select id="actionType">
+        <option value="agent">Agent</option>
+        <option value="playbook">Playbook</option>
+      </select>
+    </div>
+    <div id="agentFields">
+      <div class="field">
+        <label>Agent slug</label>
+        <input type="text" id="agentRef" placeholder="e.g. orion">
+      </div>
+      <div class="field">
+        <label>Template — the instruction sent to the agent (use {{field}} from the event)</label>
+        <textarea id="template" placeholder="Follow up with {{email}} about {{topic}}."></textarea>
+      </div>
+    </div>
+    <div id="playbookFields" style="display:none">
+      <div class="field">
+        <label>Playbook name</label>
+        <input type="text" id="playbookRef" placeholder="e.g. client-onboarding">
+      </div>
+      <div class="field">
+        <label>Variables — one per line as <code>key=value</code> (value may use {{field}})</label>
+        <textarea id="playbookVars" placeholder="client={{name}}&#10;email={{email}}"></textarea>
+      </div>
+    </div>
+    <div class="field">
+      <label>Conditions — one per line as <code>field:op:value</code> (optional)</label>
+      <textarea id="conditions" placeholder="amount:gt:100&#10;status:eq:paid"></textarea>
+    </div>
+    <div class="field">
+      <label>Dedupe template — skip duplicate events sharing this key (optional)</label>
+      <input type="text" id="dedupeKey" placeholder="{{id}}">
+    </div>
+    <div class="field">
+      <label>Rate limit per hour (optional)</label>
+      <input type="number" id="rateLimit" min="0" placeholder="e.g. 20">
+    </div>
+    <button class="btn primary" id="createBtn">Create Automation</button>
+  </div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
+  var msgEl = document.getElementById('msg');
+  var listEl = document.getElementById('list');
+  var revealEl = document.getElementById('reveal');
+
+  function showMsg(text, ok) {
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){msgEl.style.display='none';}, 4000);
+  }
+
+  function parseConditions(raw){
+    return (raw||'').split('\\n').map(function(l){return l.trim();}).filter(Boolean).map(function(l){
+      var parts = l.split(':');
+      var field = (parts[0]||'').trim();
+      var op = (parts[1]||'').trim();
+      var value = parts.slice(2).join(':').trim();
+      return { field: field, op: op, value: value };
+    }).filter(function(c){ return c.field && c.op; });
+  }
+  function parsePlaybookVars(raw){
+    var out = {};
+    (raw||'').split('\\n').map(function(l){return l.trim();}).filter(Boolean).forEach(function(l){
+      var i = l.indexOf('=');
+      if (i < 0) return;
+      var k = l.slice(0, i).trim();
+      var v = l.slice(i + 1).trim();
+      if (k) out[k] = v;
+    });
+    return out;
+  }
+
+  var actionTypeEl = document.getElementById('actionType');
+  function syncActionFields(){
+    var agent = actionTypeEl.value === 'agent';
+    document.getElementById('agentFields').style.display = agent ? '' : 'none';
+    document.getElementById('playbookFields').style.display = agent ? 'none' : '';
+  }
+  actionTypeEl.addEventListener('change', syncActionFields);
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target;
+    if (!btn || !btn.classList) return;
+    if (btn.classList.contains('action-webhook')) {
+      var wid = btn.getAttribute('data-id');
+      var el = document.getElementById('wh-' + wid);
+      if (el) el.style.display = el.style.display === 'block' ? 'none' : 'block';
+      return;
+    }
+    if (btn.classList.contains('action-delete')) {
+      var id = btn.getAttribute('data-id');
+      var name = btn.getAttribute('data-name') || 'this automation';
+      if (!id) return;
+      if (!confirm('Delete "' + name + '"?')) return;
+      fetch(BASE + '/api/automations/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+        .then(function(r){ return r.json(); })
+        .then(function(data){ if (data.error) { showMsg(data.error, false); } else { showMsg('Deleted', true); load(); } })
+        .catch(function(e){ showMsg(e.message || 'Delete failed', false); });
+    }
+  });
+
+  listEl.addEventListener('change', function(e){
+    var box = e.target;
+    if (!box || !box.classList || !box.classList.contains('action-toggle')) return;
+    var id = box.getAttribute('data-id');
+    fetch(BASE + '/api/automations/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id, enabled: box.checked }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){ if (data.error) { showMsg(data.error, false); box.checked = !box.checked; } else { showMsg(box.checked ? 'Enabled' : 'Disabled', true); } })
+      .catch(function(e){ showMsg(e.message || 'Toggle failed', false); box.checked = !box.checked; });
+  });
+
+  function load(){
+    fetch(BASE + '/api/automations').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { listEl.innerHTML = '<p class="empty">'+esc(data.error)+'</p>'; return; }
+      var items = data.automations || [];
+      if (!items.length) { listEl.innerHTML = '<p class="empty">No automations yet. Create one below.</p>'; return; }
+      var html = '';
+      items.forEach(function(a){
+        var wid = escAttr(a.id);
+        html += '<div class="row">';
+        html += '<span class="title">'+esc(a.name)+'</span>';
+        html += '<span class="tag">'+esc(a.sourceType)+' → '+esc(a.actionType)+':'+esc(a.actionRef)+'</span>';
+        html += '<label class="switch"><input type="checkbox" class="action-toggle" data-id="'+wid+'"'+(a.enabled?' checked':'')+'> '+(a.enabled?'On':'Off')+'</label>';
+        html += '<span class="meta">'+esc(a.fireCount||0)+' fires</span>';
+        html += '<button class="btn action-webhook" data-id="'+wid+'">Show webhook URL</button>';
+        html += '<button class="btn danger action-delete" data-id="'+wid+'" data-name="'+escAttr(a.name)+'">Delete</button>';
+        html += '<div class="webhook" id="wh-'+wid+'">POST <code>/automation/'+esc(a.userId)+'/'+esc(a.id)+'</code></div>';
+        html += '</div>';
+      });
+      listEl.innerHTML = html;
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">'+esc(e.message)+'</p>'; });
+  }
+
+  function showReveal(webhookUrl, secret){
+    revealEl.innerHTML =
+      '<div class="k">Webhook URL — point your event source here</div>' +
+      '<code>' + esc(webhookUrl) + '</code>' +
+      '<div class="k">Secret — send as the <code>x-nova-signature</code> header</div>' +
+      '<code>' + esc(secret) + '</code>';
+    revealEl.style.display = 'block';
+  }
+
+  document.getElementById('createBtn').addEventListener('click', function(){
+    var name = document.getElementById('name').value.trim();
+    if (!name) { showMsg('Name is required', false); return; }
+    var actionType = actionTypeEl.value;
+    var body = {
+      name: name,
+      sourceType: document.getElementById('sourceType').value,
+      actionType: actionType,
+      conditions: parseConditions(document.getElementById('conditions').value),
+      dedupeKey: document.getElementById('dedupeKey').value.trim() || undefined,
+    };
+    var rl = document.getElementById('rateLimit').value.trim();
+    if (rl) body.rateLimitPerHour = parseInt(rl, 10);
+    if (actionType === 'agent') {
+      body.actionRef = document.getElementById('agentRef').value.trim();
+      body.template = document.getElementById('template').value.trim();
+    } else {
+      body.actionRef = document.getElementById('playbookRef').value.trim();
+      body.playbookVars = parsePlaybookVars(document.getElementById('playbookVars').value);
+    }
+    if (!body.actionRef) { showMsg((actionType === 'agent' ? 'Agent slug' : 'Playbook name') + ' is required', false); return; }
+    fetch(BASE + '/api/automations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { showMsg(data.error, false); return; }
+        showMsg('Created ' + esc(data.name||name), true);
+        if (data.webhookUrl) showReveal(data.webhookUrl, data.secret);
+        document.getElementById('name').value = '';
+        document.getElementById('agentRef').value = '';
+        document.getElementById('template').value = '';
+        document.getElementById('playbookRef').value = '';
+        document.getElementById('playbookVars').value = '';
+        document.getElementById('conditions').value = '';
+        document.getElementById('dedupeKey').value = '';
+        document.getElementById('rateLimit').value = '';
+        load();
+      })
+      .catch(function(e){ showMsg(e.message || 'Create failed', false); });
+  });
+
+  syncActionFields();
   load();
 </script>
 </body></html>`;
@@ -4799,6 +5062,7 @@ export function renderDashboard(): string {
       <a href="/skills" class="topbar-action">Skills</a>
       <a href="/knowledge" class="topbar-action">Knowledge</a>
       <a href="/playbooks" class="topbar-action">Playbooks</a>
+      <a href="/automations" class="topbar-action">Automations</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -6716,6 +6980,17 @@ const server = Bun.serve({
       });
     }
 
+    // Automations page (all authenticated users)
+    if (path === "/automations") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderAutomationsPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -6917,6 +7192,66 @@ const server = Bun.serve({
         const b = await req.json();
         if (!b.id || !b.scope) return jsonResponse({ error: "id and scope required" }, 400);
         supabase.deletePlaybook(String(b.scope) as "personal" | "team", userId, String(b.id));
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    // ── Automations (event → condition → workflow) ──
+    if (path === "/api/automations" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        return jsonResponse({ automations: supabase.listAutomations(userId) });
+      } catch (e: any) {
+        return jsonResponse({ automations: [], error: e.message });
+      }
+    }
+    if (path === "/api/automations" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.name) return jsonResponse({ error: "name required" }, 400);
+        if (!b.actionRef) return jsonResponse({ error: "actionRef required" }, 400);
+        const actionType = b.actionType === "playbook" ? "playbook" : "agent";
+        const actionConfig = actionType === "playbook"
+          ? { vars: b.playbookVars && typeof b.playbookVars === "object" ? b.playbookVars : {} }
+          : { template: b.template ? String(b.template) : "" };
+        const { generateWebhookSecret } = await import("./webhook-server.ts");
+        const secret = generateWebhookSecret();
+        const result = supabase.insertAutomation({
+          userId,
+          name: String(b.name),
+          sourceType: String(b.sourceType || "webhook"),
+          conditions: Array.isArray(b.conditions) ? b.conditions : [],
+          actionType,
+          actionRef: String(b.actionRef),
+          actionConfig,
+          dedupeKey: b.dedupeKey ? String(b.dedupeKey) : undefined,
+          rateLimitPerHour: typeof b.rateLimitPerHour === "number" && b.rateLimitPerHour > 0 ? b.rateLimitPerHour : undefined,
+          secret,
+        });
+        return jsonResponse({ ...result, webhookUrl: `/automation/${userId}/${result.id}`, secret });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/automations/toggle" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        supabase.setAutomationEnabled(userId, String(b.id), !!b.enabled);
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/automations/delete" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        supabase.deleteAutomation(userId, String(b.id));
         return jsonResponse({ success: true });
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 400);

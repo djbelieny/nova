@@ -393,6 +393,82 @@ function applyPlaybookSchema(db: BunDatabase): void {
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_playbooks_name ON playbooks(scope, user_id, name, version)`);
 }
 
+/**
+ * Automation engine (event → condition → workflow). All automations live in shared.db,
+ * scoped by user_id. The legacy webhook_triggers table stays; automations is the superset.
+ */
+function applyAutomationSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS automations (
+      id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id       TEXT NOT NULL,
+      name          TEXT NOT NULL,
+      source_type   TEXT NOT NULL,
+      source_config TEXT NOT NULL DEFAULT '{}',
+      conditions    TEXT NOT NULL DEFAULT '[]',
+      action_type   TEXT NOT NULL,
+      action_ref    TEXT NOT NULL,
+      action_config TEXT NOT NULL DEFAULT '{}',
+      enabled       INTEGER DEFAULT 1,
+      dedupe_key    TEXT,
+      rate_limit_per_hour INTEGER,
+      secret        TEXT,
+      created_at    TEXT DEFAULT (datetime('now')),
+      last_fired_at TEXT,
+      fire_count    INTEGER DEFAULT 0,
+      UNIQUE(user_id, name)
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_automations_user ON automations(user_id, enabled)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_automations_source ON automations(source_type, enabled)`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS automation_runs (
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      automation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      fired_at TEXT DEFAULT (datetime('now')),
+      dedupe_key TEXT,
+      event_json TEXT,
+      status TEXT DEFAULT 'dispatched',
+      result TEXT
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_automation_runs_auto ON automation_runs(automation_id, fired_at DESC)`);
+}
+
+export interface AutomationInput {
+  userId: string;
+  name: string;
+  sourceType: string;
+  sourceConfig?: Record<string, any>;
+  conditions?: Array<{ field: string; op: string; value?: any }>;
+  actionType: 'agent' | 'playbook';
+  actionRef: string;
+  actionConfig?: Record<string, any>;
+  dedupeKey?: string | null;
+  rateLimitPerHour?: number | null;
+  secret?: string | null;
+}
+
+export interface Automation {
+  id: string; userId: string; name: string;
+  sourceType: string; sourceConfig: Record<string, any>;
+  conditions: Array<{ field: string; op: string; value?: any }>;
+  actionType: 'agent' | 'playbook'; actionRef: string; actionConfig: Record<string, any>;
+  enabled: boolean; dedupeKey: string | null; rateLimitPerHour: number | null; secret: string | null;
+  createdAt?: string; lastFiredAt?: string | null; fireCount: number;
+}
+
+function mapAutomation(r: any): Automation {
+  return {
+    id: r.id, userId: r.user_id, name: r.name, sourceType: r.source_type,
+    sourceConfig: parseJson(r.source_config, {}), conditions: parseJson(r.conditions, []),
+    actionType: r.action_type, actionRef: r.action_ref, actionConfig: parseJson(r.action_config, {}),
+    enabled: !!r.enabled, dedupeKey: r.dedupe_key ?? null, rateLimitPerHour: r.rate_limit_per_hour ?? null,
+    secret: r.secret ?? null, createdAt: r.created_at, lastFiredAt: r.last_fired_at ?? null, fireCount: r.fire_count ?? 0,
+  };
+}
+
 export type PlaybookScope = 'personal' | 'team';
 
 export interface PlaybookVar { name: string; required?: boolean; default?: string; description?: string; }
@@ -828,6 +904,8 @@ class SharedDatabase {
     applyKbSchema(this.db);
     // Playbooks — team scope lives in shared.db
     applyPlaybookSchema(this.db);
+    // Automation engine — all automations live in shared.db
+    applyAutomationSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -5113,6 +5191,78 @@ export class Database {
 
   deletePlaybook(scope: string, userId: string, id: string): void {
     this.pbHandle(scope, userId).run(`DELETE FROM playbooks WHERE id = ?`, [id]);
+  }
+
+  // ============================================================
+  // Automations (event → condition → workflow) — all in shared.db
+  // ============================================================
+
+  insertAutomation(a: AutomationInput): Automation {
+    const id = crypto.randomUUID();
+    this.shared.db.run(
+      `INSERT INTO automations (id, user_id, name, source_type, source_config, conditions, action_type, action_ref, action_config, dedupe_key, rate_limit_per_hour, secret)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, a.userId, a.name, a.sourceType, JSON.stringify(a.sourceConfig ?? {}), JSON.stringify(a.conditions ?? []),
+       a.actionType, a.actionRef, JSON.stringify(a.actionConfig ?? {}), a.dedupeKey ?? null, a.rateLimitPerHour ?? null, a.secret ?? null]
+    );
+    return this.getAutomation(a.userId, id)!;
+  }
+
+  getAutomation(userId: string, id: string): Automation | null {
+    const row = this.shared.db.query(`SELECT * FROM automations WHERE id = ? AND user_id = ?`).get(id, userId) as any;
+    return row ? mapAutomation(row) : null;
+  }
+
+  /** Get an automation by id without a user filter (webhook route already trusts the path userId). */
+  getAutomationById(id: string): Automation | null {
+    const row = this.shared.db.query(`SELECT * FROM automations WHERE id = ?`).get(id) as any;
+    return row ? mapAutomation(row) : null;
+  }
+
+  listAutomations(userId: string): Automation[] {
+    return (this.shared.db.query(`SELECT * FROM automations WHERE user_id = ? ORDER BY created_at DESC`).all(userId) as any[]).map(mapAutomation);
+  }
+
+  /** All enabled automations for a set of pollable source types (poller service). */
+  listEnabledAutomationsBySource(sourceTypes: string[]): Automation[] {
+    if (!sourceTypes.length) return [];
+    const placeholders = sourceTypes.map(() => '?').join(',');
+    return (this.shared.db.query(`SELECT * FROM automations WHERE enabled = 1 AND source_type IN (${placeholders})`).all(...sourceTypes) as any[]).map(mapAutomation);
+  }
+
+  setAutomationEnabled(userId: string, id: string, enabled: boolean): void {
+    this.shared.db.run(`UPDATE automations SET enabled = ? WHERE id = ? AND user_id = ?`, [enabled ? 1 : 0, id, userId]);
+  }
+
+  deleteAutomation(userId: string, id: string): void {
+    this.shared.db.run(`DELETE FROM automations WHERE id = ? AND user_id = ?`, [id, userId]);
+  }
+
+  recordAutomationFire(id: string): void {
+    this.shared.db.run(`UPDATE automations SET fire_count = fire_count + 1, last_fired_at = datetime('now') WHERE id = ?`, [id]);
+  }
+
+  insertAutomationRun(run: { automationId: string; userId: string; dedupeKey?: string | null; eventJson?: string; status?: string; result?: string }): void {
+    this.shared.db.run(
+      `INSERT INTO automation_runs (automation_id, user_id, dedupe_key, event_json, status, result) VALUES (?, ?, ?, ?, ?, ?)`,
+      [run.automationId, run.userId, run.dedupeKey ?? null, run.eventJson ?? null, run.status ?? 'dispatched', run.result ?? null]
+    );
+  }
+
+  /** Count runs for an automation within the last N minutes (rate limiting). */
+  countAutomationRunsSince(automationId: string, minutes: number): number {
+    const row = this.shared.db.query(
+      `SELECT COUNT(*) AS n FROM automation_runs WHERE automation_id = ? AND fired_at >= datetime('now', ?)`
+    ).get(automationId, `-${minutes} minutes`) as any;
+    return row?.n ?? 0;
+  }
+
+  /** Whether a dedupe key was already seen for this automation within the window (dedup). */
+  automationDedupeSeen(automationId: string, dedupeKey: string, minutes: number): boolean {
+    const row = this.shared.db.query(
+      `SELECT 1 FROM automation_runs WHERE automation_id = ? AND dedupe_key = ? AND fired_at >= datetime('now', ?) LIMIT 1`
+    ).get(automationId, dedupeKey, `-${minutes} minutes`);
+    return !!row;
   }
 }
 
