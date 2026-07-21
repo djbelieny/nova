@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova vs. Hermes vs. OpenClaw: the good, the bad, and the ugly — Nova</title>
+<meta name="description" content="An honest, sourced comparison of three self-hosted, open-source AI agents — OpenClaw, Hermes, and Nova — with a feature table, charts, and the good, the bad, and the ugly of each.">
+<meta property="og:title" content="Nova vs. Hermes vs. OpenClaw: the good, the bad, and the ugly">
+<meta property="og:description" content="Three self-hosted AI agents, three bets on autonomy vs. human approval. A fair, sourced comparison with a feature table, charts, and the good, the bad, and the ugly.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 18px; }
+  .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 960px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/#how">How it works</a>
+      <a href="/#agents">Agents</a>
+      <a href="/#start">Quick start</a>
+      <a href="/blog/">Blog</a>
+      <a href="/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/nova-vs-hermes-vs-openclaw/" class="en on" hreflang="en">EN</a><a href="/es/blog/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <style>
+      .cmp-table-wrap { overflow-x:auto; margin:28px 0; border:1px solid var(--line); border-radius:12px; }
+      table.cmp { border-collapse:collapse; width:100%; min-width:660px; font-size:14.5px; }
+      table.cmp th, table.cmp td { text-align:left; padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; color:#C9D3E6; }
+      table.cmp thead th { font-family:var(--mono); font-size:12px; letter-spacing:0.03em; color:var(--muted); background:var(--panel-2); }
+      table.cmp tbody tr:last-child td { border-bottom:0; }
+      table.cmp td:first-child, table.cmp th:first-child { color:var(--text); font-weight:600; width:24%; }
+      .c-nova { color:#2AABEE; } .c-hermes { color:#F0B429; } .c-claw { color:#FF6B4A; }
+      table.cmp .yes { color:var(--green); font-weight:600; } table.cmp .no { color:var(--rose); font-weight:600; } table.cmp .mid { color:var(--amber); font-weight:600; }
+      figure.chart { margin:34px 0; }
+      figure.chart figcaption { font-family:var(--mono); font-size:12px; color:var(--faint); margin-top:12px; text-align:center; }
+      .chart svg { width:100%; height:auto; display:block; }
+      .chart text { font-family:var(--mono); }
+      .legend { display:flex; gap:20px; flex-wrap:wrap; font-family:var(--mono); font-size:12.5px; color:var(--muted); justify-content:center; margin-top:10px; }
+      .legend i { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:7px; vertical-align:middle; }
+      .gbu { border:1px solid var(--line); border-radius:14px; padding:6px 20px 14px; margin:14px 0 30px; background:var(--panel); }
+      .gbu .item { padding:16px 0; border-bottom:1px solid var(--line); }
+      .gbu .item:last-child { border-bottom:0; }
+      .gbu .tag { font-family:var(--mono); font-size:10.5px; letter-spacing:0.04em; text-transform:uppercase; padding:3px 9px; border-radius:6px; margin-right:10px; white-space:nowrap; }
+      .tag.good { color:var(--green); border:1px solid color-mix(in srgb, var(--green) 55%, transparent); }
+      .tag.bad { color:var(--amber); border:1px solid color-mix(in srgb, var(--amber) 55%, transparent); }
+      .tag.ugly { color:var(--rose); border:1px solid color-mix(in srgb, var(--rose) 55%, transparent); }
+      .gbu .item p { display:inline; color:#C9D3E6; }
+      .prose h3.who { display:flex; align-items:center; gap:10px; }
+      .prose h3.who .chip { width:12px; height:12px; border-radius:4px; display:inline-block; }
+      .src { font-size:13.5px; color:var(--muted); }
+      .src a { color:var(--muted); text-decoration:underline; }
+    </style>
+
+    <span class="eyebrow">Comparison</span>
+    <h1>Nova vs. Hermes vs. OpenClaw: the good, the bad, and the ugly</h1>
+    <p class="lede">Three open-source, self-hosted AI agents you run yourself and talk to from your chat apps — and three very different bets on how much to trust an AI with the keys. An honest, side-by-side look.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 20 July 2026 <span class="dot">·</span> 12 min read</p>
+
+    <div class="prose">
+      <div class="callout"><p><span class="k">Full disclosure</span>I build Nova. I've worked to keep this fair — the numbers are sourced, and Nova gets its own <em>bad</em> and <em>ugly</em> like everyone else. If anything reads as unfair to Hermes or OpenClaw, tell me and I'll correct it.</p></div>
+
+      <p>Self-hosted AI agents had a breakout year. You run them on your own hardware, point them at your files and your chat apps, and they don't just answer — they <em>do things</em>: send messages, run commands, browse the web, automate your busywork. Three get talked about the most: <strong class="c-claw">OpenClaw</strong>, the viral juggernaut; <strong class="c-hermes">Hermes</strong>, the research-grade agent from Nous Research; and <strong class="c-nova">Nova</strong> — the one I build.</p>
+      <p>They share a shape but disagree, deeply, on one question: <strong>how much should an AI be allowed to do on its own?</strong> That single disagreement explains almost everything else about them — so keep it in mind as we go.</p>
+
+      <h2>The landscape</h2>
+      <p>Two of these are giants. OpenClaw went from launch (as "Clawdbot") in November 2025 to a quarter-million GitHub stars within months; Hermes, backed by a well-funded AI research lab, isn't far behind. Nova is the newcomer — just open-sourced, essentially zero stars. I'm not pretending Nova wins a popularity contest. It doesn't.</p>
+
+      <figure class="chart" aria-label="GitHub stars: OpenClaw ~383,600; Hermes ~217,800; Nova brand-new.">
+        <svg viewBox="0 0 700 210" role="img">
+          <!-- baseline scale 0..400k across x 150..680 (530px) -->
+          <!-- OpenClaw -->
+          <text class="lbl" x="8" y="42" fill="#E8EDF7" font-size="14">OpenClaw</text>
+          <rect x="150" y="26" width="508" height="30" rx="4" fill="#FF6B4A"></rect>
+          <text x="666" y="46" fill="#8A97B0" font-size="12" text-anchor="end" opacity="0"> </text>
+          <text x="150" y="46" fill="#0A0F1C" font-size="13" dx="10" font-weight="700">383.6k ★</text>
+          <!-- Hermes -->
+          <text class="lbl" x="8" y="102" fill="#E8EDF7" font-size="14">Hermes</text>
+          <rect x="150" y="86" width="289" height="30" rx="4" fill="#F0B429"></rect>
+          <text x="150" y="106" fill="#0A0F1C" font-size="13" dx="10" font-weight="700">217.8k ★</text>
+          <!-- Nova -->
+          <text class="lbl" x="8" y="162" fill="#E8EDF7" font-size="14">Nova</text>
+          <rect x="150" y="146" width="5" height="30" rx="2" fill="#2AABEE"></rect>
+          <text x="162" y="166" fill="#8A97B0" font-size="13">just released — a handful of stars</text>
+          <!-- axis ticks -->
+          <line x1="150" y1="188" x2="680" y2="188" stroke="#1E2C4A" stroke-width="1"></line>
+          <text x="150" y="203" fill="#5B6880" font-size="11">0</text>
+          <text x="415" y="203" fill="#5B6880" font-size="11" text-anchor="middle">200k</text>
+          <text x="680" y="203" fill="#5B6880" font-size="11" text-anchor="end">400k</text>
+        </svg>
+        <figcaption>GitHub stars, July 2026 (live). Reach, not fit — everything below is about fit.</figcaption>
+      </figure>
+
+      <h2>Meet the three</h2>
+      <p><strong class="c-claw">OpenClaw</strong> — a personal AI assistant that lives in your chat apps. Built in TypeScript/Node with a Swift companion, it connects any model — Claude, GPT, Gemini, DeepSeek, or fully local — to 20+ messaging channels, 100+ community "skills," voice, a live canvas, and mobile apps. Its signature move is a <em>heartbeat</em>: every 30 minutes it wakes, reads a <code>HEARTBEAT.md</code>, and acts on its own. MIT-licensed; now stewarded by the OpenClaw Foundation after its creator, Peter Steinberger, joined OpenAI in February 2026.</p>
+      <p><strong class="c-hermes">Hermes</strong> — Nous Research's self-improving agent, in Python. Model-agnostic to a fault: any OpenAI-compatible endpoint, and it can even reuse your vendor CLI's subscription tokens. It creates and refines its own skills from experience, models you with a dialectic memory system (Honcho), runs a "code mode" that calls tools over RPC, and can hibernate on serverless backends. It ships a terminal TUI, editor (ACP) integration, ~28 channels, and even tooling to generate training data. MIT.</p>
+      <p><strong class="c-nova">Nova</strong> — an AI <em>team</em>, not a chatbot: 24 named specialists and an executive board, coordinated by task decomposition, in Bun/TypeScript. The defining choice is <strong>two-phase execution</strong> — it prepares safe work, then asks for your approval before anything ships, sends, or spends. It drives your Claude/Gemini/Codex <em>subscriptions</em> within their terms (and now any OpenAI-compatible model too). Telegram, WhatsApp, Slack, Discord, and your terminal. MIT.</p>
+
+      <h2>Side by side</h2>
+      <div class="cmp-table-wrap"><table class="cmp">
+        <thead><tr><th>&nbsp;</th><th class="c-claw">OpenClaw</th><th class="c-hermes">Hermes</th><th class="c-nova">Nova</th></tr></thead>
+        <tbody>
+          <tr><td>Runtime</td><td>TypeScript / Node</td><td>Python</td><td>Bun / TypeScript</td></tr>
+          <tr><td>License</td><td>MIT</td><td>MIT</td><td>MIT</td></tr>
+          <tr><td>GitHub stars (Jul 2026)</td><td>~384k</td><td>~218k</td><td>new</td></tr>
+          <tr><td>Primary interface</td><td>Chat apps</td><td>Terminal + chat</td><td>Chat apps + terminal</td></tr>
+          <tr><td>Messaging channels</td><td>20+</td><td>~28</td><td>5 (TG / WA / Slack / Discord / CLI)</td></tr>
+          <tr><td>Models</td><td>Any, incl. local</td><td>Any, incl. subscription-token reuse</td><td>Subscription CLIs + any OpenAI-compatible</td></tr>
+          <tr><td>Multi-agent</td><td>Session routing</td><td>Subagents + code-mode</td><td>24 specialists + executive board</td></tr>
+          <tr><td>Human approval before acting</td><td class="no">✗ off by default</td><td class="no">✗ off by default</td><td class="yes">✓ on by default</td></tr>
+          <tr><td>Proactive / autonomous</td><td>Heartbeat, every 30 min</td><td>Background review + cron</td><td>Scheduler + services <span class="mid">(gated)</span></td></tr>
+          <tr><td>Self-improving skills</td><td class="no">✗ static</td><td class="yes">✓ auto-created</td><td class="mid">~ pattern cache</td></tr>
+          <tr><td>Default execution surface</td><td class="mid">host (sandbox opt-in)</td><td>sandbox backends</td><td class="yes">Docker sandbox + gate</td></tr>
+          <tr><td>Backing</td><td>Foundation (creator → OpenAI)</td><td>Nous Research lab</td><td>Solo (Jake)</td></tr>
+          <tr><td>Maturity</td><td>Battle-tested, huge</td><td>Research-grade, active</td><td>New (2026)</td></tr>
+        </tbody>
+      </table></div>
+
+      <h2>Where each one sits</h2>
+      <p>Strip away the feature lists and they line up on two axes: <strong>how much it acts without you</strong>, and <strong>how much it's a single assistant versus a whole team</strong>.</p>
+      <figure class="chart" aria-label="Positioning map. OpenClaw: autonomous, personal assistant. Hermes: autonomous, power tool. Nova: asks-first, multi-agent team.">
+        <svg viewBox="0 0 640 470" role="img">
+          <!-- plot area x 70..590, y 40..400 -->
+          <rect x="70" y="40" width="520" height="360" fill="#0D1526" stroke="#1E2C4A" stroke-width="1" rx="10"></rect>
+          <!-- mid grid -->
+          <line x1="330" y1="40" x2="330" y2="400" stroke="#1E2C4A" stroke-width="1" stroke-dasharray="3 4"></line>
+          <line x1="70" y1="220" x2="590" y2="220" stroke="#1E2C4A" stroke-width="1" stroke-dasharray="3 4"></line>
+          <!-- axis labels -->
+          <text x="80" y="418" fill="#8A97B0" font-size="12">◀ Asks first · human approval</text>
+          <text x="580" y="418" fill="#8A97B0" font-size="12" text-anchor="end">Acts on its own · autonomous ▶</text>
+          <text x="330" y="30" fill="#8A97B0" font-size="12" text-anchor="middle">▲ Multi-agent team / org</text>
+          <text x="330" y="452" fill="#8A97B0" font-size="12" text-anchor="middle">▼ Single personal assistant</text>
+          <!-- points -->
+          <!-- OpenClaw x0.82 y0.30 -> (496,292) -->
+          <circle cx="496" cy="292" r="9" fill="#FF6B4A" stroke="#0D1526" stroke-width="2"></circle>
+          <text x="496" y="316" fill="#FF6B4A" font-size="13" text-anchor="middle" font-weight="700">OpenClaw</text>
+          <!-- Hermes x0.72 y0.60 -> (444,184) -->
+          <circle cx="444" cy="184" r="9" fill="#F0B429" stroke="#0D1526" stroke-width="2"></circle>
+          <text x="444" y="172" fill="#F0B429" font-size="13" text-anchor="middle" font-weight="700">Hermes</text>
+          <!-- Nova x0.20 y0.82 -> (174,105) -->
+          <circle cx="174" cy="105" r="9" fill="#2AABEE" stroke="#0D1526" stroke-width="2"></circle>
+          <text x="174" y="93" fill="#2AABEE" font-size="13" text-anchor="middle" font-weight="700">Nova</text>
+        </svg>
+        <figcaption>The one chart that matters: Nova sits alone on the "asks first" side — on purpose.</figcaption>
+      </figure>
+
+      <h2>The good, the bad, and the ugly</h2>
+
+      <h3 class="who c-claw"><span class="chip" style="background:#FF6B4A"></span>OpenClaw</h3>
+      <div class="gbu">
+        <div class="item"><span class="tag good">Good</span><p>The ecosystem is unmatched — 20+ channels, 100+ skills, mobile apps, voice, a slick control UI. If you want an always-on assistant in WhatsApp that just works and actually does things, nothing else is this polished or this widely used. And it runs on truly any model.</p></div>
+        <div class="item"><span class="tag bad">Bad</span><p>By default, tools run <strong>on your host, autonomously</strong> — the main session executes without an approval step. Convenient, but it's a lot of trust to hand a probabilistic system with reach into your shell, email, and messages. Sandboxing exists, but it's opt-in for non-main sessions.</p></div>
+        <div class="item"><span class="tag ugly">Ugly</span><p>That trust has bitten people. Cisco researchers documented third-party skills performing <strong>data exfiltration and prompt injection without the user's awareness</strong>, against a largely unvetted skill registry. In March 2026, Chinese authorities restricted state enterprises, agencies, and banks from running it over data-deletion and leak concerns. And in the widely-reported "MoltMatch" episode, an agent created a dating profile — reportedly using a real person's photos without consent. Power without a gate cuts both ways.</p></div>
+      </div>
+
+      <h3 class="who c-hermes"><span class="chip" style="background:#F0B429"></span>Hermes</h3>
+      <div class="gbu">
+        <div class="item"><span class="tag good">Good</span><p>The most <em>interesting</em> of the three. It genuinely learns — forking a background copy of itself to write and refine skills after hard tasks — builds a model of you over time, and will run on literally any endpoint, including a serverless box that costs almost nothing when idle. For researchers and serious tinkerers, it's a playground with real depth (down to generating training data for tool-calling models).</p></div>
+        <div class="item"><span class="tag bad">Bad</span><p>It's heavy. Core files run into the hundreds of kilobytes; there's a large surface area to understand and operate, and the self-improving loop can sprawl if you don't watch it. And it's Python — great if that's your stack, friction if it isn't.</p></div>
+        <div class="item"><span class="tag ugly">Ugly</span><p>To get subscription pricing on Claude or Codex, Hermes <strong>reuses the vendor CLI's OAuth tokens</strong> to call the subscription backends directly from its own process. It's clever and it saves money — but it plausibly runs against those subscriptions' terms, and it breaks whenever a vendor rotates auth. Like OpenClaw, its default posture is broad autonomy, not approval.</p></div>
+      </div>
+
+      <h3 class="who c-nova"><span class="chip" style="background:#2AABEE"></span>Nova</h3>
+      <div class="gbu">
+        <div class="item"><span class="tag good">Good</span><p>The whole thing is built around <strong>not</strong> trusting the AI blindly. Two-phase execution means nothing ships, sends, or spends until you approve it — with a readable preview of what's about to happen. It reads like an org chart (24 specialists plus an executive board), drives your subscription CLIs <em>within their terms</em> (no token games), and it's a coherent Bun/TypeScript codebase you can actually sit down and read.</p></div>
+        <div class="item"><span class="tag bad">Bad</span><p>It's brand-new and tiny. Essentially zero stars, a community of roughly one, thinner docs, fewer integrations, and none of the free battle-testing a 200k-star project gets. Fewer channels than OpenClaw. If you want a huge skill marketplace <em>today</em>, it isn't here yet.</p></div>
+        <div class="item"><span class="tag ugly">Ugly</span><p>The org-chart model is overkill for "just answer my question" — 24 agents and an executive board is a lot of machinery when you wanted a one-line reply, and that structure is more to learn. The approval gate that makes Nova safe also makes it <em>slower</em> and more hands-on than an agent that simply goes. That's the trade, on purpose — but if hands-off autonomy is what you want above all, Nova is the wrong tool.</p></div>
+      </div>
+
+      <h2>So which should you pick?</h2>
+      <ul>
+        <li><strong class="c-claw">OpenClaw</strong> — if you want the biggest ecosystem and a polished, hands-off assistant in your chat apps today, and you're willing to sandbox it and vet skills yourself.</li>
+        <li><strong class="c-hermes">Hermes</strong> — if you're a researcher or serious tinkerer who wants a model-agnostic, self-improving agent, and you don't mind Python heft or the token-reuse caveat.</li>
+        <li><strong class="c-nova">Nova</strong> — if you want an AI <em>team</em> that asks before it acts, stays inside your subscription terms, and keeps you in the loop by design — and you can live with a young project.</li>
+      </ul>
+      <p>There's no universal winner here — only a winner for <em>your</em> risk tolerance. OpenClaw and Hermes bet that autonomy is worth the exposure. Nova bets the opposite: that the thing standing between a helpful agent and an expensive mistake is a human tapping <em>approve</em>. Pick the bet you're comfortable making with your shell, your keys, and your customers.</p>
+
+      <p class="src">Sources &amp; notes: star counts from the GitHub API (July 2026); OpenClaw history, naming, and documented security/regulatory issues from <a href="https://en.wikipedia.org/wiki/OpenClaw" rel="noopener">Wikipedia</a> and public reporting; Hermes and Nova details from their public repositories. Numbers move — treat them as a July-2026 snapshot.</p>
+
+      <div class="end-cta">
+        <h3>Want the one that asks first?</h3>
+        <p>Nova is open source, self-hosted, MIT licensed — an AI team that never ships, sends, or spends without your say-so.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Get Nova on GitHub</a>
+          <a class="cta ghost" href="/docs/">Read the docs</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — MIT licensed. Take it, customize it, make it yours.</span>
+    <span>
+      <a href="/">Home</a> &nbsp;·&nbsp;
+      <a href="/docs/">Documentation</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
