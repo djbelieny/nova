@@ -10,10 +10,36 @@
  */
 
 import { getByPath, dispatchAutomation, type DispatchAgentFn } from "../src/automation-engine.ts";
+import { listConnectors, getConnector, isConnectorConfigured, resolveCreds } from "../src/connectors/registry.ts";
 import type { Database } from "../src/db.ts";
 
 const POLLABLE = ["metric"];
+// Legacy generic source names (recognized; map to a connector trigger event when configured).
 const CONNECTOR_BACKED = ["email", "crm", "payment", "form"];
+
+/** All connector trigger event names (e.g. 'stripe.payment', 'shopify.order'). */
+function connectorTriggerEvents(): string[] {
+  return listConnectors().flatMap(c => (c.triggers || []).map(t => t.event));
+}
+
+/** Poll a connector trigger for an automation whose source_type is a connector event. */
+async function pollConnectorTrigger(db: Database, dispatch: DispatchAgentFn, automation: any): Promise<void> {
+  const [connectorId] = String(automation.sourceType).split(".");
+  const connector = getConnector(connectorId);
+  if (!connector || !isConnectorConfigured(connector, db)) return;
+  const trigger = (connector.triggers || []).find(t => t.event === automation.sourceType);
+  if (!trigger) return;
+  try {
+    const creds = resolveCreds(connector, db)!;
+    const events = await trigger.poll({ creds, fetchImpl: fetch });
+    for (const ev of events) {
+      // dedupe (id-based) + rate limits are enforced inside dispatchAutomation via the automation's config.
+      await dispatchAutomation(db, automation, ev, dispatch);
+    }
+  } catch (err) {
+    console.warn(`[automation-poller] connector poll failed for ${automation.name}:`, (err as Error).message);
+  }
+}
 
 async function pollMetric(db: Database, dispatch: DispatchAgentFn, automation: any): Promise<void> {
   const cfg = automation.sourceConfig || {};
@@ -38,13 +64,16 @@ export function startAutomationPoller(db: Database, dispatch: DispatchAgentFn): 
 
   async function tick(): Promise<void> {
     try {
-      const autos = db.listEnabledAutomationsBySource([...POLLABLE, ...CONNECTOR_BACKED]);
+      const connectorEvents = connectorTriggerEvents();
+      const autos = db.listEnabledAutomationsBySource([...POLLABLE, ...CONNECTOR_BACKED, ...connectorEvents]);
       for (const a of autos) {
         if (POLLABLE.includes(a.sourceType)) {
           await pollMetric(db, dispatch, a);
+        } else if (connectorEvents.includes(a.sourceType)) {
+          await pollConnectorTrigger(db, dispatch, a);
         } else if (CONNECTOR_BACKED.includes(a.sourceType) && !warnedConnector.has(a.id)) {
           warnedConnector.add(a.id);
-          console.log(`[automation-poller] "${a.name}" uses source '${a.sourceType}' — awaiting its connector (Phase 7); webhook delivery works today.`);
+          console.log(`[automation-poller] "${a.name}" uses generic source '${a.sourceType}' — point it at a connector event (e.g. stripe.payment) to poll automatically; webhook delivery works today.`);
         }
       }
     } catch (err) {

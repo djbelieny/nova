@@ -46,6 +46,7 @@ const COMMANDS: Record<string, Omit<RunSpec, "kind" | "args"> & { aliases?: stri
   extract:   { file: "src/cli-extract.ts", description: "Extract structured data from documents" },
   policy:    { file: "src/cli-policy.ts", description: "Manage compliance policies (spend/approval/content)" },
   roi:       { file: "src/cli-roi.ts", description: "Show ROI: tasks automated, hours saved, value vs cost" },
+  connector: { file: "src/cli-connector.ts", description: "Manage business connectors (Stripe/Shopify/Zendesk/HubSpot)" },
   voice:     { file: "src/voice-server.ts", description: "Start the voice-call server" },
   backup:    { file: "scripts/backup.ts", description: "Back up data, config, and .env" },
 };
