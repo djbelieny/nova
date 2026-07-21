@@ -326,6 +326,19 @@ ${planBlock}
   }
 }
 
+/**
+ * Parse a `prop:<id>:<approve|reject>` callback string into its parts.
+ * Returns null for anything that doesn't match. Exported for the relay callback
+ * branch + tests.
+ */
+export function parseProposalCallback(
+  data: string
+): { id: number; action: "approve" | "reject" } | null {
+  const m = /^prop:(\d+):(approve|reject)$/.exec(data ?? "");
+  if (!m) return null;
+  return { id: parseInt(m[1], 10), action: m[2] as "approve" | "reject" };
+}
+
 export async function rejectProposal(
   db: Database,
   userId: string,

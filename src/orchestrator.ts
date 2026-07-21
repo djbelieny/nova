@@ -27,6 +27,7 @@ import { mkdir, readdir, rename, stat } from "fs/promises";
 import { join, extname } from "path";
 import type { ExecutionPlan, ExecutionPattern } from "./patterns.ts";
 import { findPattern, recordExecution } from "./patterns.ts";
+import { reflectAndPropose } from "./learning-loop.ts";
 import {
   initPlanner,
   decompose,
@@ -1658,6 +1659,8 @@ async function routeComplex(
             winningStrategy = 3;
             const durationMs = Date.now() - startTime;
             await recordExecution(supabase, text, plan, true, durationMs, user.id, winningStrategy);
+            // Fire-and-forget reflective review (propose-don't-commit). Never blocks the reply.
+            reflectAndPropose({ db: supabase, userId: user.id, taskText: text, plan, callLLM: _callClaude }).catch(() => {});
             return;
           } else if (strategy === 4) {
             // Different specialist: route to kai (broad content/writing generalist)
@@ -1776,6 +1779,8 @@ async function routeComplex(
 
           const durationMs = Date.now() - startTime;
           await recordExecution(supabase, text, activePlan, true, durationMs, user.id, winningStrategy);
+          // Fire-and-forget reflective review (propose-don't-commit). Never blocks the reply.
+          reflectAndPropose({ db: supabase, userId: user.id, taskText: text, plan: activePlan, callLLM: _callClaude }).catch(() => {});
 
           // Update trust budget based on execution outcome
           if (supabase) {
@@ -1917,6 +1922,8 @@ async function routeComplex(
 
       const durationMs = Date.now() - startTime;
       await recordExecution(supabase, text, plan, allSucceeded, durationMs, user.id);
+      // Fire-and-forget reflective review (propose-don't-commit) — success path only.
+      if (allSucceeded) reflectAndPropose({ db: supabase, userId: user.id, taskText: text, plan, callLLM: _callClaude }).catch(() => {});
       recordLadderOutcomes(user.id, ladderExecuteTasks, { success: allSucceeded });
       return;
     }
