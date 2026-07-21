@@ -164,6 +164,7 @@ export const NOVA_COMMANDS: { command: string; description: string }[] = [
   { command: "help", description: "How to use Nova" },
   { command: "team", description: "Meet your specialists" },
   { command: "examples", description: "Ideas to try right now" },
+  { command: "knowledge", description: "See what's in your knowledge base" },
   { command: "status", description: "Check that Nova is running" },
   { command: "settings", description: "Change your name, timezone, or style" },
 ];

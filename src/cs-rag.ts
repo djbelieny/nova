@@ -1,47 +1,12 @@
 import { generateEmbedding } from './embeddings';
 import { logError } from './error-handler';
+import { chunkText, cleanText, extractText } from './text-chunk';
 import type { Database } from './db';
-
-// Chunk text into ~512 token pieces with 50-token overlap
-function chunkText(text: string, maxTokens = 512, overlapTokens = 50): string[] {
-  const maxChars = maxTokens * 4;
-  const overlapChars = overlapTokens * 4;
-  const chunks: string[] = [];
-  const paragraphs = text.split(/\n\n+/);
-  let current = '';
-  for (const para of paragraphs) {
-    if ((current + para).length > maxChars && current) {
-      chunks.push(current.trim());
-      current = current.slice(-overlapChars) + '\n\n' + para;
-    } else {
-      current = current ? current + '\n\n' + para : para;
-    }
-  }
-  if (current.trim()) chunks.push(current.trim());
-  return chunks.filter(c => c.length > 50);
-}
-
-// Extract text from buffer based on mimeType
-async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
-  if (mimeType === 'application/pdf' || mimeType.includes('pdf')) {
-    const pdfParse = await import('pdf-parse');
-    const parser = (pdfParse as any).default || pdfParse;
-    const result = await parser(buffer);
-    return result.text;
-  }
-  if (mimeType.includes('officedocument') || mimeType.includes('docx')) {
-    const mammoth = await import('mammoth');
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value;
-  }
-  // TXT / MD — direct
-  return buffer.toString('utf8');
-}
 
 export async function ingestDocument(db: Database, docId: string, buffer: Buffer, mimeType: string): Promise<void> {
   try {
     const text = await extractText(buffer, mimeType);
-    const cleaned = text.replace(/\f/g, '\n').replace(/[ \t]{3,}/g, '  ').trim();
+    const cleaned = cleanText(text);
     const chunks = chunkText(cleaned);
 
     for (let i = 0; i < chunks.length; i++) {

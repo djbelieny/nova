@@ -39,6 +39,7 @@ const COMMANDS: Record<string, Omit<RunSpec, "kind" | "args"> & { aliases?: stri
   doctor:    { file: "src/doctor.ts", description: "Health check + diagnostics" },
   providers: { file: "src/cli-manage.ts", description: "Manage AI models (list/add/remove/test/default)" },
   invite:    { file: "src/cli-manage.ts", description: "Create a pairing invite code" },
+  kb:        { file: "src/cli-kb.ts", description: "Manage the knowledge base (list/add/remove/search/reindex)" },
   voice:     { file: "src/voice-server.ts", description: "Start the voice-call server" },
   backup:    { file: "scripts/backup.ts", description: "Back up data, config, and .env" },
 };
