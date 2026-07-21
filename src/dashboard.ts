@@ -2016,6 +2016,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/schedules">Schedules</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/skills">Skills</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/knowledge">Knowledge</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/playbooks">Playbooks</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -2871,6 +2872,213 @@ export function renderKnowledgePage(): string {
   }
   document.getElementById('searchBtn').addEventListener('click', runSearch);
   document.getElementById('q').addEventListener('keydown', function(e){ if (e.key === 'Enter') runSearch(); });
+
+  load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
+// PLAYBOOKS PAGE
+// ============================================================
+
+export function renderPlaybooksPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Playbooks</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:660px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:1.4rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.4rem 0 .7rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1rem}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+  label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:block;margin-bottom:5px}
+  select,input[type=text],textarea{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.82rem;font-family:inherit;width:100%}
+  textarea{resize:vertical;min-height:70px;line-height:1.5}
+  .field{margin-bottom:12px}
+  .row{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .title{font-weight:600;flex:1;min-width:120px;font-size:.9rem;color:var(--indigo)}
+  .meta{font-size:.75rem;color:var(--dim)}
+  .tag{font-size:.68rem;padding:2px 8px;border-radius:5px;border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit}
+  .btn:hover{background:rgba(255,255,255,.10)}
+  .btn.danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(239,68,68,.1)}
+  .btn.primary{border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600}
+  .msg{margin:1rem 0;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .msg.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .empty{color:var(--dim);font-size:.85rem}
+  .scope-group{margin-bottom:1rem}
+  .scope-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin-bottom:6px}
+  .vars{font-size:.72rem;color:var(--dim);width:100%;margin-top:4px}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Playbooks</h1>
+  <p class="hint">Playbooks are reusable multi-agent SOPs. Author and manage them here — to <strong>run</strong> one, just say "run playbook &lt;name&gt;" in chat.</p>
+  <div id="msg" class="msg"></div>
+
+  <div class="controls" style="margin-top:0">
+    <button class="btn" id="seedBtn">Seed starter library</button>
+  </div>
+
+  <h2>Your Playbooks</h2>
+  <div id="list"><p class="empty">Loading…</p></div>
+
+  <h2>Create Playbook</h2>
+  <div class="card">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="name" placeholder="e.g. client-onboarding">
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <input type="text" id="description" placeholder="What this playbook does">
+    </div>
+    <div class="field">
+      <label>Scope</label>
+      <select id="scope">
+        <option value="personal">Personal</option>
+        <option value="team">Team</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Variables — one per line, name only. Suffix <code>*</code> for required.</label>
+      <textarea id="variables" placeholder="client*&#10;email*&#10;reason"></textarea>
+    </div>
+    <div class="field">
+      <label>Steps — one per line as <code>agent|phase|description</code>. Phase is prepare or execute.</label>
+      <textarea id="steps" placeholder="athena|prepare|Draft an onboarding brief for {{client}}.&#10;orion|execute|Send the welcome email to {{email}}."></textarea>
+    </div>
+    <button class="btn primary" id="createBtn">Create Playbook</button>
+  </div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
+  var msgEl = document.getElementById('msg');
+  var listEl = document.getElementById('list');
+
+  function showMsg(text, ok) {
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){msgEl.style.display='none';}, 4000);
+  }
+
+  function parseVariables(raw){
+    return (raw||'').split('\\n').map(function(l){return l.trim();}).filter(Boolean).map(function(l){
+      var required = /\\*\\s*$/.test(l);
+      var name = l.replace(/\\*\\s*$/, '').trim();
+      return { name: name, required: required };
+    }).filter(function(v){ return v.name; });
+  }
+  function parseSteps(raw){
+    return (raw||'').split('\\n').map(function(l){return l.trim();}).filter(Boolean).map(function(l){
+      var parts = l.split('|');
+      var agent = (parts[0]||'').trim();
+      var phase = (parts[1]||'').trim().toLowerCase();
+      var description = parts.slice(2).join('|').trim();
+      if (!description) { description = (parts[1]||'').trim() || agent; if (parts.length < 3) { phase = ''; } }
+      var step = { description: description };
+      if (agent) step.agent = agent;
+      if (phase === 'prepare' || phase === 'execute') step.phase = phase;
+      return step;
+    }).filter(function(s){ return s.description; });
+  }
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target;
+    if (!btn || !btn.getAttribute || !btn.classList.contains('action-delete')) return;
+    var id = btn.getAttribute('data-id');
+    var scope = btn.getAttribute('data-scope');
+    var name = btn.getAttribute('data-name') || 'this playbook';
+    if (!id) return;
+    if (!confirm('Delete "' + name + '"?')) return;
+    fetch(BASE + '/api/playbooks/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id, scope: scope }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){ if (data.error) { showMsg(data.error, false); } else { showMsg('Deleted', true); load(); } })
+      .catch(function(e){ showMsg(e.message || 'Delete failed', false); });
+  });
+
+  function varsLabel(pb){
+    return (pb.variables||[]).map(function(v){ return v.required ? v.name + '*' : v.name; }).join(', ');
+  }
+
+  function load(){
+    fetch(BASE + '/api/playbooks').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { listEl.innerHTML = '<p class="empty">'+esc(data.error)+'</p>'; return; }
+      var pbs = data.playbooks || [];
+      if (!pbs.length) { listEl.innerHTML = '<p class="empty">No playbooks yet. Seed the starter library or create one below.</p>'; return; }
+      var groups = { personal: [], team: [] };
+      pbs.forEach(function(p){ (groups[p.scope] || (groups[p.scope]=[])).push(p); });
+      var order = ['personal','team'];
+      var html = '';
+      order.forEach(function(sc){
+        var items = groups[sc];
+        if (!items || !items.length) return;
+        html += '<div class="scope-group"><div class="scope-label">'+esc(sc)+'</div>';
+        items.forEach(function(p){
+          var vars = varsLabel(p);
+          html += '<div class="row">';
+          html += '<span class="title">'+esc(p.name)+'</span>';
+          html += '<span class="tag">v'+esc(p.version)+'</span>';
+          html += '<span class="tag">'+esc(p.scope)+'</span>';
+          html += '<span class="meta">'+esc((p.steps||[]).length)+' steps</span>';
+          html += '<button class="btn danger action-delete" data-id="'+escAttr(p.id)+'" data-scope="'+escAttr(p.scope)+'" data-name="'+escAttr(p.name)+'">Delete</button>';
+          if (vars) html += '<div class="vars">vars: '+esc(vars)+'</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+      });
+      listEl.innerHTML = html;
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">'+esc(e.message)+'</p>'; });
+  }
+
+  document.getElementById('seedBtn').addEventListener('click', function(){
+    showMsg('Seeding…', true);
+    fetch(BASE + '/api/playbooks/seed', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { showMsg(data.error, false); return; }
+        showMsg('Added ' + (data.added||0) + ' starter playbook(s)', true);
+        load();
+      })
+      .catch(function(e){ showMsg(e.message || 'Seed failed', false); });
+  });
+
+  document.getElementById('createBtn').addEventListener('click', function(){
+    var name = document.getElementById('name').value.trim();
+    if (!name) { showMsg('Name is required', false); return; }
+    var body = {
+      name: name,
+      description: document.getElementById('description').value.trim(),
+      scope: document.getElementById('scope').value,
+      variables: parseVariables(document.getElementById('variables').value),
+      steps: parseSteps(document.getElementById('steps').value),
+    };
+    fetch(BASE + '/api/playbooks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error) { showMsg(data.error, false); return; }
+        showMsg('Saved ' + esc(data.name||name) + ' (v' + (data.version||1) + ')', true);
+        document.getElementById('name').value = '';
+        document.getElementById('description').value = '';
+        document.getElementById('variables').value = '';
+        document.getElementById('steps').value = '';
+        load();
+      })
+      .catch(function(e){ showMsg(e.message || 'Create failed', false); });
+  });
 
   load();
 </script>
@@ -4590,6 +4798,7 @@ export function renderDashboard(): string {
       <a href="/schedules" class="topbar-action">Schedules</a>
       <a href="/skills" class="topbar-action">Skills</a>
       <a href="/knowledge" class="topbar-action">Knowledge</a>
+      <a href="/playbooks" class="topbar-action">Playbooks</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -6496,6 +6705,17 @@ const server = Bun.serve({
       });
     }
 
+    // Playbooks page (all authenticated users)
+    if (path === "/playbooks") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderPlaybooksPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -6647,6 +6867,59 @@ const server = Bun.serve({
         return jsonResponse({ hits: await searchKnowledge(supabase, q, { userId, agentSlug: agent || undefined, limit: 8, threshold: 0.3 }) });
       } catch (e: any) {
         return jsonResponse({ hits: [], error: e.message });
+      }
+    }
+    // ── Playbooks (SOPs) ──
+    if (path === "/api/playbooks" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        return jsonResponse({ playbooks: supabase.listPlaybooksVisible(userId) });
+      } catch (e: any) {
+        return jsonResponse({ playbooks: [], error: e.message });
+      }
+    }
+    if (path === "/api/playbooks" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.name) return jsonResponse({ error: "name required" }, 400);
+        const result = supabase.insertPlaybook({
+          scope: b.scope === "team" ? "team" : "personal",
+          userId,
+          name: String(b.name),
+          description: b.description ? String(b.description) : undefined,
+          variables: Array.isArray(b.variables) ? b.variables : [],
+          steps: Array.isArray(b.steps) ? b.steps : [],
+        });
+        return jsonResponse(result);
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/playbooks/seed" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const { SEED_PLAYBOOKS } = await import("./playbooks.ts");
+        let count = 0;
+        for (const s of SEED_PLAYBOOKS) {
+          if (supabase.findPlaybook(userId, s.name)) continue;
+          supabase.insertPlaybook({ ...s, scope: "personal", userId });
+          count++;
+        }
+        return jsonResponse({ success: true, added: count });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/playbooks/delete" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id || !b.scope) return jsonResponse({ error: "id and scope required" }, 400);
+        supabase.deletePlaybook(String(b.scope) as "personal" | "team", userId, String(b.id));
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
       }
     }
     if (path === "/api/ledger") {
