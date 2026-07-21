@@ -369,6 +369,66 @@ function applyKbSchema(db: BunDatabase): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_kb_chunks_scope ON kb_chunks(scope, agent_slug)`);
 }
 
+/**
+ * Playbooks (business SOPs as parameterized, versioned workflows). Created in both
+ * shared.db (team scope) and each per-user db (personal scope); facade routes by scope.
+ */
+function applyPlaybookSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS playbooks (
+      id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      scope       TEXT NOT NULL DEFAULT 'personal',
+      user_id     TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      description TEXT,
+      version     INTEGER NOT NULL DEFAULT 1,
+      variables   TEXT NOT NULL DEFAULT '[]',
+      steps       TEXT NOT NULL,
+      enabled     INTEGER DEFAULT 1,
+      created_at  TEXT DEFAULT (datetime('now')),
+      updated_at  TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_playbooks_scope ON playbooks(scope, enabled)`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_playbooks_name ON playbooks(scope, user_id, name, version)`);
+}
+
+export type PlaybookScope = 'personal' | 'team';
+
+export interface PlaybookVar { name: string; required?: boolean; default?: string; description?: string; }
+export interface PlaybookStep { agent?: string; phase?: 'prepare' | 'execute'; description: string; dependsOn?: number[]; reviewAgent?: string; }
+
+export interface Playbook {
+  id: string;
+  scope: PlaybookScope;
+  userId: string;
+  name: string;
+  description: string | null;
+  version: number;
+  variables: PlaybookVar[];
+  steps: PlaybookStep[];
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface PlaybookInput {
+  scope: PlaybookScope;
+  userId: string;
+  name: string;
+  description?: string | null;
+  variables: PlaybookVar[];
+  steps: PlaybookStep[];
+}
+
+function mapPlaybook(r: any): Playbook {
+  return {
+    id: r.id, scope: r.scope, userId: r.user_id, name: r.name, description: r.description ?? null,
+    version: r.version, variables: parseJson(r.variables, []), steps: parseJson(r.steps, []),
+    enabled: !!r.enabled, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
 export type KbScope = 'personal' | 'team' | 'agent';
 
 export interface KbDocInput {
@@ -766,6 +826,8 @@ class SharedDatabase {
 
     // Nova Knowledge (RAG) — team + agent scopes live in shared.db
     applyKbSchema(this.db);
+    // Playbooks — team scope lives in shared.db
+    applyPlaybookSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -1545,6 +1607,8 @@ class UserDatabase {
 
     // Nova Knowledge (RAG) — personal scope lives in the per-user db
     applyKbSchema(this.db);
+    // Playbooks — personal scope lives in the per-user db
+    applyPlaybookSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -4985,6 +5049,70 @@ export class Database {
       hits.push(...this.searchKbHandle(this.shared.db, blob, `c.scope = 'team'`, [], limit));
     }
     return hits.sort((a, b) => b.similarity - a.similarity).slice(0, limit);
+  }
+
+  // ============================================================
+  // Playbooks — personal → per-user db, team → shared.db
+  // ============================================================
+
+  private pbHandle(scope: string, userId: string): BunDatabase {
+    return scope === 'personal' ? this.getUserDb(userId).db : this.shared.db;
+  }
+
+  /** Insert a playbook at version 1 (or the next version if the name already exists in scope). */
+  insertPlaybook(input: PlaybookInput): Playbook {
+    const h = this.pbHandle(input.scope, input.userId);
+    const prev = h.query(`SELECT MAX(version) AS v FROM playbooks WHERE scope = ? AND user_id = ? AND name = ?`)
+      .get(input.scope, input.userId, input.name) as any;
+    const version = (prev?.v ?? 0) + 1;
+    const id = crypto.randomUUID();
+    h.run(
+      `INSERT INTO playbooks (id, scope, user_id, name, description, version, variables, steps)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, input.scope, input.userId, input.name, input.description ?? null, version,
+       JSON.stringify(input.variables ?? []), JSON.stringify(input.steps ?? [])]
+    );
+    return this.getPlaybookById(input.scope, input.userId, id)!;
+  }
+
+  getPlaybookById(scope: string, userId: string, id: string): Playbook | null {
+    const row = this.pbHandle(scope, userId).query(`SELECT * FROM playbooks WHERE id = ?`).get(id) as any;
+    return row ? mapPlaybook(row) : null;
+  }
+
+  /** Latest enabled version of a playbook by name within a scope. Team scope ignores user_id (author tag only). */
+  getPlaybookByName(scope: string, userId: string, name: string): Playbook | null {
+    const h = this.pbHandle(scope, userId);
+    const row = scope === 'personal'
+      ? h.query(`SELECT * FROM playbooks WHERE scope = 'personal' AND user_id = ? AND name = ? AND enabled = 1 ORDER BY version DESC LIMIT 1`).get(userId, name) as any
+      : h.query(`SELECT * FROM playbooks WHERE scope = ? AND name = ? AND enabled = 1 ORDER BY version DESC LIMIT 1`).get(scope, name) as any;
+    return row ? mapPlaybook(row) : null;
+  }
+
+  /** All playbooks a user can see: their personal ones + team ones (latest version each). */
+  listPlaybooksVisible(userId: string): Playbook[] {
+    const personal = (this.getUserDb(userId).db
+      .query(`SELECT * FROM playbooks WHERE scope = 'personal' AND user_id = ? AND enabled = 1 ORDER BY name, version DESC`)
+      .all(userId) as any[]).map(mapPlaybook);
+    const team = (this.shared.db
+      .query(`SELECT * FROM playbooks WHERE scope = 'team' AND enabled = 1 ORDER BY name, version DESC`)
+      .all() as any[]).map(mapPlaybook);
+    // Keep only the highest version per (scope,name)
+    const seen = new Set<string>();
+    return [...personal, ...team].filter(p => {
+      const key = `${p.scope}:${p.name}`;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+  }
+
+  /** Find a playbook by name across the user's visible scopes (personal first, then team). */
+  findPlaybook(userId: string, name: string): Playbook | null {
+    return this.getPlaybookByName('personal', userId, name) ?? this.getPlaybookByName('team', userId, name);
+  }
+
+  deletePlaybook(scope: string, userId: string, id: string): void {
+    this.pbHandle(scope, userId).run(`DELETE FROM playbooks WHERE id = ?`, [id]);
   }
 }
 

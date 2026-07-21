@@ -30,7 +30,8 @@ import {
 } from "./memory.ts";
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
-import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, recoverPendingApprovals } from "./orchestrator.ts";
+import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, recoverPendingApprovals, runPlan } from "./orchestrator.ts";
+import { renderPlaybook, describePlaybook, SEED_PLAYBOOKS } from "./playbooks.ts";
 import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
 import {
   buildWelcomeMessage,
@@ -1858,6 +1859,46 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
     if (text.trim().toLowerCase() === "/team") {
       await ctx.reply(buildTeamMessage(getAllAgents()), { parse_mode: "Markdown" });
       return;
+    }
+
+    // /playbooks — list; /playbook seed — load starters; /playbook run <name> [k=v] — run one.
+    {
+      const lc = text.trim().toLowerCase();
+      if (lc === "/playbooks" || lc === "/playbook" || lc === "/playbook list") {
+        const pbs = supabase.listPlaybooksVisible(user.id);
+        if (!pbs.length) {
+          await ctx.reply("📋 *No playbooks yet.*\n\nPlaybooks are reusable SOPs — author a process once, run it many times. Load the starter library with `/playbook seed`, then run one with `/playbook run <name> key=value`.", { parse_mode: "Markdown" });
+          return;
+        }
+        const lines = ["📋 *Playbooks*", "", ...pbs.map(p => `• ${describePlaybook(p)}`), "", "_Run one:_ `/playbook run <name> key=value`"];
+        await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+        return;
+      }
+      if (lc === "/playbook seed") {
+        let n = 0;
+        for (const s of SEED_PLAYBOOKS) {
+          if (!supabase.findPlaybook(user.id, s.name)) { supabase.insertPlaybook({ ...s, scope: "personal", userId: user.id }); n++; }
+        }
+        await ctx.reply(`✓ Loaded ${n} starter playbook${n === 1 ? "" : "s"}. Send /playbooks to see them.`);
+        return;
+      }
+      if (lc.startsWith("/playbook run ") || /\brun\s+(?:the\s+)?[\w-]+\s+playbook\b/i.test(text) || /\brun\s+playbook\s+[\w-]+/i.test(text)) {
+        const { parsePlaybookInvocation } = await import("./playbooks.ts");
+        const { name, vars } = parsePlaybookInvocation(text);
+        if (!name) { await ctx.reply("Which playbook? Try `/playbook run <name> key=value`.", { parse_mode: "Markdown" }); return; }
+        const found = supabase.findPlaybook(user.id, name);
+        if (!found) { await ctx.reply(`No playbook named *${name}*. Send /playbooks to list, or /playbook seed for starters.`, { parse_mode: "Markdown" }); return; }
+        const { plan, missing, errors } = renderPlaybook(found, vars);
+        if (errors.length) { await ctx.reply(`Can't run it: ${errors.join("; ")}`); return; }
+        if (missing.length || !plan) {
+          await ctx.reply(`*${found.name}* needs: ${missing.map(m => `\`${m}\``).join(", ")}\n\nExample: \`/playbook run ${found.name} ${missing.map(m => `${m}=…`).join(" ")}\``, { parse_mode: "Markdown" });
+          return;
+        }
+        await saveMessage("user", `[Playbook: ${found.name}]`, user.id, undefined, msg.channelType);
+        runPlan(ctx, `Playbook: ${found.name}`, user, supabase, plan, getSessionKey(user.id, msg.channelType));
+        await ctx.reply(`▶️ Running playbook *${found.name}* (${plan.subtasks.length} steps)…`, { parse_mode: "Markdown" });
+        return;
+      }
     }
 
     // /knowledge — list the documents in your knowledge base, grouped by scope.

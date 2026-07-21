@@ -1528,6 +1528,24 @@ async function deliverWorkspaceFiles(
 // Phase 2: execute (consequential) → run on approval
 // ============================================================
 
+/**
+ * Execute a pre-built ExecutionPlan (e.g. rendered from a playbook) through the normal
+ * complex-task path — decomposition is skipped, but two-phase prepare→approve→execute,
+ * artifacts, and the approval gate all apply exactly as usual.
+ */
+export function runPlan(
+  ctx: OrchestratorContext,
+  text: string,
+  user: any,
+  supabase: Database | null,
+  plan: ExecutionPlan,
+  sessionKey?: string
+): void {
+  const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  routeComplex(ctx, text, user, supabase, plan, undefined, requestId, undefined, undefined, sessionKey)
+    .catch((err) => logError(err, "orchestrator:runPlan", user?.id));
+}
+
 async function routeComplex(
   ctx: OrchestratorContext,
   text: string,
