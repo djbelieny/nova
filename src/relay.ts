@@ -86,6 +86,7 @@ import { searchZoomRecordings, processRecordingById, type ZoomMeeting } from "..
 import { startHealthMonitor } from "../services/health-monitor.ts";
 import { startDevTaskDispatcher } from "../services/dev-task-dispatcher.ts";
 import { startKbWatcher } from "../services/kb-watch.ts";
+import { startAutomationPoller } from "../services/automation-poller.ts";
 import { checkCliAuth } from "./cli-auth.ts";
 import { startCsRouter } from './cs-router.ts';
 
@@ -1899,6 +1900,21 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
         await ctx.reply(`▶️ Running playbook *${found.name}* (${plan.subtasks.length} steps)…`, { parse_mode: "Markdown" });
         return;
       }
+    }
+
+    // /automations — list your event-driven automations.
+    if (text.trim().toLowerCase() === "/automations" || text.trim().toLowerCase() === "/automation") {
+      const autos = supabase.listAutomations(user.id);
+      if (!autos.length) {
+        await ctx.reply("⚡ *No automations yet.*\n\nAutomations run a workflow when an event arrives (a webhook, a metric crossing a threshold). Create one from a terminal: `nova automation add <name> --agent <slug> --template \"…\"` — or `--playbook <name>`. Every fire still passes the approval gate.", { parse_mode: "Markdown" });
+        return;
+      }
+      const lines = ["⚡ *Automations*", "", ...autos.map(a => {
+        const action = a.actionType === "playbook" ? `playbook:${a.actionRef}` : `agent:${a.actionRef}`;
+        return `${a.enabled ? "●" : "○"} *${a.name}* — ${a.sourceType} → ${action} (fired ${a.fireCount}×)`;
+      })];
+      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+      return;
     }
 
     // /knowledge — list the documents in your knowledge base, grouped by scope.
@@ -4176,6 +4192,10 @@ startWebhookServer(
   (userId, transcript, meta) => processCallTranscript(userId, transcript, meta),
 );
 console.log(`[webhook] Ingestion server on port ${WEBHOOK_PORT}`);
+
+// Automation poller — drives non-push automation sources (metric probes today)
+startAutomationPoller(supabase, async (userId, agentSlug, taskDescription) =>
+  dispatchAutonomousTask(userId, agentSlug, taskDescription, "automation"));
 
 // ============================================================
 // START

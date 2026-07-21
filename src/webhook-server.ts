@@ -223,6 +223,30 @@ export function startWebhookServer(
         return new Response(JSON.stringify({ status: "ok", ...result }), { headers: { "Content-Type": "application/json" } });
       }
 
+      // POST /automation/:userId/:automationId — event → condition → workflow (automation engine)
+      if (req.method === "POST" && pathParts[0] === "automation" && pathParts.length >= 3) {
+        const userId = pathParts[1];
+        const automationId = pathParts[2];
+        const automation = db.getAutomationById(automationId);
+        if (!automation || automation.userId !== userId || !automation.enabled) {
+          return new Response(JSON.stringify({ error: "automation not found or disabled" }), { status: 404, headers: { "Content-Type": "application/json" } });
+        }
+        const bodyText = await req.text();
+        const secret = automation.secret || (automation.sourceConfig?.secret as string) || "";
+        const signatureHeader = req.headers.get("X-Nova-Signature") || req.headers.get("x-nova-signature");
+        if (secret && !verifySignature(bodyText, secret, signatureHeader)) {
+          emit({ type: "webhook.triggered", level: "warn", userId, data: { message: `Automation signature failed: ${automation.name}`, module: "automation" } });
+          return new Response(JSON.stringify({ error: "invalid signature" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        }
+        let event: Record<string, any> = {};
+        try { event = JSON.parse(bodyText); } catch { /* non-JSON → empty event */ }
+
+        const { dispatchAutomation } = await import("./automation-engine.ts");
+        const outcome = await dispatchAutomation(db, automation, event, dispatch).catch((e) => { console.error("[automation]", e); return { fired: false, reason: "error" }; });
+        emit({ type: "webhook.triggered", level: "info", userId, data: { message: `Automation ${automation.name}: ${outcome.fired ? "fired" : "skipped (" + (outcome.reason || "") + ")"}`, module: "automation" } });
+        return new Response(JSON.stringify({ status: "ok", ...outcome }), { headers: { "Content-Type": "application/json" } });
+      }
+
       // Health check
       if (req.method === "GET" && url.pathname === "/health") {
         return new Response(JSON.stringify({ status: "ok", service: "nova-webhooks" }), {
