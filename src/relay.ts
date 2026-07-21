@@ -87,6 +87,7 @@ import { startHealthMonitor } from "../services/health-monitor.ts";
 import { startDevTaskDispatcher } from "../services/dev-task-dispatcher.ts";
 import { startKbWatcher } from "../services/kb-watch.ts";
 import { startAutomationPoller } from "../services/automation-poller.ts";
+import { startRoiDigest } from "../services/roi-digest.ts";
 import { checkCliAuth } from "./cli-auth.ts";
 import { startCsRouter } from './cs-router.ts';
 
@@ -1929,6 +1930,15 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
         await ctx.reply(n ? `▶️ Resumed ${n} process(es) waiting on \`${sig[1]}\`.` : `No processes were waiting on \`${sig[1]}\`.`, { parse_mode: "Markdown" });
         return;
       }
+    }
+
+    // /roi — business value delivered (tasks automated, hours saved, $ vs cost).
+    if (text.trim().toLowerCase() === "/roi" || text.trim().toLowerCase().startsWith("/roi ")) {
+      const m = text.trim().match(/\/roi\s+(\d+)/);
+      const days = m ? Number(m[1]) : 7;
+      const { rollupRoi, formatRoiDigest } = await import("./roi.ts");
+      await ctx.reply(formatRoiDigest(rollupRoi(supabase, user.id, days)), { parse_mode: "Markdown" });
+      return;
     }
 
     // /policies — list your compliance policies (restrictive-only guardrails).
@@ -4273,6 +4283,14 @@ console.log(`[webhook] Ingestion server on port ${WEBHOOK_PORT}`);
 // Automation poller — drives non-push automation sources (metric probes today)
 startAutomationPoller(supabase, async (userId, agentSlug, taskDescription) =>
   dispatchAutonomousTask(userId, agentSlug, taskDescription, "automation"));
+
+// Weekly ROI digest — DMs each user the value delivered
+startRoiDigest(supabase, async (userId, message) => {
+  const u = supabase.getUserById(userId);
+  if (u?.telegram_id && telegramAdapter) {
+    await telegramAdapter.getBot()?.api.sendMessage(u.telegram_id, message, { parse_mode: "Markdown" }).catch(() => {});
+  }
+});
 
 // ============================================================
 // START
