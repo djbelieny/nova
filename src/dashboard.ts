@@ -2020,6 +2020,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/automations">Automations</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/processes">Processes</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/extraction">Extraction</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/policies">Policies</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -3878,6 +3879,320 @@ export function renderExtractionPage(): string {
 }
 
 // ============================================================
+// POLICIES PAGE (compliance layer — restrictive-only)
+// ============================================================
+
+export function renderPoliciesPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Policies</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:1.4rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.4rem 0 .7rem}
+  h3{font-size:.78rem;font-weight:600;color:var(--text);margin-bottom:.6rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1rem}
+  .notice{background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.3);color:var(--text);border-radius:9px;padding:11px 14px;font-size:.8rem;line-height:1.5;margin-bottom:1.2rem}
+  .notice strong{color:var(--yellow)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:block;margin-bottom:5px}
+  select,input[type=text],input[type=number]{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.82rem;font-family:inherit;width:100%}
+  .field{margin-bottom:12px}
+  .checks{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:5px}
+  .checks label{display:inline-flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:.82rem;color:var(--text);margin:0;cursor:pointer}
+  .checks input{width:auto}
+  .row{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:10px}
+  .rowhead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .title{font-weight:600;flex:1;min-width:120px;font-size:.88rem}
+  .tag{padding:2px 8px;border-radius:5px;font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;background:rgba(255,255,255,.07);color:var(--dim);border:1px solid var(--border)}
+  .tag.org{background:rgba(99,102,241,.18);color:var(--indigo);border-color:rgba(99,102,241,.3)}
+  .tag.department{background:rgba(245,158,11,.14);color:var(--yellow);border-color:rgba(245,158,11,.3)}
+  .tag.off{opacity:.55}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block}
+  .btn:hover{background:rgba(255,255,255,.10)}
+  .btn.danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(239,68,68,.1)}
+  .btn.primary{border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600}
+  .btn.sm{padding:3px 10px;font-size:.72rem}
+  .toggle{padding:3px 12px;font-size:.72rem;border-radius:20px}
+  .toggle.on{border-color:rgba(34,197,94,.4);color:var(--green);background:rgba(34,197,94,.10)}
+  .toggle.off{border-color:var(--border);color:var(--dim)}
+  .msg{margin:1rem 0;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .msg.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .empty{color:var(--dim);font-size:.85rem}
+  .group-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:1rem 0 .5rem}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Policies</h1>
+  <p class="hint">The compliance layer. Policies add guardrails to what agents do — spend caps, approval requirements, and content checks — scoped to the whole org, a department, or a single user.</p>
+  <div class="notice"><strong>Policies are restrictive-only.</strong> They add friction (require approval, block, or warn) but never grant more autonomy than the earned-autonomy ladder allows. With no policies defined, behavior is unchanged.</div>
+  <div id="msg" class="msg"></div>
+
+  <h2>Active Policies</h2>
+  <div id="list"><p class="empty">Loading…</p></div>
+
+  <h2>Create Policy</h2>
+  <div class="card">
+    <div class="cols">
+      <div class="field">
+        <label>Kind</label>
+        <select id="kind">
+          <option value="spend_cap">Spend cap</option>
+          <option value="approval_matrix">Approval matrix</option>
+          <option value="content_check">Content check</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Scope</label>
+        <select id="scope">
+          <option value="org">Org</option>
+          <option value="department">Department</option>
+          <option value="user">User</option>
+        </select>
+      </div>
+    </div>
+    <div class="field" id="scopeRefField" style="display:none">
+      <label id="scopeRefLabel">Scope reference</label>
+      <input type="text" id="scopeRef" placeholder="e.g. marketing or a user id">
+    </div>
+
+    <div id="form_spend_cap" class="kindform">
+      <div class="cols">
+        <div class="field">
+          <label>Cap (USD)</label>
+          <input type="number" id="sc_cap" min="0" step="1" placeholder="500">
+        </div>
+        <div class="field">
+          <label>Period</label>
+          <select id="sc_period"><option value="day">Per day</option><option value="month" selected>Per month</option></select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Department (optional)</label>
+        <input type="text" id="sc_dept" placeholder="e.g. marketing">
+      </div>
+    </div>
+
+    <div id="form_approval_matrix" class="kindform" style="display:none">
+      <div class="field">
+        <label>Action type (optional)</label>
+        <input type="text" id="am_action" placeholder="e.g. email.send">
+      </div>
+      <div class="field">
+        <label>Approver user id(s) — comma separated</label>
+        <input type="text" id="am_approvers" placeholder="e.g. user_123, user_456">
+      </div>
+      <div class="cols">
+        <div class="field">
+          <label>Min approver role (optional)</label>
+          <input type="text" id="am_role" placeholder="e.g. manager">
+        </div>
+        <div class="field">
+          <label>Escalate after (minutes, optional)</label>
+          <input type="number" id="am_escalate" min="0" step="1" placeholder="60">
+        </div>
+      </div>
+      <div class="field">
+        <label>Department (optional)</label>
+        <input type="text" id="am_dept" placeholder="e.g. marketing">
+      </div>
+    </div>
+
+    <div id="form_content_check" class="kindform" style="display:none">
+      <div class="field">
+        <label>Checks</label>
+        <div class="checks">
+          <label><input type="checkbox" class="cc_check" value="pii" checked> PII</label>
+          <label><input type="checkbox" class="cc_check" value="profanity"> Profanity</label>
+          <label><input type="checkbox" class="cc_check" value="brand"> Brand</label>
+          <label><input type="checkbox" class="cc_check" value="claims"> Claims</label>
+        </div>
+      </div>
+      <div class="cols">
+        <div class="field">
+          <label>On fail</label>
+          <select id="cc_onfail"><option value="block">Block</option><option value="warn">Warn</option></select>
+        </div>
+        <div class="field">
+          <label>Department (optional)</label>
+          <input type="text" id="cc_dept" placeholder="e.g. marketing">
+        </div>
+      </div>
+    </div>
+
+    <button class="btn primary" id="createBtn">Create Policy</button>
+  </div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  var msgEl = document.getElementById('msg');
+  var listEl = document.getElementById('list');
+  var kindEl = document.getElementById('kind');
+  var scopeEl = document.getElementById('scope');
+
+  function showMsg(text, ok){
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){msgEl.style.display='none';}, 4000);
+  }
+
+  var KIND_LABEL = { spend_cap: 'Spend cap', approval_matrix: 'Approval matrix', content_check: 'Content check' };
+
+  function describe(p){
+    var c = p.config || {};
+    if (p.kind === 'spend_cap') {
+      return 'cap $' + (c.capUsd != null ? c.capUsd : '?') + '/' + (c.period || 'month') + (c.department ? ' for ' + c.department : '');
+    }
+    if (p.kind === 'approval_matrix') {
+      var who = Array.isArray(c.approvers) && c.approvers.length ? c.approvers.join(', ') : (c.minApproverRole || 'any approver');
+      var s = 'approval for ' + (c.actionType || 'all actions') + ' by ' + who;
+      if (c.escalateAfterMin) s += ' (escalate after ' + c.escalateAfterMin + 'm)';
+      if (c.department) s += ' — ' + c.department;
+      return s;
+    }
+    if (p.kind === 'content_check') {
+      var checks = Array.isArray(c.checks) ? c.checks : [];
+      return 'check [' + checks.join(', ') + '] → ' + (c.onFail || 'warn') + (c.department ? ' for ' + c.department : '');
+    }
+    return JSON.stringify(c);
+  }
+
+  function scopeLabel(p){
+    var s = p.scope || 'org';
+    return s + (p.scopeRef ? ':' + p.scopeRef : '');
+  }
+
+  function renderList(policies){
+    if (!policies.length) { listEl.innerHTML = '<p class="empty">No policies defined. Agent behavior follows the earned-autonomy ladder unchanged.</p>'; return; }
+    var order = ['spend_cap','approval_matrix','content_check'];
+    var html = '';
+    order.forEach(function(kind){
+      var group = policies.filter(function(p){ return p.kind === kind; });
+      if (!group.length) return;
+      html += '<div class="group-title">' + esc(KIND_LABEL[kind] || kind) + '</div>';
+      group.forEach(function(p){
+        var scope = p.scope || 'org';
+        html += '<div class="row">';
+        html += '<div class="rowhead">';
+        html += '<span class="title">' + esc(describe(p)) + '</span>';
+        html += '<span class="tag ' + esc(scope) + (p.enabled ? '' : ' off') + '">' + esc(scopeLabel(p)) + '</span>';
+        html += '<button class="btn sm toggle ' + (p.enabled ? 'on' : 'off') + ' action-toggle" data-id="' + esc(p.id) + '" data-enabled="' + (p.enabled ? '1' : '0') + '">' + (p.enabled ? 'On' : 'Off') + '</button>';
+        html += '<button class="btn sm danger action-del" data-id="' + esc(p.id) + '">Delete</button>';
+        html += '</div></div>';
+      });
+    });
+    listEl.innerHTML = html;
+  }
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target;
+    if (!btn || !btn.getAttribute) return;
+    var id = btn.getAttribute('data-id');
+    if (!id) return;
+    if (btn.classList.contains('action-toggle')) {
+      var enabled = btn.getAttribute('data-enabled') === '1';
+      fetch(BASE + '/api/policies/toggle', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id, enabled: !enabled }) })
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d.error) { showMsg(d.error, false); } else { load(); } })
+        .catch(function(err){ showMsg(err.message || 'Toggle failed', false); });
+    } else if (btn.classList.contains('action-del')) {
+      if (!confirm('Delete this policy?')) return;
+      fetch(BASE + '/api/policies/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ id: id }) })
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d.error) { showMsg(d.error, false); } else { showMsg('Deleted', true); load(); } })
+        .catch(function(err){ showMsg(err.message || 'Delete failed', false); });
+    }
+  });
+
+  function syncForms(){
+    var kind = kindEl.value;
+    ['spend_cap','approval_matrix','content_check'].forEach(function(k){
+      document.getElementById('form_' + k).style.display = (k === kind) ? 'block' : 'none';
+    });
+  }
+  function syncScope(){
+    var scope = scopeEl.value;
+    var field = document.getElementById('scopeRefField');
+    var label = document.getElementById('scopeRefLabel');
+    if (scope === 'org') { field.style.display = 'none'; }
+    else { field.style.display = 'block'; label.textContent = (scope === 'department') ? 'Department name' : 'User id'; }
+  }
+  kindEl.addEventListener('change', syncForms);
+  scopeEl.addEventListener('change', syncScope);
+
+  function buildConfig(kind){
+    if (kind === 'spend_cap') {
+      var cap = parseFloat(document.getElementById('sc_cap').value);
+      if (!(cap >= 0)) { showMsg('Cap must be a number', false); return null; }
+      var cfg = { capUsd: cap, period: document.getElementById('sc_period').value };
+      var dept = document.getElementById('sc_dept').value.trim();
+      if (dept) cfg.department = dept;
+      return cfg;
+    }
+    if (kind === 'approval_matrix') {
+      var approvers = document.getElementById('am_approvers').value.split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+      var cfg = { approvers: approvers };
+      var action = document.getElementById('am_action').value.trim();
+      if (action) cfg.actionType = action;
+      var role = document.getElementById('am_role').value.trim();
+      if (role) cfg.minApproverRole = role;
+      var esc = parseInt(document.getElementById('am_escalate').value, 10);
+      if (Number.isFinite(esc) && esc > 0) cfg.escalateAfterMin = esc;
+      var dept = document.getElementById('am_dept').value.trim();
+      if (dept) cfg.department = dept;
+      if (!approvers.length && !role) { showMsg('Add an approver id or a min role', false); return null; }
+      return cfg;
+    }
+    if (kind === 'content_check') {
+      var checks = Array.prototype.slice.call(document.querySelectorAll('.cc_check:checked')).map(function(el){ return el.value; });
+      if (!checks.length) { showMsg('Select at least one check', false); return null; }
+      var cfg = { checks: checks, onFail: document.getElementById('cc_onfail').value };
+      var dept = document.getElementById('cc_dept').value.trim();
+      if (dept) cfg.department = dept;
+      return cfg;
+    }
+    return null;
+  }
+
+  document.getElementById('createBtn').addEventListener('click', function(){
+    var kind = kindEl.value;
+    var config = buildConfig(kind);
+    if (!config) return;
+    var scope = scopeEl.value;
+    var scopeRef = (scope === 'org') ? null : (document.getElementById('scopeRef').value.trim() || null);
+    fetch(BASE + '/api/policies', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ scope: scope, scopeRef: scopeRef, kind: kind, config: config }) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ if (d.error) { showMsg(d.error, false); return; } showMsg('Policy created', true); load(); })
+      .catch(function(err){ showMsg(err.message || 'Create failed', false); });
+  });
+
+  function load(){
+    fetch(BASE + '/api/policies').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error && !data.policies) { listEl.innerHTML = '<p class="empty">' + esc(data.error) + '</p>'; return; }
+      renderList(data.policies || []);
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+
+  syncForms();
+  syncScope();
+  load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
 // TASK HISTORY PAGE
 // ============================================================
 
@@ -5594,6 +5909,7 @@ export function renderDashboard(): string {
       <a href="/automations" class="topbar-action">Automations</a>
       <a href="/processes" class="topbar-action">Processes</a>
       <a href="/extraction" class="topbar-action">Extraction</a>
+      <a href="/policies" class="topbar-action">Policies</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -7544,6 +7860,17 @@ const server = Bun.serve({
       });
     }
 
+    // Policies page (all authenticated users)
+    if (path === "/policies") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderPoliciesPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -7941,6 +8268,54 @@ const server = Bun.serve({
           callLLM,
         });
         return jsonResponse(result);
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    // ── Compliance policies (restrictive-only) ──
+    if (path === "/api/policies" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        return jsonResponse({ policies: supabase.listPolicies(userId) });
+      } catch (e: any) {
+        return jsonResponse({ policies: [], error: e.message });
+      }
+    }
+    if (path === "/api/policies" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.kind) return jsonResponse({ error: "kind required" }, 400);
+        if (!b.config || typeof b.config !== "object") return jsonResponse({ error: "config required" }, 400);
+        return jsonResponse(supabase.insertPolicy({
+          userId,
+          scope: b.scope ?? undefined,
+          scopeRef: b.scopeRef ?? null,
+          kind: String(b.kind),
+          config: b.config,
+        }));
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/policies/toggle" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        supabase.setPolicyEnabled(userId, String(b.id), !!b.enabled);
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/policies/delete" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        supabase.deletePolicy(userId, String(b.id));
+        return jsonResponse({ success: true });
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 400);
       }
