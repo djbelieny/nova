@@ -632,9 +632,19 @@ export async function executePhase(
           .join("\n\n");
 
         // Add artifact context for execute-phase subtasks
-        const fullDepContext = phase === "execute"
+        const depAndArtifacts = phase === "execute"
           ? (depContext ? depContext + artifactContext : artifactContext)
           : depContext;
+
+        // Nova Knowledge auto-inject — scoped to this agent (personal + team + this agent's pack)
+        let knowledgeContext = "";
+        if (db && user?.id) {
+          try {
+            const { getKnowledgeContext } = await import("./knowledge.ts");
+            knowledgeContext = await getKnowledgeContext(db, subtask.description, user.id, { agentSlug });
+          } catch { /* knowledge is best-effort */ }
+        }
+        const fullDepContext = [depAndArtifacts, knowledgeContext].filter(Boolean).join("\n\n");
 
         const { userPrompt: baseUserPrompt } = _buildPrompt(
           user,

@@ -326,6 +326,109 @@ function openDb(dbPath: string): BunDatabase {
   return db;
 }
 
+/**
+ * Nova Knowledge (RAG) schema — created in BOTH shared.db (team/agent scopes)
+ * and each per-user db (personal scope). Same table shape in both; the facade
+ * routes reads/writes to the right handle by scope. Mirrors the cs_knowledge
+ * pattern: plain BLOB embedding + vec_distance_cosine, no vec0 virtual table.
+ */
+function applyKbSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS kb_docs (
+      id            TEXT PRIMARY KEY,
+      scope         TEXT NOT NULL,
+      agent_slug    TEXT,
+      user_id       TEXT NOT NULL,
+      title         TEXT NOT NULL,
+      source        TEXT NOT NULL,
+      source_type   TEXT NOT NULL,
+      sha256        TEXT NOT NULL,
+      status        TEXT NOT NULL DEFAULT 'processing',
+      chunk_count   INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_kb_docs_scope ON kb_docs(scope, agent_slug)`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_kb_docs_sha ON kb_docs(scope, agent_slug, user_id, sha256)`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS kb_chunks (
+      id          TEXT PRIMARY KEY,
+      doc_id      TEXT NOT NULL REFERENCES kb_docs(id) ON DELETE CASCADE,
+      scope       TEXT NOT NULL,
+      agent_slug  TEXT,
+      user_id     TEXT NOT NULL,
+      ordinal     INTEGER NOT NULL,
+      text        TEXT NOT NULL,
+      embedding   BLOB NOT NULL,
+      token_count INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_kb_chunks_scope ON kb_chunks(scope, agent_slug)`);
+}
+
+export type KbScope = 'personal' | 'team' | 'agent';
+
+export interface KbDocInput {
+  id: string;
+  scope: KbScope;
+  agentSlug?: string | null;
+  userId: string;
+  title: string;
+  source: string;
+  sourceType: string;
+  sha256: string;
+}
+
+export interface KbDoc {
+  id: string;
+  scope: KbScope;
+  agentSlug: string | null;
+  userId: string;
+  title: string;
+  source: string;
+  sourceType: string;
+  sha256: string;
+  status: string;
+  chunkCount: number;
+  errorMessage: string | null;
+  createdAt: number;
+}
+
+export interface KbChunkInput {
+  id: string;
+  docId: string;
+  scope: KbScope;
+  agentSlug?: string | null;
+  userId: string;
+  ordinal: number;
+  text: string;
+  embedding: Float32Array;
+  tokenCount: number;
+}
+
+export interface KbChunkHit {
+  id: string;
+  docId: string;
+  text: string;
+  similarity: number;
+  scope: string;
+  agentSlug: string | null;
+  title: string;
+  source: string;
+}
+
+function mapKbDoc(r: any): KbDoc {
+  return {
+    id: r.id, scope: r.scope, agentSlug: r.agent_slug ?? null, userId: r.user_id,
+    title: r.title, source: r.source, sourceType: r.source_type, sha256: r.sha256,
+    status: r.status, chunkCount: r.chunk_count, errorMessage: r.error_message ?? null,
+    createdAt: r.created_at,
+  };
+}
+
 // macOS: use Homebrew's SQLite which supports dynamic extensions
 if (process.platform === "darwin") {
   const brewSqlite = "/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib";
@@ -660,6 +763,9 @@ class SharedDatabase {
       used_at TEXT,
       created_at TEXT DEFAULT (datetime('now'))
     )`);
+
+    // Nova Knowledge (RAG) — team + agent scopes live in shared.db
+    applyKbSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -1436,6 +1542,9 @@ class UserDatabase {
     )`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(user_id, status)`);
     this.db.run(`CREATE INDEX IF NOT EXISTS idx_tickets_msgid ON support_tickets(user_id, resend_message_id)`);
+
+    // Nova Knowledge (RAG) — personal scope lives in the per-user db
+    applyKbSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -4764,6 +4873,119 @@ export class Database {
   }
   getCsMessages(sessionId: string, limit?: number): CsMessage[] { return this.shared.getCsMessages(sessionId, limit); }
   getCsSessions(status?: string): CsSession[] { return this.shared.getCsSessions(status); }
+
+  // ============================================================
+  // Nova Knowledge (RAG) — personal → per-user db, team/agent → shared.db
+  // ============================================================
+
+  /** Pick the db handle a KB row of `scope` belongs to. */
+  private kbHandle(scope: string, userId: string): BunDatabase {
+    return scope === 'personal' ? this.getUserDb(userId).db : this.shared.db;
+  }
+
+  insertKbDoc(doc: KbDocInput): void {
+    this.kbHandle(doc.scope, doc.userId).run(
+      `INSERT INTO kb_docs (id, scope, agent_slug, user_id, title, source, source_type, sha256, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing')`,
+      [doc.id, doc.scope, doc.agentSlug ?? null, doc.userId, doc.title, doc.source, doc.sourceType, doc.sha256]
+    );
+  }
+
+  updateKbDocStatus(scope: string, userId: string, id: string, status: string, chunkCount?: number, errorMessage?: string): void {
+    this.kbHandle(scope, userId).run(
+      `UPDATE kb_docs SET status = ?, chunk_count = COALESCE(?, chunk_count), error_message = ? WHERE id = ?`,
+      [status, chunkCount ?? null, errorMessage ?? null, id]
+    );
+  }
+
+  getKbDoc(scope: string, userId: string, id: string): KbDoc | null {
+    const row = this.kbHandle(scope, userId).query(`SELECT * FROM kb_docs WHERE id = ?`).get(id) as any;
+    return row ? mapKbDoc(row) : null;
+  }
+
+  /** Returns the existing doc id if content with this sha already exists in the scope, else null. */
+  kbDocExistsBySha(scope: string, agentSlug: string | null, userId: string, sha256: string): string | null {
+    const row = this.kbHandle(scope, userId).query(
+      `SELECT id FROM kb_docs WHERE scope = ? AND agent_slug IS ? AND user_id = ? AND sha256 = ? LIMIT 1`
+    ).get(scope, agentSlug, userId, sha256) as any;
+    return row?.id ?? null;
+  }
+
+  deleteKbDoc(scope: string, userId: string, id: string): void {
+    const h = this.kbHandle(scope, userId);
+    h.run(`DELETE FROM kb_chunks WHERE doc_id = ?`, [id]);
+    h.run(`DELETE FROM kb_docs WHERE id = ?`, [id]);
+  }
+
+  insertKbChunk(chunk: KbChunkInput): void {
+    const blob = Buffer.from(chunk.embedding.buffer);
+    this.kbHandle(chunk.scope, chunk.userId).run(
+      `INSERT INTO kb_chunks (id, doc_id, scope, agent_slug, user_id, ordinal, text, embedding, token_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [chunk.id, chunk.docId, chunk.scope, chunk.agentSlug ?? null, chunk.userId, chunk.ordinal, chunk.text, blob, chunk.tokenCount]
+    );
+  }
+
+  /** Fast guard: does this user have any retrievable KB docs (personal + team + agent pack)? */
+  hasKbDocs(userId: string | undefined, agentSlug?: string): boolean {
+    if (userId) {
+      const personal = this.getUserDb(userId).db.query(`SELECT 1 FROM kb_docs WHERE scope = 'personal' AND status = 'ready' LIMIT 1`).get();
+      if (personal) return true;
+    }
+    const shared = agentSlug
+      ? this.shared.db.query(`SELECT 1 FROM kb_docs WHERE status = 'ready' AND (scope = 'team' OR (scope = 'agent' AND agent_slug = ?)) LIMIT 1`).get(agentSlug)
+      : this.shared.db.query(`SELECT 1 FROM kb_docs WHERE status = 'ready' AND scope = 'team' LIMIT 1`).get();
+    return !!shared;
+  }
+
+  /** All docs a user can see: their personal docs + team + (optionally) a given agent's pack. */
+  listKbDocsVisible(userId: string | undefined, agentSlug?: string): KbDoc[] {
+    const personal = userId
+      ? (this.getUserDb(userId).db
+          .query(`SELECT * FROM kb_docs WHERE scope = 'personal' AND user_id = ? ORDER BY created_at DESC`)
+          .all(userId) as any[]).map(mapKbDoc)
+      : [];
+    const sharedRows = agentSlug
+      ? this.shared.db.query(`SELECT * FROM kb_docs WHERE scope = 'team' OR (scope = 'agent' AND agent_slug = ?) ORDER BY created_at DESC`).all(agentSlug) as any[]
+      : this.shared.db.query(`SELECT * FROM kb_docs WHERE scope IN ('team','agent') ORDER BY created_at DESC`).all() as any[];
+    return [...personal, ...sharedRows.map(mapKbDoc)];
+  }
+
+  private searchKbHandle(handle: BunDatabase, blob: Buffer, scopeClause: string, params: any[], limit: number): KbChunkHit[] {
+    const rows = handle.query(`
+      SELECT c.id, c.doc_id, c.text, c.scope, c.agent_slug,
+             (1.0 - vec_distance_cosine(c.embedding, ?)) AS similarity,
+             d.title, d.source
+      FROM kb_chunks c JOIN kb_docs d ON d.id = c.doc_id
+      WHERE (${scopeClause}) AND d.status = 'ready'
+      ORDER BY vec_distance_cosine(c.embedding, ?) ASC
+      LIMIT ?
+    `).all(blob, ...params, blob, limit) as any[];
+    return rows.map(r => ({
+      id: r.id, docId: r.doc_id, text: r.text, similarity: r.similarity,
+      scope: r.scope, agentSlug: r.agent_slug ?? null, title: r.title, source: r.source,
+    }));
+  }
+
+  /**
+   * Search across the scopes a user (and optionally the running agent) can see:
+   * personal (per-user db) + team + that agent's pack (shared db). Merged, sorted by
+   * similarity, top `limit`.
+   */
+  searchKb(queryEmbedding: Float32Array, opts: { userId?: string; agentSlug?: string; limit?: number }): KbChunkHit[] {
+    const limit = opts.limit ?? 5;
+    const blob = Buffer.from(queryEmbedding.buffer);
+    const hits: KbChunkHit[] = [];
+    // Personal — per-user db
+    if (opts.userId) hits.push(...this.searchKbHandle(this.getUserDb(opts.userId).db, blob, `c.scope = 'personal'`, [], limit));
+    // Team + agent pack — shared db
+    if (opts.agentSlug) {
+      hits.push(...this.searchKbHandle(this.shared.db, blob, `c.scope = 'team' OR (c.scope = 'agent' AND c.agent_slug = ?)`, [opts.agentSlug], limit));
+    } else {
+      hits.push(...this.searchKbHandle(this.shared.db, blob, `c.scope = 'team'`, [], limit));
+    }
+    return hits.sort((a, b) => b.similarity - a.similarity).slice(0, limit);
+  }
 }
 
 // ============================================================

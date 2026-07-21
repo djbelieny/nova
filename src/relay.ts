@@ -84,6 +84,7 @@ import { initCallProcessor, processCallTranscript } from "../services/call-proce
 import { searchZoomRecordings, processRecordingById, type ZoomMeeting } from "../services/zoom-transcript-poller.ts";
 import { startHealthMonitor } from "../services/health-monitor.ts";
 import { startDevTaskDispatcher } from "../services/dev-task-dispatcher.ts";
+import { startKbWatcher } from "../services/kb-watch.ts";
 import { checkCliAuth } from "./cli-auth.ts";
 import { startCsRouter } from './cs-router.ts';
 
@@ -1859,6 +1860,29 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       return;
     }
 
+    // /knowledge — list the documents in your knowledge base, grouped by scope.
+    if (text.trim().toLowerCase() === "/knowledge" || text.trim().toLowerCase() === "/kb") {
+      const docs = supabase.listKbDocsVisible(user.id);
+      if (!docs.length) {
+        await ctx.reply(
+          "📚 *Your knowledge base is empty.*\n\nDrop me a PDF, DOCX, or text file with a caption like _\"add to knowledge\"_ (or _\"add to team knowledge\"_) and I'll learn it — then use and cite it automatically.\n\nFrom a terminal: `nova kb add <file|url>`.",
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
+      const byScope: Record<string, string[]> = {};
+      for (const d of docs) {
+        const key = d.scope === "agent" ? `agent/${d.agentSlug}` : d.scope;
+        (byScope[key] ||= []).push(`  • ${d.title} (${d.status === "ready" ? `${d.chunkCount} chunks` : d.status})`);
+      }
+      const lines = ["📚 *Knowledge base*", ""];
+      for (const [scope, items] of Object.entries(byScope)) {
+        lines.push(`*${scope}* (${items.length})`, ...items, "");
+      }
+      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+      return;
+    }
+
     // /examples — starter ideas you can tap to run right now.
     if (text.trim().toLowerCase() === "/examples") {
       await ctx.reply(buildExamplesMessage(), {
@@ -2467,6 +2491,43 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       await writeFile(filePath, msg.document.buffer);
 
       const caption = msg.document.caption || `Analyze: ${msg.document.filename}`;
+
+      // Knowledge-base ingestion — caption like "add to knowledge", "remember this file",
+      // "add to team knowledge", "for lex's knowledge". Ingests the buffer directly.
+      const { parseKbCaption } = await import("./knowledge.ts");
+      const kbIntent = parseKbCaption(caption);
+      if (kbIntent.wants) {
+        try {
+          const { ingestDocument } = await import("./knowledge.ts");
+          const { sourceTypeFromName } = await import("./text-chunk.ts");
+          const sourceType = sourceTypeFromName(rawName);
+          const isText = sourceType === "md" || sourceType === "txt";
+          const r = await ingestDocument({
+            db: supabase,
+            userId: user.id,
+            scope: kbIntent.scope,
+            agentSlug: kbIntent.agentSlug,
+            title: rawName,
+            source: `telegram:${msg.channelMessageId}`,
+            sourceType,
+            bytes: isText ? undefined : msg.document.buffer,
+            text: isText ? msg.document.buffer.toString("utf8") : undefined,
+          });
+          const where = kbIntent.scope === "agent" ? `${kbIntent.agentSlug}'s` : kbIntent.scope;
+          await ctx.reply(
+            r.status === "ready"
+              ? `📚 Added *${rawName}* to ${where} knowledge (${r.chunkCount} chunks). I'll use it automatically and cite it.`
+              : `Couldn't add that to knowledge: ${r.error || "no extractable text"}`,
+            { parse_mode: "Markdown" }
+          );
+        } catch (e) {
+          console.error("[kb] telegram ingest error:", e);
+          await ctx.reply("Couldn't add that to knowledge.");
+        }
+        await unlink(filePath).catch(() => {});
+        return;
+      }
+
       const memoryMode = isMemoryIntent(caption);
       await saveMessage("user", `[Document: ${msg.document.filename}]: ${caption}`, user.id, undefined, msg.channelType);
 
@@ -4201,6 +4262,9 @@ if (adminUserId && telegramAdapter) {
 
 // Start health monitor — polls /health every 2 min, alerts after 3 consecutive failures
 startHealthMonitor();
+
+// Start knowledge-folder watcher — auto-ingests files dropped in ~/.nova/knowledge/
+startKbWatcher();
 
 // Start dev task dispatcher — polls for pending dev tasks every 30s
 if (telegramAdapter) {

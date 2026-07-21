@@ -654,6 +654,21 @@ export async function getRelevantContext(
   query: string,
   userId: string
 ): Promise<string> {
+  // Recalled memories (memwright) and knowledge-base chunks are independent —
+  // fetch both and join. Either can be empty; the block is omitted when both are.
+  const [pastBlock, kbBlock] = await Promise.all([
+    recallPastContext(db, query, userId),
+    getKnowledgeBlock(db, query, userId),
+  ]);
+  return [pastBlock, kbBlock].filter(Boolean).join("\n\n");
+}
+
+/** The memwright "RELEVANT PAST" block (unchanged behavior, extracted). */
+async function recallPastContext(
+  db: Database | null,
+  query: string,
+  userId: string
+): Promise<string> {
   try {
     const results = await memwright.recall(query, {
       namespace: `user:${userId}`,
@@ -681,6 +696,22 @@ export async function getRelevantContext(
     );
   } catch (error) {
     console.warn("Relevant context error:", error);
+    return "";
+  }
+}
+
+/** Nova Knowledge (RAG) auto-inject block — personal + team scope for conversation paths. */
+async function getKnowledgeBlock(
+  db: Database | null,
+  query: string,
+  userId: string
+): Promise<string> {
+  if (!db) return "";
+  try {
+    const { getKnowledgeContext } = await import("./knowledge.ts");
+    return await getKnowledgeContext(db, query, userId);
+  } catch (error) {
+    console.warn("Knowledge context error:", error);
     return "";
   }
 }

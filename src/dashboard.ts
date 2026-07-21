@@ -2015,6 +2015,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/integrations">Integrations</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/schedules">Schedules</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/skills">Skills</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/knowledge">Knowledge</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/whatsapp">WhatsApp</a>
@@ -2659,6 +2660,218 @@ export function renderSkillsPage(): string {
       listEl.innerHTML = html;
     }).catch(function(e){ listEl.innerHTML = '<p class="empty">'+esc(e.message)+'</p>'; });
   }
+  load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
+// KNOWLEDGE PAGE (Nova Knowledge — RAG)
+// ============================================================
+
+export function renderKnowledgePage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Knowledge</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:660px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:1.4rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.4rem 0 .7rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  .drop{border:1px dashed var(--border);border-radius:10px;padding:22px 16px;text-align:center;color:var(--dim);font-size:.85rem;cursor:pointer;transition:background .15s,border-color .15s}
+  .drop:hover,.drop.drag{background:rgba(99,102,241,.08);border-color:var(--indigo);color:var(--text)}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+  select,input[type=text]{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.82rem;font-family:inherit}
+  input[type=text]{flex:1;min-width:140px}
+  .row{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:12px 16px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .title{font-weight:600;flex:1;min-width:120px;font-size:.9rem;color:var(--indigo)}
+  .meta{font-size:.75rem;color:var(--dim)}
+  .tag{font-size:.68rem;padding:2px 8px;border-radius:5px;border:1px solid var(--border);background:rgba(255,255,255,.05);color:var(--dim);text-transform:uppercase;letter-spacing:.04em}
+  .st{font-size:.68rem;padding:2px 8px;border-radius:5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+  .st-ready{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.25)}
+  .st-error{background:rgba(239,68,68,.12);color:var(--red);border:1px solid rgba(239,68,68,.25)}
+  .st-other{background:rgba(255,255,255,.07);color:var(--dim);border:1px solid var(--border)}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit}
+  .btn:hover{background:rgba(255,255,255,.10)}
+  .btn.danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(239,68,68,.1)}
+  .btn.primary{border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600}
+  .hit{background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:.82rem}
+  .hit-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:5px;flex-wrap:wrap}
+  .hit-title{color:var(--indigo);font-weight:600;font-size:.78rem}
+  .sim{color:var(--yellow);font-weight:600;font-size:.72rem}
+  .snippet{color:var(--dim);line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .msg{margin:1rem 0;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .msg.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .empty{color:var(--dim);font-size:.85rem}
+  .scope-group{margin-bottom:1rem}
+  .scope-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin-bottom:6px}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Nova Knowledge</h1>
+  <div id="msg" class="msg"></div>
+
+  <div class="card">
+    <div id="drop" class="drop">Drop a file here, or click to choose (PDF, DOCX, MD, TXT)</div>
+    <input type="file" id="file" style="display:none">
+    <div class="controls">
+      <select id="scope">
+        <option value="personal">Personal</option>
+        <option value="team">Team</option>
+        <option value="agent">Agent</option>
+      </select>
+      <input type="text" id="agentSlug" placeholder="agent slug (e.g. architect)" style="display:none">
+      <button class="btn primary" id="uploadBtn">Upload</button>
+    </div>
+  </div>
+
+  <h2>Search</h2>
+  <div class="card">
+    <div class="controls" style="margin-top:0">
+      <input type="text" id="q" placeholder="Search the knowledge base…">
+      <input type="text" id="searchAgent" placeholder="agent slug (optional)">
+      <button class="btn primary" id="searchBtn">Search</button>
+    </div>
+    <div id="hits" style="margin-top:12px"></div>
+  </div>
+
+  <h2>Documents</h2>
+  <div id="list"><p class="empty">Loading…</p></div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
+  var msgEl = document.getElementById('msg');
+  var listEl = document.getElementById('list');
+  var hitsEl = document.getElementById('hits');
+  var fileInput = document.getElementById('file');
+  var dropEl = document.getElementById('drop');
+  var scopeEl = document.getElementById('scope');
+  var agentSlugEl = document.getElementById('agentSlug');
+  var pending = null;
+
+  function showMsg(text, ok) {
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){msgEl.style.display='none';}, 4000);
+  }
+  function stClass(st){var s=(st||'').toLowerCase();if(s==='ready')return 'st-ready';if(s==='error')return 'st-error';return 'st-other';}
+
+  scopeEl.addEventListener('change', function(){
+    agentSlugEl.style.display = scopeEl.value === 'agent' ? 'inline-block' : 'none';
+  });
+
+  dropEl.addEventListener('click', function(){ fileInput.click(); });
+  fileInput.addEventListener('change', function(){
+    if (fileInput.files && fileInput.files[0]) { pending = fileInput.files[0]; dropEl.textContent = pending.name; }
+  });
+  dropEl.addEventListener('dragover', function(e){ e.preventDefault(); dropEl.classList.add('drag'); });
+  dropEl.addEventListener('dragleave', function(){ dropEl.classList.remove('drag'); });
+  dropEl.addEventListener('drop', function(e){
+    e.preventDefault(); dropEl.classList.remove('drag');
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) { pending = e.dataTransfer.files[0]; dropEl.textContent = pending.name; }
+  });
+
+  document.getElementById('uploadBtn').addEventListener('click', function(){
+    if (!pending) { showMsg('Choose a file first', false); return; }
+    var fd = new FormData();
+    fd.append('file', pending);
+    fd.append('scope', scopeEl.value);
+    if (scopeEl.value === 'agent') fd.append('agentSlug', agentSlugEl.value.trim());
+    showMsg('Uploading…', true);
+    fetch(BASE + '/api/kb/upload', { method: 'POST', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.error || data.status === 'error') { showMsg(data.error || 'Upload failed', false); return; }
+        var label = data.status === 'duplicate' ? 'Already indexed' : 'Indexed ' + (data.chunkCount||0) + ' chunks';
+        showMsg(esc(data.title||pending.name) + ' — ' + label, true);
+        pending = null; fileInput.value = ''; dropEl.textContent = 'Drop a file here, or click to choose (PDF, DOCX, MD, TXT)';
+        load();
+      })
+      .catch(function(e){ showMsg(e.message || 'Upload failed', false); });
+  });
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target;
+    if (!btn || !btn.getAttribute || !btn.classList.contains('action-delete')) return;
+    var id = btn.getAttribute('data-id');
+    var scope = btn.getAttribute('data-scope');
+    var title = btn.getAttribute('data-title') || 'this document';
+    if (!id) return;
+    if (!confirm('Delete "' + title + '"?')) return;
+    fetch(BASE + '/api/kb/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id, scope: scope }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){ if (data.error) { showMsg(data.error, false); } else { showMsg('Deleted', true); load(); } })
+      .catch(function(e){ showMsg(e.message || 'Delete failed', false); });
+  });
+
+  function scopeTag(d){
+    if (d.scope === 'agent') return 'agent:' + (d.agentSlug || '?');
+    return d.scope || 'personal';
+  }
+
+  function load(){
+    fetch(BASE + '/api/kb').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { listEl.innerHTML = '<p class="empty">'+esc(data.error)+'</p>'; return; }
+      var docs = data.docs || [];
+      if (!docs.length) { listEl.innerHTML = '<p class="empty">No documents yet.</p>'; return; }
+      var groups = { personal: [], team: [], agent: [] };
+      docs.forEach(function(d){ (groups[d.scope] || (groups[d.scope]=[])).push(d); });
+      var order = ['personal','team','agent'];
+      var html = '';
+      order.forEach(function(sc){
+        var items = groups[sc];
+        if (!items || !items.length) return;
+        html += '<div class="scope-group"><div class="scope-label">'+esc(sc)+'</div>';
+        items.forEach(function(d){
+          html += '<div class="row">';
+          html += '<span class="title">'+esc(d.title||'(untitled)')+'</span>';
+          html += '<span class="tag">'+esc(scopeTag(d))+'</span>';
+          html += '<span class="st '+stClass(d.status)+'">'+esc(d.status||'?')+'</span>';
+          html += '<span class="meta">'+esc(d.chunkCount||0)+' chunks</span>';
+          html += '<button class="btn danger action-delete" data-id="'+escAttr(d.id)+'" data-scope="'+escAttr(d.scope)+'" data-title="'+escAttr(d.title||'')+'">Delete</button>';
+          html += '</div>';
+        });
+        html += '</div>';
+      });
+      listEl.innerHTML = html;
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">'+esc(e.message)+'</p>'; });
+  }
+
+  function runSearch(){
+    var q = document.getElementById('q').value.trim();
+    var agent = document.getElementById('searchAgent').value.trim();
+    if (!q) { hitsEl.innerHTML = '<p class="empty">Enter a query.</p>'; return; }
+    hitsEl.innerHTML = '<p class="empty">Searching…</p>';
+    var url = BASE + '/api/kb/search?q=' + encodeURIComponent(q) + (agent ? '&agent=' + encodeURIComponent(agent) : '');
+    fetch(url).then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { hitsEl.innerHTML = '<p class="empty">'+esc(data.error)+'</p>'; return; }
+      var hits = data.hits || [];
+      if (!hits.length) { hitsEl.innerHTML = '<p class="empty">No matches.</p>'; return; }
+      var html = '';
+      hits.forEach(function(h){
+        var pct = Math.round((h.similarity || 0) * 100);
+        html += '<div class="hit"><div class="hit-head">';
+        html += '<span class="hit-title">'+esc(h.title||h.source||'')+'</span>';
+        html += '<span class="sim">'+esc(pct)+'%</span>';
+        html += '</div><div class="snippet">'+esc(h.text||'')+'</div></div>';
+      });
+      hitsEl.innerHTML = html;
+    }).catch(function(e){ hitsEl.innerHTML = '<p class="empty">'+esc(e.message||'Search failed')+'</p>'; });
+  }
+  document.getElementById('searchBtn').addEventListener('click', runSearch);
+  document.getElementById('q').addEventListener('keydown', function(e){ if (e.key === 'Enter') runSearch(); });
+
   load();
 </script>
 </body></html>`;
@@ -4376,6 +4589,7 @@ export function renderDashboard(): string {
       <a href="/profile" class="topbar-action">Profile</a>
       <a href="/schedules" class="topbar-action">Schedules</a>
       <a href="/skills" class="topbar-action">Skills</a>
+      <a href="/knowledge" class="topbar-action">Knowledge</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
       <a href="/whatsapp" class="topbar-action">WhatsApp</a>
@@ -6271,6 +6485,17 @@ const server = Bun.serve({
       });
     }
 
+    // Knowledge page (all authenticated users)
+    if (path === "/knowledge") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderKnowledgePage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -6361,6 +6586,69 @@ const server = Bun.serve({
     }
     if (path === "/api/tasks") return jsonResponse(await getTasks());
     if (path === "/api/costs") return jsonResponse(await getCosts(userId));
+
+    // ── Nova Knowledge (RAG) ──
+    if (path === "/api/kb" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      const agentParam = url.searchParams.get("agent") || undefined;
+      try {
+        return jsonResponse({ docs: supabase.listKbDocsVisible(userId, agentParam) });
+      } catch (e: any) {
+        return jsonResponse({ docs: [], error: e.message });
+      }
+    }
+    if (path === "/api/kb/upload" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const formData = await req.formData();
+        const file = formData.get("file") as File;
+        if (!file) return jsonResponse({ error: "Missing file" }, 400);
+        const scope = ((formData.get("scope") as string) || "personal") as "personal" | "team" | "agent";
+        const agentSlug = (formData.get("agentSlug") as string) || undefined;
+        const buf = Buffer.from(await file.arrayBuffer());
+        const { ingestDocument } = await import("./knowledge.ts");
+        const { sourceTypeFromName } = await import("./text-chunk.ts");
+        const st = sourceTypeFromName(file.name);
+        const isText = st === "md" || st === "txt";
+        const result = await ingestDocument({
+          db: supabase,
+          userId,
+          scope,
+          agentSlug: agentSlug || undefined,
+          title: file.name,
+          source: "dashboard:" + file.name,
+          sourceType: st,
+          bytes: isText ? undefined : buf,
+          text: isText ? buf.toString("utf8") : undefined,
+        });
+        return jsonResponse(result, result.status === "error" ? 400 : 200);
+      } catch (e: any) {
+        return jsonResponse({ status: "error", error: e.message }, 400);
+      }
+    }
+    if (path === "/api/kb/delete" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id || !b.scope) return jsonResponse({ error: "id and scope required" }, 400);
+        supabase.deleteKbDoc(String(b.scope), userId, String(b.id));
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/kb/search" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      const q = url.searchParams.get("q") || "";
+      if (!q.trim()) return jsonResponse({ hits: [] });
+      const agent = url.searchParams.get("agent") || undefined;
+      try {
+        const { searchKnowledge } = await import("./knowledge.ts");
+        return jsonResponse({ hits: await searchKnowledge(supabase, q, { userId, agentSlug: agent || undefined, limit: 8, threshold: 0.3 }) });
+      } catch (e: any) {
+        return jsonResponse({ hits: [], error: e.message });
+      }
+    }
     if (path === "/api/ledger") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
       const agent = url.searchParams.get("agent") || undefined;
