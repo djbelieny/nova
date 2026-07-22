@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { runSecurityChecks, checkFilePerms } from "../src/doctor.ts";
+import { runSecurityChecks, checkFilePerms, securityStartupWarnings } from "../src/doctor.ts";
 
 const base = { NOVA_ENCRYPTION_KEY: "3f8a1c9e2b7d4056a1e9c3f7b2d8046e91a3c7f5b2d804e6a91c3f7b5d2084ea", DASHBOARD_PASS: "x", NOVA_LEAK_FIREWALL: "", NOVA_AGENT_ENV_STRICT: "", NOVA_UNTRUSTED_FIREWALL: "" };
 
@@ -35,4 +35,10 @@ test("flags a world-readable .env", async () => {
   const env = checks.find((c) => c.name === "Env file permissions")!;
   expect(env.ok).toBe(false);
   expect(env.fix).toContain("chmod");
+});
+
+test("startup warnings list actionable fixes for a soft config", () => {
+  const w = securityStartupWarnings({ NOVA_ENCRYPTION_KEY: "short", NOVA_LEAK_FIREWALL: "off" });
+  expect(w.some((s) => s.includes("NOVA_ENCRYPTION_KEY"))).toBe(true);
+  expect(w.some((s) => s.includes("NOVA_LEAK_FIREWALL"))).toBe(true);
 });

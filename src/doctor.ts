@@ -131,6 +131,11 @@ export function runSecurityChecks(env: Record<string, string | undefined>): Chec
   return checks;
 }
 
+/** Boot-time warning lines for failing, fixable security checks. Pure — no I/O, safe to call at startup. */
+export function securityStartupWarnings(env: Record<string, string | undefined>): string[] {
+  return runSecurityChecks(env).filter((c) => !c.ok && c.fix).map((c) => `[security] ${c.name}: ${c.fix}`);
+}
+
 /** Checks `.env` and the data directory aren't group/world-accessible. Uses `stat` via the injectable runner. */
 export async function checkFilePerms(run: Runner = defaultRunner): Promise<Check[]> {
   const out: Check[] = [];

@@ -278,6 +278,16 @@ const DASHBOARD_PASS = process.env.DASHBOARD_PASS;
 if (!DASHBOARD_PASS) {
   console.error("[dashboard] DASHBOARD_PASS is not set — dashboard login is disabled for security. Set DASHBOARD_PASS in .env to enable it.");
 }
+// Refuse to expose an unauthenticated dashboard: without a password, bind loopback-only
+// regardless of what the environment otherwise implies. An explicit DASHBOARD_HOST always wins.
+const BIND_HOST: string | undefined = process.env.DASHBOARD_HOST
+  ? process.env.DASHBOARD_HOST
+  : !DASHBOARD_PASS
+    ? "127.0.0.1"
+    : undefined;
+if (!DASHBOARD_PASS && !process.env.DASHBOARD_HOST) {
+  console.warn("[security] Dashboard has no DASHBOARD_PASS — binding to 127.0.0.1 (loopback) to avoid exposing it unauthenticated. Set DASHBOARD_PASS to serve on all interfaces.");
+}
 const DASHBOARD_BASE = process.env.DASHBOARD_BASE ?? "/dashboard";
 const COOKIE_PATH = "/"; // Always root path so cookie works across /dashboard, /kanban, etc.
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -8735,6 +8745,7 @@ function renderOAuthResult(ok: boolean, msg: string): string {
 if (RUN_SERVER) {
 const server = Bun.serve({
   port: PORT,
+  ...(BIND_HOST ? { hostname: BIND_HOST } : {}),
   async fetch(req) {
     const url = new URL(req.url);
     // Strip DASHBOARD_BASE prefix so route matching works regardless of reverse proxy path

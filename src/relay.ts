@@ -59,6 +59,7 @@ import {
   getAllProviders,
   getAvailableProviderNames,
 } from "./ai-provider.ts";
+import { securityStartupWarnings } from "./doctor.ts";
 import { ClaudeProvider } from "./providers/claude.ts";
 import { GeminiProvider } from "./providers/gemini.ts";
 import { CodexProvider } from "./providers/codex.ts";
@@ -4452,6 +4453,9 @@ await loadAgents();
 // Startup config validation — report which features are active/disabled
 console.log("Starting Nova (multi-channel mode)...");
 console.log(`Project directory: ${PROJECT_DIR || "(relay working directory)"}`);
+
+// Security posture — warn on any fixable gap (encryption key strength, disabled firewalls, etc.)
+for (const w of securityStartupWarnings(process.env)) console.warn(w);
 
 // Channel status
 const channelStatus = channels.getStatus();
