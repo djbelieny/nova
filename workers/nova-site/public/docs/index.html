@@ -944,6 +944,14 @@ data/memwright/      <span class="c"># optional long-term memory service store</
       <li><strong>Executive board</strong> — RLS on all shared tables (self-hosted Postgres + PostgREST or Supabase); the DB key on trusted servers only.</li>
       <li><strong>SQL</strong> — fully parameterized queries; AI CLIs invoked with argv arrays (no shell interpolation of your messages).</li>
     </ul>
+    <h3>Security posture</h3>
+    <p>Nova has access to private data, receives untrusted input (messages, web content, tool output), and has outbound paths (chat replies, API calls). That's the "lethal trifecta" — the hardening below cuts each leg for the untrusted/leaking case. Run <code>nova doctor --security</code> to grade your deployment against it.</p>
+    <ul>
+      <li><strong>Least-privilege agent env</strong> (<code>NOVA_AGENT_ENV_STRICT</code>, on by default) — agent subprocesses get only the vars they need, not the full host environment.</li>
+      <li><strong>Egress leak firewall</strong> (<code>NOVA_LEAK_FIREWALL</code>, on by default) — redacts secrets from chat replies and logs, hard-blocks secrets leaving at the execute boundary.</li>
+      <li><strong>Untrusted-input firewall</strong> (<code>NOVA_UNTRUSTED_FIREWALL</code>, on by default) — neutralizes tool/web/email content before it enters an agent prompt.</li>
+      <li><strong>Dashboard</strong> binds loopback-only unless <code>DASHBOARD_PASS</code> is set.</li>
+    </ul>
     <p>Found a vulnerability? Report privately via <a href="https://github.com/djbelieny/nova/security" rel="noopener">GitHub Security Advisories</a> — see <code>SECURITY.md</code>.</p>
   </section>
 
