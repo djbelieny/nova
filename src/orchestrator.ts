@@ -1552,6 +1552,7 @@ export function runPlan(
   sessionKey?: string
 ): void {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  if (supabase && user?.id) supabase.insertRunEvent(user.id, { kind: 'playbook', refId: requestId, refName: (text || '').slice(0, 60), status: 'started', detail: (text || '').slice(0, 500) }); // [trust]
   routeComplex(ctx, text, user, supabase, plan, undefined, requestId, undefined, undefined, sessionKey)
     .catch((err) => logError(err, "orchestrator:runPlan", user?.id));
 }

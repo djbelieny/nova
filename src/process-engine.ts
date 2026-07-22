@@ -58,6 +58,7 @@ export async function advanceProcess(db: Database, proc: ProcessInstance, runSte
   while (step < proc.steps.length) {
     if (++guard > MAX_STEPS) {
       db.updateProcess(proc.userId, proc.id, { state: 'failed', currentStep: step, context: ctx });
+      db.insertRunEvent(proc.userId, { kind: 'process', refId: proc.id, refName: proc.name, status: 'failed', detail: `exceeded ${MAX_STEPS} steps` }); // [trust]
       return { state: 'failed' };
     }
     const s: ProcessStep = proc.steps[step];
@@ -65,10 +66,12 @@ export async function advanceProcess(db: Database, proc: ProcessInstance, runSte
     if (s.type === 'wait') {
       if (s.event) {
         db.updateProcess(proc.userId, proc.id, { state: 'waiting', currentStep: step + 1, waitEvent: s.event, waitUntil: null, context: ctx });
+        db.insertRunEvent(proc.userId, { kind: 'process', refId: proc.id, refName: proc.name, status: 'waiting', detail: `event:${s.event}` }); // [trust]
         return { state: 'waiting', waitingOn: `event:${s.event}` };
       }
       if (s.until) {
         db.updateProcess(proc.userId, proc.id, { state: 'waiting', currentStep: step + 1, waitUntil: computeWaitUntil(s.until), waitEvent: null, context: ctx });
+        db.insertRunEvent(proc.userId, { kind: 'process', refId: proc.id, refName: proc.name, status: 'waiting', detail: `timer:${s.until}` }); // [trust]
         return { state: 'waiting', waitingOn: `timer:${s.until}` };
       }
       step++; // malformed wait — skip
@@ -81,12 +84,14 @@ export async function advanceProcess(db: Database, proc: ProcessInstance, runSte
     ctx[`step_${step}`] = result;
     if (!success) {
       db.updateProcess(proc.userId, proc.id, { state: 'failed', currentStep: step, context: ctx });
+      db.insertRunEvent(proc.userId, { kind: 'process', refId: proc.id, refName: proc.name, status: 'failed', detail: `step ${step}` }); // [trust]
       return { state: 'failed' };
     }
     step++;
   }
 
   db.updateProcess(proc.userId, proc.id, { state: 'done', currentStep: step, context: ctx });
+  db.insertRunEvent(proc.userId, { kind: 'process', refId: proc.id, refName: proc.name, status: 'done', detail: null }); // [trust]
   return { state: 'done' };
 }
 

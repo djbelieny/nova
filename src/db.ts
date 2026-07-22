@@ -461,6 +461,52 @@ function mapPolicy(r: any): Policy {
   return { id: r.id, userId: r.user_id, scope: r.scope, scopeRef: r.scope_ref ?? null, kind: r.kind, config: parseJson(r.config, {}), enabled: !!r.enabled, createdAt: r.created_at };
 }
 
+/**
+ * Trust & operability — unified run observability + retries/dead-letter. All in shared.db.
+ * run_events: one row per automation/process/playbook lifecycle transition (fired, skipped,
+ * failed, waiting, done, started…). dead_letter: automations that exhausted their retries,
+ * kept for inspection + manual retry (`nova dlq`).
+ */
+function applyTrustSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS run_events (
+      id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id    TEXT NOT NULL,
+      kind       TEXT NOT NULL,
+      ref_id     TEXT,
+      ref_name   TEXT,
+      status     TEXT NOT NULL,
+      detail     TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_run_events_user ON run_events(user_id, created_at DESC)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_run_events_ref ON run_events(ref_id, created_at DESC)`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS dead_letter (
+      id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id    TEXT NOT NULL,
+      kind       TEXT NOT NULL,
+      ref_id     TEXT,
+      ref_name   TEXT,
+      payload    TEXT,
+      error      TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_dead_letter_user ON dead_letter(user_id, created_at DESC)`);
+}
+
+export interface RunEvent { id: string; userId: string; kind: 'automation' | 'process' | 'playbook'; refId: string | null; refName: string | null; status: string; detail: string | null; createdAt?: string; }
+function mapRunEvent(r: any): RunEvent {
+  return { id: r.id, userId: r.user_id, kind: r.kind, refId: r.ref_id ?? null, refName: r.ref_name ?? null, status: r.status, detail: r.detail ?? null, createdAt: r.created_at };
+}
+
+export interface DeadLetter { id: string; userId: string; kind: string; refId: string | null; refName: string | null; payload: string | null; error: string | null; createdAt?: string; }
+function mapDeadLetter(r: any): DeadLetter {
+  return { id: r.id, userId: r.user_id, kind: r.kind, refId: r.ref_id ?? null, refName: r.ref_name ?? null, payload: r.payload ?? null, error: r.error ?? null, createdAt: r.created_at };
+}
+
 export interface AutomationInput {
   userId: string;
   name: string;
@@ -1038,6 +1084,8 @@ class SharedDatabase {
     applyAutomationSchema(this.db);
     // Policy / compliance layer — all in shared.db
     applyPolicySchema(this.db);
+    // Trust & operability — run observability + dead-letter (shared.db)
+    applyTrustSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -5589,6 +5637,60 @@ export class Database {
       `SELECT COUNT(*) AS n, COALESCE(SUM(cost_usd), 0) AS cost FROM action_ledger WHERE phase = 'execute' AND outcome = 'success' AND created_at >= datetime('now', ?)`
     ).get(`-${days} days`) as any;
     return { tasksAutomated: row?.n ?? 0, costUsd: row?.cost ?? 0 };
+  }
+
+  // ============================================================
+  // Trust & operability — run observability + dead-letter (shared.db)
+  // ============================================================
+
+  /** Record one lifecycle transition for an automation / process / playbook run. */
+  insertRunEvent(userId: string, e: { kind: 'automation' | 'process' | 'playbook'; refId?: string | null; refName?: string | null; status: string; detail?: string | null }): RunEvent {
+    const id = crypto.randomUUID();
+    this.shared.db.run(
+      `INSERT INTO run_events (id, user_id, kind, ref_id, ref_name, status, detail) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, e.kind, e.refId ?? null, e.refName ?? null, e.status, e.detail ?? null]
+    );
+    return mapRunEvent(this.shared.db.query(`SELECT * FROM run_events WHERE id = ?`).get(id));
+  }
+
+  /** Recent run_events for a user, optionally filtered by kind. */
+  listRunEvents(userId: string, opts: { kind?: string; limit?: number } = {}): RunEvent[] {
+    const limit = opts.limit ?? 50;
+    const rows = opts.kind
+      ? this.shared.db.query(`SELECT * FROM run_events WHERE user_id = ? AND kind = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(userId, opts.kind, limit)
+      : this.shared.db.query(`SELECT * FROM run_events WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`).all(userId, limit);
+    return (rows as any[]).map(mapRunEvent);
+  }
+
+  /** Count failed run_events for a specific ref within the last N minutes. */
+  countRunEventFailures(userId: string, refId: string, minutes: number): number {
+    const row = this.shared.db.query(
+      `SELECT COUNT(*) AS n FROM run_events WHERE user_id = ? AND ref_id = ? AND status = 'failed' AND created_at >= datetime('now', ?)`
+    ).get(userId, refId, `-${minutes} minutes`) as any;
+    return row?.n ?? 0;
+  }
+
+  /** Park a run that exhausted its retries for later inspection / manual retry. */
+  insertDeadLetter(userId: string, e: { kind: string; refId?: string | null; refName?: string | null; payload?: string | null; error?: string | null }): DeadLetter {
+    const id = crypto.randomUUID();
+    this.shared.db.run(
+      `INSERT INTO dead_letter (id, user_id, kind, ref_id, ref_name, payload, error) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, e.kind, e.refId ?? null, e.refName ?? null, e.payload ?? null, e.error ?? null]
+    );
+    return mapDeadLetter(this.shared.db.query(`SELECT * FROM dead_letter WHERE id = ?`).get(id));
+  }
+
+  listDeadLetters(userId: string): DeadLetter[] {
+    return (this.shared.db.query(`SELECT * FROM dead_letter WHERE user_id = ? ORDER BY created_at DESC`).all(userId) as any[]).map(mapDeadLetter);
+  }
+
+  getDeadLetter(userId: string, id: string): DeadLetter | null {
+    const row = this.shared.db.query(`SELECT * FROM dead_letter WHERE id = ? AND user_id = ?`).get(id, userId) as any;
+    return row ? mapDeadLetter(row) : null;
+  }
+
+  deleteDeadLetter(userId: string, id: string): void {
+    this.shared.db.run(`DELETE FROM dead_letter WHERE id = ? AND user_id = ?`, [id, userId]);
   }
 
   // ============================================================
