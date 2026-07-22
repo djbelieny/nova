@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { runSecurityChecks } from "../src/doctor.ts";
 
-const base = { NOVA_ENCRYPTION_KEY: "a".repeat(64), DASHBOARD_PASS: "x", NOVA_LEAK_FIREWALL: "", NOVA_AGENT_ENV_STRICT: "", NOVA_UNTRUSTED_FIREWALL: "" };
+const base = { NOVA_ENCRYPTION_KEY: "3f8a1c9e2b7d4056a1e9c3f7b2d8046e91a3c7f5b2d804e6a91c3f7b5d2084ea", DASHBOARD_PASS: "x", NOVA_LEAK_FIREWALL: "", NOVA_AGENT_ENV_STRICT: "", NOVA_UNTRUSTED_FIREWALL: "" };
 
 test("all-good env passes the core security checks", () => {
   const checks = runSecurityChecks(base);
@@ -22,4 +22,9 @@ test("dashboard exposed without a password is a hard fail", () => {
   const c = checks.find((x) => x.name === "Dashboard auth")!;
   expect(c.ok).toBe(false);
   expect(c.fix).toBeTruthy();
+});
+
+test("flags long but low-entropy key (degenerate repeating chars)", () => {
+  const checks = runSecurityChecks({ ...base, NOVA_ENCRYPTION_KEY: "a".repeat(64) });
+  expect(checks.find((c) => c.name === "Encryption key")!.ok).toBe(false);
 });

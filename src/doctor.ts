@@ -69,9 +69,10 @@ export function runEnvChecks(env: Record<string, string | undefined>): Check[] {
   return checks;
 }
 
-/** Length-based strength gate: a 64-hex key (or any 32+ char secret) clears this comfortably. */
+/** Entropy-aware strength gate: requires 32+ chars AND 8+ distinct chars. Rejects degenerate keys like `"aaaa...aaa"`. */
 function looksStrongKey(k: string): boolean {
-  return Boolean(k) && k.length >= 32;
+  if (!k || k.length < 32) return false;
+  return new Set(k).size >= 8;
 }
 
 /** Pure security-posture checks. Reports on Fixes 1-3 flags + deployment hygiene. */
