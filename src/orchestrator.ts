@@ -1242,7 +1242,11 @@ function orchestrateMain(
       emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Dev task detected: "${text.substring(0, 60)}"`, classification: "dev-task-prompt" } });
       const keyboard = new InlineKeyboard();
       projects.forEach((p) => keyboard.text(`Queue for ${p.name}`, `devtask:${p.id}:${text.substring(0, 200)}`).row());
-      keyboard.text("Handle normally", `devtask:normal:${text.substring(0, 200)}`);
+      // Carry provenance through the round-trip: forwarded (untrusted) content that matches
+      // the dev-task pattern must not regain auto-approve eligibility just because the user
+      // tapped "Handle normally" — see devtask:normal parse in relay.ts.
+      const trustFlag = trust === "untrusted" ? "u" : "t";
+      keyboard.text("Handle normally", `devtask:normal:${trustFlag}:${text.substring(0, 200)}`);
       _sendMessageToChat(
         chatId,
         `This looks like a dev task. Queue it as background work on a registered project, or handle normally?\n\n*Task:* ${text.substring(0, 200)}`,

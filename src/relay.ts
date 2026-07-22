@@ -992,13 +992,25 @@ channels.onButtonPress(async (chatId, userId, platformUserId, buttonData, reply,
     const taskText = buttonData.slice(secondColon + 1);
 
     if (projectIdOrNormal === "normal") {
+      // devtask:normal:<t|u>:<text> — trust flag threaded through so forwarded (untrusted)
+      // content that got routed here via the dev-task prompt doesn't regain auto-approve
+      // eligibility. Back-compat: old-format buttons (devtask:normal:<text>, no flag) are
+      // treated as trusted, matching pre-fix behavior.
+      let devTaskTrust: TrustLevel = "trusted";
+      let normalTaskText = taskText;
+      const flagMatch = taskText.match(/^([tu]):/);
+      if (flagMatch) {
+        devTaskTrust = flagMatch[1] === "u" ? "untrusted" : "trusted";
+        normalTaskText = taskText.slice(2);
+      }
+
       // Treat as a regular message — route back through orchestrator
-      await editOriginal?.(`Handling normally: ${taskText.substring(0, 60)}...`);
+      await editOriginal?.(`Handling normally: ${normalTaskText.substring(0, 60)}...`);
       const adapter = channels.get("telegram") || channels.getAll()[0];
       if (!adapter) return;
       const platformCtx = createGenericPlatformContext(adapter, chatId, user);
       const sk = getSessionKey(user.id, "telegram");
-      orchestrate(platformCtx as any, taskText, user, supabase, sk, "telegram");
+      orchestrate(platformCtx as any, normalTaskText, user, supabase, sk, "telegram", devTaskTrust);
     } else {
       const project = supabase.getProject(user.id, projectIdOrNormal);
       if (!project) {
