@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nova — an open-source AI team you run from Telegram</title>
-<meta name="description" content="Nova is a self-hosted, open-source multi-agent platform: 24 specialist agents, any LLM, a real nova CLI, and human approval before anything ships, spends, or sends — from Telegram to your terminal.">
-<meta property="og:title" content="Nova — an open-source AI team you run from Telegram">
-<meta property="og:description" content="24 specialist agents, task decomposition, and human approval before anything ships, spends, or sends. Self-hosted, MIT licensed.">
+<meta name="description" content="Nova is a self-hosted, open-source AI platform: 24 specialist agents, a knowledge base you feed, event-driven automations, playbooks, durable processes, business connectors, and human approval before anything ships, spends, or sends — from Telegram to your terminal.">
+<meta property="og:title" content="Nova — an open-source AI team that runs your operation">
+<meta property="og:description" content="24 specialist agents, a knowledge base, event-driven automations & playbooks, connectors, governance — with human approval before anything ships, spends, or sends. Self-hosted, MIT licensed.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://mynova.space/">
 <meta property="og:site_name" content="Nova">
@@ -377,8 +377,8 @@
 <section id="how">
   <div class="wrap">
     <span class="sec-eyebrow">[message flow]</span>
-    <h2>Every message runs the same honest pipeline.</h2>
-    <p class="sec-lede">No magic router, no black box. A message is classified, decomposed if it's big, and executed in two phases — with the consequential half gated behind you.</p>
+    <h2>Every request runs the same honest pipeline.</h2>
+    <p class="sec-lede">No magic router, no black box. Whether it starts as a message you send or an event that fires an automation, a request is classified, decomposed if it's big, and executed in two phases — with the consequential half gated behind you.</p>
     <div class="pipeline">
       <div class="stage">
         <span class="st-label">01 · classify</span>
@@ -411,6 +411,7 @@
       <li><span class="mark">local →</span><span><strong>Your data stays home.</strong> Messages, memory, and tasks live in local SQLite with per-user isolation. Embeddings are computed on your machine.</span></li>
       <li><span class="mark">encrypted →</span><span><strong>Credentials at rest.</strong> OAuth tokens are AES-256-GCM encrypted; webhook signatures verified; dashboard sessions authenticated.</span></li>
       <li><span class="mark">yours →</span><span><strong>Your keys, your models.</strong> Routes across Claude, Gemini, and Codex CLIs under your own accounts, with rate-limit fallback.</span></li>
+      <li><span class="mark">governed →</span><span><strong>Guardrails for a business.</strong> Spend caps, approval matrices, and PII checks; role-based permissions; encrypted secrets; and an audit ledger of every consequential action.</span></li>
     </ul>
   </div>
 </section>
@@ -492,12 +493,14 @@
     <div class="stack-grid">
       <div class="stack-item"><h3>Any model, no lock-in</h3><p>Run on your Claude, Gemini, or Codex subscriptions via their CLIs, or add any OpenAI-compatible model — OpenRouter, OpenAI, local Ollama or vLLM — with one command. Subscription-first, your keys.</p></div>
       <div class="stack-item"><h3>A real nova CLI</h3><p>One <code>nova</code> command runs everything, and <code>nova connect</code> drops you into your running Nova from any terminal — local or VPS — with live agent activity and inline approvals.</p></div>
+      <div class="stack-item"><h3>Knowledge base (RAG)</h3><p>Feed it PDFs, docs, and URLs — chunked and embedded on your machine, retrieved across every agent with source citations. Personal, team, or per-agent.</p></div>
       <div class="stack-item"><h3>Persistent memory</h3><p>Facts, goals, and tasks with local vector search — Nova remembers across conversations and injects the right context.</p></div>
-      <div class="stack-item"><h3>Pattern learning</h3><p>Successful plans are cached and reused, so repeat requests skip classification entirely.</p></div>
+      <div class="stack-item"><h3>Learning &amp; pattern cache</h3><p>Successful plans are cached and reused; proven wins are promoted into learned skills over time.</p></div>
       <div class="stack-item"><h3>Scheduler &amp; proactive services</h3><p>Morning briefings, smart check-ins, recurring and conditional tasks — it works while you don't.</p></div>
-      <div class="stack-item"><h3>12 MCP integrations</h3><p>Notion, Google Workspace, Playwright, Cloudflare, Square, GoHighLevel, and more — per-user credentials.</p></div>
+      <div class="stack-item"><h3>Integrations &amp; connectors</h3><p>MCP servers (Notion, Google Workspace, Playwright, Cloudflare, GoHighLevel) plus two-way business connectors — Stripe, Shopify, Zendesk, HubSpot — on per-user credentials.</p></div>
+      <div class="stack-item"><h3>Governance &amp; audit</h3><p>Earned-autonomy ladder, spend caps and approval matrices, role-based permissions, encrypted secrets, and a full action ledger with ROI reporting.</p></div>
       <div class="stack-item"><h3>45 skills</h3><p>Image generation, DOCX/XLSX/PPTX/PDF creation, research writing, ad extraction — invoked by agents as needed.</p></div>
-      <div class="stack-item"><h3>Voice</h3><p>Voice messages transcribed via Groq or local Whisper; optional phone-call server with task extraction.</p></div>
+      <div class="stack-item"><h3>Voice</h3><p>Inbound and outbound calls via Twilio; voice messages transcribed with Groq or local Whisper.</p></div>
     </div>
   </div>
 </section>

@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nova — un equipo de IA de código abierto que ejecutas desde Telegram</title>
-<meta name="description" content="Nova es una plataforma multiagente de código abierto auto-alojada: 24 agentes especialistas, cualquier LLM, una verdadera CLI nova y aprobación humana antes de que nada se publique, gaste o envíe — desde Telegram hasta tu terminal.">
-<meta property="og:title" content="Nova — un equipo de IA de código abierto que ejecutas desde Telegram">
-<meta property="og:description" content="24 agentes especialistas, descomposición de tareas y aprobación humana antes de que nada se publique, gaste o envíe. Auto-alojado, licencia MIT.">
+<meta name="description" content="Nova es una plataforma de IA de código abierto auto-alojada: 24 agentes especialistas, una base de conocimiento que tú alimentas, automatizaciones orientadas a eventos, playbooks, procesos duraderos, conectores de negocio y aprobación humana antes de que nada se publique, gaste o envíe — desde Telegram hasta tu terminal.">
+<meta property="og:title" content="Nova — un equipo de IA de código abierto que dirige tu operación">
+<meta property="og:description" content="24 agentes especialistas, una base de conocimiento, automatizaciones orientadas a eventos y playbooks, conectores, gobernanza — con aprobación humana antes de que nada se publique, gaste o envíe. Auto-alojado, licencia MIT.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://mynova.space/es/">
 <meta property="og:site_name" content="Nova">
@@ -377,8 +377,8 @@
 <section id="how">
   <div class="wrap">
     <span class="sec-eyebrow">[flujo de mensajes]</span>
-    <h2>Cada mensaje ejecuta el mismo flujo honesto.</h2>
-    <p class="sec-lede">Sin enrutador mágico, sin caja negra. Un mensaje se clasifica, se desglosa si es grande y se ejecuta en dos fases — con la mitad consecuente controlada por ti.</p>
+    <h2>Cada solicitud ejecuta el mismo flujo honesto.</h2>
+    <p class="sec-lede">Sin enrutador mágico, sin caja negra. Ya sea que comience como un mensaje que envías o como un evento que dispara una automatización, una solicitud se clasifica, se desglosa si es grande y se ejecuta en dos fases — con la mitad consecuente controlada por ti.</p>
     <div class="pipeline">
       <div class="stage">
         <span class="st-label">01 · clasificar</span>
@@ -411,6 +411,7 @@
       <li><span class="mark">local →</span><span><strong>Tus datos se quedan en casa.</strong> Los mensajes, la memoria y las tareas viven en SQLite local con aislamiento por usuario. Las incrustaciones se calculan en tu máquina.</span></li>
       <li><span class="mark">encriptado →</span><span><strong>Credenciales en reposo.</strong> Los tokens OAuth se encriptan con AES-256-GCM; las firmas de webhook se verifican; las sesiones del panel se autentican.</span></li>
       <li><span class="mark">tuyo →</span><span><strong>Tus claves, tus modelos.</strong> Se enruta a través de CLIs de Claude, Gemini y Codex bajo tus propias cuentas, con alternancia de límite de velocidad.</span></li>
+      <li><span class="mark">gobernado →</span><span><strong>Salvaguardas para un negocio.</strong> Límites de gasto, matrices de aprobación y verificaciones de PII; permisos basados en roles; secretos encriptados; y un registro de auditoría de cada acción consecuente.</span></li>
     </ul>
   </div>
 </section>
@@ -492,12 +493,14 @@
     <div class="stack-grid">
       <div class="stack-item"><h3>Cualquier modelo, sin ataduras</h3><p>Funciona con tus suscripciones de Claude, Gemini o Codex vía sus CLIs, o añade cualquier modelo compatible con OpenAI — OpenRouter, OpenAI, Ollama o vLLM locales — con un solo comando. Suscripción primero, tus claves.</p></div>
       <div class="stack-item"><h3>Una verdadera CLI nova</h3><p>Un solo comando <code>nova</code> lo ejecuta todo, y <code>nova connect</code> te lleva a tu Nova en marcha desde cualquier terminal — local o VPS — con actividad de agentes en vivo y aprobaciones en línea.</p></div>
+      <div class="stack-item"><h3>Base de conocimiento (RAG)</h3><p>Aliméntala con PDFs, documentos y URLs — fragmentados e incrustados en tu máquina, recuperados en todos los agentes con citas de fuentes. Personal, de equipo o por agente.</p></div>
       <div class="stack-item"><h3>Memoria persistente</h3><p>Hechos, objetivos y tareas con búsqueda vectorial local — Nova recuerda entre conversaciones e inyecta el contexto correcto.</p></div>
-      <div class="stack-item"><h3>Aprendizaje de patrones</h3><p>Los planes exitosos se almacenan en caché y se reutilizan, por lo que las solicitudes repetidas omiten la clasificación por completo.</p></div>
+      <div class="stack-item"><h3>Aprendizaje y caché de patrones</h3><p>Los planes exitosos se almacenan en caché y se reutilizan; con el tiempo, los aciertos comprobados se promueven a habilidades aprendidas.</p></div>
       <div class="stack-item"><h3>Programador y servicios proactivos</h3><p>Resúmenes matutinos, controles inteligentes, tareas recurrentes y condicionales — funciona mientras tú no lo haces.</p></div>
-      <div class="stack-item"><h3>12 integraciones MCP</h3><p>Notion, Google Workspace, Playwright, Cloudflare, Square, GoHighLevel y más — credenciales por usuario.</p></div>
+      <div class="stack-item"><h3>Integraciones y conectores</h3><p>Servidores MCP (Notion, Google Workspace, Playwright, Cloudflare, GoHighLevel) más conectores de negocio bidireccionales — Stripe, Shopify, Zendesk, HubSpot — con credenciales por usuario.</p></div>
+      <div class="stack-item"><h3>Gobernanza y auditoría</h3><p>Escalera de autonomía ganada, límites de gasto y matrices de aprobación, permisos basados en roles, secretos encriptados y un registro completo de acciones con reportes de ROI.</p></div>
       <div class="stack-item"><h3>45 habilidades</h3><p>Generación de imágenes, creación de DOCX/XLSX/PPTX/PDF, escritura de investigación, extracción de anuncios — invocadas por agentes según sea necesario.</p></div>
-      <div class="stack-item"><h3>Voz</h3><p>Mensajes de voz transcritos vía Groq o Whisper local; servidor de llamadas telefónicas opcional con extracción de tareas.</p></div>
+      <div class="stack-item"><h3>Voz</h3><p>Llamadas entrantes y salientes vía Twilio; mensajes de voz transcritos con Groq o Whisper local.</p></div>
     </div>
   </div>
 </section>
