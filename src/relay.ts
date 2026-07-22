@@ -31,6 +31,7 @@ import {
 import { textToSpeech, isTTSEnabled } from "./tts.ts";
 import { toggleVoiceResponses, loadSettings } from "./settings.ts";
 import { orchestrate, initOrchestrator, handleApproval, getPendingApprovalCount, recoverPendingApprovals, runPlan } from "./orchestrator.ts";
+import type { TrustLevel } from "./untrusted.ts";
 import { renderPlaybook, describePlaybook, SEED_PLAYBOOKS } from "./playbooks.ts";
 import { loadAgents, getAllAgents, buildAgentPrompt } from "./agent-router.ts";
 import {
@@ -1735,6 +1736,22 @@ function sanitizeUserInput(text: string): string {
     .trim();
 }
 
+/**
+ * True if the inbound message was forwarded (from another user, chat, or channel) rather than
+ * typed directly by the sender. A forward carries someone else's content through the owner's
+ * chat — it's not the owner's own instruction, so it must not get provenance-bound auto-approve.
+ *
+ * Only reliably detectable on Telegram today: `createPlatformContext()` stashes the raw grammY
+ * `Context` on `_raw`, and `Context.message` (per @grammyjs/types' `Message`) exposes
+ * `forward_origin?: MessageOrigin` — the Bot API 7.0+ replacement for the old per-field
+ * forward_date/forward_from/forward_sender_name, which no longer exist on this type. WhatsApp/
+ * Slack/Discord/CLI adapters don't surface equivalent forward metadata through `_raw`, so those
+ * paths fall through to "trusted" (unchanged behavior) rather than guessing at a field.
+ */
+function isForwardedMessage(ctx: any): boolean {
+  return !!ctx?._raw?.message?.forward_origin;
+}
+
 // ============================================================
 // MESSAGE HANDLERS (all channels via adapter pattern)
 // ============================================================
@@ -1807,6 +1824,10 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
     : channels.get(msg.channelType)!, msg.channelChatId, user);
   (ctx as any).novaUser = user;
   (ctx as any).channelType = msg.channelType;
+
+  // Forwarded content is untrusted provenance — see isForwardedMessage() for why this is
+  // Telegram-only for now. Direct owner messages (the common case) stay "trusted".
+  const trust: TrustLevel = isForwardedMessage(ctx) ? "untrusted" : "trusted";
 
   // --- TEXT MESSAGES ---
   if (msg.text) {
@@ -1897,7 +1918,7 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
           return;
         }
         await saveMessage("user", `[Playbook: ${found.name}]`, user.id, undefined, msg.channelType);
-        runPlan(ctx, `Playbook: ${found.name}`, user, supabase, plan, getSessionKey(user.id, msg.channelType));
+        runPlan(ctx, `Playbook: ${found.name}`, user, supabase, plan, getSessionKey(user.id, msg.channelType), trust);
         await ctx.reply(`▶️ Running playbook *${found.name}* (${plan.subtasks.length} steps)…`, { parse_mode: "Markdown" });
         return;
       }
@@ -2578,7 +2599,7 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
         (ctx as any)._whatsappContactContext = contactContext;
       }
 
-      orchestrate(ctx._raw || ctx, actualText, user, supabase, getSessionKey(user.id, msg.channelType), msg.channelType);
+      orchestrate(ctx._raw || ctx, actualText, user, supabase, getSessionKey(user.id, msg.channelType), msg.channelType, trust);
       return;
     }
 
@@ -2590,7 +2611,7 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       (ctx as any)._whatsappContactContext = contactContext;
     }
 
-    orchestrate(ctx._raw || ctx, text, user, supabase, getSessionKey(user.id, msg.channelType), msg.channelType);
+    orchestrate(ctx._raw || ctx, text, user, supabase, getSessionKey(user.id, msg.channelType), msg.channelType, trust);
     return;
   }
 
