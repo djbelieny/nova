@@ -2021,6 +2021,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/processes">Processes</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/extraction">Extraction</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/policies">Policies</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/governance-admin">Governance Admin</a>
 <a class="hub-link" href="${DASHBOARD_BASE}/roi">ROI</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/activity">Activity</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/deadletters">Dead letters</a>
@@ -4254,6 +4255,253 @@ export function renderPoliciesPage(): string {
   syncForms();
   syncScope();
   load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
+// GOVERNANCE ADMIN PAGE (RBAC · delegation · connector secrets)
+// ============================================================
+
+export function renderGovernanceAdminPage(): string {
+  const encAtRest = !!process.env.NOVA_ENCRYPTION_KEY;
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Governance Admin</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#22c55e;--red:#ef4444;--yellow:#f59e0b}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:1.4rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.6rem 0 .7rem}
+  h3{font-size:.78rem;font-weight:600;color:var(--text);margin-bottom:.6rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1rem}
+  .notice{background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.3);color:var(--text);border-radius:9px;padding:11px 14px;font-size:.8rem;line-height:1.5;margin-bottom:1.2rem}
+  .notice strong{color:var(--green)}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  label{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);display:block;margin-bottom:5px}
+  select,input[type=text],input[type=password],input[type=date]{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--text);font-size:.82rem;font-family:inherit;width:100%}
+  .field{margin-bottom:12px}
+  table{width:100%;border-collapse:collapse;font-size:.8rem}
+  th,td{text-align:left;padding:8px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{color:var(--dim);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:.68rem}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .bar select,.bar input{width:auto}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit;text-decoration:none;display:inline-block}
+  .btn:hover{background:rgba(255,255,255,.10)}
+  .btn.sm{padding:3px 10px;font-size:.72rem}
+  .btn.danger{border-color:rgba(239,68,68,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(239,68,68,.1)}
+  .btn.primary{border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:600}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:5px;font-size:.68rem;font-weight:600;background:rgba(99,102,241,.18);color:#a5b4fc;border:1px solid rgba(99,102,241,.3);margin:2px 4px 2px 0}
+  .pill .x{cursor:pointer;opacity:.7}
+  .pill .x:hover{opacity:1;color:var(--red)}
+  .tag{padding:2px 8px;border-radius:5px;font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;background:rgba(255,255,255,.07);color:var(--dim);border:1px solid var(--border)}
+  .tag.admin{background:rgba(245,158,11,.14);color:var(--yellow);border-color:rgba(245,158,11,.3)}
+  .msg{margin:1rem 0;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .msg.err{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .empty{color:var(--dim);font-size:.85rem}
+  .muted{color:var(--dim);font-size:.75rem}
+  .cred-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:760px){.cred-grid{grid-template-columns:1fr}}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Governance Admin</h1>
+  <p class="hint">Access control plane: grant capabilities, set out-of-office delegation, and rotate connector secrets. Admins implicitly hold every capability — grants apply to members only.</p>
+  ${encAtRest
+    ? `<div class="notice"><strong>Encryption on.</strong> Connector secrets are encrypted at rest (AES-256-GCM) with <code>NOVA_ENCRYPTION_KEY</code>. Stored values are never displayed.</div>`
+    : `<div class="notice" style="background:rgba(245,158,11,.10);border-color:rgba(245,158,11,.3)"><strong style="color:var(--yellow)">Encryption key not set.</strong> Set <code>NOVA_ENCRYPTION_KEY</code> to encrypt connector secrets at rest (AES-256-GCM).</div>`}
+  <div id="msg" class="msg"></div>
+
+  <h2>Capabilities (RBAC)</h2>
+  <p class="hint">Admins can do everything. Members need explicit grants to run governed management actions.</p>
+  <div class="card"><div id="rbac"><p class="empty">Loading…</p></div></div>
+
+  <h2>Out-of-office delegation</h2>
+  <p class="hint">Route a user's approvals to a delegate while they are away.</p>
+  <div class="card"><div id="deleg"><p class="empty">Loading…</p></div></div>
+
+  <h2>Connector secrets</h2>
+  <p class="hint">Set credentials for business-system connectors. Secrets write straight to encrypted storage; they are never read back into this page.</p>
+  <div id="connectors"><p class="empty">Loading…</p></div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  var msgEl = document.getElementById('msg');
+  function showMsg(text, ok){
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){msgEl.style.display='none';}, 4000);
+  }
+  var CAPS = [];
+  var USERS = [];
+  function userName(id){ for (var i=0;i<USERS.length;i++){ if (USERS[i].id===id) return USERS[i].name || USERS[i].username || USERS[i].id; } return id; }
+
+  function post(path, body){
+    return fetch(BASE + path, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{}) })
+      .then(function(r){ return r.json().then(function(d){ return { status:r.status, body:d }; }); });
+  }
+
+  // ── RBAC ──
+  function renderRbac(){
+    var rbacEl = document.getElementById('rbac');
+    if (!USERS.length) { rbacEl.innerHTML = '<p class="empty">No users.</p>'; return; }
+    var capOpts = CAPS.map(function(c){ return '<option value="' + esc(c) + '">' + esc(c) + '</option>'; }).join('');
+    var html = '<table><thead><tr><th>User</th><th>Role</th><th>Grants</th><th>Manage</th></tr></thead><tbody>';
+    USERS.forEach(function(u){
+      var isAdmin = u.role === 'admin';
+      html += '<tr>';
+      html += '<td>' + esc(u.name || u.username || u.id) + '<div class="muted">' + esc(u.id) + '</div></td>';
+      html += '<td><span class="tag ' + (isAdmin ? 'admin' : '') + '">' + esc(u.role || 'member') + '</span></td>';
+      if (isAdmin) {
+        html += '<td class="muted">all (admin)</td><td class="muted">—</td>';
+      } else {
+        var caps = u.caps || [];
+        var grants = caps.length
+          ? caps.map(function(c){ return '<span class="pill">' + esc(c) + '<span class="x action-revoke" data-user="' + esc(u.id) + '" data-cap="' + esc(c) + '">✕</span></span>'; }).join('')
+          : '<span class="muted">none</span>';
+        html += '<td>' + grants + '</td>';
+        html += '<td><div class="bar"><select class="cap-sel" data-user="' + esc(u.id) + '">' + capOpts + '</select>'
+              + '<button class="btn sm action-grant" data-user="' + esc(u.id) + '">Grant</button></div></td>';
+      }
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    rbacEl.innerHTML = html;
+  }
+
+  document.getElementById('rbac').addEventListener('click', function(e){
+    var t = e.target;
+    if (!t || !t.getAttribute) return;
+    if (t.classList.contains('action-grant')) {
+      var uid = t.getAttribute('data-user');
+      var sel = document.querySelector('.cap-sel[data-user="' + uid + '"]');
+      var cap = sel ? sel.value : '';
+      if (!cap) return;
+      post('/api/gov/grant', { userId: uid, capability: cap }).then(function(res){
+        if (res.status !== 200 || res.body.error) { showMsg(res.body.error || 'Grant failed', false); return; }
+        showMsg('Granted ' + cap, true); loadUsers();
+      });
+    } else if (t.classList.contains('action-revoke')) {
+      var uid2 = t.getAttribute('data-user');
+      var cap2 = t.getAttribute('data-cap');
+      post('/api/gov/revoke', { userId: uid2, capability: cap2 }).then(function(res){
+        if (res.status !== 200 || res.body.error) { showMsg(res.body.error || 'Revoke failed', false); return; }
+        showMsg('Revoked ' + cap2, true); loadUsers();
+      });
+    }
+  });
+
+  // ── Delegation ──
+  function renderDeleg(){
+    var el = document.getElementById('deleg');
+    if (!USERS.length) { el.innerHTML = '<p class="empty">No users.</p>'; return; }
+    var html = '<table><thead><tr><th>User</th><th>Status</th><th>Set delegate</th></tr></thead><tbody>';
+    USERS.forEach(function(u){
+      var d = u.delegation;
+      var status = d
+        ? '→ <strong>' + esc(userName(d.delegateUserId)) + '</strong>' + (d.until ? ' <span class="muted">until ' + esc(d.until) + '</span>' : '') + (d.reason ? '<div class="muted">' + esc(d.reason) + '</div>' : '')
+        : '<span class="muted">in office</span>';
+      var opts = '<option value="">— delegate —</option>' + USERS.filter(function(o){ return o.id !== u.id; })
+        .map(function(o){ return '<option value="' + esc(o.id) + '">' + esc(o.name || o.username || o.id) + '</option>'; }).join('');
+      html += '<tr>';
+      html += '<td>' + esc(u.name || u.username || u.id) + '</td>';
+      html += '<td>' + status + (d ? ' <button class="btn sm danger action-clear" data-user="' + esc(u.id) + '">Clear</button>' : '') + '</td>';
+      html += '<td><div class="bar"><select class="del-user" data-user="' + esc(u.id) + '">' + opts + '</select>'
+            + '<input type="text" class="del-reason" data-user="' + esc(u.id) + '" placeholder="reason (optional)" style="width:150px">'
+            + '<input type="date" class="del-until" data-user="' + esc(u.id) + '">'
+            + '<button class="btn sm action-setdel" data-user="' + esc(u.id) + '">Set</button></div></td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    el.innerHTML = html;
+  }
+
+  document.getElementById('deleg').addEventListener('click', function(e){
+    var t = e.target;
+    if (!t || !t.getAttribute) return;
+    if (t.classList.contains('action-setdel')) {
+      var uid = t.getAttribute('data-user');
+      var sel = document.querySelector('.del-user[data-user="' + uid + '"]');
+      var reason = document.querySelector('.del-reason[data-user="' + uid + '"]');
+      var until = document.querySelector('.del-until[data-user="' + uid + '"]');
+      var delegateUserId = sel ? sel.value : '';
+      if (!delegateUserId) { showMsg('Pick a delegate', false); return; }
+      post('/api/gov/delegate', { userId: uid, delegateUserId: delegateUserId, reason: reason ? reason.value.trim() : '', until: until ? until.value : '' }).then(function(res){
+        if (res.status !== 200 || res.body.error) { showMsg(res.body.error || 'Set failed', false); return; }
+        showMsg('Delegation set', true); loadUsers();
+      });
+    } else if (t.classList.contains('action-clear')) {
+      var uid2 = t.getAttribute('data-user');
+      post('/api/gov/delegate/clear', { userId: uid2 }).then(function(res){
+        if (res.status !== 200 || res.body.error) { showMsg(res.body.error || 'Clear failed', false); return; }
+        showMsg('Delegation cleared', true); loadUsers();
+      });
+    }
+  });
+
+  // ── Connector secrets ──
+  function renderConnectors(list){
+    var el = document.getElementById('connectors');
+    if (!list.length) { el.innerHTML = '<p class="empty">No connectors registered.</p>'; return; }
+    var html = '';
+    list.forEach(function(c){
+      html += '<div class="card">';
+      html += '<h3>' + esc(c.label) + ' <span class="muted">(' + esc(c.id) + ')</span></h3>';
+      html += '<div class="muted" style="margin-bottom:10px">' + (c.rotations || 0) + ' rotation' + (c.rotations === 1 ? '' : 's') + ' logged</div>';
+      html += '<div class="cred-grid">';
+      (c.credEnv || []).forEach(function(env){
+        html += '<div class="field"><label>' + esc(env) + '</label><input type="password" class="cred-input" data-conn="' + esc(c.id) + '" data-env="' + esc(env) + '" placeholder="•••• (leave blank to keep)" autocomplete="off"></div>';
+      });
+      html += '</div>';
+      html += '<button class="btn primary action-savesecret" data-conn="' + esc(c.id) + '">Save secret</button>';
+      html += '</div>';
+    });
+    el.innerHTML = html;
+  }
+
+  document.getElementById('connectors').addEventListener('click', function(e){
+    var t = e.target;
+    if (!t || !t.getAttribute || !t.classList.contains('action-savesecret')) return;
+    var conn = t.getAttribute('data-conn');
+    var inputs = document.querySelectorAll('.cred-input[data-conn="' + conn + '"]');
+    var creds = {};
+    var any = false;
+    inputs.forEach(function(inp){ var v = inp.value; if (v) { creds[inp.getAttribute('data-env')] = v; any = true; } });
+    if (!any) { showMsg('Enter at least one value', false); return; }
+    post('/api/gov/connector-secret', { id: conn, creds: creds }).then(function(res){
+      if (res.status !== 200 || !res.body.ok) { showMsg((res.body && res.body.error) || 'Save failed', false); return; }
+      showMsg('Secret saved (encrypted at rest)', true);
+      inputs.forEach(function(inp){ inp.value = ''; });
+      loadConnectors();
+    });
+  });
+
+  function loadUsers(){
+    fetch(BASE + '/api/gov/users').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { document.getElementById('rbac').innerHTML = '<p class="empty">' + esc(data.error) + '</p>'; return; }
+      USERS = data.users || [];
+      CAPS = data.capabilities || [];
+      renderRbac();
+      renderDeleg();
+    }).catch(function(e){ document.getElementById('rbac').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+  function loadConnectors(){
+    fetch(BASE + '/api/gov/connectors').then(function(r){ return r.json(); }).then(function(data){
+      renderConnectors((data && data.connectors) || []);
+    }).catch(function(e){ document.getElementById('connectors').innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+
+  loadUsers();
+  loadConnectors();
 </script>
 </body></html>`;
 }
@@ -6516,6 +6764,7 @@ export function renderDashboard(): string {
       <a href="/processes" class="topbar-action">Processes</a>
       <a href="/extraction" class="topbar-action">Extraction</a>
       <a href="/policies" class="topbar-action">Policies</a>
+      <a href="/governance-admin" class="topbar-action">Governance Admin</a>
       <a href="/roi" class="topbar-action">ROI</a>
       <a href="/activity" class="topbar-action">Activity</a>
       <a href="/deadletters" class="topbar-action">Dead letters</a>
@@ -8481,6 +8730,21 @@ const server = Bun.serve({
       });
     }
 
+    // Governance Admin page (RBAC · delegation · connector secrets).
+    // Gated on the access.manage capability — admins always pass, so admin behavior is unchanged.
+    if (path === "/governance-admin") {
+      const { hasCapability } = await import("./permissions.ts");
+      if (!hasCapability(supabase, me?.userId ?? "", "access.manage" as any)) {
+        return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      }
+      return new Response(renderGovernanceAdminPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // ROI page (all authenticated users)
     if (path === "/roi") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -8689,6 +8953,7 @@ const server = Bun.serve({
     }
     if (path === "/api/playbooks" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "playbook.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.name) return jsonResponse({ error: "name required" }, 400);
@@ -8707,6 +8972,7 @@ const server = Bun.serve({
     }
     if (path === "/api/playbooks/seed" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "playbook.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const { SEED_PLAYBOOKS } = await import("./playbooks.ts");
         let count = 0;
@@ -8722,6 +8988,7 @@ const server = Bun.serve({
     }
     if (path === "/api/playbooks/delete" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "playbook.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.id || !b.scope) return jsonResponse({ error: "id and scope required" }, 400);
@@ -8742,6 +9009,7 @@ const server = Bun.serve({
     }
     if (path === "/api/automations" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "automation.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.name) return jsonResponse({ error: "name required" }, 400);
@@ -8771,6 +9039,7 @@ const server = Bun.serve({
     }
     if (path === "/api/automations/toggle" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "automation.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.id) return jsonResponse({ error: "id required" }, 400);
@@ -8782,6 +9051,7 @@ const server = Bun.serve({
     }
     if (path === "/api/automations/delete" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "automation.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.id) return jsonResponse({ error: "id required" }, 400);
@@ -8937,6 +9207,7 @@ const server = Bun.serve({
     }
     if (path === "/api/policies" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "policy.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.kind) return jsonResponse({ error: "kind required" }, 400);
@@ -8954,6 +9225,7 @@ const server = Bun.serve({
     }
     if (path === "/api/policies/toggle" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "policy.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.id) return jsonResponse({ error: "id required" }, 400);
@@ -8965,11 +9237,110 @@ const server = Bun.serve({
     }
     if (path === "/api/policies/delete" && req.method === "POST") {
       if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "policy.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       try {
         const b = await req.json();
         if (!b.id) return jsonResponse({ error: "id required" }, 400);
         supabase.deletePolicy(userId, String(b.id));
         return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    // ── Governance admin (RBAC · delegation · connector secrets) ──
+    // All /api/gov/* routes require the access.manage capability. Admins always pass
+    // (hasCapability returns true for admins), so admin behavior is unchanged.
+    if (path.startsWith("/api/gov/")) {
+      const { hasCapability } = await import("./permissions.ts");
+      if (!hasCapability(supabase, me?.userId ?? "", "access.manage" as any)) {
+        return jsonResponse({ error: "permission denied" }, 403);
+      }
+    }
+    if (path === "/api/gov/users" && req.method === "GET") {
+      try {
+        const { CAPABILITIES } = await import("./permissions.ts");
+        const users = supabase.getAllUsers().map((u: any) => ({
+          id: u.id,
+          name: u.name,
+          username: u.username,
+          role: u.role,
+          caps: supabase.listUserCapabilities(u.id),
+          delegation: supabase.getActiveDelegation(u.id),
+        }));
+        return jsonResponse({ users, capabilities: CAPABILITIES });
+      } catch (e: any) {
+        return jsonResponse({ users: [], capabilities: [], error: e.message }, 500);
+      }
+    }
+    if (path === "/api/gov/grant" && req.method === "POST") {
+      try {
+        const b = await req.json();
+        if (!b.userId || !b.capability) return jsonResponse({ error: "userId and capability required" }, 400);
+        const { isCapability } = await import("./permissions.ts");
+        if (!isCapability(String(b.capability))) return jsonResponse({ error: "unknown capability" }, 400);
+        supabase.grantCapability(String(b.userId), String(b.capability), me?.userId);
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/gov/revoke" && req.method === "POST") {
+      try {
+        const b = await req.json();
+        if (!b.userId || !b.capability) return jsonResponse({ error: "userId and capability required" }, 400);
+        supabase.revokeCapability(String(b.userId), String(b.capability));
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/gov/delegate" && req.method === "POST") {
+      try {
+        const b = await req.json();
+        if (!b.userId || !b.delegateUserId) return jsonResponse({ error: "userId and delegateUserId required" }, 400);
+        supabase.setDelegation(
+          String(b.userId),
+          String(b.delegateUserId),
+          b.reason ? String(b.reason) : undefined,
+          b.until ? String(b.until) : undefined,
+        );
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/gov/delegate/clear" && req.method === "POST") {
+      try {
+        const b = await req.json();
+        if (!b.userId) return jsonResponse({ error: "userId required" }, 400);
+        supabase.clearDelegation(String(b.userId));
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/gov/connectors" && req.method === "GET") {
+      try {
+        const { listConnectors } = await import("./connectors/registry.ts");
+        return jsonResponse({
+          connectors: listConnectors().map((c) => ({
+            id: c.id,
+            label: c.label,
+            credEnv: c.credEnv,
+            rotations: supabase.listSecretRotations(c.id).length,
+          })),
+        });
+      } catch (e: any) {
+        return jsonResponse({ connectors: [], error: e.message }, 500);
+      }
+    }
+    if (path === "/api/gov/connector-secret" && req.method === "POST") {
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        if (!b.creds || typeof b.creds !== "object") return jsonResponse({ error: "creds required" }, 400);
+        supabase.setConnectorSecret(String(b.id), b.creds as Record<string, string>, me?.userId || "dashboard");
+        return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 400);
       }
@@ -9049,6 +9420,7 @@ const server = Bun.serve({
       }
     }
     if (path === "/api/connectors/run" && req.method === "POST") {
+      { const { hasCapability } = await import("./permissions.ts"); if (!hasCapability(supabase, me?.userId ?? "", "connector.manage" as any)) return jsonResponse({ error: "permission denied" }, 403); }
       const body = await req.json().catch(() => ({}));
       const id = String(body.id || "");
       const action = String(body.action || "");

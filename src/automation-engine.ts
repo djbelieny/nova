@@ -165,9 +165,16 @@ export async function dispatchAutomation(
     return { fired: false, reason: decision.skipReason };
   }
 
-  // Dedupe
-  if (decision.dedupeKey && db.automationDedupeSeen(automation.id, decision.dedupeKey, 60)) {
-    return { fired: false, reason: 'deduped' };
+  // Dedupe. Durable exactly-once when the automation opts in (idempotent); otherwise the
+  // original 60-minute window. [gov]
+  if (decision.dedupeKey) {
+    if (automation.idempotent) {
+      if (!db.claimIdempotencyKey(`auto:${automation.id}:${decision.dedupeKey}`, 'automation', automation.idempotencyTtlSec ?? undefined)) {
+        return { fired: false, reason: 'deduped' };
+      }
+    } else if (db.automationDedupeSeen(automation.id, decision.dedupeKey, 60)) {
+      return { fired: false, reason: 'deduped' };
+    }
   }
   // Rate limit
   if (automation.rateLimitPerHour && db.countAutomationRunsSince(automation.id, 60) >= automation.rateLimitPerHour) {

@@ -47,14 +47,29 @@ async function runAction(id: string, action: string, rest: string[]): Promise<nu
   return 0;
 }
 
+/** `nova connector set|rotate <id> NAME=value …` — store credentials encrypted at rest. */
+function runSet(id: string, pairs: string[]): number {
+  const c = getConnector(id);
+  if (!c) { console.error(`  Unknown connector: ${id}`); return 1; }
+  const creds: Record<string, string> = {};
+  for (const p of pairs) { const i = p.indexOf("="); if (i > 0) creds[p.slice(0, i)] = p.slice(i + 1); }
+  if (!Object.keys(creds).length) { console.error(`  Usage: nova connector set ${id} ${c.credEnv.map(e => `${e}=…`).join(" ")}`); return 1; }
+  const db = getDb();
+  const by = db.getUsersByRole("admin")[0]?.id || "cli";
+  db.setConnectorSecret(id, creds, by);
+  console.log(`  ✓ Stored ${Object.keys(creds).join(", ")} for ${id} (encrypted at rest). Rotations logged: ${db.listSecretRotations(id).length}.`);
+  return 0;
+}
+
 export async function runConnectorCli(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "list": case undefined: return runList();
     case "test": return rest[0] ? runTest(rest[0]) : (console.error("  Usage: nova connector test <id>"), 1);
     case "run": return rest[0] && rest[1] ? runAction(rest[0], rest[1], rest.slice(2)) : (console.error("  Usage: nova connector run <id> <action> --input '{…}'"), 1);
+    case "set": case "rotate": return rest[0] ? runSet(rest[0], rest.slice(1)) : (console.error("  Usage: nova connector set <id> NAME=value …"), 1);
     default:
-      console.error(`  Unknown subcommand: ${sub}\n  Usage: nova connector list|test <id>|run <id> <action>`);
+      console.error(`  Unknown subcommand: ${sub}\n  Usage: nova connector list|test <id>|run <id> <action>|set <id> NAME=value`);
       return 1;
   }
 }

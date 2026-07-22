@@ -11,6 +11,7 @@
 
 import { getByPath, dispatchAutomation, type DispatchAgentFn } from "../src/automation-engine.ts";
 import { listConnectors, getConnector, isConnectorConfigured, resolveCreds } from "../src/connectors/registry.ts";
+import { withLock } from "../src/locks.ts";
 import type { Database } from "../src/db.ts";
 
 const POLLABLE = ["metric"];
@@ -63,6 +64,12 @@ export function startAutomationPoller(db: Database, dispatch: DispatchAgentFn): 
   const warnedConnector = new Set<string>();
 
   async function tick(): Promise<void> {
+    // Advisory lock so overlapping ticks / multiple instances don't double-fire automations.
+    const { ran } = await withLock(db, "automation-poller", intervalSec + 30, () => tickInner());
+    if (!ran) return;
+  }
+
+  async function tickInner(): Promise<void> {
     try {
       const connectorEvents = connectorTriggerEvents();
       const autos = db.listEnabledAutomationsBySource([...POLLABLE, ...CONNECTOR_BACKED, ...connectorEvents]);

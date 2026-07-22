@@ -50,6 +50,8 @@ const COMMANDS: Record<string, Omit<RunSpec, "kind" | "args"> & { aliases?: stri
   dlq:       { file: "src/cli-dlq.ts", description: "Dead-letter queue: list, retry, or drop failed automations" },
   connector: { file: "src/cli-connector.ts", description: "Manage business connectors (Stripe/Shopify/Zendesk/HubSpot)" },
   call:      { file: "src/cli-call.ts", description: "Place an outbound voice call that speaks a message" },
+  access:    { file: "src/cli-access.ts", description: "Manage capability grants (RBAC): grant/revoke/list" },
+  ooo:       { file: "src/cli-ooo.ts", description: "Out-of-office: delegate your work while you're away" },
   voice:     { file: "src/voice-server.ts", description: "Start the voice-call server" },
   backup:    { file: "scripts/backup.ts", description: "Back up data, config, and .env" },
 };

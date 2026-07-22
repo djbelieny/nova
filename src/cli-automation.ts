@@ -122,6 +122,8 @@ function runAdd(rest: string[]): number {
     dedupeKey: flags.dedupe ? String(flags.dedupe) : null,
     rateLimitPerHour: flags.rate ? Number(flags.rate) : null,
     secret,
+    idempotent: !!flags.idempotent,
+    idempotencyTtlSec: flags["idempotency-ttl"] ? Number(flags["idempotency-ttl"]) : null,
   });
   console.log(`  ✓ Added automation "${name}" (${actionType}:${actionRef})`);
   if ((flags.source || "webhook") === "webhook") {
