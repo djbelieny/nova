@@ -2023,6 +2023,7 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/policies">Policies</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/governance-admin">Governance Admin</a>
 <a class="hub-link" href="${DASHBOARD_BASE}/roi">ROI</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/data">Data</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/activity">Activity</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/deadletters">Dead letters</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/connectors">Connectors</a>
@@ -4670,6 +4671,244 @@ export function renderRoiPage(): string {
 }
 
 // ============================================================
+// DATA PAGE (connected-data layer)
+// ============================================================
+
+export function renderDataPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Data</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#57C785;--red:#E86A84;--yellow:#F0B429;--blue:#2AABEE}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:.5rem}
+  h2{font-size:.82rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:1.8rem 0 .8rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1.2rem}
+  .hint code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:5px;font-size:.76rem;color:var(--text)}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:12px}
+  .src-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:.5rem}
+  .src-head h3{font-size:.95rem;font-weight:700}
+  .badge{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;padding:2px 9px;border-radius:20px;border:1px solid var(--border);white-space:nowrap}
+  .badge.http{color:var(--blue);border-color:rgba(42,171,238,.4);background:rgba(42,171,238,.12)}
+  .badge.sqlite{color:var(--green);border-color:rgba(87,199,133,.4);background:rgba(87,199,133,.12)}
+  .badge.connector{color:var(--yellow);border-color:rgba(240,180,41,.4);background:rgba(240,180,41,.12)}
+  .cfg{font-family:ui-monospace,monospace;font-size:.72rem;color:var(--dim);word-break:break-word;margin-bottom:.7rem}
+  .src-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  label{display:block;font-size:.72rem;color:var(--dim);margin-bottom:.35rem}
+  input,select,textarea{width:100%;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:inherit;font-size:.8rem;padding:8px 10px;margin-bottom:.7rem}
+  textarea{font-family:ui-monospace,monospace;resize:vertical;min-height:64px}
+  button{background:var(--blue);color:#04121c;border:none;border-radius:8px;font-family:inherit;font-weight:600;font-size:.8rem;padding:8px 18px;cursor:pointer}
+  button.ghost{background:transparent;color:var(--dim);border:1px solid var(--border)}
+  button.ghost:hover{color:var(--text)}
+  button.danger{background:transparent;color:var(--red);border:1px solid rgba(232,106,132,.4)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .ovr{margin-top:.7rem}
+  .field{display:none}
+  .field.show{display:block}
+  table{border-collapse:collapse;width:100%;font-size:.76rem}
+  th,td{text-align:left;padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.06);white-space:nowrap}
+  th{color:var(--dim);text-transform:uppercase;letter-spacing:.04em;font-size:.66rem;font-weight:600}
+  td{font-family:ui-monospace,monospace}
+  .tablewrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-top:.5rem}
+  .count{font-size:.74rem;color:var(--dim);margin-top:.5rem}
+  .empty{color:var(--dim);font-size:.82rem;padding:24px 4px;text-align:center}
+  .err{color:var(--red);font-size:.78rem;margin-top:.5rem}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Data</h1>
+  <p class="hint">Connected-data layer. Sources are <b>read-only</b> — connect an HTTP report, a read-only SQLite file, or a connector read action, then query it here or from agents (<code>nova data query</code>). Connector write actions are refused by the backend.</p>
+
+  <h2>Registered sources</h2>
+  <div id="list"><p class="empty">Loading…</p></div>
+
+  <h2>Query result</h2>
+  <div class="card" id="resultCard"><p class="empty">Run a source to see rows here.</p></div>
+
+  <h2>Add a source</h2>
+  <div class="card">
+    <label>Name</label>
+    <input id="f_name" placeholder="e.g. sales-report">
+    <label>Kind</label>
+    <select id="f_kind">
+      <option value="http">http</option>
+      <option value="sqlite">sqlite</option>
+      <option value="connector">connector</option>
+    </select>
+
+    <div class="field show" data-kind="http">
+      <label>URL</label>
+      <input id="f_url" placeholder="https://api.example.com/report.json">
+      <label>Rows path (dot path to the array; optional)</label>
+      <input id="f_rowsPath" placeholder="data.items">
+      <label>Format (optional)</label>
+      <select id="f_format">
+        <option value="">auto (JSON)</option>
+        <option value="csv">csv</option>
+      </select>
+    </div>
+
+    <div class="field" data-kind="sqlite">
+      <label>File path (read-only)</label>
+      <input id="f_path" placeholder="/data/reports.db">
+      <label>Query (SELECT / WITH only)</label>
+      <textarea id="f_query">SELECT * FROM my_table LIMIT 100</textarea>
+    </div>
+
+    <div class="field" data-kind="connector">
+      <label>Connector</label>
+      <input id="f_connector" placeholder="stripe">
+      <label>Action (read action)</label>
+      <input id="f_action" placeholder="list_charges">
+      <label>Rows path (optional)</label>
+      <input id="f_crowsPath" placeholder="data">
+    </div>
+
+    <button id="saveBtn">Save source</button>
+    <div class="err" id="saveErr" style="display:none"></div>
+  </div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+
+  function cfgSummary(s){
+    var c = s.config || {};
+    if (s.kind === 'http') return (c.method || 'GET') + ' ' + (c.url || '') + (c.rowsPath ? ' · rows=' + c.rowsPath : '') + (c.format ? ' · ' + c.format : '');
+    if (s.kind === 'sqlite') return (c.path || '') + (c.query ? ' · ' + c.query : '');
+    if (s.kind === 'connector') return (c.connector || '') + '.' + (c.action || '') + (c.rowsPath ? ' · rows=' + c.rowsPath : '');
+    return JSON.stringify(c);
+  }
+
+  function srcHtml(s){
+    var h = '<div class="card" data-name="' + esc(s.name) + '" data-kind="' + esc(s.kind) + '">';
+    h += '<div class="src-head"><h3>' + esc(s.name) + '</h3><span class="badge ' + esc(s.kind) + '">' + esc(s.kind) + '</span></div>';
+    h += '<div class="cfg">' + esc(cfgSummary(s)) + '</div>';
+    if (s.kind === 'sqlite') {
+      h += '<div class="ovr"><label>Ad-hoc query override (optional)</label><textarea class="s-query" placeholder="SELECT ..."></textarea></div>';
+    }
+    h += '<div class="src-actions"><button class="s-run">Run</button><button class="ghost s-del danger">Delete</button></div>';
+    h += '</div>';
+    return h;
+  }
+
+  function renderTable(r){
+    var card = document.getElementById('resultCard');
+    var cols = r.columns || [];
+    var rows = r.rows || [];
+    if (!rows.length) { card.innerHTML = '<p class="empty">Source "' + esc(r.source) + '" returned no rows.</p>'; return; }
+    var h = '<div class="tablewrap"><table><thead><tr>';
+    cols.forEach(function(c){ h += '<th>' + esc(c) + '</th>'; });
+    h += '</tr></thead><tbody>';
+    rows.forEach(function(row){
+      h += '<tr>';
+      cols.forEach(function(c){
+        var v = row[c];
+        h += '<td>' + esc(v && typeof v === 'object' ? JSON.stringify(v) : v) + '</td>';
+      });
+      h += '</tr>';
+    });
+    h += '</tbody></table></div>';
+    h += '<div class="count">' + rows.length + ' row(s) · source: ' + esc(r.source) + '</div>';
+    card.innerHTML = h;
+  }
+
+  function runSource(name, query){
+    var card = document.getElementById('resultCard');
+    card.innerHTML = '<p class="empty">Running…</p>';
+    fetch(BASE + '/api/data/query', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, query: query || undefined })
+    }).then(function(r){ return r.json(); }).then(function(r){
+      if (r.error) { card.innerHTML = '<p class="err">' + esc(r.error) + '</p>'; return; }
+      renderTable(r);
+    }).catch(function(e){ card.innerHTML = '<p class="err">' + esc(e.message) + '</p>'; });
+  }
+
+  function delSource(name){
+    fetch(BASE + '/api/data/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name })
+    }).then(function(){ load(); });
+  }
+
+  function wire(card){
+    var name = card.getAttribute('data-name');
+    var runBtn = card.querySelector('.s-run');
+    var delBtn = card.querySelector('.s-del');
+    var qEl = card.querySelector('.s-query');
+    if (runBtn) runBtn.addEventListener('click', function(){ runSource(name, qEl ? qEl.value.trim() : ''); });
+    if (delBtn) delBtn.addEventListener('click', function(){ delSource(name); });
+  }
+
+  function load(){
+    var listEl = document.getElementById('list');
+    fetch(BASE + '/api/data').then(function(r){ return r.json(); }).then(function(r){
+      if (r.error) { listEl.innerHTML = '<p class="empty">' + esc(r.error) + '</p>'; return; }
+      var list = r.sources || [];
+      if (!list.length) { listEl.innerHTML = '<p class="empty">No data sources registered yet.</p>'; return; }
+      listEl.innerHTML = list.map(srcHtml).join('');
+      Array.prototype.forEach.call(listEl.querySelectorAll('.card'), wire);
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+
+  // kind field toggling
+  var kindSel = document.getElementById('f_kind');
+  function syncFields(){
+    var k = kindSel.value;
+    Array.prototype.forEach.call(document.querySelectorAll('.field'), function(f){
+      f.classList.toggle('show', f.getAttribute('data-kind') === k);
+    });
+  }
+  kindSel.addEventListener('change', syncFields);
+  syncFields();
+
+  function buildConfig(kind){
+    if (kind === 'http') {
+      var cfg = { url: document.getElementById('f_url').value.trim() };
+      var rp = document.getElementById('f_rowsPath').value.trim();
+      var fmt = document.getElementById('f_format').value;
+      if (rp) cfg.rowsPath = rp;
+      if (fmt) cfg.format = fmt;
+      return cfg;
+    }
+    if (kind === 'sqlite') {
+      return { path: document.getElementById('f_path').value.trim(), query: document.getElementById('f_query').value.trim() };
+    }
+    var c = { connector: document.getElementById('f_connector').value.trim(), action: document.getElementById('f_action').value.trim() };
+    var crp = document.getElementById('f_crowsPath').value.trim();
+    if (crp) c.rowsPath = crp;
+    return c;
+  }
+
+  document.getElementById('saveBtn').addEventListener('click', function(){
+    var errEl = document.getElementById('saveErr');
+    errEl.style.display = 'none';
+    var name = document.getElementById('f_name').value.trim();
+    var kind = kindSel.value;
+    if (!name) { errEl.textContent = 'Name is required.'; errEl.style.display = 'block'; return; }
+    var config = buildConfig(kind);
+    fetch(BASE + '/api/data', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, kind: kind, config: config })
+    }).then(function(r){ return r.json(); }).then(function(r){
+      if (r.error) { errEl.textContent = r.error; errEl.style.display = 'block'; return; }
+      document.getElementById('f_name').value = '';
+      load();
+    }).catch(function(e){ errEl.textContent = e.message; errEl.style.display = 'block'; });
+  });
+
+  load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
 // CONNECTORS PAGE
 // ============================================================
 
@@ -6766,6 +7005,7 @@ export function renderDashboard(): string {
       <a href="/policies" class="topbar-action">Policies</a>
       <a href="/governance-admin" class="topbar-action">Governance Admin</a>
       <a href="/roi" class="topbar-action">ROI</a>
+      <a href="/data" class="topbar-action">Data</a>
       <a href="/activity" class="topbar-action">Activity</a>
       <a href="/deadletters" class="topbar-action">Dead letters</a>
       <a href="/connectors" class="topbar-action">Connectors</a>
@@ -8756,6 +8996,16 @@ const server = Bun.serve({
       });
     }
 
+    if (path === "/data") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderDataPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Connectors page (all authenticated users)
     if (path === "/connectors") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -9353,6 +9603,56 @@ const server = Bun.serve({
         return jsonResponse(rollupRoi(supabase, userId, Number(days) || 7));
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 500);
+      }
+    }
+    // ── Data sources (connected-data layer) ──
+    if (path === "/api/data" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        return jsonResponse({ sources: supabase.listDataSources(userId) });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/data" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const body = await req.json().catch(() => ({}));
+        const name = String(body.name || "").trim();
+        const kind = String(body.kind || "").trim();
+        if (!name) return jsonResponse({ error: "name required" }, 400);
+        if (!kind) return jsonResponse({ error: "kind required" }, 400);
+        return jsonResponse(supabase.upsertDataSource(userId, { name, kind, config: body.config || {} }));
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/data/delete" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const body = await req.json().catch(() => ({}));
+        const name = String(body.name || "").trim();
+        if (!name) return jsonResponse({ error: "name required" }, 400);
+        supabase.deleteDataSource(userId, name);
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    if (path === "/api/data/query" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const body = await req.json().catch(() => ({}));
+        const name = String(body.name || "").trim();
+        if (!name) return jsonResponse({ error: "name required" }, 400);
+        const source = supabase.getDataSource(userId, name);
+        if (!source) return jsonResponse({ error: `no data source "${name}"` }, 404);
+        const { queryDataSource } = await import("./data-sources.ts");
+        const query = body.query ? String(body.query) : undefined;
+        const r = await queryDataSource(supabase, source, { query });
+        return jsonResponse({ columns: r.columns, rows: r.rows.slice(0, 200), source: r.source });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
       }
     }
     // ── Activity (unified run feed: automation / process / playbook) ──

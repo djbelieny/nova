@@ -23,6 +23,22 @@ function runList(): number {
   return 0;
 }
 
+/** `nova connector describe <id>` — introspect a connector's actions + params (mcp2cli-style --help). */
+function runDescribe(id: string): number {
+  const c = getConnector(id);
+  if (!c) { console.error(`  Unknown connector: ${id}`); return 1; }
+  console.log(`  ${c.id} — ${c.label}  (auth: ${c.authKind}; creds: ${c.credEnv.join(", ")})`);
+  console.log("  actions:");
+  for (const [name, a] of Object.entries(c.actions)) {
+    const params = (a.inputs || []).map(i => i.required ? `${i.name}*` : i.name).join(", ");
+    console.log(`   • ${name}${a.write ? " [write — gate this]" : ""} — ${a.description}${params ? `  params: { ${params} }` : ""}`);
+    for (const i of a.inputs || []) if (i.description) console.log(`       ${i.name}: ${i.description}`);
+  }
+  if (c.triggers?.length) console.log(`  triggers (automation sources): ${c.triggers.map(t => t.event).join(", ")}`);
+  console.log(`  call: nova connector run ${c.id} <action> --input '{"key":"value"}'`);
+  return 0;
+}
+
 async function runTest(id: string): Promise<number> {
   const db = getDb();
   const c = getConnector(id);
@@ -65,6 +81,7 @@ export async function runConnectorCli(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv;
   switch (sub) {
     case "list": case undefined: return runList();
+    case "describe": case "help": return rest[0] ? runDescribe(rest[0]) : (console.error("  Usage: nova connector describe <id>"), 1);
     case "test": return rest[0] ? runTest(rest[0]) : (console.error("  Usage: nova connector test <id>"), 1);
     case "run": return rest[0] && rest[1] ? runAction(rest[0], rest[1], rest.slice(2)) : (console.error("  Usage: nova connector run <id> <action> --input '{…}'"), 1);
     case "set": case "rotate": return rest[0] ? runSet(rest[0], rest.slice(1)) : (console.error("  Usage: nova connector set <id> NAME=value …"), 1);

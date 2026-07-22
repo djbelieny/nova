@@ -1,7 +1,7 @@
 // tests/policy.test.ts
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
-import { evaluatePolicies, policyForcesApproval, runContentChecks, departmentForAgent } from "../src/policy.ts";
+import { evaluatePolicies, policyForcesApproval, runContentChecks, departmentForAgent, enforceBlockPolicies } from "../src/policy.ts";
 
 let seq = 0;
 function newUser() {
@@ -68,6 +68,27 @@ test("department-scoped policy only applies to that department", () => {
   db.insertPolicy({ userId, scope: "department", scopeRef: "marketing", kind: "approval_matrix", config: { approvers: ["cmo"] } });
   expect(evaluatePolicies(db, { userId, agent: "helios", actionType: "x" }).decision).toBe("require-approval"); // marketing
   expect(evaluatePolicies(db, { userId, agent: "lex", actionType: "x" }).decision).toBe("allow"); // legal
+});
+
+test("enforceBlockPolicies hard-blocks prepared content with a block content_check", () => {
+  const { db, userId } = newUser();
+  // No block policy → nothing blocked.
+  expect(enforceBlockPolicies(db, userId, "customer SSN 123-45-6789").blocked).toBe(false);
+  db.insertPolicy({ userId, scope: "org", kind: "content_check", config: { checks: ["pii"], onFail: "block" } });
+  const r = enforceBlockPolicies(db, userId, "customer SSN 123-45-6789 in the email");
+  expect(r.blocked).toBe(true);
+  expect(r.reasons.join()).toContain("pii");
+  // A warn (not block) policy does NOT hard-block.
+  const { db: db2, userId: u2 } = newUser();
+  db2.insertPolicy({ userId: u2, scope: "org", kind: "content_check", config: { checks: ["pii"], onFail: "warn" } });
+  expect(enforceBlockPolicies(db2, u2, "SSN 123-45-6789").blocked).toBe(false);
+});
+
+test("department-scoped block only applies to that department's agents", () => {
+  const { db, userId } = newUser();
+  db.insertPolicy({ userId, scope: "department", scopeRef: "marketing", kind: "content_check", config: { checks: ["pii"], onFail: "block" } });
+  expect(enforceBlockPolicies(db, userId, "SSN 123-45-6789", { agents: ["kai"] }).blocked).toBe(true);   // kai → marketing
+  expect(enforceBlockPolicies(db, userId, "SSN 123-45-6789", { agents: ["lex"] }).blocked).toBe(false);  // lex → legal
 });
 
 test("db: policy list/enable/delete", () => {

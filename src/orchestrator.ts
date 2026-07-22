@@ -45,7 +45,7 @@ import {
 } from "./planner.ts";
 import type { SubtaskResult, Artifact, ProgressCallback } from "./planner.ts";
 import { decideGate, recordOutcome, type GateMode } from "./autonomy.ts";
-import { evaluatePolicies, policyForcesApproval } from "./policy.ts";
+import { evaluatePolicies, policyForcesApproval, enforceBlockPolicies } from "./policy.ts";
 import { deriveActionType } from "./ledger.ts";
 import {
   processMemoryIntents,
@@ -503,6 +503,23 @@ export async function handleApproval(
 
   // action === "approve" — run execute phase
   pendingApprovals.delete(approvalId);
+
+  // Hard-block compliance: a content_check policy set to `block` prevents execution even
+  // after approval (true compliance block). Checked against the prepared content.
+  {
+    const preparedContent = [
+      ...(pending.artifacts || []).map((a: any) => String(a?.value ?? "")),
+      ...(pending.prepareResults || []).map((r: any) => String(r?.result ?? "")),
+    ].join("\n");
+    const executeAgents = (pending.plan?.subtasks || []).filter((s: any) => s.phase === "execute").map((s: any) => s.agent || "general");
+    const block = enforceBlockPolicies(pending.supabase, pending.user.id, preparedContent, { agents: executeAgents });
+    if (block.blocked) {
+      recordLadderOutcomes(pending.user.id, (pending.plan?.subtasks || []).filter((s: any) => s.phase === "execute"), { success: false, rejected: true });
+      if (pending.supabase && pending.parentTaskId) pending.supabase.updateTask(pending.parentTaskId, { status: "blocked", result: `blocked by policy: ${block.reasons.join(", ")}` });
+      await _sendResponseWithVoice(ctx as any, `🛡️ Execution blocked by a compliance policy (${block.reasons.join(", ")}). Nothing was sent or published. Revise the content and try again.`, pending.user.id);
+      return;
+    }
+  }
 
   try {
     await ctx.replyWithChatAction("typing");
@@ -1924,6 +1941,17 @@ async function routeComplex(
     const ladderGate = supabase ? resolveExecuteGate(user.id, ladderExecuteTasks) : { mode: "ask" as GateMode };
 
     if (ladderGate.mode === "auto" || ladderGate.mode === "notify") {
+      // Hard-block compliance still applies on the autopilot path (block ≠ friction).
+      if (supabase) {
+        const preparedContent = [...artifacts.map((a: any) => String(a?.value ?? "")), ...prepareResults.map((r: any) => String(r?.result ?? ""))].join("\n");
+        const block = enforceBlockPolicies(supabase, user.id, preparedContent, { agents: ladderExecuteTasks.map((s) => s.agent || "general") });
+        if (block.blocked) {
+          recordLadderOutcomes(user.id, ladderExecuteTasks, { success: false, rejected: true });
+          if (parentTaskId) supabase.updateTask(parentTaskId, { status: "blocked", result: `blocked by policy: ${block.reasons.join(", ")}` });
+          await _sendResponseWithVoice(ctx as any, `🛡️ Execution blocked by a compliance policy (${block.reasons.join(", ")}). Nothing was sent or published.`, user.id);
+          return;
+        }
+      }
       emit({ type: "approval.resolved", level: "info", requestId, userId: user.id, data: { message: `Autonomy ladder ${ladderGate.mode} — executing without gate`, action: `ladder-${ladderGate.mode}` } });
 
       const executeResults = await executePhase(plan, "execute", user, supabase, parentTaskId, artifacts, prepareResults, onProgress, workspaceDir);

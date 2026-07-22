@@ -12,10 +12,14 @@ export interface ConnectorCtx {
   fetchImpl: FetchImpl;
 }
 
+export interface ConnectorInput { name: string; required?: boolean; description?: string; }
+
 export interface ConnectorAction {
   description: string;
   /** Consequential (write) actions must be gated by the caller. */
   write?: boolean;
+  /** Input parameter hints — surfaced by `nova connector describe` (mcp2cli-style introspection). */
+  inputs?: ConnectorInput[];
   run: (input: Record<string, any>, ctx: ConnectorCtx) => Promise<any>;
 }
 

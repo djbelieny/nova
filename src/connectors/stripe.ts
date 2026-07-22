@@ -10,16 +10,19 @@ export const stripeConnector: Connector = {
   credEnv: ['STRIPE_API_KEY'],
   actions: {
     list_charges: {
-      description: 'List recent charges. input: { limit? }',
+      description: 'List recent charges.',
+      inputs: [{ name: 'limit', description: 'max results (default 10)' }],
       run: (input, ctx) => httpJson(ctx, 'GET', `${BASE}/charges?limit=${input.limit || 10}`, { headers: auth(ctx) }),
     },
     get_customer: {
-      description: 'Get a customer by id. input: { id }',
+      description: 'Get a customer by id.',
+      inputs: [{ name: 'id', required: true, description: 'Stripe customer id (cus_…)' }],
       run: (input, ctx) => httpJson(ctx, 'GET', `${BASE}/customers/${encodeURIComponent(input.id)}`, { headers: auth(ctx) }),
     },
     create_refund: {
-      description: 'Refund a charge. input: { charge, amount? }',
+      description: 'Refund a charge.',
       write: true,
+      inputs: [{ name: 'charge', required: true, description: 'charge id (ch_…)' }, { name: 'amount', description: 'cents; omit for full refund' }],
       run: (input, ctx) => httpJson(ctx, 'POST', `${BASE}/refunds`, { headers: auth(ctx), form: { charge: input.charge, ...(input.amount ? { amount: String(input.amount) } : {}) } }),
     },
   },
