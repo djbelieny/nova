@@ -695,7 +695,7 @@ nova connector set stripe STRIPE_API_KEY=sk_live_…   <span class="c">stored en
       <li><strong>Retries &amp; dead-letter</strong> — a failed dispatch retries with backoff; if it still fails it lands in a dead-letter queue instead of vanishing. <code>nova dlq list | retry &lt;id&gt; | drop &lt;id&gt;</code>, or the dashboard <strong>Dead letters</strong> page.</li>
     </ul>
     <h3>Agents can use your tools</h3>
-    <p>Specialist agents call Nova's capabilities themselves while working — searching the knowledge base, extracting a document, querying a data source, running a configured connector, or running a playbook — via the <code>nova</code> CLI in their sandbox. Following the <strong>mcp2cli</strong> pattern, they <em>discover</em> tools on demand (e.g. <code>nova connector describe &lt;id&gt;</code>) rather than carrying every schema in the prompt, use read actions freely, and <strong>propose write/consequential actions for approval</strong> rather than executing them directly.</p>
+    <p>Specialist agents call Nova's capabilities themselves while working — searching the knowledge base, extracting a document, querying a data source, running a configured connector, or running a playbook — via the <code>nova</code> CLI in their execution environment. Following the <strong>mcp2cli</strong> pattern, they <em>discover</em> tools on demand (e.g. <code>nova connector describe &lt;id&gt;</code>) rather than carrying every schema in the prompt, use read actions freely, and <strong>propose write/consequential actions for approval</strong> rather than executing them directly.</p>
   </section>
 
   <!-- ══════════════ CONNECTED DATA ══════════════ -->
@@ -774,7 +774,7 @@ nova access list @teammate
       <tr><td>Groq</td><td>API</td><td>Whisper voice transcription</td></tr>
     </table></div>
     <h3>Adding any OpenAI-compatible model</h3>
-    <p>Beyond the subscription CLIs, you can add <strong>any OpenAI-compatible model</strong> — an OpenRouter route, an OpenAI model, or a local <code>Ollama</code> / <code>vLLM</code> endpoint. Add one with <code>nova providers add</code> (or the dashboard's <strong>Models</strong> panel); manage the rest with <code>nova providers list</code>, <code>nova providers test</code>, and <code>nova providers default</code>. Definitions live in <code>config/providers.json</code>, and each model uses its own API key. The subscription CLIs remain the default — added models slot in alongside them and can drive the same sandbox and MCP tools.</p>
+    <p>Beyond the subscription CLIs, you can add <strong>any OpenAI-compatible model</strong> — an OpenRouter route, an OpenAI model, or a local <code>Ollama</code> / <code>vLLM</code> endpoint. Add one with <code>nova providers add</code> (or the dashboard's <strong>Models</strong> panel); manage the rest with <code>nova providers list</code>, <code>nova providers test</code>, and <code>nova providers default</code>. Definitions live in <code>config/providers.json</code>, and each model uses its own API key. The subscription CLIs remain the default — added models slot in alongside them and drive the same MCP tools and connectors.</p>
   </section>
 
   <!-- ══════════════ MCP ══════════════ -->
@@ -834,13 +834,13 @@ nova access list @teammate
   <section id="board">
     <span class="sec-eyebrow">[advanced]</span>
     <h2>Executive board</h2>
-    <p>An optional distributed layer: seven executive nodes — CEO, CFO, CMO, CTO, COO, Research, Critic — each with a distinct reasoning persona and its own AI provider, coordinating through a shared Supabase database. Ask <code>/board should we switch to usage-based pricing?</code> and you get independent analyses, an adversarial pre-mortem from the Critic, and 3–5 synthesized options with confidence scores. Pick one; the decision is recorded and the COO dispatches execution.</p>
+    <p>An optional multi-node layer: seven executive roles — CEO, CFO, CMO, CTO, COO, Research, Critic — each a process with a distinct reasoning persona and its own AI provider, coordinating through a shared Postgres database over PostgREST. Ask <code>/board should we switch to usage-based pricing?</code> and you get independent analyses, an adversarial pre-mortem from the Critic, and 3–5 synthesized options with confidence scores. Pick one; the decision is recorded and the COO dispatches execution.</p>
     <h3>Setup</h3>
     <ol>
-      <li>Create a Supabase project; apply <code>supabase/migrations/001_executive_board.sql</code>.</li>
-      <li>Set <code>SUPABASE_URL</code> and <code>SUPABASE_SERVICE_ROLE_KEY</code> in <code>.env</code>. The board tables use row-level security with no anonymous access — the service role key is required and must only live on trusted servers.</li>
+      <li>Stand up the shared DB — <strong>self-hosted Postgres + PostgREST</strong> (<code>bun run migrate:board</code>, see <code>deploy/board/</code>), or a Supabase project if you prefer a hosted one.</li>
+      <li>Set <code>BOARD_DB_URL</code> and <code>BOARD_DB_KEY</code> in <code>.env</code> (the <code>SUPABASE_*</code> names still work as aliases). The board tables use row-level security with no anonymous access — the key must only live on trusted servers.</li>
       <li>Create <code>.env.&lt;role&gt;</code> per node (<code>EXEC_ROLE</code>, <code>EXEC_NODE_ID</code>, a bot token, optional <code>EXEC_AI_PROVIDER</code>).</li>
-      <li>Start nodes: <code>bun run exec:ceo</code>, <code>exec:cfo</code>, … <code>exec:critic</code> — same machine or seven separate VPSes (systemd units <code>nova-exec-&lt;role&gt;</code>).</li>
+      <li>Start the roles: <code>bun run exec:ceo</code>, <code>exec:cfo</code>, … <code>exec:critic</code>. They're just processes — run all seven on one host, or spread them across machines (systemd units <code>nova-exec-&lt;role&gt;</code>). Separate hosts with separate AI keys is a recommendation for rate limits, not a requirement.</li>
     </ol>
     <p>Executives use their own intent tags: <code>[DELEGATE: agent | task]</code> (optionally <code>| PROVIDER: claude</code>), <code>[BRIEF: role|all | summary]</code>, and <code>[DECISION: question | chosen | rationale | CONFIDENCE: 0.8]</code>.</p>
   </section>
@@ -881,11 +881,13 @@ data/memwright/      <span class="c"># optional long-term memory service store</
     <span class="sec-eyebrow">[security]</span>
     <h2>Security model</h2>
     <ul>
-      <li><strong>Approval gates</strong> separate consequential actions from safe ones, per category and per user.</li>
-      <li><strong>Credentials at rest</strong> — OAuth tokens are AES-256-GCM encrypted with <code>NOVA_ENCRYPTION_KEY</code>.</li>
-      <li><strong>Webhooks verified</strong> — Twilio HMAC with timing-safe comparison; Resend svix signatures.</li>
-      <li><strong>Dashboard</strong> — authenticated sessions, per-user data isolation, rate limiting. Always set <code>DASHBOARD_PASS</code> and serve over HTTPS if exposed.</li>
-      <li><strong>Executive board</strong> — RLS on all shared tables; service role key on trusted servers only.</li>
+      <li><strong>Approval gates</strong> separate consequential actions from safe ones, per category and per user — <strong>the default safety boundary</strong> (see the caveat below).</li>
+      <li><strong>Sandboxing is opt-in.</strong> By default agent tools run <strong>unsandboxed on your host</strong>. A hardened Docker sandbox exists (<code>NOVA_SANDBOX_BACKEND=docker</code>: read-only FS, dropped caps, no network, workspace-only mount) but is off by default and <strong>falls back to unsandboxed if Docker isn't installed</strong>. Run Nova as a dedicated user / on its own VPS, and enable the Docker sandbox if isolation matters to you.</li>
+      <li><strong>Autonomous paths.</strong> The approval gate covers <em>interactive</em> requests. Scheduled tasks, automations, and durable-process steps are <strong>pre-authorized when you create them</strong> and run headless; the controls there are the autonomy ladder's <strong>spending caps</strong> and <strong>hard-block</strong> content policies (which stop execution even on those paths).</li>
+      <li><strong>Credentials at rest</strong> — OAuth tokens and connector secrets are AES-256-GCM encrypted with <code>NOVA_ENCRYPTION_KEY</code>.</li>
+      <li><strong>Webhooks verified</strong> — Twilio HMAC with timing-safe comparison; Resend svix signatures; automation webhooks HMAC-signed.</li>
+      <li><strong>Dashboard</strong> — authenticated sessions, per-user data isolation, capability-gated management routes, rate limiting. Always set <code>DASHBOARD_PASS</code> and serve over HTTPS if exposed.</li>
+      <li><strong>Executive board</strong> — RLS on all shared tables (self-hosted Postgres + PostgREST or Supabase); the DB key on trusted servers only.</li>
       <li><strong>SQL</strong> — fully parameterized queries; AI CLIs invoked with argv arrays (no shell interpolation of your messages).</li>
     </ul>
     <p>Found a vulnerability? Report privately via <a href="https://github.com/djbelieny/nova/security" rel="noopener">GitHub Security Advisories</a> — see <code>SECURITY.md</code>.</p>

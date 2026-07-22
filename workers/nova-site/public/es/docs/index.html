@@ -695,7 +695,7 @@ nova connector set stripe STRIPE_API_KEY=sk_live_…   <span class="c">almacenad
       <li><strong>Reintentos y dead-letter</strong> — un envío fallido se reintenta con backoff; si aun así falla, cae en una cola de dead-letter en lugar de desaparecer. <code>nova dlq list | retry &lt;id&gt; | drop &lt;id&gt;</code>, o la página <strong>Dead letters</strong> del dashboard.</li>
     </ul>
     <h3>Los agentes pueden usar tus herramientas</h3>
-    <p>Los agentes especialistas pueden llamar a las capacidades de Nova ellos mismos mientras trabajan — buscar en la base de conocimiento, extraer un documento, consultar una fuente de datos, ejecutar un conector configurado o correr un playbook — mediante la CLI <code>nova</code> en su sandbox. Siguiendo el patrón <strong>mcp2cli</strong>, <em>descubren</em> las herramientas bajo demanda (p. ej. <code>nova connector describe &lt;id&gt;</code>) en lugar de cargar cada esquema en el prompt, usan las acciones de lectura libremente y <strong>proponen acciones de escritura/con consecuencias para aprobación</strong> en lugar de ejecutarlas directamente.</p>
+    <p>Los agentes especialistas pueden llamar a las capacidades de Nova ellos mismos mientras trabajan — buscar en la base de conocimiento, extraer un documento, consultar una fuente de datos, ejecutar un conector configurado o correr un playbook — mediante la CLI <code>nova</code> en su entorno de ejecución. Siguiendo el patrón <strong>mcp2cli</strong>, <em>descubren</em> las herramientas bajo demanda (p. ej. <code>nova connector describe &lt;id&gt;</code>) en lugar de cargar cada esquema en el prompt, usan las acciones de lectura libremente y <strong>proponen acciones de escritura/con consecuencias para aprobación</strong> en lugar de ejecutarlas directamente.</p>
   </section>
 
   <!-- ══════════════ CONNECTED DATA ══════════════ -->
@@ -774,7 +774,7 @@ nova access list @teammate
       <tr><td>Groq</td><td>API</td><td>Transcripción de voz Whisper</td></tr>
     </table></div>
     <h3>Agregar cualquier modelo compatible con OpenAI</h3>
-    <p>Más allá de las CLIs de suscripción, puedes agregar <strong>cualquier modelo compatible con OpenAI</strong> — una ruta de OpenRouter, un modelo de OpenAI, o un endpoint local de <code>Ollama</code> / <code>vLLM</code>. Agrega uno con <code>nova providers add</code> (o la sección <strong>Modelos</strong> del panel); gestiona el resto con <code>nova providers list</code>, <code>nova providers test</code> y <code>nova providers default</code>. Las definiciones viven en <code>config/providers.json</code>, y cada modelo usa su propia clave API. Las CLIs de suscripción siguen siendo el valor predeterminado — los modelos agregados se acomodan junto a ellas y pueden impulsar el mismo sandbox y las mismas herramientas MCP.</p>
+    <p>Más allá de las CLIs de suscripción, puedes agregar <strong>cualquier modelo compatible con OpenAI</strong> — una ruta de OpenRouter, un modelo de OpenAI, o un endpoint local de <code>Ollama</code> / <code>vLLM</code>. Agrega uno con <code>nova providers add</code> (o la sección <strong>Modelos</strong> del panel); gestiona el resto con <code>nova providers list</code>, <code>nova providers test</code> y <code>nova providers default</code>. Las definiciones viven en <code>config/providers.json</code>, y cada modelo usa su propia clave API. Las CLIs de suscripción siguen siendo el valor predeterminado — los modelos agregados se acomodan junto a ellas y usan las mismas herramientas MCP y conectores.</p>
   </section>
 
   <!-- ══════════════ MCP ══════════════ -->
@@ -834,13 +834,13 @@ nova access list @teammate
   <section id="board">
     <span class="sec-eyebrow">[avanzado]</span>
     <h2>Junta ejecutiva</h2>
-    <p>Una capa distribuida opcional: siete nodos ejecutivos — CEO, CFO, CMO, CTO, COO, Research, Critic — cada uno con una persona de razonamiento distinta y su propio proveedor de IA, coordinándose a través de una base de datos compartida de Supabase. Pregunta <code>/board should we switch to usage-based pricing?</code> y obtienes análisis independientes, un pre-mortem adversarial del Critic y 3–5 opciones sintetizadas con puntuaciones de confianza. Elige una; la decisión se registra y el COO despacha la ejecución.</p>
+    <p>Una capa multinodo opcional: siete roles ejecutivos — CEO, CFO, CMO, CTO, COO, Research, Critic — cada uno un proceso con una persona de razonamiento distinta y su propio proveedor de IA, coordinándose a través de una base de datos Postgres compartida mediante PostgREST. Pregunta <code>/board should we switch to usage-based pricing?</code> y obtienes análisis independientes, un pre-mortem adversarial del Critic y 3–5 opciones sintetizadas con puntuaciones de confianza. Elige una; la decisión se registra y el COO despacha la ejecución.</p>
     <h3>Configuración</h3>
     <ol>
-      <li>Crea un proyecto de Supabase; aplica <code>supabase/migrations/001_executive_board.sql</code>.</li>
-      <li>Establece <code>SUPABASE_URL</code> y <code>SUPABASE_SERVICE_ROLE_KEY</code> en <code>.env</code>. Las tablas del panel usan seguridad a nivel de fila sin acceso anónimo — se requiere la clave de rol de servicio y debe vivir solo en servidores de confianza.</li>
+      <li>Levanta la base de datos compartida — <strong>Postgres + PostgREST autoalojado</strong> (<code>bun run migrate:board</code>, ver <code>deploy/board/</code>), o un proyecto de Supabase si prefieres uno gestionado.</li>
+      <li>Establece <code>BOARD_DB_URL</code> y <code>BOARD_DB_KEY</code> en <code>.env</code> (los nombres <code>SUPABASE_*</code> siguen funcionando como alias). Las tablas de la junta usan seguridad a nivel de fila sin acceso anónimo — la clave solo debe vivir en servidores de confianza.</li>
       <li>Crea <code>.env.&lt;role&gt;</code> por nodo (<code>EXEC_ROLE</code>, <code>EXEC_NODE_ID</code>, un token de bot, <code>EXEC_AI_PROVIDER</code> opcional).</li>
-      <li>Inicia nodos: <code>bun run exec:ceo</code>, <code>exec:cfo</code>, … <code>exec:critic</code> — misma máquina o siete VPSes separadas (unidades systemd <code>nova-exec-&lt;role&gt;</code>).</li>
+      <li>Inicia los roles: <code>bun run exec:ceo</code>, <code>exec:cfo</code>, … <code>exec:critic</code>. Son solo procesos — ejecuta los siete en un mismo host o distribúyelos en varias máquinas (unidades systemd <code>nova-exec-&lt;role&gt;</code>). Hosts separados con claves de IA separadas es una recomendación para los límites de tasa, no un requisito.</li>
     </ol>
     <p>Los ejecutivos usan sus propias etiquetas de intención: <code>[DELEGATE: agente | tarea]</code> (opcionalmente <code>| PROVIDER: claude</code>), <code>[BRIEF: role|all | resumen]</code> y <code>[DECISION: pregunta | elegido | rationale | CONFIDENCE: 0.8]</code>.</p>
   </section>
@@ -881,11 +881,13 @@ data/memwright/      <span class="c"># almacenamiento del servicio de memoria a 
     <span class="sec-eyebrow">[seguridad]</span>
     <h2>Modelo de seguridad</h2>
     <ul>
-      <li><strong>Controles de aprobación</strong> separan acciones consecuentes de las seguras, por categoría y por usuario.</li>
-      <li><strong>Credenciales en reposo</strong> — Los tokens OAuth están cifrados con AES-256-GCM con <code>NOVA_ENCRYPTION_KEY</code>.</li>
-      <li><strong>Webhooks verificados</strong> — HMAC de Twilio con comparación segura de tiempo; firmas svix de Resend.</li>
-      <li><strong>Panel</strong> — sesiones autenticadas, aislamiento de datos por usuario, limitación de velocidad. Siempre establece <code>DASHBOARD_PASS</code> y sirve sobre HTTPS si está expuesto.</li>
-      <li><strong>Junta ejecutiva</strong> — RLS en todas las tablas compartidas; clave de rol de servicio solo en servidores de confianza.</li>
+      <li><strong>Controles de aprobación</strong> separan acciones consecuentes de las seguras, por categoría y por usuario — <strong>el límite de seguridad predeterminado</strong> (ver la salvedad más abajo).</li>
+      <li><strong>El aislamiento (sandbox) es opcional.</strong> Por defecto, las herramientas de los agentes se ejecutan <strong>sin sandbox en tu host</strong>. Existe un sandbox de Docker endurecido (<code>NOVA_SANDBOX_BACKEND=docker</code>: FS de solo lectura, capacidades reducidas, sin red, montaje solo del workspace) pero está desactivado por defecto y <strong>recae en sin sandbox si Docker no está instalado</strong>. Ejecuta Nova como un usuario dedicado / en su propio VPS, y habilita el sandbox de Docker si el aislamiento te importa.</li>
+      <li><strong>Rutas autónomas.</strong> El control de aprobación cubre las solicitudes <em>interactivas</em>. Las tareas programadas, las automatizaciones y los pasos de procesos durables están <strong>preautorizados cuando los creas</strong> y se ejecutan sin supervisión; ahí los controles son los <strong>topes de gasto</strong> de la escalera de autonomía y las políticas de contenido de <strong>bloqueo absoluto</strong> (que detienen la ejecución incluso en esas rutas).</li>
+      <li><strong>Credenciales en reposo</strong> — Los tokens OAuth y los secretos de conectores están cifrados con AES-256-GCM con <code>NOVA_ENCRYPTION_KEY</code>.</li>
+      <li><strong>Webhooks verificados</strong> — HMAC de Twilio con comparación segura de tiempo; firmas svix de Resend; webhooks de automatización firmados con HMAC.</li>
+      <li><strong>Panel</strong> — sesiones autenticadas, aislamiento de datos por usuario, rutas de gestión restringidas por capacidad, limitación de velocidad. Siempre establece <code>DASHBOARD_PASS</code> y sirve sobre HTTPS si está expuesto.</li>
+      <li><strong>Junta ejecutiva</strong> — RLS en todas las tablas compartidas (Postgres + PostgREST autoalojado o Supabase); la clave de la base de datos solo en servidores de confianza.</li>
       <li><strong>SQL</strong> — consultas completamente parametrizadas; CLIs de IA invocadas con arrays argv (sin interpolación de shell de tus mensajes).</li>
     </ul>
     <p>¿Encontraste una vulnerabilidad? Reporta en privado vía <a href="https://github.com/djbelieny/nova/security" rel="noopener">GitHub Security Advisories</a> — ver <code>SECURITY.md</code>.</p>
