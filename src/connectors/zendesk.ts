@@ -14,8 +14,9 @@ export const zendeskConnector: Connector = {
       run: (_input, ctx) => httpJson(ctx, 'GET', `${base(ctx)}/tickets.json?sort_order=desc`, { headers: auth(ctx) }),
     },
     create_ticket: {
-      description: 'Create a ticket. input: { subject, body, priority? }',
+      description: 'Create a ticket.',
       write: true,
+      inputs: [{ name: 'subject', required: true }, { name: 'body', required: true }, { name: 'priority', description: 'low|normal|high|urgent' }],
       run: (input, ctx) => httpJson(ctx, 'POST', `${base(ctx)}/tickets.json`, { headers: auth(ctx), body: { ticket: { subject: input.subject, comment: { body: input.body }, priority: input.priority } } }),
     },
   },

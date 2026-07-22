@@ -675,6 +675,28 @@ function applyRoiSchema(db: BunDatabase): void {
 
 export interface RoiEvent { id: string; userId: string; agent: string | null; department: string | null; valueUsd: number; minutesSaved: number; note: string | null; createdAt?: string; }
 
+/**
+ * Connected-data layer — register queryable data sources (HTTP JSON/CSV endpoints, read-only
+ * SQLite files, or connector read-actions) for recurring analytical reads. Per-user db.
+ */
+function applyDataSourceSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS data_sources (
+      id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      user_id    TEXT NOT NULL,
+      name       TEXT NOT NULL,
+      kind       TEXT NOT NULL,
+      config     TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(user_id, name)
+    )
+  `);
+}
+export interface DataSource { id: string; userId: string; name: string; kind: 'http' | 'sqlite' | 'connector'; config: Record<string, any>; createdAt?: string; }
+function mapDataSource(r: any): DataSource {
+  return { id: r.id, userId: r.user_id, name: r.name, kind: r.kind, config: parseJson(r.config, {}), createdAt: r.created_at };
+}
+
 export interface ExtractField { name: string; type?: 'string' | 'number' | 'boolean' | 'date' | 'array'; description?: string; required?: boolean; }
 export interface ExtractSchema { id: string; userId: string; name: string; fields: ExtractField[]; destination: string | null; createdAt?: string; }
 export interface Extraction { id: string; userId: string; schemaId: string | null; schemaName: string | null; source: string | null; data: Record<string, any>; status: string; createdAt?: string; }
@@ -1933,6 +1955,8 @@ class UserDatabase {
     applyExtractionSchema(this.db);
     // ROI events — per-user db
     applyRoiSchema(this.db);
+    // Connected-data sources — per-user db
+    applyDataSourceSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -5864,6 +5888,34 @@ export class Database {
   }
   listSecretRotations(provider: string): any[] {
     return this.shared.db.query(`SELECT provider, rotated_by, created_at FROM secret_rotations WHERE provider = ? ORDER BY created_at DESC`).all(provider) as any[];
+  }
+
+  // ============================================================
+  // Connected-data sources — per-user db
+  // ============================================================
+
+  upsertDataSource(userId: string, s: { name: string; kind: string; config: Record<string, any> }): DataSource {
+    const db = this.getUserDb(userId).db;
+    const existing = db.query(`SELECT id FROM data_sources WHERE user_id = ? AND name = ?`).get(userId, s.name) as any;
+    if (existing) {
+      db.run(`UPDATE data_sources SET kind = ?, config = ? WHERE id = ?`, [s.kind, JSON.stringify(s.config), existing.id]);
+    } else {
+      db.run(`INSERT INTO data_sources (id, user_id, name, kind, config) VALUES (?, ?, ?, ?, ?)`, [crypto.randomUUID(), userId, s.name, s.kind, JSON.stringify(s.config)]);
+    }
+    return this.getDataSource(userId, s.name)!;
+  }
+
+  getDataSource(userId: string, name: string): DataSource | null {
+    const row = this.getUserDb(userId).db.query(`SELECT * FROM data_sources WHERE user_id = ? AND name = ?`).get(userId, name) as any;
+    return row ? mapDataSource(row) : null;
+  }
+
+  listDataSources(userId: string): DataSource[] {
+    return (this.getUserDb(userId).db.query(`SELECT * FROM data_sources WHERE user_id = ? ORDER BY name`).all(userId) as any[]).map(mapDataSource);
+  }
+
+  deleteDataSource(userId: string, name: string): void {
+    this.getUserDb(userId).db.run(`DELETE FROM data_sources WHERE user_id = ? AND name = ?`, [userId, name]);
   }
 }
 

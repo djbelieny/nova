@@ -14,8 +14,9 @@ export const hubspotConnector: Connector = {
       run: (input, ctx) => httpJson(ctx, 'GET', `${BASE}/crm/v3/objects/contacts?limit=${input.limit || 20}`, { headers: auth(ctx) }),
     },
     create_contact: {
-      description: 'Create a contact. input: { email, firstname?, lastname?, ... }',
+      description: 'Create a contact.',
       write: true,
+      inputs: [{ name: 'email', required: true }, { name: 'firstname' }, { name: 'lastname' }],
       run: (input, ctx) => httpJson(ctx, 'POST', `${BASE}/crm/v3/objects/contacts`, { headers: auth(ctx), body: { properties: input } }),
     },
   },

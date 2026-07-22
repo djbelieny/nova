@@ -118,3 +118,27 @@ export function evaluatePolicies(db: Database, ctx: PolicyContext): PolicyResult
 export function policyForcesApproval(result: PolicyResult): boolean {
   return result.decision !== 'allow';
 }
+
+/**
+ * Hard-block enforcement, run at the EXECUTE boundary against the prepared content — even
+ * after a human approval, a `content_check` policy with `onFail: 'block'` prevents execution
+ * (true compliance block, not just added friction). Returns which checks failed.
+ */
+export function enforceBlockPolicies(
+  db: Database,
+  userId: string,
+  content: string,
+  opts: { agents?: string[] } = {}
+): { blocked: boolean; reasons: string[] } {
+  const departments = new Set((opts.agents || []).map(departmentForAgent).filter(Boolean) as string[]);
+  const reasons: string[] = [];
+  for (const p of db.listPolicies(userId, true)) {
+    if (p.kind !== 'content_check' || p.config?.onFail !== 'block') continue;
+    // Department-scoped block applies only when one of the acting agents is in that department.
+    const dept = p.config?.department || (p.scope === 'department' ? p.scopeRef : null);
+    if (dept && departments.size && !departments.has(dept)) continue;
+    const failed = runContentChecks(content || '', (p.config.checks as string[]) || []);
+    if (failed.length) reasons.push(failed.join(', '));
+  }
+  return { blocked: reasons.length > 0, reasons: [...new Set(reasons)] };
+}

@@ -1971,6 +1971,26 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       return;
     }
 
+    // /data — list connected data sources or query one. "/data query <name>"
+    if (text.trim().toLowerCase() === "/data" || text.trim().toLowerCase().startsWith("/data ")) {
+      const q = text.trim().match(/^\/data\s+query\s+([\w-]+)/i);
+      if (q) {
+        const s = supabase.getDataSource(user.id, q[1]);
+        if (!s) { await ctx.reply(`No data source *${q[1]}*. Add one from a terminal: \`nova data add …\`.`, { parse_mode: "Markdown" }); return; }
+        try {
+          const { queryDataSource } = await import("./data-sources.ts");
+          const r = await queryDataSource(supabase, s);
+          const preview = r.rows.slice(0, 10).map(row => `• ${JSON.stringify(row).slice(0, 120)}`).join("\n");
+          await ctx.reply(`📊 *${s.name}* — ${r.rows.length} row(s), columns: ${r.columns.join(", ")}\n\n${preview}${r.rows.length > 10 ? "\n…" : ""}`, { parse_mode: "Markdown" });
+        } catch (e: any) { await ctx.reply(`Couldn't query ${q[1]}: ${e.message}`); }
+        return;
+      }
+      const sources = supabase.listDataSources(user.id);
+      if (!sources.length) { await ctx.reply("📊 *No data sources.* Register one (HTTP/SQLite/connector) from a terminal: `nova data add <name> --kind http --url …`, then `/data query <name>`.", { parse_mode: "Markdown" }); return; }
+      await ctx.reply(["📊 *Data sources*", "", ...sources.map(s => `• *${s.name}* [${s.kind}]`), "", "_Query one:_ `/data query <name>`"].join("\n"), { parse_mode: "Markdown" });
+      return;
+    }
+
     // /roi — business value delivered (tasks automated, hours saved, $ vs cost).
     if (text.trim().toLowerCase() === "/roi" || text.trim().toLowerCase().startsWith("/roi ")) {
       const m = text.trim().match(/\/roi\s+(\d+)/);
