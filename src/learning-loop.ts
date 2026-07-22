@@ -16,6 +16,7 @@ import { join } from "path";
 import type { Database } from "./db.ts";
 import { memwright } from "./memwright-client.ts";
 import { detectFactCategory } from "./memory.ts";
+import { looksLikeInjection } from "./untrusted.ts";
 
 function normalizeSignature(text: string): string {
   const stopWords = new Set([
@@ -47,35 +48,11 @@ const DEFAULT_MAX_PENDING = 20;
 
 /**
  * Heuristic prompt-injection detector for learned/proposed content before it
- * re-enters a prompt. Nova has no shared scanner for memory/learned re-injection
- * (cs-sanitize is customer-input-specific), so this flags text that reads as an
- * instruction to the system rather than a description of the user's work.
+ * re-enters a prompt. Moved to `./untrusted.ts` as the shared scanner used across
+ * Nova (memory/learned re-injection, knowledge retrieval, playbooks, automation);
+ * re-exported here for back-compat with existing importers.
  */
-export function looksLikeInjection(text: string): boolean {
-  if (!text) return false;
-  const t = text.toLowerCase();
-
-  // Nova intent tags / slash commands smuggled into content
-  if (/\[(remember|share|goal|done|task[_a-z]*|schedule[_a-z]*|devtask|decision|brief|delegate)[:\s]/i.test(text)) return true;
-  if (/(^|\n)\s*\/(help|start|agents|memory|goals|tasks|board|adduser|devtask|schedule)\b/i.test(text)) return true;
-
-  const patterns: RegExp[] = [
-    /ignore (all |the |your )?(previous|prior|above|earlier) (instructions|prompts?|messages?|context)/,
-    /disregard (all |the |your )?(previous|prior|above|earlier)/,
-    /forget (everything|all|your instructions|previous)/,
-    /you are (now|actually) (a|an|the)\b/,
-    /(system|developer)\s*(prompt|message|instruction)/,
-    /\b(new|updated|override|revised) (system )?(instructions?|rules?|directives?)\b/,
-    /act as (a|an|the)?\s*(different|new|unrestricted|jailbroken|dan)\b/,
-    /pretend (to be|you are)\b/,
-    /do not (tell|inform|reveal to) (the )?(user|anyone)/,
-    /reveal (your|the) (system )?(prompt|instructions)/,
-    /\bexfiltrate\b|\bsend .* to (http|https|www)/,
-    /\bexec(ute)?\b.*\b(command|shell|code)\b/,
-    /<\s*(system|assistant|user)\s*>/,
-  ];
-  return patterns.some((re) => re.test(t));
-}
+export { looksLikeInjection };
 
 /**
  * Extract and parse the first balanced JSON object from arbitrary LLM output.
