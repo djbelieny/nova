@@ -49,3 +49,13 @@ test("strict=false restores full passthrough", () => {
   process.env.STRIPE_API_KEY = "sk_live_x";
   expect(buildAgentEnv({}).STRIPE_API_KEY).toBe("sk_live_x");
 });
+
+test("strict mode passes through proxy/TLS vars (usability)", () => {
+  process.env.HTTPS_PROXY = "http://corp-proxy:8080";
+  process.env.NODE_EXTRA_CA_CERTS = "/etc/ssl/corp.pem";
+  const env = buildAgentEnv({ provider: "claude" });
+  expect(env.HTTPS_PROXY).toBe("http://corp-proxy:8080");
+  expect(env.NODE_EXTRA_CA_CERTS).toBe("/etc/ssl/corp.pem");
+  delete process.env.HTTPS_PROXY;
+  delete process.env.NODE_EXTRA_CA_CERTS;
+});
