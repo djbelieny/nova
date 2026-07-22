@@ -18,6 +18,7 @@ import { join, dirname, resolve } from "path";
 import { mkdirSync, existsSync, readdirSync, renameSync } from "fs";
 import * as sqliteVec from "sqlite-vec";
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { redactLeaks } from "./leak-scan.ts";
 
 // ============================================================
 // Credential Encryption (AES-256-GCM)
@@ -4105,6 +4106,9 @@ export class Database {
     duration_ms?: number;
     user_id?: string;
   }): void {
+    const scrub = (s: string) => process.env.NOVA_LEAK_FIREWALL === "off" ? s : redactLeaks(s).text;
+    const safeMessage = data.message ? scrub(data.message) : null;
+    const safeMetadata = scrub(JSON.stringify(data.metadata || {}));
     this.shared.db.run(`
       INSERT INTO logs (id, level, event, message, metadata, session_id, duration_ms, user_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -4112,8 +4116,8 @@ export class Database {
       uuid(),
       data.level || "info",
       data.event,
-      data.message || null,
-      JSON.stringify(data.metadata || {}),
+      safeMessage,
+      safeMetadata,
       data.session_id || null,
       data.duration_ms || null,
       data.user_id || null,

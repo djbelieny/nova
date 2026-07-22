@@ -2,8 +2,10 @@
  * Policy / compliance layer — restrictive-only.
  *
  * Evaluated at the approval gate AFTER the autonomy ladder decides. Policies can only add
- * friction (force human approval, block, or warn); they never grant more autonomy. With no
- * policies defined, evaluation is a no-op and behavior is identical to today.
+ * friction (force human approval, block, or warn); they never grant more autonomy.
+ * `enforceBlockPolicies` always hard-blocks content containing a detected secret, independent
+ * of any configured policies (gated by NOVA_LEAK_BLOCK_EXECUTE) — it is not a no-op even with
+ * no policies defined.
  *
  * Kinds:
  *   spend_cap      { period:'day'|'month', capUsd, department? }
@@ -12,6 +14,7 @@
  */
 
 import type { Database, Policy } from './db';
+import { scanForLeaks } from './leak-scan.ts';
 
 /** Coarse agent → department map for department-scoped policies (optional matching). */
 export const AGENT_DEPARTMENT: Record<string, string> = {
@@ -132,6 +135,10 @@ export function enforceBlockPolicies(
 ): { blocked: boolean; reasons: string[] } {
   const departments = new Set((opts.agents || []).map(departmentForAgent).filter(Boolean) as string[]);
   const reasons: string[] = [];
+  if (process.env.NOVA_LEAK_BLOCK_EXECUTE !== 'off' && content) {
+    const secrets = scanForLeaks(content).filter((f) => f.severity === 'secret');
+    if (secrets.length) reasons.push(`secret detected (${[...new Set(secrets.map((s) => s.type))].join(', ')})`);
+  }
   for (const p of db.listPolicies(userId, true)) {
     if (p.kind !== 'content_check' || p.config?.onFail !== 'block') continue;
     // Department-scoped block applies only when one of the acting agents is in that department.

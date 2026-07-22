@@ -9,6 +9,7 @@
 import { Bot, Context, InputFile, InlineKeyboard } from "grammy";
 import { stat } from "fs/promises";
 import { getExamplePrompt, NOVA_COMMANDS } from "../onboarding.ts";
+import { redactLeaks } from "../leak-scan.ts";
 import type {
   ChannelAdapter,
   IncomingMessage,
@@ -594,5 +595,7 @@ export function cleanResponseForUser(response: string): string {
   cleaned = cleaned.replace(/^.*(?:scripts\/generate_image\.py|send_telegram_file\.sh|\.claude\/skills\/).*$/gm, "");
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
 
-  return cleaned.trim();
+  const trimmed = cleaned.trim();
+  if (process.env.NOVA_LEAK_FIREWALL === "off") return trimmed;
+  return redactLeaks(trimmed, { severities: ["secret"] }).text;
 }

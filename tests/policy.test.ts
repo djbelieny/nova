@@ -3,6 +3,8 @@ import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { evaluatePolicies, policyForcesApproval, runContentChecks, departmentForAgent, enforceBlockPolicies } from "../src/policy.ts";
 
+// Split literal so the contiguous provider token never appears in source (see leak-scan.test.ts).
+const STRIPE = "sk_live_" + "FAKEtest1234notrealSTRIPE";
 let seq = 0;
 function newUser() {
   const db = getDb();
@@ -89,6 +91,20 @@ test("department-scoped block only applies to that department's agents", () => {
   db.insertPolicy({ userId, scope: "department", scopeRef: "marketing", kind: "content_check", config: { checks: ["pii"], onFail: "block" } });
   expect(enforceBlockPolicies(db, userId, "SSN 123-45-6789", { agents: ["kai"] }).blocked).toBe(true);   // kai → marketing
   expect(enforceBlockPolicies(db, userId, "SSN 123-45-6789", { agents: ["lex"] }).blocked).toBe(false);  // lex → legal
+});
+
+test("enforceBlockPolicies blocks a secret with no policy configured", () => {
+  const db = getDb();
+  const U = "sec-block-" + Math.abs(Date.now() % 1e6); // unique-ish; NOVA_DB_DIR is isolated
+  const r = enforceBlockPolicies(db, U, `publishing token ${STRIPE}`);
+  expect(r.blocked).toBe(true);
+  expect(r.reasons.join()).toContain("secret");
+});
+
+test("enforceBlockPolicies does NOT block plain PII with no policy", () => {
+  const db = getDb();
+  const U2 = "sec-nopii-" + Math.abs((Date.now() + 1) % 1e6);
+  expect(enforceBlockPolicies(db, U2, "email a@b.com ssn 123-45-6789").blocked).toBe(false);
 });
 
 test("db: policy list/enable/delete", () => {
