@@ -2022,6 +2022,8 @@ export function renderAccountPage(): string {
     <a class="hub-link" href="${DASHBOARD_BASE}/extraction">Extraction</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/policies">Policies</a>
 <a class="hub-link" href="${DASHBOARD_BASE}/roi">ROI</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/activity">Activity</a>
+    <a class="hub-link" href="${DASHBOARD_BASE}/deadletters">Dead letters</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/connectors">Connectors</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/history">History</a>
     <a class="hub-link" href="${DASHBOARD_BASE}/approvals">Approvals</a>
@@ -3130,6 +3132,15 @@ export function renderAutomationsPage(): string {
   .empty{color:var(--dim);font-size:.85rem}
   .webhook{width:100%;margin-top:6px;font-size:.72rem;color:var(--dim);word-break:break-all;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:6px 8px;display:none}
   .webhook code{color:var(--text)}
+  .sim{width:100%;margin-top:6px;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:8px;padding:10px;display:none}
+  .sim label{margin-bottom:4px}
+  .sim textarea{font-family:ui-monospace,monospace;min-height:56px;font-size:.76rem;margin-bottom:8px}
+  .sim-out{margin-top:8px;font-size:.78rem;border-radius:7px;padding:9px 11px;display:none}
+  .sim-out.fire{background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);color:var(--green)}
+  .sim-out.skip{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--yellow)}
+  .sim-out.err{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:var(--red)}
+  .sim-out .k{color:var(--dim);text-transform:uppercase;font-size:.64rem;letter-spacing:.05em}
+  .sim-out code{color:var(--text);font-family:ui-monospace,monospace}
   .reveal{background:rgba(99,102,241,.12);border:1px solid rgba(99,102,241,.35);border-radius:8px;padding:10px 12px;margin:1rem 0;display:none}
   .reveal .k{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-bottom:4px}
   .reveal code{display:block;font-size:.74rem;color:var(--text);word-break:break-all;background:rgba(0,0,0,.25);border-radius:5px;padding:6px 8px;margin-bottom:8px}
@@ -3188,7 +3199,8 @@ export function renderAutomationsPage(): string {
     </div>
     <div class="field">
       <label>Conditions — one per line as <code>field:op:value</code> (optional)</label>
-      <textarea id="conditions" placeholder="amount:gt:100&#10;status:eq:paid"></textarea>
+      <textarea id="conditions" placeholder="amount:gt:100&#10;status:eq:paid&#10;body:semantic:a customer complaint:0.55"></textarea>
+      <p class="hint" style="margin:.5rem 0 0">Ops: <code>eq</code>, <code>ne</code>, <code>gt</code>, <code>lt</code>, <code>contains</code>, <code>exists</code>, and <code>semantic</code>. A <code>semantic</code> line — <code>field:semantic:phrase:threshold</code> — fires when the event field is semantically similar to the phrase (threshold optional, default 0.5).</p>
     </div>
     <div class="field">
       <label>Dedupe template — skip duplicate events sharing this key (optional)</label>
@@ -3221,6 +3233,18 @@ export function renderAutomationsPage(): string {
       var parts = l.split(':');
       var field = (parts[0]||'').trim();
       var op = (parts[1]||'').trim();
+      if (op === 'semantic') {
+        // field:semantic:<phrase>[:<threshold>]
+        var rest = parts.slice(2);
+        var threshold;
+        if (rest.length > 1) {
+          var last = rest[rest.length - 1].trim();
+          if (last !== '' && !isNaN(Number(last))) { threshold = Number(last); rest = rest.slice(0, -1); }
+        }
+        var c = { field: field, op: op, value: rest.join(':').trim() };
+        if (threshold !== undefined) c.threshold = threshold;
+        return c;
+      }
       var value = parts.slice(2).join(':').trim();
       return { field: field, op: op, value: value };
     }).filter(function(c){ return c.field && c.op; });
@@ -3252,6 +3276,39 @@ export function renderAutomationsPage(): string {
       var wid = btn.getAttribute('data-id');
       var el = document.getElementById('wh-' + wid);
       if (el) el.style.display = el.style.display === 'block' ? 'none' : 'block';
+      return;
+    }
+    if (btn.classList.contains('action-test')) {
+      var sid = btn.getAttribute('data-id');
+      var sim = document.getElementById('sim-' + sid);
+      if (sim) sim.style.display = sim.style.display === 'block' ? 'none' : 'block';
+      return;
+    }
+    if (btn.classList.contains('sim-run')) {
+      var rid = btn.getAttribute('data-id');
+      var panel = document.getElementById('sim-' + rid);
+      if (!panel) return;
+      var inEl = panel.querySelector('.sim-in');
+      var outEl = panel.querySelector('.sim-out');
+      var event;
+      try { event = JSON.parse(inEl.value || '{}'); }
+      catch (err) { outEl.className = 'sim-out err'; outEl.style.display = 'block'; outEl.textContent = 'Invalid JSON: ' + err.message; return; }
+      btn.disabled = true;
+      outEl.className = 'sim-out'; outEl.style.display = 'block'; outEl.textContent = 'Running…';
+      fetch(BASE + '/api/automations/simulate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: rid, event: event }) })
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          if (data.error) { outEl.className = 'sim-out err'; outEl.textContent = data.error; return; }
+          if (data.wouldFire) {
+            outEl.className = 'sim-out fire';
+            outEl.innerHTML = '<div class="k">Would fire</div>→ dispatch to <code>' + esc(data.agentSlug || '?') + '</code><br><span class="k">Task</span><br><code>' + esc(data.taskDescription || '') + '</code>';
+          } else {
+            outEl.className = 'sim-out skip';
+            outEl.innerHTML = '<div class="k">Would not fire</div>' + esc(data.reason || 'conditions not met');
+          }
+        })
+        .catch(function(err){ outEl.className = 'sim-out err'; outEl.textContent = err.message || 'Simulation failed'; })
+        .then(function(){ btn.disabled = false; });
       return;
     }
     if (btn.classList.contains('action-delete')) {
@@ -3290,8 +3347,15 @@ export function renderAutomationsPage(): string {
         html += '<label class="switch"><input type="checkbox" class="action-toggle" data-id="'+wid+'"'+(a.enabled?' checked':'')+'> '+(a.enabled?'On':'Off')+'</label>';
         html += '<span class="meta">'+esc(a.fireCount||0)+' fires</span>';
         html += '<button class="btn action-webhook" data-id="'+wid+'">Show webhook URL</button>';
+        html += '<button class="btn action-test" data-id="'+wid+'">Test / dry-run</button>';
         html += '<button class="btn danger action-delete" data-id="'+wid+'" data-name="'+escAttr(a.name)+'">Delete</button>';
         html += '<div class="webhook" id="wh-'+wid+'">POST <code>/automation/'+esc(a.userId)+'/'+esc(a.id)+'</code></div>';
+        html += '<div class="sim" id="sim-'+wid+'" data-id="'+wid+'">'
+          + '<label>Sample event (JSON) — evaluate conditions without executing</label>'
+          + '<textarea class="sim-in">{}</textarea>'
+          + '<button class="btn sim-run" data-id="'+wid+'">Run dry-run</button>'
+          + '<div class="sim-out"></div>'
+          + '</div>';
         html += '</div>';
       });
       listEl.innerHTML = html;
@@ -4509,6 +4573,227 @@ export function renderConnectorsPage(): string {
   }).catch(function(e){
     document.getElementById('grid').innerHTML = '<p class="empty">' + esc(e.message) + '</p>';
   });
+</script>
+</body></html>`;
+}
+
+// ============================================================
+// ACTIVITY PAGE (unified run feed)
+// ============================================================
+
+export function renderActivityPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Activity</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#57C785;--red:#E86A84;--yellow:#F0B429;--blue:#2AABEE}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:.5rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1.2rem}
+  .filters{display:flex;gap:8px;margin-bottom:1.4rem;flex-wrap:wrap}
+  .filter{padding:5px 15px;border-radius:20px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:var(--dim);font-size:.78rem;cursor:pointer;font-family:inherit}
+  .filter:hover{color:var(--text)}
+  .filter.active{border-color:rgba(42,171,238,.5);color:var(--blue);background:rgba(42,171,238,.12);font-weight:600}
+  .row{display:flex;align-items:flex-start;gap:12px;background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:11px 15px;margin-bottom:8px}
+  .row .ico{font-size:1rem;line-height:1.4;flex-shrink:0}
+  .row .body{flex:1;min-width:0}
+  .row .top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .row .name{font-weight:600;font-size:.88rem}
+  .row .badge{font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:5px;border:1px solid var(--border);color:var(--dim)}
+  .row .badge.fired,.row .badge.done{color:var(--green);border-color:rgba(87,199,133,.4);background:rgba(87,199,133,.12)}
+  .row .badge.started,.row .badge.waiting{color:var(--yellow);border-color:rgba(240,180,41,.35);background:rgba(240,180,41,.1)}
+  .row .badge.failed{color:var(--red);border-color:rgba(232,106,132,.4);background:rgba(232,106,132,.12)}
+  .row .badge.skipped{color:var(--dim)}
+  .row .kind{font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+  .row .detail{font-size:.78rem;color:var(--dim);margin-top:3px;word-break:break-word}
+  .row .time{font-size:.72rem;color:var(--dim);white-space:nowrap;flex-shrink:0}
+  .empty{color:var(--dim);font-size:.82rem;padding:24px 4px;text-align:center}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Activity</h1>
+  <p class="hint">A unified feed of every run across the system — automation fires, process steps, and playbook runs, newest first.</p>
+
+  <div class="filters" id="filters">
+    <button class="filter active" data-kind="">All</button>
+    <button class="filter" data-kind="automation">Automations</button>
+    <button class="filter" data-kind="process">Processes</button>
+    <button class="filter" data-kind="playbook">Playbooks</button>
+  </div>
+
+  <div id="list"><p class="empty">Loading…</p></div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  var kind = '';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+
+  var KIND_ICON = { automation: '⚡', process: '🔄', playbook: '📖' };
+  var STATUS_ICON = { fired: '✅', done: '✅', started: '▶️', waiting: '⏳', skipped: '⤼', failed: '❌' };
+
+  function timeAgo(ts){
+    if (!ts) return '';
+    var then = new Date(ts).getTime();
+    if (isNaN(then)) return esc(ts);
+    var s = Math.max(0, Math.floor((Date.now() - then) / 1000));
+    if (s < 60) return s + 's ago';
+    var m = Math.floor(s / 60); if (m < 60) return m + 'm ago';
+    var h = Math.floor(m / 60); if (h < 24) return h + 'h ago';
+    return Math.floor(h / 24) + 'd ago';
+  }
+
+  function rowHtml(e){
+    var status = String(e.status || '');
+    var ico = STATUS_ICON[status] || KIND_ICON[e.kind] || '•';
+    var h = '<div class="row">';
+    h += '<div class="ico">' + ico + '</div>';
+    h += '<div class="body"><div class="top">';
+    h += '<span class="name">' + esc(e.refName || e.refId || '(unnamed)') + '</span>';
+    if (status) h += '<span class="badge ' + esc(status) + '">' + esc(status) + '</span>';
+    h += '<span class="kind">' + esc(e.kind) + '</span></div>';
+    if (e.detail) h += '<div class="detail">' + esc(e.detail) + '</div>';
+    h += '</div>';
+    h += '<div class="time">' + esc(timeAgo(e.createdAt)) + '</div>';
+    h += '</div>';
+    return h;
+  }
+
+  function load(){
+    var listEl = document.getElementById('list');
+    fetch(BASE + '/api/activity?kind=' + encodeURIComponent(kind) + '&limit=100').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { listEl.innerHTML = '<p class="empty">' + esc(data.error) + '</p>'; return; }
+      var items = data.events || [];
+      if (!items.length) { listEl.innerHTML = '<p class="empty">No activity yet.</p>'; return; }
+      listEl.innerHTML = items.map(rowHtml).join('');
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+
+  var filtersEl = document.getElementById('filters');
+  filtersEl.addEventListener('click', function(e){
+    var b = e.target;
+    if (!b || !b.classList || !b.classList.contains('filter')) return;
+    kind = b.getAttribute('data-kind') || '';
+    Array.prototype.forEach.call(filtersEl.children, function(c){ c.classList.toggle('active', c === b); });
+    load();
+  });
+
+  load();
+</script>
+</body></html>`;
+}
+
+// ============================================================
+// DEAD-LETTER QUEUE PAGE (failed automation dispatches)
+// ============================================================
+
+export function renderDeadLettersPage(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nova — Dead Letters</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--green:#57C785;--red:#E86A84;--yellow:#F0B429;--blue:#2AABEE}
+  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:24px;min-height:100vh}
+  .wrap{max-width:760px;margin:0 auto}
+  h1{font-size:1.15rem;font-weight:700;margin-bottom:.5rem}
+  .back{display:block;margin-bottom:1.2rem;color:var(--dim);text-decoration:none;font-size:.8rem}
+  .back:hover{color:var(--text)}
+  .hint{color:var(--dim);font-size:.8rem;line-height:1.5;margin-bottom:1.2rem}
+  .hint code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:5px;font-size:.76rem;color:var(--text)}
+  .msg{margin:0 0 1rem;padding:9px 12px;border-radius:8px;font-size:.82rem;display:none}
+  .msg.ok{background:rgba(87,199,133,.12);border:1px solid rgba(87,199,133,.3);color:var(--green)}
+  .msg.err{background:rgba(232,106,132,.12);border:1px solid rgba(232,106,132,.3);color:var(--red)}
+  .card{background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:10px}
+  .card-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:.5rem}
+  .card-head .name{font-weight:600;font-size:.9rem;flex:1;min-width:120px}
+  .card-head .kind{font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim)}
+  .card-head .time{font-size:.72rem;color:var(--dim);white-space:nowrap}
+  .err-line{font-size:.8rem;color:var(--red);word-break:break-word;margin-bottom:.6rem}
+  .sec{font-size:.66rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin:.6rem 0 .3rem}
+  pre.payload{background:rgba(0,0,0,.35);border:1px solid var(--border);border-radius:8px;padding:9px;font-family:ui-monospace,monospace;font-size:.72rem;white-space:pre-wrap;word-break:break-word;max-height:180px;overflow:auto;color:var(--dim)}
+  .actions{margin-top:.8rem;display:flex;align-items:center;gap:12px}
+  .btn{padding:5px 14px;border-radius:7px;border:1px solid var(--border);background:rgba(255,255,255,.06);color:var(--text);font-size:.78rem;cursor:pointer;font-family:inherit}
+  .btn.danger{border-color:rgba(232,106,132,.4);color:var(--red)}
+  .btn.danger:hover{background:rgba(232,106,132,.1)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .retry-note{font-size:.74rem;color:var(--dim)}
+  .retry-note code{background:rgba(255,255,255,.07);padding:1px 6px;border-radius:5px;font-size:.72rem;color:var(--text)}
+  .empty{color:var(--dim);font-size:.82rem;padding:24px 4px;text-align:center}
+</style></head><body>
+<div class="wrap">
+  <a class="back" href="${DASHBOARD_BASE}/">← Dashboard</a>
+  <h1>Dead letters</h1>
+  <p class="hint">Automation dispatches that failed after their retries were exhausted. Inspect the error and payload, then <b>Drop</b> to discard. Retry is available from the CLI: <code>nova dlq retry &lt;id&gt;</code>.</p>
+  <div id="msg" class="msg"></div>
+  <div id="list"><p class="empty">Loading…</p></div>
+</div>
+<script>
+  var BASE = '${DASHBOARD_BASE}';
+  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+  function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
+  var msgEl = document.getElementById('msg');
+  var listEl = document.getElementById('list');
+
+  function showMsg(text, ok){
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+    msgEl.innerHTML = esc(text);
+    msgEl.style.display = 'block';
+    setTimeout(function(){ msgEl.style.display = 'none'; }, 4000);
+  }
+
+  function fmtTime(ts){
+    if (!ts) return '';
+    var d = new Date(ts);
+    return isNaN(d.getTime()) ? esc(ts) : d.toLocaleString();
+  }
+
+  function prettyPayload(p){
+    if (p == null || p === '') return '(empty)';
+    try { return JSON.stringify(JSON.parse(p), null, 2); } catch (e) { return String(p); }
+  }
+
+  function cardHtml(d){
+    var h = '<div class="card" data-id="' + escAttr(d.id) + '">';
+    h += '<div class="card-head"><span class="name">' + esc(d.refName || d.refId || '(unnamed)') + '</span>';
+    h += '<span class="kind">' + esc(d.kind) + '</span>';
+    h += '<span class="time">' + fmtTime(d.createdAt) + '</span></div>';
+    if (d.error) h += '<div class="err-line">' + esc(d.error) + '</div>';
+    h += '<div class="sec">Payload</div><pre class="payload">' + esc(prettyPayload(d.payload)) + '</pre>';
+    h += '<div class="actions"><button class="btn danger drop" data-id="' + escAttr(d.id) + '">Drop</button>';
+    h += '<span class="retry-note">Retry via <code>nova dlq retry ' + esc(d.id) + '</code></span></div>';
+    h += '</div>';
+    return h;
+  }
+
+  listEl.addEventListener('click', function(e){
+    var btn = e.target;
+    if (!btn || !btn.classList || !btn.classList.contains('drop')) return;
+    var id = btn.getAttribute('data-id');
+    if (!id) return;
+    if (!confirm('Drop this dead letter? This cannot be undone.')) return;
+    btn.disabled = true;
+    fetch(BASE + '/api/dlq/drop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){ if (data.error) { showMsg(data.error, false); btn.disabled = false; } else { showMsg('Dropped', true); load(); } })
+      .catch(function(err){ showMsg(err.message || 'Drop failed', false); btn.disabled = false; });
+  });
+
+  function load(){
+    fetch(BASE + '/api/dlq').then(function(r){ return r.json(); }).then(function(data){
+      if (data.error) { listEl.innerHTML = '<p class="empty">' + esc(data.error) + '</p>'; return; }
+      var items = data.items || [];
+      if (!items.length) { listEl.innerHTML = '<p class="empty">No dead letters — every dispatch has succeeded.</p>'; return; }
+      listEl.innerHTML = items.map(cardHtml).join('');
+    }).catch(function(e){ listEl.innerHTML = '<p class="empty">' + esc(e.message) + '</p>'; });
+  }
+
+  load();
 </script>
 </body></html>`;
 }
@@ -6232,6 +6517,8 @@ export function renderDashboard(): string {
       <a href="/extraction" class="topbar-action">Extraction</a>
       <a href="/policies" class="topbar-action">Policies</a>
       <a href="/roi" class="topbar-action">ROI</a>
+      <a href="/activity" class="topbar-action">Activity</a>
+      <a href="/deadletters" class="topbar-action">Dead letters</a>
       <a href="/connectors" class="topbar-action">Connectors</a>
       <a href="/history" class="topbar-action">History</a>
       <a href="/approvals" class="topbar-action">Approvals</a>
@@ -8216,6 +8503,28 @@ const server = Bun.serve({
       });
     }
 
+    // Activity page (all authenticated users)
+    if (path === "/activity") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderActivityPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
+    // Dead-letter queue page (all authenticated users)
+    if (path === "/deadletters") {
+      if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderDeadLettersPage(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+        },
+      });
+    }
+
     // Task History page (all authenticated users)
     if (path === "/history") {
       if (!me) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
@@ -8673,6 +8982,51 @@ const server = Bun.serve({
         return jsonResponse(rollupRoi(supabase, userId, Number(days) || 7));
       } catch (e: any) {
         return jsonResponse({ error: e.message }, 500);
+      }
+    }
+    // ── Activity (unified run feed: automation / process / playbook) ──
+    if (path === "/api/activity" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const kind = url.searchParams.get("kind") || undefined;
+        const limit = Number(url.searchParams.get("limit")) || 50;
+        return jsonResponse({ events: supabase.listRunEvents(userId, { kind: kind || undefined, limit }) });
+      } catch (e: any) {
+        return jsonResponse({ events: [], error: e.message });
+      }
+    }
+    // ── Dead-letter queue (failed automation dispatches) ──
+    if (path === "/api/dlq" && req.method === "GET") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        return jsonResponse({ items: supabase.listDeadLetters(userId) });
+      } catch (e: any) {
+        return jsonResponse({ items: [], error: e.message });
+      }
+    }
+    if (path === "/api/dlq/drop" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        supabase.deleteDeadLetter(userId, String(b.id));
+        return jsonResponse({ success: true });
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
+      }
+    }
+    // ── Automation dry-run (evaluate conditions, execute nothing) ──
+    if (path === "/api/automations/simulate" && req.method === "POST") {
+      if (!userId) return jsonResponse({ error: "userId required" }, 400);
+      try {
+        const b = await req.json();
+        if (!b.id) return jsonResponse({ error: "id required" }, 400);
+        const automation = supabase.listAutomations(userId).find((a: any) => a.id === String(b.id));
+        if (!automation) return jsonResponse({ error: "automation not found" }, 404);
+        const { simulateAutomation } = await import("./simulate.ts");
+        return jsonResponse(simulateAutomation(supabase, automation, b.event || {}));
+      } catch (e: any) {
+        return jsonResponse({ error: e.message }, 400);
       }
     }
     // ── Connectors (business systems: Stripe/Shopify/Zendesk/HubSpot) ──
