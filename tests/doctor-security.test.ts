@@ -37,6 +37,21 @@ test("flags a world-readable .env", async () => {
   expect(env.fix).toContain("chmod");
 });
 
+test("flags a group-readable .env (640)", async () => {
+  const fakeRun = async (cmd: string) => (cmd.includes(".env") ? "640" : "600");
+  const checks = await checkFilePerms(fakeRun);
+  const env = checks.find((c) => c.name === "Env file permissions")!;
+  expect(env.ok).toBe(false);
+  expect(env.fix).toContain("chmod");
+});
+
+test("NOVA_LEAK_FIREWALL=false is reported ENABLED (report matches enforcement)", () => {
+  const checks = runSecurityChecks({ ...base, NOVA_LEAK_FIREWALL: "false" });
+  const c = checks.find((x) => x.name === "Leak firewall")!;
+  expect(c.ok).toBe(true);
+  expect(c.detail).toBe("enabled");
+});
+
 test("startup warnings list actionable fixes for a soft config", () => {
   const w = securityStartupWarnings({ NOVA_ENCRYPTION_KEY: "short", NOVA_LEAK_FIREWALL: "off" });
   expect(w.some((s) => s.includes("NOVA_ENCRYPTION_KEY"))).toBe(true);

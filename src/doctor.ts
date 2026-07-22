@@ -78,7 +78,9 @@ function looksStrongKey(k: string): boolean {
 /** Pure security-posture checks. Reports on Fixes 1-3 flags + deployment hygiene. */
 export function runSecurityChecks(env: Record<string, string | undefined>): Check[] {
   const checks: Check[] = [];
-  const off = (v?: string) => ["off", "false", "0", "no"].includes((v || "").toLowerCase());
+  // Mirrors the real enforcement (telegram.ts, db.ts, api-agent-loop.ts all use `=== "off"`):
+  // the firewalls disable ONLY on the exact string "off", not on falsy-ish values like "false"/"0"/"no".
+  const off = (v?: string) => (v || "").toLowerCase() === "off";
 
   const key = env.NOVA_ENCRYPTION_KEY || "";
   checks.push({
@@ -88,13 +90,23 @@ export function runSecurityChecks(env: Record<string, string | undefined>): Chec
     fix: looksStrongKey(key) ? undefined : "Set NOVA_ENCRYPTION_KEY to `openssl rand -hex 32` and restart.",
   });
 
-  const dashHost = env.DASHBOARD_HOST || "127.0.0.1";
-  const exposed = !/^(127\.|localhost|::1)/.test(dashHost);
+  // Mirrors computeBindHost() in dashboard.ts: explicit DASHBOARD_HOST always wins; no password
+  // binds loopback-only; password with no explicit host binds all interfaces (Bun default).
   const hasPass = Boolean(env.DASHBOARD_PASS);
+  const bindHost = env.DASHBOARD_HOST || (hasPass ? undefined : "127.0.0.1");
+  const loopback = bindHost !== undefined && /^(127\.|localhost|::1)/.test(bindHost);
+  const allInterfaces = bindHost === undefined;
+  const exposed = !loopback;
   checks.push({
     name: "Dashboard auth",
     ok: hasPass || !exposed,
-    detail: !exposed ? "loopback-only" : hasPass ? "password set" : "EXPOSED without a password",
+    detail: loopback
+      ? "loopback-only"
+      : hasPass
+        ? allInterfaces
+          ? "all interfaces (password set)"
+          : "password set"
+        : "EXPOSED without a password",
     fix: hasPass || !exposed ? undefined : "Set DASHBOARD_PASS or bind DASHBOARD_HOST to 127.0.0.1.",
   });
 
@@ -146,11 +158,13 @@ export async function checkFilePerms(run: Runner = defaultRunner): Promise<Check
   for (const [name, path, want] of items) {
     try {
       const mode = (await run(`stat -c %a ${path} 2>/dev/null || stat -f %Lp ${path}`)).trim();
-      const worldReadable = mode.length >= 3 && Number(mode[mode.length - 1]) !== 0;
+      // Flag group- OR world-accessible modes (e.g. 640/660/644), not just world (last digit).
+      const groupOrWorldAccessible =
+        mode.length >= 3 && (Number(mode[mode.length - 2]) !== 0 || Number(mode[mode.length - 1]) !== 0);
       out.push({
-        name, ok: !worldReadable,
+        name, ok: !groupOrWorldAccessible,
         detail: `mode ${mode}`,
-        fix: worldReadable ? `chmod ${want} ${path}` : undefined,
+        fix: groupOrWorldAccessible ? `chmod ${want} ${path}` : undefined,
       });
     } catch {
       out.push({ name, ok: true, detail: "not present" });
