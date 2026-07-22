@@ -16,6 +16,7 @@ import { writeFile, mkdir, rm } from "fs/promises";
 import { mkdirSync } from "fs";
 import { wrapForExecution } from "../sandbox/index.ts";
 import { planSandboxAuth } from "../sandbox/auth.ts";
+import { buildAgentEnv } from "../agent-env.ts";
 import { join } from "path";
 import { readFileSync, readdirSync, copyFileSync } from "fs";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass, ProviderKind, ProviderCapabilities } from "../ai-provider.ts";
@@ -117,12 +118,12 @@ export class GeminiProvider implements AIProvider {
       stdout: "pipe",
       stderr: "pipe",
       cwd: wrapped.cwd,
-      env: {
-        ...process.env,
-        GEMINI_API_KEY: geminiKey || undefined,
+      env: buildAgentEnv({
+        provider: "gemini",
+        mcpConfigPath: opts.mcpConfigPath,
         // Override HOME so Gemini finds our temp ~/.gemini/settings.json
-        ...(homeOverride ? { HOME: homeOverride } : {}),
-      },
+        extra: { GEMINI_API_KEY: geminiKey || undefined, ...(homeOverride ? { HOME: homeOverride } : {}) },
+      }),
     });
 
     const [output, stderr] = await Promise.all([
