@@ -205,6 +205,32 @@
   .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
   .langsw a.on { color:var(--text) !important; background:var(--line); }
   @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+
+  /* ── Flow diagram (overview) ── */
+  .flowdiag { margin: 18px 0 22px; padding: 26px 22px; border: 1px solid var(--line); border-radius: 16px; background: radial-gradient(120% 140% at 12% 0%, color-mix(in srgb, var(--tg) 7%, transparent), transparent 55%), var(--panel-2); overflow-x: auto; }
+  .flow-rail { display: flex; align-items: stretch; justify-content: center; gap: 4px; flex-wrap: wrap; }
+  .flow-node { position: relative; flex: 1 1 0; min-width: 116px; max-width: 210px; background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; display: flex; flex-direction: column; gap: 5px; justify-content: center; }
+  .flow-node .n-label { font-family: var(--display); font-weight: 700; font-size: 14.5px; letter-spacing: -0.01em; color: var(--text); }
+  .flow-node small { font-family: var(--mono); font-size: 11px; line-height: 1.45; color: var(--muted); }
+  .flow-node.accent { border-color: color-mix(in srgb, var(--tg) 55%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--tg) 22%, transparent) inset, 0 6px 22px -12px var(--tg); }
+  .flow-node.accent .n-label { color: var(--tg); }
+  .flow-inputs { display: flex; flex-direction: column; gap: 7px; flex: 1 1 0; min-width: 128px; max-width: 200px; justify-content: center; }
+  .flow-inputs .flow-node { max-width: none; }
+  .flow-node.io { padding: 10px 13px; }
+  .flow-arrow { align-self: center; color: var(--faint); font-family: var(--mono); font-size: 17px; padding: 0 2px; user-select: none; }
+  .flow-down { display: flex; justify-content: center; color: var(--faint); font-size: 16px; line-height: 1; margin: 3px 0; user-select: none; }
+  .flow-mid { display: flex; justify-content: center; }
+  .flow-mid .flow-node { flex: 0 1 460px; max-width: 460px; text-align: center; align-items: center; }
+  .flow-mid small { text-align: center; }
+  .flow-gate { display: flex; align-items: stretch; justify-content: center; gap: 4px; flex-wrap: wrap; margin-top: 4px; padding-top: 18px; border-top: 1px dashed var(--line); }
+  .gate-step { flex: 1 1 0; min-width: 130px; max-width: 220px; text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; align-items: center; }
+  .gate-step .n-label { font-family: var(--display); font-weight: 700; font-size: 14.5px; }
+  .gate-step small { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .gate-step.amber { border-color: color-mix(in srgb, var(--amber) 50%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--amber) 20%, transparent) inset; }
+  .gate-step.amber .n-label { color: var(--amber); }
+  .gate-step.green .n-label { color: var(--green); }
+  .flow-cap { text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--faint); margin-top: 12px; }
+  @media (max-width: 720px) { .flow-rail, .flow-gate { flex-direction: column; align-items: stretch; } .flow-node, .gate-step, .flow-inputs { max-width: none; } .flow-arrow { transform: rotate(90deg); padding: 2px 0; } }
 </style>
 <link rel="alternate" hreflang="en" href="https://mynova.space/docs/">
 <link rel="alternate" hreflang="es" href="https://mynova.space/es/docs/">
@@ -292,16 +318,35 @@
       <tr><td><strong>Your models, your machine</strong></td><td>It drives the vendor CLIs (Claude, Gemini, Codex) as subprocesses so it runs on subscriptions you already pay for — plus any OpenAI-compatible API. Storage is local SQLite; embeddings and the <a href="#knowledge">knowledge base</a> are local. Your keys, your data.</td></tr>
       <tr><td><strong>Trust &amp; governance</strong></td><td>Two-phase prepare → approve → execute gates interactive requests; <a href="#policies">policies</a>, spending caps, and role-based <a href="#governance">permissions</a> govern the autonomous ones.</td></tr>
     </table></div>
-    <pre><code>message ─▶ channel ──▶ relay ─▶ orchestrator ─▶ planner
-  or        (Telegram/          │ classify         │ decompose into
- event       Slack/             │ (heuristic →     │ subtasks with
-(webhook,     Discord/          │  pattern cache → │ dependencies)
- metric,      terminal)         │  LLM)            │
- connector)                      ▼                  ▼
-                          agent-router ◀── 24 specialist agents
-                                 │
-                       prepare ─▶ <span class="k">approve</span> ─▶ execute
-                       (safe)    (interactive)  (ships/spends/sends)</code></pre>
+    <figure class="flowdiag" aria-label="How a request flows through Nova">
+      <div class="flow-rail">
+        <div class="flow-inputs">
+          <div class="flow-node io"><span class="n-label">Message</span><small>a person, any channel</small></div>
+          <div class="flow-node io"><span class="n-label">Event</span><small>webhook · metric · connector</small></div>
+        </div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-node"><span class="n-label">Channel</span><small>Telegram · Slack · Discord · terminal</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-node"><span class="n-label">Relay</span><small>coordinates the turn</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-node accent"><span class="n-label">Orchestrator</span><small>classify: heuristic → cache → LLM</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="flow-node"><span class="n-label">Planner</span><small>decompose into dependency-ordered subtasks</small></div>
+      </div>
+      <div class="flow-down">↓</div>
+      <div class="flow-mid">
+        <div class="flow-node"><span class="n-label">Agent-router</span><small>hands the work to 1 of 24 specialist agents</small></div>
+      </div>
+      <div class="flow-down">↓</div>
+      <div class="flow-gate">
+        <div class="gate-step"><span class="n-label">Prepare</span><small>safe — research, draft, generate</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="gate-step amber"><span class="n-label">Approve</span><small>interactive requests only</small></div>
+        <span class="flow-arrow">→</span>
+        <div class="gate-step green"><span class="n-label">Execute</span><small>ships · spends · sends</small></div>
+      </div>
+      <div class="flow-cap">Autonomous paths (automations, schedules) are governed by policies &amp; caps instead of the interactive gate.</div>
+    </figure>
     <p>Everything runs on your machine: <strong>Bun + TypeScript</strong>, local SQLite with vector search, your own AI accounts, and credentials AES-256-GCM encrypted at rest. MIT licensed — <a href="https://github.com/djbelieny/nova" rel="noopener">source on GitHub</a>.</p>
   </section>
 
