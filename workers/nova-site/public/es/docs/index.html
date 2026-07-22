@@ -944,6 +944,14 @@ data/memwright/      <span class="c"># almacenamiento del servicio de memoria a 
       <li><strong>Junta ejecutiva</strong> — RLS en todas las tablas compartidas (Postgres + PostgREST autoalojado o Supabase); la clave de la base de datos solo en servidores de confianza.</li>
       <li><strong>SQL</strong> — consultas completamente parametrizadas; CLIs de IA invocadas con arrays argv (sin interpolación de shell de tus mensajes).</li>
     </ul>
+    <h3>Postura de seguridad</h3>
+    <p>Nova tiene acceso a datos privados, recibe entradas no confiables (mensajes, contenido web, salida de herramientas) y tiene rutas de salida (respuestas de chat, llamadas a APIs). Esa es la "trifecta letal" — el endurecimiento de abajo corta cada pata para el caso de entrada no confiable / fuga de datos. Ejecuta <code>nova doctor --security</code> para calificar tu despliegue frente a ella.</p>
+    <ul>
+      <li><strong>Entorno de agentes con mínimo privilegio</strong> (<code>NOVA_AGENT_ENV_STRICT</code>, activado por defecto) — los subprocesos de los agentes reciben solo las variables que necesitan, no todo el entorno del host.</li>
+      <li><strong>Firewall de fuga de salida (egress)</strong> (<code>NOVA_LEAK_FIREWALL</code>, activado por defecto) — redacta secretos de las respuestas de chat y los logs, y bloquea de forma estricta los secretos que salen en el límite de ejecución.</li>
+      <li><strong>Firewall de entrada no confiable</strong> (<code>NOVA_UNTRUSTED_FIREWALL</code>, activado por defecto) — neutraliza el contenido de herramientas/web/email antes de que entre al prompt de un agente.</li>
+      <li><strong>El panel</strong> se vincula solo a loopback a menos que se establezca <code>DASHBOARD_PASS</code>.</li>
+    </ul>
     <p>¿Encontraste una vulnerabilidad? Reporta en privado vía <a href="https://github.com/djbelieny/nova/security" rel="noopener">GitHub Security Advisories</a> — ver <code>SECURITY.md</code>.</p>
   </section>
 

@@ -69,6 +69,110 @@ export function runEnvChecks(env: Record<string, string | undefined>): Check[] {
   return checks;
 }
 
+/** Entropy-aware strength gate: requires 32+ chars AND 8+ distinct chars. Rejects degenerate keys like `"aaaa...aaa"`. */
+function looksStrongKey(k: string): boolean {
+  if (!k || k.length < 32) return false;
+  return new Set(k).size >= 8;
+}
+
+/** Pure security-posture checks. Reports on Fixes 1-3 flags + deployment hygiene. */
+export function runSecurityChecks(env: Record<string, string | undefined>): Check[] {
+  const checks: Check[] = [];
+  // Mirrors the real enforcement (telegram.ts, db.ts, api-agent-loop.ts all use `=== "off"`):
+  // the firewalls disable ONLY on the exact string "off", not on falsy-ish values like "false"/"0"/"no".
+  const off = (v?: string) => (v || "").toLowerCase() === "off";
+
+  const key = env.NOVA_ENCRYPTION_KEY || "";
+  checks.push({
+    name: "Encryption key",
+    ok: looksStrongKey(key),
+    detail: !key ? "missing" : looksStrongKey(key) ? "set (strong)" : "weak / too short",
+    fix: looksStrongKey(key) ? undefined : "Set NOVA_ENCRYPTION_KEY to `openssl rand -hex 32` and restart.",
+  });
+
+  // Mirrors computeBindHost() in dashboard.ts: explicit DASHBOARD_HOST always wins; no password
+  // binds loopback-only; password with no explicit host binds all interfaces (Bun default).
+  const hasPass = Boolean(env.DASHBOARD_PASS);
+  const bindHost = env.DASHBOARD_HOST || (hasPass ? undefined : "127.0.0.1");
+  const loopback = bindHost !== undefined && /^(127\.|localhost|::1)/.test(bindHost);
+  const allInterfaces = bindHost === undefined;
+  const exposed = !loopback;
+  checks.push({
+    name: "Dashboard auth",
+    ok: hasPass || !exposed,
+    detail: loopback
+      ? "loopback-only"
+      : hasPass
+        ? allInterfaces
+          ? "all interfaces (password set)"
+          : "password set"
+        : "EXPOSED without a password",
+    fix: hasPass || !exposed ? undefined : "Set DASHBOARD_PASS or bind DASHBOARD_HOST to 127.0.0.1.",
+  });
+
+  checks.push({
+    name: "Leak firewall",
+    ok: !off(env.NOVA_LEAK_FIREWALL),
+    detail: off(env.NOVA_LEAK_FIREWALL) ? "disabled" : "enabled",
+    fix: off(env.NOVA_LEAK_FIREWALL) ? "Remove NOVA_LEAK_FIREWALL=off to redact/block leaked secrets." : undefined,
+  });
+
+  checks.push({
+    name: "Least-privilege agent env",
+    ok: env.NOVA_AGENT_ENV_STRICT !== "false",
+    detail: env.NOVA_AGENT_ENV_STRICT === "false" ? "disabled (full env passthrough)" : "enabled",
+    fix: env.NOVA_AGENT_ENV_STRICT === "false" ? "Remove NOVA_AGENT_ENV_STRICT=false so agents can't read unrelated secrets." : undefined,
+  });
+
+  checks.push({
+    name: "Untrusted-input firewall",
+    ok: !off(env.NOVA_UNTRUSTED_FIREWALL),
+    detail: off(env.NOVA_UNTRUSTED_FIREWALL) ? "disabled" : "enabled",
+    fix: off(env.NOVA_UNTRUSTED_FIREWALL) ? "Remove NOVA_UNTRUSTED_FIREWALL=off to neutralize injected content." : undefined,
+  });
+
+  const backend = (env.NOVA_SANDBOX_BACKEND || "local").toLowerCase();
+  const untrustedOptIn = ["true", "1", "yes"].includes((env.NOVA_ALLOW_UNSANDBOXED_UNTRUSTED || "").toLowerCase());
+  checks.push({
+    name: "Sandbox posture",
+    ok: backend === "docker" || untrustedOptIn,
+    detail: backend === "docker" ? "docker" : untrustedOptIn ? "local (untrusted opt-in acknowledged)" : "local (untrusted flows unsandboxed)",
+    fix: backend === "docker" || untrustedOptIn ? undefined : "Set NOVA_SANDBOX_BACKEND=docker for untrusted-triggered flows, or ack NOVA_ALLOW_UNSANDBOXED_UNTRUSTED=true.",
+  });
+
+  return checks;
+}
+
+/** Boot-time warning lines for failing, fixable security checks. Pure — no I/O, safe to call at startup. */
+export function securityStartupWarnings(env: Record<string, string | undefined>): string[] {
+  return runSecurityChecks(env).filter((c) => !c.ok && c.fix).map((c) => `[security] ${c.name}: ${c.fix}`);
+}
+
+/** Checks `.env` and the data directory aren't group/world-accessible. Uses `stat` via the injectable runner. */
+export async function checkFilePerms(run: Runner = defaultRunner): Promise<Check[]> {
+  const out: Check[] = [];
+  const items: Array<[string, string, string]> = [
+    ["Env file permissions", ".env", "600"],
+    ["Data dir permissions", process.env.NOVA_DB_DIR || "data", "700"],
+  ];
+  for (const [name, path, want] of items) {
+    try {
+      const mode = (await run(`stat -c %a ${path} 2>/dev/null || stat -f %Lp ${path}`)).trim();
+      // Flag group- OR world-accessible modes (e.g. 640/660/644), not just world (last digit).
+      const groupOrWorldAccessible =
+        mode.length >= 3 && (Number(mode[mode.length - 2]) !== 0 || Number(mode[mode.length - 1]) !== 0);
+      out.push({
+        name, ok: !groupOrWorldAccessible,
+        detail: `mode ${mode}`,
+        fix: groupOrWorldAccessible ? `chmod ${want} ${path}` : undefined,
+      });
+    } catch {
+      out.push({ name, ok: true, detail: "not present" });
+    }
+  }
+  return out;
+}
+
 /** Checks a required CLI is present, returning its version string in `detail`. */
 async function checkCommand(name: string, cmd: string, versionFlag: string, run: Runner): Promise<Check> {
   try {
@@ -136,6 +240,12 @@ export function formatDiagnostics(checks: Check[], versions: Record<string, stri
 }
 
 if (import.meta.main) {
+  const security = process.argv.includes("--security");
+  if (security) {
+    const checks = [...runSecurityChecks(process.env), ...(await checkFilePerms())];
+    console.log(formatDiagnostics(checks, { platform: process.platform }));
+    process.exit(checks.every((c) => c.ok) ? 0 : 1);
+  }
   const checks = await runAllChecks();
   console.log(formatDiagnostics(checks, { platform: process.platform, node: process.version }));
   process.exit(checks.every((c) => c.ok) ? 0 : 1);

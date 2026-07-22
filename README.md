@@ -120,6 +120,12 @@ protects you:
   full automation chain yet, and it's a broad surface for one maintainer. The connector set is a
   starter four. Read the code before you trust it with the keys.
 
+On top of the approval gate, four controls are **on by default**: least-privilege agent env
+(`NOVA_AGENT_ENV_STRICT`), an egress leak firewall that redacts/blocks secrets leaving the system
+(`NOVA_LEAK_FIREWALL`), an untrusted-input firewall that neutralizes tool/web/email content before
+it reaches an agent prompt (`NOVA_UNTRUSTED_FIREWALL`), and a dashboard that binds loopback-only
+unless `DASHBOARD_PASS` is set. Run `nova doctor --security` to grade your deployment.
+
 ## Quick start
 
 ### Prerequisites
