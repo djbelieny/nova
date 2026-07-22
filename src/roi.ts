@@ -91,6 +91,25 @@ export function rollupRoi(db: Database, userId: string, days = 7): RoiRollup {
   };
 }
 
+export interface ValueRank { agent: string; valueUsd: number; hoursSaved: number; }
+export interface DepartmentRank { department: string; valueUsd: number; hoursSaved: number; }
+
+/** Agents ranked by $ value influenced over the last `days` (desc). */
+export function rankAgentsByValue(db: Database, userId: string, days = 7): ValueRank[] {
+  const { byAgent } = rollupRoi(db, userId, days);
+  return Object.entries(byAgent)
+    .map(([agent, v]) => ({ agent, valueUsd: v.valueUsd, hoursSaved: v.hoursSaved }))
+    .sort((a, b) => b.valueUsd - a.valueUsd);
+}
+
+/** Departments ranked by $ value influenced over the last `days` (desc). */
+export function rankDepartmentsByValue(db: Database, userId: string, days = 7): DepartmentRank[] {
+  const { byDepartment } = rollupRoi(db, userId, days);
+  return Object.entries(byDepartment)
+    .map(([department, v]) => ({ department, valueUsd: v.valueUsd, hoursSaved: v.hoursSaved }))
+    .sort((a, b) => b.valueUsd - a.valueUsd);
+}
+
 /** A short human-readable ROI digest (Telegram / CLI). */
 export function formatRoiDigest(r: RoiRollup): string {
   const lines = [

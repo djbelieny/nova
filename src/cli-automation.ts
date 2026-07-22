@@ -27,6 +27,37 @@ function baseUrl(): string {
   return (process.env.PUBLIC_BASE_URL || process.env.WEBHOOK_BASE_URL || `http://localhost:${process.env.WEBHOOK_PORT || 8788}`).replace(/\/$/, "");
 }
 
+/**
+ * Parse a single `--when` value into a condition.
+ *   amount:gt:1000                          → { field:'amount', op:'gt', value:'1000' }
+ *   body:semantic:"a customer complaint":0.55 → { field:'body', op:'semantic', value:'a customer complaint', threshold:0.55 }
+ * Semantic values may be quoted (spaces/colons allowed) with an optional trailing :<threshold>.
+ */
+export function parseWhen(w: string): { field: string; op: string; value?: any; threshold?: number } {
+  const first = w.indexOf(":");
+  if (first < 0) return { field: w, op: "exists" };
+  const field = w.slice(0, first);
+  const rest = w.slice(first + 1);
+  const second = rest.indexOf(":");
+  const op = second >= 0 ? rest.slice(0, second) : rest;
+  const remainder = second >= 0 ? rest.slice(second + 1) : "";
+
+  if (op === "semantic") {
+    const quoted = remainder.match(/^"((?:[^"\\]|\\.)*)"(?::([\d.]+))?$/);
+    if (quoted) {
+      const cond: { field: string; op: string; value: string; threshold?: number } = { field, op, value: quoted[1] };
+      if (quoted[2] !== undefined) cond.threshold = Number(quoted[2]);
+      return cond;
+    }
+    // Unquoted: strip an optional trailing :<number> as the threshold.
+    const trailing = remainder.match(/^(.*):([\d.]+)$/);
+    if (trailing) return { field, op, value: trailing[1], threshold: Number(trailing[2]) };
+    return { field, op, value: remainder };
+  }
+
+  return { field, op, value: remainder };
+}
+
 interface Flags { [k: string]: string | string[] | boolean; }
 function parseFlags(rest: string[]): { positional: string[]; flags: Flags } {
   const positional: string[] = [];
@@ -61,10 +92,7 @@ function runAdd(rest: string[]): number {
   const db = getDb();
   const userId = adminId(db);
 
-  const conditions = ((flags.when as string[]) || []).map((w) => {
-    const [field, op, ...v] = w.split(":");
-    return { field, op, value: v.join(":") };
-  });
+  const conditions = ((flags.when as string[]) || []).map(parseWhen);
 
   let actionType: "agent" | "playbook";
   let actionRef: string;
