@@ -943,6 +943,17 @@ export function detectAutoApprove(text: string, trust: TrustLevel = "trusted"): 
   return AUTO_APPROVE_PHRASES.some((p) => lower.startsWith(p));
 }
 
+// Provenance gate: no matter what upstream signals (phrase-based auto-approve, approval
+// rules, or trust-budget autonomy) computed, an untrusted-triggered plan can never take
+// the straight-through execute path — it must always land on the human approval gate.
+export function resolveAutoApprove(opts: {
+  autoApprove: boolean;
+  ruleAutoApprove: boolean;
+  trust: TrustLevel;
+}): boolean {
+  return opts.trust === "trusted" && (opts.autoApprove || opts.ruleAutoApprove);
+}
+
 // ============================================================
 // BUDGET-GATED AUTONOMY — rule-based auto-approval
 // ============================================================
@@ -1624,7 +1635,11 @@ async function routeComplex(
 
     // Check rule-based auto-approve (budget-gated autonomy)
     let ruleAutoApprove = false;
-    if (hasExecutePhase && !autoApprove && supabase) {
+    if (hasExecutePhase && trust === "untrusted") {
+      // Provenance gate: untrusted-triggered plans may prepare but never auto-execute —
+      // skip rule/trust-budget computation entirely and fall through to the approval gate.
+      ruleAutoApprove = false;
+    } else if (hasExecutePhase && !autoApprove && supabase) {
       const rules = supabase.getApprovalRules(user.id);
       if (rules.length > 0) {
         const executeTasks = plan.subtasks.filter((s) => s.phase === "execute");
@@ -1659,7 +1674,7 @@ async function routeComplex(
     }
 
     // If no execute subtasks or auto-approve: run everything straight through
-    if (!hasExecutePhase || autoApprove || ruleAutoApprove) {
+    if (!hasExecutePhase || resolveAutoApprove({ autoApprove, ruleAutoApprove, trust })) {
       if (autoApprove && hasExecutePhase) {
         emit({ type: "approval.resolved", level: "info", requestId, userId: user.id, data: { message: "Auto-approve detected — running all phases", action: "auto-approve" } });
       }
