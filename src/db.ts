@@ -456,6 +456,57 @@ function applyPolicySchema(db: BunDatabase): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_policies_user ON policies(user_id, enabled)`);
 }
 
+/**
+ * Governance & production hardening: durable idempotency, advisory locks, capability
+ * grants (RBAC), out-of-office delegation, and a secret-rotation audit. All in shared.db.
+ */
+function applyGovernanceSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
+      key        TEXT PRIMARY KEY,
+      scope      TEXT,
+      result     TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_idem_expires ON idempotency_keys(expires_at)`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS locks (
+      name        TEXT PRIMARY KEY,
+      holder      TEXT NOT NULL,
+      acquired_at TEXT DEFAULT (datetime('now')),
+      expires_at  TEXT NOT NULL
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS capability_grants (
+      user_id    TEXT NOT NULL,
+      capability TEXT NOT NULL,
+      granted_by TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, capability)
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS delegations (
+      user_id          TEXT PRIMARY KEY,
+      delegate_user_id TEXT NOT NULL,
+      reason           TEXT,
+      until            TEXT,
+      created_at       TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS secret_rotations (
+      id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+      provider   TEXT NOT NULL,
+      rotated_by TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+}
+
 export interface Policy { id: string; userId: string; scope: string; scopeRef: string | null; kind: string; config: Record<string, any>; enabled: boolean; createdAt?: string; }
 function mapPolicy(r: any): Policy {
   return { id: r.id, userId: r.user_id, scope: r.scope, scopeRef: r.scope_ref ?? null, kind: r.kind, config: parseJson(r.config, {}), enabled: !!r.enabled, createdAt: r.created_at };
@@ -519,6 +570,8 @@ export interface AutomationInput {
   dedupeKey?: string | null;
   rateLimitPerHour?: number | null;
   secret?: string | null;
+  idempotent?: boolean;
+  idempotencyTtlSec?: number | null;
 }
 
 export interface Automation {
@@ -527,6 +580,7 @@ export interface Automation {
   conditions: Array<{ field: string; op: string; value?: any }>;
   actionType: 'agent' | 'playbook'; actionRef: string; actionConfig: Record<string, any>;
   enabled: boolean; dedupeKey: string | null; rateLimitPerHour: number | null; secret: string | null;
+  idempotent: boolean; idempotencyTtlSec: number | null;
   createdAt?: string; lastFiredAt?: string | null; fireCount: number;
 }
 
@@ -536,7 +590,8 @@ function mapAutomation(r: any): Automation {
     sourceConfig: parseJson(r.source_config, {}), conditions: parseJson(r.conditions, []),
     actionType: r.action_type, actionRef: r.action_ref, actionConfig: parseJson(r.action_config, {}),
     enabled: !!r.enabled, dedupeKey: r.dedupe_key ?? null, rateLimitPerHour: r.rate_limit_per_hour ?? null,
-    secret: r.secret ?? null, createdAt: r.created_at, lastFiredAt: r.last_fired_at ?? null, fireCount: r.fire_count ?? 0,
+    secret: r.secret ?? null, idempotent: !!r.idempotent, idempotencyTtlSec: r.idempotency_ttl_sec ?? null,
+    createdAt: r.created_at, lastFiredAt: r.last_fired_at ?? null, fireCount: r.fire_count ?? 0,
   };
 }
 
@@ -1086,6 +1141,8 @@ class SharedDatabase {
     applyPolicySchema(this.db);
     // Trust & operability — run observability + dead-letter (shared.db)
     applyTrustSchema(this.db);
+    // Governance & hardening — idempotency, locks, RBAC, delegation (shared.db)
+    applyGovernanceSchema(this.db);
 
       this.db.run("COMMIT");
     } catch (err) {
@@ -1120,6 +1177,9 @@ class SharedDatabase {
     try { this.db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username) WHERE username IS NOT NULL`); } catch {}
     // Discord channel: raw Discord user ID for message resolution
     try { this.db.run(`ALTER TABLE users ADD COLUMN discord_id TEXT`); } catch {}
+    // Governance: automations can opt into durable exactly-once idempotency
+    try { this.db.run(`ALTER TABLE automations ADD COLUMN idempotent INTEGER DEFAULT 0`); } catch {}
+    try { this.db.run(`ALTER TABLE automations ADD COLUMN idempotency_ttl_sec INTEGER`); } catch {}
     try { this.db.run(`CREATE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id)`); } catch {}
   }
 
@@ -5396,10 +5456,11 @@ export class Database {
   insertAutomation(a: AutomationInput): Automation {
     const id = crypto.randomUUID();
     this.shared.db.run(
-      `INSERT INTO automations (id, user_id, name, source_type, source_config, conditions, action_type, action_ref, action_config, dedupe_key, rate_limit_per_hour, secret)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO automations (id, user_id, name, source_type, source_config, conditions, action_type, action_ref, action_config, dedupe_key, rate_limit_per_hour, secret, idempotent, idempotency_ttl_sec)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, a.userId, a.name, a.sourceType, JSON.stringify(a.sourceConfig ?? {}), JSON.stringify(a.conditions ?? []),
-       a.actionType, a.actionRef, JSON.stringify(a.actionConfig ?? {}), a.dedupeKey ?? null, a.rateLimitPerHour ?? null, a.secret ?? null]
+       a.actionType, a.actionRef, JSON.stringify(a.actionConfig ?? {}), a.dedupeKey ?? null, a.rateLimitPerHour ?? null, a.secret ?? null,
+       a.idempotent ? 1 : 0, a.idempotencyTtlSec ?? null]
     );
     return this.getAutomation(a.userId, id)!;
   }
@@ -5728,6 +5789,81 @@ export class Database {
 
   markTaskEscalated(ownerUserId: string, taskId: string): void {
     this.getUserDb(ownerUserId).db.run(`UPDATE agent_tasks SET escalated_at = datetime('now') WHERE id = ?`, [taskId]);
+  }
+
+  // ============================================================
+  // Governance & hardening — shared.db
+  // ============================================================
+
+  /** Durable exactly-once claim: returns true if this call claimed the key (first time), false if already claimed. */
+  claimIdempotencyKey(key: string, scope?: string, ttlSeconds?: number): boolean {
+    // Clear an expired prior claim so the key can be reused after its TTL.
+    this.shared.db.run(`DELETE FROM idempotency_keys WHERE key = ? AND expires_at IS NOT NULL AND expires_at <= datetime('now')`, [key]);
+    const expires = ttlSeconds ? `datetime('now', '+${Math.floor(ttlSeconds)} seconds')` : 'NULL';
+    const res = this.shared.db.run(
+      `INSERT OR IGNORE INTO idempotency_keys (key, scope, expires_at) VALUES (?, ?, ${expires})`,
+      [key, scope ?? null]
+    );
+    return (res as any).changes === 1;
+  }
+
+  /** Best-effort advisory lock. Returns true if acquired (or renewed by the same holder). */
+  acquireLock(name: string, holder: string, ttlSeconds: number): boolean {
+    this.shared.db.run(`DELETE FROM locks WHERE name = ? AND expires_at <= datetime('now')`, [name]);
+    const res = this.shared.db.run(
+      `INSERT INTO locks (name, holder, expires_at) VALUES (?, ?, datetime('now', '+${Math.floor(ttlSeconds)} seconds'))
+       ON CONFLICT(name) DO UPDATE SET holder = excluded.holder, acquired_at = datetime('now'), expires_at = excluded.expires_at
+       WHERE locks.holder = excluded.holder OR locks.expires_at <= datetime('now')`,
+      [name, holder]
+    );
+    if ((res as any).changes >= 1) return true;
+    const row = this.shared.db.query(`SELECT holder FROM locks WHERE name = ?`).get(name) as any;
+    return row?.holder === holder;
+  }
+
+  releaseLock(name: string, holder: string): void {
+    this.shared.db.run(`DELETE FROM locks WHERE name = ? AND holder = ?`, [name, holder]);
+  }
+
+  // Capability grants (RBAC)
+  grantCapability(userId: string, capability: string, grantedBy?: string): void {
+    this.shared.db.run(`INSERT OR REPLACE INTO capability_grants (user_id, capability, granted_by) VALUES (?, ?, ?)`, [userId, capability, grantedBy ?? null]);
+  }
+  revokeCapability(userId: string, capability: string): void {
+    this.shared.db.run(`DELETE FROM capability_grants WHERE user_id = ? AND capability = ?`, [userId, capability]);
+  }
+  listUserCapabilities(userId: string): string[] {
+    return (this.shared.db.query(`SELECT capability FROM capability_grants WHERE user_id = ?`).all(userId) as any[]).map(r => r.capability);
+  }
+  hasCapabilityGrant(userId: string, capability: string): boolean {
+    return !!this.shared.db.query(`SELECT 1 FROM capability_grants WHERE user_id = ? AND capability = ? LIMIT 1`).get(userId, capability);
+  }
+
+  // Out-of-office delegation
+  setDelegation(userId: string, delegateUserId: string, reason?: string, until?: string): void {
+    this.shared.db.run(
+      `INSERT INTO delegations (user_id, delegate_user_id, reason, until) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET delegate_user_id = excluded.delegate_user_id, reason = excluded.reason, until = excluded.until, created_at = datetime('now')`,
+      [userId, delegateUserId, reason ?? null, until ?? null]
+    );
+  }
+  clearDelegation(userId: string): void {
+    this.shared.db.run(`DELETE FROM delegations WHERE user_id = ?`, [userId]);
+  }
+  getActiveDelegation(userId: string): { delegateUserId: string; reason: string | null; until: string | null } | null {
+    const row = this.shared.db.query(
+      `SELECT delegate_user_id, reason, until FROM delegations WHERE user_id = ? AND (until IS NULL OR until > datetime('now'))`
+    ).get(userId) as any;
+    return row ? { delegateUserId: row.delegate_user_id, reason: row.reason ?? null, until: row.until ?? null } : null;
+  }
+
+  // Connector secret storage (encrypted at rest) + rotation audit
+  setConnectorSecret(connectorId: string, creds: Record<string, string>, by: string): void {
+    this.upsertSharedCredential({ provider: connectorId, kind: 'api_key', credentials: creds, created_by: by });
+    this.shared.db.run(`INSERT INTO secret_rotations (provider, rotated_by) VALUES (?, ?)`, [connectorId, by]);
+  }
+  listSecretRotations(provider: string): any[] {
+    return this.shared.db.query(`SELECT provider, rotated_by, created_at FROM secret_rotations WHERE provider = ? ORDER BY created_at DESC`).all(provider) as any[];
   }
 }
 

@@ -1999,6 +1999,45 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       return;
     }
 
+    // /ooo — out-of-office delegation. "/ooo @teammate reason" | "/ooo off" | "/ooo"
+    if (text.trim().toLowerCase() === "/ooo" || text.trim().toLowerCase().startsWith("/ooo ")) {
+      const arg = text.trim().slice(4).trim();
+      if (!arg) {
+        const d = supabase.getActiveDelegation(user.id);
+        if (!d) { await ctx.reply("You are not out of office. Set it with `/ooo @teammate [reason]`.", { parse_mode: "Markdown" }); return; }
+        const name = supabase.getUserById(d.delegateUserId)?.name || d.delegateUserId;
+        await ctx.reply(`🌴 Out of office → *${name}*${d.until ? ` until ${d.until}` : ""}${d.reason ? ` (${d.reason})` : ""}. \`/ooo off\` to clear.`, { parse_mode: "Markdown" });
+        return;
+      }
+      if (arg.toLowerCase() === "off" || arg.toLowerCase() === "clear") { supabase.clearDelegation(user.id); await ctx.reply("✓ Out-of-office cleared. Work routes to you again."); return; }
+      const m = arg.match(/^(@?[\w.-]+)\s*(.*)$/);
+      const { resolveAssignee } = await import("./task-routing.ts");
+      const who = m ? resolveAssignee(supabase, m[1]) : null;
+      if (!who) { await ctx.reply("Usage: `/ooo @teammate [reason]` — I couldn't find that teammate.", { parse_mode: "Markdown" }); return; }
+      supabase.setDelegation(user.id, who.userId, (m && m[2]) || undefined);
+      await ctx.reply(`🌴 Out of office → *${who.name}*. Tasks and approvals routed to you now go to them.`, { parse_mode: "Markdown" });
+      return;
+    }
+
+    // /access — view/grant capabilities (admin only). "/access @user grant automation.manage"
+    if (text.trim().toLowerCase() === "/access" || text.trim().toLowerCase().startsWith("/access ")) {
+      if (user.role !== "admin") { await ctx.reply("Only an admin can manage access."); return; }
+      const parts = text.trim().split(/\s+/).slice(1);
+      const { CAPABILITIES, isCapability } = await import("./permissions.ts");
+      if (!parts.length) { await ctx.reply(`🔑 *Capabilities*: ${CAPABILITIES.join(", ")}\n\nUsage: \`/access @user grant <capability>\` or \`… revoke <capability>\`, \`/access @user list\`.`, { parse_mode: "Markdown" }); return; }
+      const { resolveAssignee } = await import("./task-routing.ts");
+      const who = resolveAssignee(supabase, parts[0]);
+      if (!who) { await ctx.reply(`No teammate matching "${parts[0]}".`); return; }
+      const action = (parts[1] || "list").toLowerCase();
+      if (action === "list") { await ctx.reply(`*${who.name}* grants: ${supabase.listUserCapabilities(who.userId).join(", ") || "(none)"}`, { parse_mode: "Markdown" }); return; }
+      const cap = parts[2];
+      if (!cap || !isCapability(cap)) { await ctx.reply(`Unknown capability. One of: ${CAPABILITIES.join(", ")}`); return; }
+      if (action === "grant") { supabase.grantCapability(who.userId, cap, user.id); await ctx.reply(`✓ Granted \`${cap}\` to *${who.name}*.`, { parse_mode: "Markdown" }); }
+      else if (action === "revoke") { supabase.revokeCapability(who.userId, cap); await ctx.reply(`✓ Revoked \`${cap}\` from *${who.name}*.`, { parse_mode: "Markdown" }); }
+      else await ctx.reply("Usage: `/access @user grant|revoke|list <capability>`", { parse_mode: "Markdown" });
+      return;
+    }
+
     // /policies — list your compliance policies (restrictive-only guardrails).
     if (text.trim().toLowerCase() === "/policies" || text.trim().toLowerCase() === "/policy") {
       const policies = supabase.listPolicies(user.id);

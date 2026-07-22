@@ -22,6 +22,7 @@ registerProvider(new CodexProvider());
 import { computeNextTrigger } from "../src/memory.ts";
 import { resumeDueTimers, type RunStepFn } from "../src/process-engine.ts";
 import { sweepOverdueTasks } from "../src/task-routing.ts";
+import { withLock, PROCESS_ID } from "../src/locks.ts";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 
@@ -238,6 +239,12 @@ async function main() {
 
   const db = getDb();
 
+  // Advisory lock so two overlapping dispatcher runs don't double-process the same work.
+  if (!db.acquireLock("task-dispatcher", PROCESS_ID, 300)) {
+    console.log("Another dispatcher run holds the lock; skipping this tick.");
+    process.exit(0);
+  }
+
   // Resume durable processes whose timers are now due (runs regardless of scheduled tasks)
   try {
     const resumed = await resumeDueTimers(db, runProcessStep);
@@ -262,6 +269,7 @@ async function main() {
 
   if (!dueTasks?.length) {
     console.log("No due tasks");
+    db.releaseLock("task-dispatcher", PROCESS_ID);
     process.exit(0);
   }
 
@@ -318,6 +326,7 @@ async function main() {
     );
   }
 
+  db.releaseLock("task-dispatcher", PROCESS_ID);
   console.log("\nDispatcher complete");
 }
 

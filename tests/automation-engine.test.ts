@@ -14,7 +14,7 @@ function newUser() {
 const auto = (over: Partial<Automation> = {}): Automation => ({
   id: "a1", userId: "u", name: "n", sourceType: "webhook", sourceConfig: {},
   conditions: [], actionType: "agent", actionRef: "helios", actionConfig: { template: "Follow up with {{contact.name}} ({{contact.email}})" },
-  enabled: true, dedupeKey: null, rateLimitPerHour: null, secret: null, fireCount: 0, ...over,
+  enabled: true, dedupeKey: null, rateLimitPerHour: null, secret: null, idempotent: false, idempotencyTtlSec: null, fireCount: 0, ...over,
 });
 
 test("getByPath + renderTemplate resolve nested fields", () => {

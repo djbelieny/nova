@@ -4,6 +4,7 @@
  * driven by the periodic dispatcher.
  */
 
+import { resolveApprover } from './delegation';
 import type { Database } from './db';
 
 /** Resolve a teammate reference (@username, username, or display name) to a user id. */
@@ -21,9 +22,9 @@ export function resolveAssignee(db: Database, ref: string): { userId: string; na
   return null;
 }
 
-export interface AssignResult { ok: boolean; error?: string; assignee?: { userId: string; name: string } }
+export interface AssignResult { ok: boolean; error?: string; assignee?: { userId: string; name: string }; redirectedFrom?: string }
 
-/** Assign a task to a teammate with an optional due time / SLA. */
+/** Assign a task to a teammate with an optional due time / SLA. Honors out-of-office delegation. */
 export function assignTaskTo(
   db: Database,
   ownerUserId: string,
@@ -31,10 +32,21 @@ export function assignTaskTo(
   ref: string,
   opts?: { dueAt?: string | null; slaMinutes?: number | null }
 ): AssignResult {
-  const assignee = resolveAssignee(db, ref);
-  if (!assignee) return { ok: false, error: `no teammate matching "${ref}"` };
+  const target = resolveAssignee(db, ref);
+  if (!target) return { ok: false, error: `no teammate matching "${ref}"` };
+  // If the intended assignee is out of office, route to their active delegate.
+  let assignee = target;
+  let redirectedFrom: string | undefined;
+  try {
+    const resolved = resolveApprover(db, target.userId);
+    if (resolved.viaDelegate && resolved.userId !== target.userId) {
+      const dName = db.getUserById(resolved.userId)?.name || 'delegate';
+      assignee = { userId: resolved.userId, name: dName };
+      redirectedFrom = target.name;
+    }
+  } catch { /* delegation is best-effort */ }
   db.assignTask(ownerUserId, taskId, assignee.userId, opts);
-  return { ok: true, assignee };
+  return { ok: true, assignee, redirectedFrom };
 }
 
 export type EscalateNotify = (recipientUserId: string, message: string) => Promise<void>;
