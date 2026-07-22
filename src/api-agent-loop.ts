@@ -20,6 +20,7 @@ import { wrapForExecution } from "./sandbox/index.ts";
 import { buildMcp2cliInstructions, loadProjectMcpConfig } from "./mcp2cli.ts";
 import { maybeWrapWithRtk } from "./rtk.ts";
 import { buildAgentEnv } from "./agent-env.ts";
+import { neutralizeUntrusted } from "./untrusted.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const MAX_TOOL_OUTPUT = 10_000;
@@ -232,7 +233,11 @@ export async function runApiAgentLoop(args: ApiAgentLoopArgs): Promise<AIProvide
       } else {
         output = `Unknown tool: ${tc?.function?.name ?? "(unnamed)"}`;
       }
-      messages.push({ role: "tool", tool_call_id: tc.id, content: output });
+      // Only this OpenAI-compatible provider loop neutralizes tool output; the CLI-driven providers
+      // (Claude/Gemini/Codex) run their own tool loops Nova doesn't intercept, so they rely on the
+      // two-phase approval gate instead.
+      const safe = process.env.NOVA_UNTRUSTED_FIREWALL === "off" ? output : neutralizeUntrusted(output).text;
+      messages.push({ role: "tool", tool_call_id: tc.id, content: safe });
     }
   }
 
