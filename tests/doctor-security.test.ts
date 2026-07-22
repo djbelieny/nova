@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { runSecurityChecks } from "../src/doctor.ts";
+import { runSecurityChecks, checkFilePerms } from "../src/doctor.ts";
 
 const base = { NOVA_ENCRYPTION_KEY: "3f8a1c9e2b7d4056a1e9c3f7b2d8046e91a3c7f5b2d804e6a91c3f7b5d2084ea", DASHBOARD_PASS: "x", NOVA_LEAK_FIREWALL: "", NOVA_AGENT_ENV_STRICT: "", NOVA_UNTRUSTED_FIREWALL: "" };
 
@@ -27,4 +27,12 @@ test("dashboard exposed without a password is a hard fail", () => {
 test("flags long but low-entropy key (degenerate repeating chars)", () => {
   const checks = runSecurityChecks({ ...base, NOVA_ENCRYPTION_KEY: "a".repeat(64) });
   expect(checks.find((c) => c.name === "Encryption key")!.ok).toBe(false);
+});
+
+test("flags a world-readable .env", async () => {
+  const fakeRun = async (cmd: string) => (cmd.includes(".env") ? "644" : "600");
+  const checks = await checkFilePerms(fakeRun);
+  const env = checks.find((c) => c.name === "Env file permissions")!;
+  expect(env.ok).toBe(false);
+  expect(env.fix).toContain("chmod");
 });

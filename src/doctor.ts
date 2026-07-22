@@ -131,6 +131,29 @@ export function runSecurityChecks(env: Record<string, string | undefined>): Chec
   return checks;
 }
 
+/** Checks `.env` and the data directory aren't group/world-accessible. Uses `stat` via the injectable runner. */
+export async function checkFilePerms(run: Runner = defaultRunner): Promise<Check[]> {
+  const out: Check[] = [];
+  const items: Array<[string, string, string]> = [
+    ["Env file permissions", ".env", "600"],
+    ["Data dir permissions", process.env.NOVA_DB_DIR || "data", "700"],
+  ];
+  for (const [name, path, want] of items) {
+    try {
+      const mode = (await run(`stat -c %a ${path} 2>/dev/null || stat -f %Lp ${path}`)).trim();
+      const worldReadable = mode.length >= 3 && Number(mode[mode.length - 1]) !== 0;
+      out.push({
+        name, ok: !worldReadable,
+        detail: `mode ${mode}`,
+        fix: worldReadable ? `chmod ${want} ${path}` : undefined,
+      });
+    } catch {
+      out.push({ name, ok: true, detail: "not present" });
+    }
+  }
+  return out;
+}
+
 /** Checks a required CLI is present, returning its version string in `detail`. */
 async function checkCommand(name: string, cmd: string, versionFlag: string, run: Runner): Promise<Check> {
   try {
