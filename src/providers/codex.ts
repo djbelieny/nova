@@ -15,6 +15,7 @@ import { join } from "path";
 import { mkdirSync } from "fs";
 import { resolveSandboxBackend, wrapForExecution } from "../sandbox/index.ts";
 import { planSandboxAuth } from "../sandbox/auth.ts";
+import { buildAgentEnv } from "../agent-env.ts";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass, ProviderKind, ProviderCapabilities } from "../ai-provider.ts";
 
 export class CodexProvider implements AIProvider {
@@ -113,10 +114,7 @@ export class CodexProvider implements AIProvider {
       stdout: "pipe",
       stderr: "pipe",
       cwd: inDocker ? wrapped.cwd : undefined,
-      env: {
-        ...process.env,
-        OPENAI_API_KEY: process.env.OPENAI_API_KEY || undefined,
-      },
+      env: buildAgentEnv({ provider: "codex" }),
     });
 
     const [output, stderr] = await Promise.all([

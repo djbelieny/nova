@@ -13,6 +13,7 @@ import { mkdirSync } from "fs";
 import type { AIProvider, AIProviderCallOpts, AIProviderResult, ModelTier, ProviderCostClass, ProviderKind, ProviderCapabilities } from "../ai-provider.ts";
 import { wrapForExecution } from "../sandbox/index.ts";
 import { planSandboxAuth } from "../sandbox/auth.ts";
+import { buildAgentEnv } from "../agent-env.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const CLI_TIMEOUT_MS = 300_000;
@@ -128,10 +129,7 @@ export class ClaudeProvider implements AIProvider {
       stdout: "pipe",
       stderr: "pipe",
       cwd: wrapped.cwd,
-      env: {
-        ...process.env,
-        CLAUDECODE: undefined,
-      },
+      env: buildAgentEnv({ provider: "claude", mcpConfigPath: opts.mcpConfigPath, extra: { CLAUDECODE: undefined } }),
     });
 
     let timedOut = false;

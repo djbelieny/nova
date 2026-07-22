@@ -19,6 +19,7 @@ import type { ProviderProfile } from "./providers/openai-compatible.ts";
 import { wrapForExecution } from "./sandbox/index.ts";
 import { buildMcp2cliInstructions, loadProjectMcpConfig } from "./mcp2cli.ts";
 import { maybeWrapWithRtk } from "./rtk.ts";
+import { buildAgentEnv } from "./agent-env.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const MAX_TOOL_OUTPUT = 10_000;
@@ -138,7 +139,7 @@ function buildSystemContent(systemPrompt: string | undefined, mcpConfigPath?: st
 }
 
 /** Default bash runner — executes the command in the existing sandbox. */
-function makeDefaultRunBash(userId?: string): BashRunner {
+function makeDefaultRunBash(userId?: string, mcpConfigPath?: string): BashRunner {
   const novaWorkspace = `${process.env.HOME || "~"}/.nova/workspace`;
   const cwd = userId ? `${novaWorkspace}/users/${userId}` : novaWorkspace;
   return async (command: string): Promise<string> => {
@@ -154,7 +155,7 @@ function makeDefaultRunBash(userId?: string): BashRunner {
       stdout: "pipe",
       stderr: "pipe",
       cwd: wrapped.cwd,
-      env: { ...process.env },
+      env: buildAgentEnv({ mcpConfigPath }),
     });
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
@@ -171,7 +172,7 @@ export async function runApiAgentLoop(args: ApiAgentLoopArgs): Promise<AIProvide
   if (!apiKey) throw new Error(`${args.profile.apiKeyEnv} not set`);
 
   const fetchImpl = args.fetchImpl ?? globalThis.fetch;
-  const runBash = args.runBash ?? makeDefaultRunBash(args.userId);
+  const runBash = args.runBash ?? makeDefaultRunBash(args.userId, args.mcpConfigPath);
   const maxTurns = args.maxTurns > 0 ? args.maxTurns : 25;
 
   const systemContent = buildSystemContent(args.systemPrompt, args.mcpConfigPath);

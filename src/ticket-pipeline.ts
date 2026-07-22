@@ -60,12 +60,11 @@ export function defaultLLM(): (s: string, u: string) => Promise<string> {
   };
 }
 
-// SECURITY WARNING: defaultAgent currently inherits Nova's full environment (including all secrets
-// from .env) and runs with bypassPermissions while processing untrusted email content. This
-// violates spec guardrail #3 (execution sandbox). Do NOT set TICKET_DEPLOY_DRYRUN=false until:
-//   1. Nova's secrets are scrubbed from the env before the coding agent process is spawned.
-//   2. The agent runs in an isolated working directory with only the repo's own credentials —
-//      never the host process's API keys or tokens.
+// SECURITY NOTE: defaultAgent runs with bypassPermissions while processing untrusted email
+// content. It delegates to ClaudeProvider.call, whose spawn already scrubs the process env to
+// least-privilege via buildAgentEnv (no wholesale inheritance of Nova's .env secrets). The
+// remaining hardening for untrusted email is running this under the Docker sandbox (Fix 4) —
+// isolating the working directory and filesystem/network access, not just the env.
 // See: docs/superpowers/specs/2026-06-18-support-ticket-pipeline-design.md
 export function defaultAgent(): (cwd: string, task: string) => Promise<void> {
   return async (cwd, task) => {
