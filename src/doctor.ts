@@ -221,6 +221,12 @@ export function formatDiagnostics(checks: Check[], versions: Record<string, stri
 }
 
 if (import.meta.main) {
+  const security = process.argv.includes("--security");
+  if (security) {
+    const checks = [...runSecurityChecks(process.env), ...(await checkFilePerms())];
+    console.log(formatDiagnostics(checks, { platform: process.platform }));
+    process.exit(checks.every((c) => c.ok) ? 0 : 1);
+  }
   const checks = await runAllChecks();
   console.log(formatDiagnostics(checks, { platform: process.platform, node: process.version }));
   process.exit(checks.every((c) => c.ok) ? 0 : 1);
