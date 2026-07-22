@@ -233,6 +233,9 @@ export async function runApiAgentLoop(args: ApiAgentLoopArgs): Promise<AIProvide
       } else {
         output = `Unknown tool: ${tc?.function?.name ?? "(unnamed)"}`;
       }
+      // Only this OpenAI-compatible provider loop neutralizes tool output; the CLI-driven providers
+      // (Claude/Gemini/Codex) run their own tool loops Nova doesn't intercept, so they rely on the
+      // two-phase approval gate instead.
       const safe = process.env.NOVA_UNTRUSTED_FIREWALL === "off" ? output : neutralizeUntrusted(output).text;
       messages.push({ role: "tool", tool_call_id: tc.id, content: safe });
     }

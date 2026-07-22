@@ -23,3 +23,16 @@ test("neutralize leaves benign content essentially intact", () => {
   expect(r.flagged).toBe(false);
   expect(r.text).toContain("42 tests passed");
 });
+
+test("neutralize preserves role labels in a benign transcript (not injection-shaped)", () => {
+  const r = neutralizeUntrusted("Human: hi\nAssistant: yo");
+  expect(r.flagged).toBe(false);
+  expect(r.text).toContain("Human:");
+  expect(r.text).toContain("Assistant:");
+});
+
+test("neutralize does not empty a bare role-prefix-only benign input", () => {
+  const r = neutralizeUntrusted("System:");
+  expect(r.flagged).toBe(false);
+  expect(r.text).toBe("System:");
+});
