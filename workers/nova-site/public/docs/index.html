@@ -271,6 +271,7 @@
     <a href="#always-on">Running always-on</a>
     <a href="#database">Database &amp; backups</a>
     <a href="#security">Security model</a>
+    <a href="#open-source">Open source</a>
     <a href="#troubleshooting">Troubleshooting</a>
   </div>
 </aside>
@@ -283,19 +284,25 @@
   <section id="overview">
     <span class="sec-eyebrow">[overview]</span>
     <h2>What Nova is</h2>
-    <p>Nova is an open-source, self-hosted multi-agent platform. You talk to it from <strong>Telegram, WhatsApp, or Slack</strong>; it classifies each message, decomposes complex requests into subtasks, routes them to <strong>24 specialist agents</strong>, and executes in two phases — safe preparation first, then a <strong>human approval gate</strong> before anything is published, sent, or paid for.</p>
-    <pre><code>User ─▶ Channel ─▶ relay ─▶ orchestrator ─▶ planner
-        (Telegram/     │ classify           │ decompose
-         WhatsApp/     │ (heuristic →       │ (subtasks +
-         Slack)        │  pattern cache →   │  dependencies)
-                       │  LLM)              │
-                       ▼                    ▼
-                agent-router ◀── 24 specialist agents
-                       │
-             prepare ─▶ <span class="k">approve</span> ─▶ execute
-                       │
-                  Response ─▶ User</code></pre>
-    <p>Everything runs on your machine: <strong>Bun + TypeScript</strong>, local SQLite with vector search, your own AI CLI accounts (Claude, Gemini, Codex), and credentials encrypted at rest. MIT licensed — <a href="https://github.com/djbelieny/nova" rel="noopener">source on GitHub</a>.</p>
+    <p>Nova is an open-source, self-hosted AI platform. It's a team of <strong>24 specialist agents</strong> plus an <strong>automation layer</strong> that runs the repeatable work in the background — and it runs on your own model subscriptions and your own machine. Four pillars:</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Pillar</th><th>What it means</th></tr>
+      <tr><td><strong>Multi-agent</strong></td><td>A request is classified cheaply, then answered, routed to one specialist, or decomposed into a dependency-ordered plan run across several (an optional 7-role <a href="#board">executive board</a> deliberates on strategy).</td></tr>
+      <tr><td><strong>Event-driven</strong></td><td>It doesn't only wait for a message. A webhook, a metric, a connector event, or a semantic match can fire an <a href="#automations">automation</a> or <a href="#playbooks">playbook</a>; <a href="#processes">durable processes</a> span days.</td></tr>
+      <tr><td><strong>Your models, your machine</strong></td><td>It drives the vendor CLIs (Claude, Gemini, Codex) as subprocesses so it runs on subscriptions you already pay for — plus any OpenAI-compatible API. Storage is local SQLite; embeddings and the <a href="#knowledge">knowledge base</a> are local. Your keys, your data.</td></tr>
+      <tr><td><strong>Trust &amp; governance</strong></td><td>Two-phase prepare → approve → execute gates interactive requests; <a href="#policies">policies</a>, spending caps, and role-based <a href="#governance">permissions</a> govern the autonomous ones.</td></tr>
+    </table></div>
+    <pre><code>message ─▶ channel ──▶ relay ─▶ orchestrator ─▶ planner
+  or        (Telegram/          │ classify         │ decompose into
+ event       Slack/             │ (heuristic →     │ subtasks with
+(webhook,     Discord/          │  pattern cache → │ dependencies)
+ metric,      terminal)         │  LLM)            │
+ connector)                      ▼                  ▼
+                          agent-router ◀── 24 specialist agents
+                                 │
+                       prepare ─▶ <span class="k">approve</span> ─▶ execute
+                       (safe)    (interactive)  (ships/spends/sends)</code></pre>
+    <p>Everything runs on your machine: <strong>Bun + TypeScript</strong>, local SQLite with vector search, your own AI accounts, and credentials AES-256-GCM encrypted at rest. MIT licensed — <a href="https://github.com/djbelieny/nova" rel="noopener">source on GitHub</a>.</p>
   </section>
 
   <!-- ══════════════ GETTING STARTED ══════════════ -->
@@ -797,6 +804,8 @@ nova access list @teammate
       <tr><td><code>browserbase</code></td><td>Cloud browser sessions</td><td><code>BROWSERBASE_API_KEY</code>, <code>BROWSERBASE_PROJECT_ID</code></td></tr>
     </table></div>
     <p>Service-based MCPs in <code>services/</code> add YouTube, TikTok, Zoom, and Meta social publishing. The optional <code>memwright</code> server provides long-term vector memory (port 8765).</p>
+    <h3>mcp2cli — tools without the context tax</h3>
+    <p>Loading every MCP tool's JSON schema into an agent's prompt is expensive — hundreds of tool definitions can dominate the context window. Nova instead exposes MCP servers through <strong>mcp2cli</strong>: agents get a short instruction to <em>discover</em> tools on demand from the shell — <code>mcp2cli … --list</code> to see a server's tools, then <code>--tool &lt;name&gt; --param k=v</code> to call one — so only the tools actually used cost any context. The same discovery-first idiom applies to Nova's own capabilities (<code>nova connector describe &lt;id&gt;</code>, <code>nova kb search</code>, …), so an agent's toolset can grow without bloating its prompt.</p>
   </section>
 
   <!-- ══════════════ DASHBOARD ══════════════ -->
@@ -891,6 +900,22 @@ data/memwright/      <span class="c"># optional long-term memory service store</
       <li><strong>SQL</strong> — fully parameterized queries; AI CLIs invoked with argv arrays (no shell interpolation of your messages).</li>
     </ul>
     <p>Found a vulnerability? Report privately via <a href="https://github.com/djbelieny/nova/security" rel="noopener">GitHub Security Advisories</a> — see <code>SECURITY.md</code>.</p>
+  </section>
+
+  <!-- ══════════════ OPEN SOURCE ══════════════ -->
+  <section id="open-source">
+    <span class="sec-eyebrow">[credits]</span>
+    <h2>Open source</h2>
+    <p>Nova is MIT licensed and built on a lot of other people's work. Each project below is used under its own license (full texts ship in <code>node_modules</code>) — thank you to their maintainers.</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Area</th><th>Projects</th></tr>
+      <tr><td>Runtime &amp; AI</td><td><a href="https://bun.sh" rel="noopener">Bun</a>, <a href="https://www.typescriptlang.org" rel="noopener">TypeScript</a>, <a href="https://github.com/asg017/sqlite-vec" rel="noopener">sqlite-vec</a> (vector search), <a href="https://www.npmjs.com/package/@huggingface/transformers" rel="noopener">Transformers.js</a> running <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2" rel="noopener">all-MiniLM-L6-v2</a>, the <a href="https://www.npmjs.com/package/@modelcontextprotocol/sdk" rel="noopener">MCP SDK</a></td></tr>
+      <tr><td><strong>mcp2cli</strong></td><td>the MCP-to-CLI bridge Nova drives so agents call MCP tools from the shell (see <a href="#mcp">MCP integrations</a>)</td></tr>
+      <tr><td>Channels &amp; UI</td><td><a href="https://grammy.dev" rel="noopener">grammY</a> (Telegram), <a href="https://www.npmjs.com/package/@slack/bolt" rel="noopener">Bolt</a> (Slack), <a href="https://discord.js.org" rel="noopener">discord.js</a>, <a href="https://www.npmjs.com/package/ink" rel="noopener">Ink</a> + <a href="https://react.dev" rel="noopener">React</a></td></tr>
+      <tr><td>Documents &amp; media</td><td><a href="https://www.npmjs.com/package/pdf-parse" rel="noopener">pdf-parse</a>, <a href="https://www.npmjs.com/package/mammoth" rel="noopener">mammoth</a>, <a href="https://www.npmjs.com/package/docx" rel="noopener">docx</a>, <a href="https://www.npmjs.com/package/pptxgenjs" rel="noopener">PptxGenJS</a>, <a href="https://sharp.pixelplumbing.com" rel="noopener">sharp</a>, <a href="https://playwright.dev" rel="noopener">Playwright</a></td></tr>
+      <tr><td>Other</td><td><a href="https://www.npmjs.com/package/groq-sdk" rel="noopener">groq-sdk</a> (transcription), <a href="https://resend.com" rel="noopener">Resend</a> (email), <a href="https://www.npmjs.com/package/dotenv" rel="noopener">dotenv</a></td></tr>
+    </table></div>
+    <p>Nova <strong>runs on</strong> the official vendor CLIs — <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a>, the Gemini CLI, and Codex — driven as subprocesses under your own subscriptions; those are proprietary tools, not bundled. Nova also grew out of Goda's minimal <a href="https://github.com/godagoo" rel="noopener">Claude Code Telegram Relay</a> pattern, since almost entirely rewritten.</p>
   </section>
 
   <!-- ══════════════ TROUBLESHOOTING ══════════════ -->

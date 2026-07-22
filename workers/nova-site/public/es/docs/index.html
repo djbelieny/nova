@@ -271,6 +271,7 @@
     <a href="#always-on">Ejecución continua</a>
     <a href="#database">Base de datos y copias de seguridad</a>
     <a href="#security">Modelo de seguridad</a>
+    <a href="#open-source">Código abierto</a>
     <a href="#troubleshooting">Resolución de problemas</a>
   </div>
 </aside>
@@ -283,19 +284,25 @@
   <section id="overview">
     <span class="sec-eyebrow">[descripción general]</span>
     <h2>Qué es Nova</h2>
-    <p>Nova es una plataforma multi-agente de código abierto y auto-alojada. Puedes hablar con ella desde <strong>Telegram, WhatsApp o Slack</strong>; clasifica cada mensaje, descompone solicitudes complejas en subtareas, las enruta a <strong>24 agentes especialistas</strong> y ejecuta en dos fases — preparación segura primero, luego un <strong>control de aprobación humana</strong> antes de que se publique, envíe o pague nada.</p>
-    <pre><code>User ─▶ Channel ─▶ relay ─▶ orchestrator ─▶ planner
-        (Telegram/     │ classify           │ decompose
-         WhatsApp/     │ (heuristic →       │ (subtasks +
-         Slack)        │  pattern cache →   │  dependencies)
-                       │  LLM)              │
-                       ▼                    ▼
-                agent-router ◀── 24 specialist agents
-                       │
-             prepare ─▶ <span class="k">approve</span> ─▶ execute
-                       │
-                  Response ─▶ User</code></pre>
-    <p>Todo corre en tu máquina: <strong>Bun + TypeScript</strong>, SQLite local con búsqueda vectorial, tus propias cuentas CLI de IA (Claude, Gemini, Codex) y credenciales cifradas en reposo. Licenciado bajo MIT — <a href="https://github.com/djbelieny/nova" rel="noopener">código fuente en GitHub</a>.</p>
+    <p>Nova es una plataforma de IA de código abierto y auto-alojada. Es un equipo de <strong>24 agentes especialistas</strong> más una <strong>capa de automatización</strong> que ejecuta el trabajo repetitivo en segundo plano — y corre sobre tus propias suscripciones de modelos y tu propia máquina. Cuatro pilares:</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Pilar</th><th>Qué significa</th></tr>
+      <tr><td><strong>Multi-agente</strong></td><td>Una solicitud se clasifica de forma económica y luego se responde, se enruta a un especialista o se descompone en un plan ordenado por dependencias que corre entre varios (una <a href="#board">junta ejecutiva</a> opcional de 7 roles delibera sobre la estrategia).</td></tr>
+      <tr><td><strong>Orientada a eventos</strong></td><td>No solo espera un mensaje. Un webhook, una métrica, un evento de conector o una coincidencia semántica pueden disparar una <a href="#automations">automatización</a> o un <a href="#playbooks">playbook</a>; los <a href="#processes">procesos durables</a> abarcan días.</td></tr>
+      <tr><td><strong>Tus modelos, tu máquina</strong></td><td>Maneja las CLIs de los proveedores (Claude, Gemini, Codex) como subprocesos, así que corre sobre suscripciones que ya pagas — más cualquier API compatible con OpenAI. El almacenamiento es SQLite local; los embeddings y la <a href="#knowledge">base de conocimiento</a> son locales. Tus claves, tus datos.</td></tr>
+      <tr><td><strong>Confianza y gobernanza</strong></td><td>El flujo de dos fases preparar → aprobar → ejecutar controla las solicitudes interactivas; las <a href="#policies">políticas</a>, los topes de gasto y los <a href="#governance">permisos</a> basados en roles gobiernan las autónomas.</td></tr>
+    </table></div>
+    <pre><code>mensaje ─▶ canal ────▶ relay ─▶ orchestrator ─▶ planner
+   o        (Telegram/          │ clasifica         │ descompone en
+ evento      Slack/             │ (heurística →     │ subtareas con
+(webhook,    Discord/           │  caché de patrón →│ dependencias)
+ métrica,    terminal)          │  LLM)             │
+ conector)                       ▼                   ▼
+                          agent-router ◀── 24 agentes especialistas
+                                 │
+                       preparar ─▶ <span class="k">approve</span> ─▶ ejecutar
+                       (seguro)  (interactivo)  (publica/gasta/envía)</code></pre>
+    <p>Todo corre en tu máquina: <strong>Bun + TypeScript</strong>, SQLite local con búsqueda vectorial, tus propias cuentas de IA y credenciales cifradas en reposo con AES-256-GCM. Licenciado bajo MIT — <a href="https://github.com/djbelieny/nova" rel="noopener">código fuente en GitHub</a>.</p>
   </section>
 
   <!-- ══════════════ GETTING STARTED ══════════════ -->
@@ -797,6 +804,8 @@ nova access list @teammate
       <tr><td><code>browserbase</code></td><td>Sesiones de navegador en la nube</td><td><code>BROWSERBASE_API_KEY</code>, <code>BROWSERBASE_PROJECT_ID</code></td></tr>
     </table></div>
     <p>Los MCPs basados en servicios en <code>services/</code> agregan YouTube, TikTok, Zoom y publicación social de Meta. El servidor opcional <code>memwright</code> proporciona memoria vectorial a largo plazo (puerto 8765).</p>
+    <h3>mcp2cli — herramientas sin el impuesto de contexto</h3>
+    <p>Cargar el esquema JSON de cada herramienta MCP en el prompt de un agente es costoso — cientos de definiciones de herramientas pueden dominar la ventana de contexto. En cambio, Nova expone los servidores MCP a través de <strong>mcp2cli</strong>: los agentes reciben una instrucción breve para <em>descubrir</em> herramientas bajo demanda desde el shell — <code>mcp2cli … --list</code> para ver las herramientas de un servidor, y luego <code>--tool &lt;name&gt; --param k=v</code> para llamar a una — así solo las herramientas que realmente se usan cuestan contexto. El mismo enfoque de descubrimiento primero aplica a las propias capacidades de Nova (<code>nova connector describe &lt;id&gt;</code>, <code>nova kb search</code>, …), de modo que el conjunto de herramientas de un agente puede crecer sin inflar su prompt.</p>
   </section>
 
   <!-- ══════════════ DASHBOARD ══════════════ -->
@@ -891,6 +900,22 @@ data/memwright/      <span class="c"># almacenamiento del servicio de memoria a 
       <li><strong>SQL</strong> — consultas completamente parametrizadas; CLIs de IA invocadas con arrays argv (sin interpolación de shell de tus mensajes).</li>
     </ul>
     <p>¿Encontraste una vulnerabilidad? Reporta en privado vía <a href="https://github.com/djbelieny/nova/security" rel="noopener">GitHub Security Advisories</a> — ver <code>SECURITY.md</code>.</p>
+  </section>
+
+  <!-- ══════════════ OPEN SOURCE ══════════════ -->
+  <section id="open-source">
+    <span class="sec-eyebrow">[créditos]</span>
+    <h2>Código abierto</h2>
+    <p>Nova está licenciado bajo MIT y construido sobre el trabajo de muchas otras personas. Cada proyecto de abajo se usa bajo su propia licencia (los textos completos vienen en <code>node_modules</code>) — gracias a quienes los mantienen.</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Área</th><th>Proyectos</th></tr>
+      <tr><td>Runtime e IA</td><td><a href="https://bun.sh" rel="noopener">Bun</a>, <a href="https://www.typescriptlang.org" rel="noopener">TypeScript</a>, <a href="https://github.com/asg017/sqlite-vec" rel="noopener">sqlite-vec</a> (búsqueda vectorial), <a href="https://www.npmjs.com/package/@huggingface/transformers" rel="noopener">Transformers.js</a> ejecutando <a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2" rel="noopener">all-MiniLM-L6-v2</a>, el <a href="https://www.npmjs.com/package/@modelcontextprotocol/sdk" rel="noopener">MCP SDK</a></td></tr>
+      <tr><td><strong>mcp2cli</strong></td><td>el puente MCP-a-CLI que Nova maneja para que los agentes llamen a herramientas MCP desde el shell (ver <a href="#mcp">Integraciones MCP</a>)</td></tr>
+      <tr><td>Canales e interfaz</td><td><a href="https://grammy.dev" rel="noopener">grammY</a> (Telegram), <a href="https://www.npmjs.com/package/@slack/bolt" rel="noopener">Bolt</a> (Slack), <a href="https://discord.js.org" rel="noopener">discord.js</a>, <a href="https://www.npmjs.com/package/ink" rel="noopener">Ink</a> + <a href="https://react.dev" rel="noopener">React</a></td></tr>
+      <tr><td>Documentos y medios</td><td><a href="https://www.npmjs.com/package/pdf-parse" rel="noopener">pdf-parse</a>, <a href="https://www.npmjs.com/package/mammoth" rel="noopener">mammoth</a>, <a href="https://www.npmjs.com/package/docx" rel="noopener">docx</a>, <a href="https://www.npmjs.com/package/pptxgenjs" rel="noopener">PptxGenJS</a>, <a href="https://sharp.pixelplumbing.com" rel="noopener">sharp</a>, <a href="https://playwright.dev" rel="noopener">Playwright</a></td></tr>
+      <tr><td>Otros</td><td><a href="https://www.npmjs.com/package/groq-sdk" rel="noopener">groq-sdk</a> (transcripción), <a href="https://resend.com" rel="noopener">Resend</a> (correo), <a href="https://www.npmjs.com/package/dotenv" rel="noopener">dotenv</a></td></tr>
+    </table></div>
+    <p>Nova <strong>corre sobre</strong> las CLIs oficiales de los proveedores — <a href="https://claude.ai/claude-code" rel="noopener">Claude Code</a>, la CLI de Gemini y Codex — manejadas como subprocesos bajo tus propias suscripciones; esas son herramientas propietarias, no incluidas. Nova también surgió del patrón minimalista <a href="https://github.com/godagoo" rel="noopener">Claude Code Telegram Relay</a> de Goda, desde entonces reescrito casi por completo.</p>
   </section>
 
   <!-- ══════════════ TROUBLESHOOTING ══════════════ -->

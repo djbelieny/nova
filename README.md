@@ -1,11 +1,12 @@
 # Nova
 
-**An AI team that asks before it acts.**
+**A self-hosted AI team that runs your operation — and asks before it acts.**
 
-Nova is a self-hosted, open-source multi-agent orchestrator you run yourself and talk to from
-Telegram, Slack, Discord, or a terminal. It routes each message across 24 specialist agents,
-runs the work in two phases — safe drafting first, then your approval before anything ships,
-spends, or sends — and it runs on your own model subscriptions and your own machine.
+Nova is a self-hosted, open-source AI platform: a team of 24 specialist agents plus an
+automation layer that reacts to events and runs the repeatable work in the background. You reach
+it from Telegram, Slack, Discord, or a terminal — or a webhook, a metric, or a connector event
+fires it — and it runs on your own model subscriptions and your own machine, with human approval
+where it matters.
 
 <p align="center">
   <a href="https://mynova.space">
@@ -42,10 +43,15 @@ message ──▶ channel ──▶ relay ──▶ orchestrator ──▶ plann
   each just a markdown file). A message is classified cheaply, then answered directly, routed to
   one specialist, or decomposed into a dependency-ordered plan run across several. An optional
   distributed **executive board** (7 reasoning personas) can deliberate on strategic questions.
-- **Two-phase execution.** The safe half — research, drafts, generation — runs freely and stays on
-  your machine. Then an inline **Approve / Revise / Cancel** gate in chat. Only after you approve
-  does the consequential half — publish, send, spend — run. Agents earn autonomy over time (a
-  per-category ladder with spending caps) for work you've told it to stop asking about.
+- **Event-driven, not just a chat bot.** A message is one trigger; a webhook, a metric crossing a
+  threshold, a connector event, or a semantic match is another. Any of them can run an agent or a
+  **playbook** (a reusable SOP), and **durable processes** carry multi-day work across waits and
+  restarts. Nova runs the operation in the background, not only when you ask.
+- **Two-phase execution + governance.** For interactive requests the safe half — research, drafts,
+  generation — runs freely; then an inline **Approve / Revise / Cancel** gate; only after you
+  approve does the consequential half — publish, send, spend — run. Autonomous paths (schedules,
+  automations) are pre-authorized and governed by spending caps, role-based permissions, and
+  content policies that can hard-block. Agents also earn autonomy over time (a per-category ladder).
 - **Your models, your machine.** It drives the official vendor CLIs (Claude Code, Gemini, Codex)
   as subprocesses, so it runs on subscriptions you already pay for instead of metered API tokens —
   and it also supports any OpenAI-compatible API (OpenRouter, DeepSeek, xAI, local Ollama/vLLM).
@@ -213,11 +219,34 @@ services/              # task dispatcher, automation poller, proactive services
 
 MIT — take it, customize it, make it yours.
 
-## Acknowledgments
+## Built with open source
 
-Nova grew out of Goda's minimal [Claude Code Telegram Relay](https://github.com/godagoo) pattern —
-the original "run Claude Code as an always-on Telegram bot" idea. It has since been almost entirely
-rewritten into the platform you see here.
+Nova stands on a lot of other people's work. Each project below is used under its own license
+(full license texts ship in `node_modules`); thank you to their maintainers.
+
+**Runtime & AI**
+- [Bun](https://bun.sh) — the runtime · [TypeScript](https://www.typescriptlang.org)
+- [sqlite-vec](https://github.com/asg017/sqlite-vec) — vector search inside SQLite
+- [Transformers.js](https://www.npmjs.com/package/@huggingface/transformers) — local embeddings, running the [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) model
+- [Model Context Protocol SDK](https://www.npmjs.com/package/@modelcontextprotocol/sdk) — MCP
+- **mcp2cli** — the MCP-to-CLI bridge Nova drives so agents call MCP tools from the shell instead of loading every schema into context
+
+**Channels & UI**
+- [grammY](https://grammy.dev) (Telegram) · [Bolt](https://www.npmjs.com/package/@slack/bolt) (Slack) · [discord.js](https://discord.js.org) (Discord) · [Ink](https://www.npmjs.com/package/ink) + [React](https://react.dev) (terminal & dashboard)
+
+**Documents & media**
+- [pdf-parse](https://www.npmjs.com/package/pdf-parse) · [mammoth](https://www.npmjs.com/package/mammoth) · [docx](https://www.npmjs.com/package/docx) · [PptxGenJS](https://www.npmjs.com/package/pptxgenjs) · [sharp](https://sharp.pixelplumbing.com) · [Playwright](https://playwright.dev)
+
+**Other**
+- [groq-sdk](https://www.npmjs.com/package/groq-sdk) (transcription) · [Resend](https://resend.com) (email) · [dotenv](https://www.npmjs.com/package/dotenv)
+
+Nova **runs on** the official vendor CLIs — [Claude Code](https://claude.ai/claude-code), the Gemini
+CLI, and Codex — driven as subprocesses under your own subscriptions. Those are proprietary tools,
+not bundled with Nova.
+
+And it grew out of Goda's minimal [Claude Code Telegram Relay](https://github.com/godagoo) pattern —
+the original "run Claude Code as an always-on Telegram bot" idea — since almost entirely rewritten
+into the platform you see here.
 
 ---
 
