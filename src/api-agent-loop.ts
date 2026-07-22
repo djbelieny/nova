@@ -18,6 +18,7 @@ import type { AIProviderResult } from "./ai-provider.ts";
 import type { ProviderProfile } from "./providers/openai-compatible.ts";
 import { wrapForExecution } from "./sandbox/index.ts";
 import { buildMcp2cliInstructions, loadProjectMcpConfig } from "./mcp2cli.ts";
+import { maybeWrapWithRtk } from "./rtk.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const MAX_TOOL_OUTPUT = 10_000;
@@ -142,7 +143,9 @@ function makeDefaultRunBash(userId?: string): BashRunner {
   const cwd = userId ? `${novaWorkspace}/users/${userId}` : novaWorkspace;
   return async (command: string): Promise<string> => {
     try { mkdirSync(cwd, { recursive: true }); } catch {}
-    const argv = ["bash", "-lc", command];
+    // Route through RTK (token-compressed output) when installed + enabled; passthrough otherwise.
+    const finalCommand = await maybeWrapWithRtk(command);
+    const argv = ["bash", "-lc", finalCommand];
     const wrapped = await wrapForExecution(argv, cwd, true, {
       network: "bridge",
       workspaceDir: cwd,

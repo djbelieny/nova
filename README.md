@@ -230,6 +230,7 @@ Nova stands on a lot of other people's work. Each project below is used under it
 - [Transformers.js](https://www.npmjs.com/package/@huggingface/transformers) — local embeddings, running the [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) model
 - [Model Context Protocol SDK](https://www.npmjs.com/package/@modelcontextprotocol/sdk) — MCP
 - **mcp2cli** — the MCP-to-CLI bridge Nova drives so agents call MCP tools from the shell instead of loading every schema into context
+- [RTK — Rust Token Killer](https://github.com/rtk-ai/rtk) (Apache-2.0) — installed by `bootstrap.sh` and **on by default**; compresses the output of common dev commands (git, build, test, grep…) by 60–90% before it re-enters an agent's context. Nova routes its own shell through it and it's safe by design (unknown commands pass through unchanged). Disable with `NOVA_RTK=off`.
 
 **Channels & UI**
 - [grammY](https://grammy.dev) (Telegram) · [Bolt](https://www.npmjs.com/package/@slack/bolt) (Slack) · [discord.js](https://discord.js.org) (Discord) · [Ink](https://www.npmjs.com/package/ink) + [React](https://react.dev) (terminal & dashboard)

@@ -86,6 +86,32 @@ else
   fi
 fi
 
+# ── 4b. RTK — Rust Token Killer (compresses command output, on by default) ──
+# Optional but recommended: Nova routes its own bash through `rtk` when present, and
+# the AI CLIs pick it up via rtk's Claude Code hook. Never fatal — Nova degrades to
+# raw output if rtk is absent. Disable at runtime with NOVA_RTK=off.
+if [[ "${NOVA_RTK:-}" =~ ^(off|false|0|no)$ ]]; then
+  echo -e "  ${YELLOW}! RTK: skipped (NOVA_RTK=${NOVA_RTK})${NC}"
+elif have rtk; then
+  echo -e "  ${GREEN}✓ RTK: $(rtk --version 2>/dev/null || echo found)${NC}"
+  [[ "$CHECK" == "1" ]] || rtk init -g &>/dev/null || true   # best-effort Claude Code hook
+elif [[ "$CHECK" == "1" ]]; then
+  echo -e "  ${YELLOW}! RTK: not found (would install; optional token saver)${NC}"
+else
+  echo -e "  ${YELLOW}Installing RTK (optional token saver)...${NC}"
+  if have cargo && cargo install --git https://github.com/rtk-ai/rtk --quiet &>/dev/null; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+    echo -e "  ${GREEN}✓ RTK installed (via cargo)${NC}"
+    rtk init -g &>/dev/null || true
+  elif [[ "$OS" == "Darwin" ]] && have brew && brew install rtk &>/dev/null; then
+    echo -e "  ${GREEN}✓ RTK installed (via brew)${NC}"
+    rtk init -g &>/dev/null || true
+  else
+    echo -e "  ${YELLOW}!${NC} RTK not installed (optional). To enable token savings later:"
+    echo "    brew install rtk   # or: cargo install --git https://github.com/rtk-ai/rtk"
+  fi
+fi
+
 # ── 5. In --check mode we stop here (no mutations) ───────────────
 if [[ "$CHECK" == "1" ]]; then
   echo ""

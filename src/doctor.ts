@@ -84,17 +84,38 @@ async function checkCommand(name: string, cmd: string, versionFlag: string, run:
   }
 }
 
+/**
+ * RTK is an optional token saver — Nova works without it (raw command output). This check is
+ * always `ok` so a missing binary never fails overall health; the detail just reports status.
+ */
+async function checkRtk(env: Record<string, string | undefined>, run: Runner): Promise<Check> {
+  const off = ["off", "false", "0", "no"].includes((env.NOVA_RTK || "").toLowerCase());
+  if (off) return { name: "RTK (token saver)", ok: true, detail: "disabled (NOVA_RTK)" };
+  try {
+    const version = await run("rtk --version");
+    return { name: "RTK (token saver)", ok: true, detail: `${version.split("\n")[0] || "found"}, active` };
+  } catch {
+    return {
+      name: "RTK (token saver)",
+      ok: true,
+      detail: "not installed (optional) — raw output",
+      fix: "Optional: `brew install rtk` (or `cargo install --git https://github.com/rtk-ai/rtk`) for 60–90% smaller command output.",
+    };
+  }
+}
+
 /** Runs the full suite (tool presence + env config). Pass a fake runner in tests. */
 export async function runAllChecks(
   env: Record<string, string | undefined> = process.env,
   run: Runner = defaultRunner
 ): Promise<Check[]> {
-  const [bun, claude, git] = await Promise.all([
+  const [bun, claude, git, rtk] = await Promise.all([
     checkCommand("Bun", "bun", "--version", run),
     checkCommand("Claude Code CLI", "claude", "--version", run),
     checkCommand("git", "git", "--version", run),
+    checkRtk(env, run),
   ]);
-  return [bun, claude, git, ...runEnvChecks(env)];
+  return [bun, claude, git, ...runEnvChecks(env), rtk];
 }
 
 /** Formats checks + versions into a copyable diagnostics blob. */
@@ -102,7 +123,7 @@ export function formatDiagnostics(checks: Check[], versions: Record<string, stri
   const lines: string[] = ["Nova Doctor — diagnostics", "========================="];
   for (const c of checks) {
     lines.push(`${c.ok ? "✅" : "❌"} ${c.name}: ${c.detail}`);
-    if (!c.ok && c.fix) lines.push(`   → ${c.fix}`);
+    if (c.fix) lines.push(`   → ${c.fix}`);
   }
   const vkeys = Object.keys(versions);
   if (vkeys.length > 0) {

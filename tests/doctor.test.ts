@@ -50,3 +50,32 @@ test("runAllChecks uses the injected runner and reports tool presence", async ()
   expect(checks.find((c) => c.name === "Claude Code CLI")!.ok).toBe(false);
   expect(checks.find((c) => c.name === "git")!.ok).toBe(true);
 });
+
+test("RTK check is informational: missing rtk stays ok with an optional hint", async () => {
+  const fakeRun = async (cmd: string) => {
+    if (cmd.startsWith("rtk")) throw new Error("not found");
+    return "ok";
+  };
+  const checks = await runAllChecks({ TELEGRAM_BOT_TOKEN: "t", TELEGRAM_USER_ID: "1" }, fakeRun);
+  const rtk = checks.find((c) => c.name === "RTK (token saver)")!;
+  expect(rtk.ok).toBe(true);
+  expect(rtk.fix).toBeTruthy();
+});
+
+test("RTK check reports active when rtk is present", async () => {
+  const fakeRun = async (cmd: string) => (cmd.startsWith("rtk") ? "rtk 0.4.1" : "ok");
+  const checks = await runAllChecks({ TELEGRAM_BOT_TOKEN: "t", TELEGRAM_USER_ID: "1" }, fakeRun);
+  const rtk = checks.find((c) => c.name === "RTK (token saver)")!;
+  expect(rtk.ok).toBe(true);
+  expect(rtk.detail).toContain("active");
+});
+
+test("RTK check honors NOVA_RTK=off", async () => {
+  const fakeRun = async () => "ok";
+  const checks = await runAllChecks(
+    { TELEGRAM_BOT_TOKEN: "t", TELEGRAM_USER_ID: "1", NOVA_RTK: "off" },
+    fakeRun
+  );
+  const rtk = checks.find((c) => c.name === "RTK (token saver)")!;
+  expect(rtk.detail).toContain("disabled");
+});
