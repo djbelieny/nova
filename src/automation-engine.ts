@@ -117,6 +117,7 @@ export async function dispatchAutomation(
     // Only record genuine skips that are worth seeing (not every non-matching event).
     if (decision.skipReason && decision.skipReason !== 'conditions-not-met') {
       db.insertAutomationRun({ automationId: automation.id, userId: automation.userId, dedupeKey: decision.dedupeKey, status: 'skipped', result: decision.skipReason });
+      db.insertRunEvent(automation.userId, { kind: 'automation', refId: automation.id, refName: automation.name, status: 'skipped', detail: decision.skipReason }); // [trust]
     }
     return { fired: false, reason: decision.skipReason };
   }
@@ -131,11 +132,26 @@ export async function dispatchAutomation(
     return { fired: false, reason: 'rate-limited' };
   }
 
-  const taskId = await dispatchAgent(automation.userId, decision.dispatch.agentSlug, decision.dispatch.taskDescription, { automation_id: automation.id, source: automation.sourceType }).catch(() => null);
+  let taskId: string | null = null; // [trust] retry the agent dispatch up to 3 attempts
+  let lastErr: any = null; // [trust] remember the last failure for the dead-letter record
+  for (let attempt = 1; attempt <= 3; attempt++) { // [trust]
+    try { // [trust]
+      taskId = await dispatchAgent(automation.userId, decision.dispatch.agentSlug, decision.dispatch.taskDescription, { automation_id: automation.id, source: automation.sourceType }); // [trust]
+    } catch (err) { lastErr = err; taskId = null; } // [trust] a throw is a failed attempt
+    if (taskId) break; // [trust] success → stop retrying
+  } // [trust]
+  if (!taskId) { // [trust] every attempt failed (threw or returned null) → dead-letter it
+    const errMsg = lastErr ? (lastErr?.message || String(lastErr)) : 'dispatch returned null'; // [trust]
+    db.insertDeadLetter(automation.userId, { kind: 'automation', refId: automation.id, refName: automation.name, payload: JSON.stringify(event).slice(0, 4000), error: errMsg }); // [trust]
+    db.insertAutomationRun({ automationId: automation.id, userId: automation.userId, dedupeKey: decision.dedupeKey, eventJson: JSON.stringify(event).slice(0, 2000), status: 'failed', result: null }); // [trust]
+    db.insertRunEvent(automation.userId, { kind: 'automation', refId: automation.id, refName: automation.name, status: 'failed', detail: errMsg }); // [trust]
+    return { fired: false, reason: 'failed' }; // [trust]
+  } // [trust]
   db.recordAutomationFire(automation.id);
   db.insertAutomationRun({
     automationId: automation.id, userId: automation.userId, dedupeKey: decision.dedupeKey,
     eventJson: JSON.stringify(event).slice(0, 2000), status: 'dispatched', result: taskId || null,
   });
+  db.insertRunEvent(automation.userId, { kind: 'automation', refId: automation.id, refName: automation.name, status: 'fired', detail: `task:${taskId}` }); // [trust]
   return { fired: true, taskId };
 }

@@ -16,6 +16,7 @@
 
 import { getDb, type DatabaseType } from "./db.ts";
 import { generateWebhookSecret } from "./webhook-server.ts";
+import { simulateAutomation } from "./simulate.ts";
 
 function adminId(db: DatabaseType): string {
   const admin = db.getUsersByRole("admin")[0];
@@ -133,6 +134,29 @@ function runRemove(name: string): number {
   return 0;
 }
 
+function runSimulate(rest: string[]): number {
+  const { positional, flags } = parseFlags(rest);
+  const name = positional[0];
+  if (!name) { console.error("  Usage: nova automation simulate <name> --event '{\"amount\":1200}'"); return 1; }
+  const db = getDb(); const userId = adminId(db);
+  const a = db.listAutomations(userId).find((x) => x.name === name);
+  if (!a) { console.error(`  No automation "${name}"`); return 1; }
+  let event: Record<string, any> = {};
+  if (flags.event) {
+    try { event = JSON.parse(String(flags.event)); }
+    catch (err: any) { console.error(`  Invalid --event JSON: ${err?.message || err}`); return 1; }
+  }
+  const sim = simulateAutomation(db, a, event);
+  console.log(`  Simulating "${name}" (nothing is dispatched):`);
+  if (sim.wouldFire) {
+    console.log(`  ✓ Would fire → agent:${sim.agentSlug}`);
+    console.log(`    Task: ${sim.taskDescription}`);
+  } else {
+    console.log(`  ✗ Would NOT fire — ${sim.reason}`);
+  }
+  return 0;
+}
+
 export function runAutomationCli(argv: string[]): number {
   const [sub, ...rest] = argv;
   const name = rest.find((a) => !a.startsWith("--")) || "";
@@ -143,8 +167,9 @@ export function runAutomationCli(argv: string[]): number {
     case "enable": return name ? runToggle(name, true) : (console.error("  Usage: nova automation enable <name>"), 1);
     case "disable": return name ? runToggle(name, false) : (console.error("  Usage: nova automation disable <name>"), 1);
     case "remove": case "rm": return name ? runRemove(name) : (console.error("  Usage: nova automation remove <name>"), 1);
+    case "simulate": case "dry-run": return runSimulate(rest);
     default:
-      console.error(`  Unknown subcommand: ${sub}\n  Usage: nova automation list|add|url|enable|disable|remove`);
+      console.error(`  Unknown subcommand: ${sub}\n  Usage: nova automation list|add|url|enable|disable|remove|simulate`);
       return 1;
   }
 }

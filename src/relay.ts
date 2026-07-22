@@ -1980,6 +1980,25 @@ const handleIncomingMessage = async (msg: IncomingMessage, reply: (m: any) => Pr
       return;
     }
 
+    // /activity — recent run observability across automations, processes, and playbooks.
+    if (text.trim().toLowerCase() === "/activity" || text.trim().toLowerCase() === "/runs") {
+      const events = supabase.listRunEvents(user.id, { limit: 15 });
+      if (!events.length) {
+        await ctx.reply("📊 *No activity yet.*\n\nRun events appear here when automations fire, processes advance, or playbooks start.", { parse_mode: "Markdown" });
+        return;
+      }
+      const statusIcon: Record<string, string> = { fired: "⚡", started: "▶️", waiting: "⏳", done: "✅", skipped: "⏭️", failed: "❌" };
+      const kindIcon: Record<string, string> = { automation: "⚡", process: "🔁", playbook: "📋" };
+      const lines = ["📊 *Recent activity*", "", ...events.map(e => {
+        const si = statusIcon[e.status] || "•";
+        const ki = kindIcon[e.kind] || "•";
+        const ref = e.refName ? ` ${e.refName}` : "";
+        return `${si} ${ki} ${e.kind}: ${e.status}${ref}`;
+      })];
+      await ctx.reply(lines.join("\n"), { parse_mode: "Markdown" });
+      return;
+    }
+
     // /policies — list your compliance policies (restrictive-only guardrails).
     if (text.trim().toLowerCase() === "/policies" || text.trim().toLowerCase() === "/policy") {
       const policies = supabase.listPolicies(user.id);
