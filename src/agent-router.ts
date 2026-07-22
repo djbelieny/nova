@@ -15,6 +15,8 @@ import { getGoogleGwsDir } from "./integrations.ts";
 import { existsSync } from "fs";
 import { emit } from "./events.ts";
 import type { Database } from "./db.ts";
+import { getDb } from "./db.ts";
+import { buildNovaToolInstructions } from "./agent-tools.ts";
 
 const PROJECT_ROOT = dirname(dirname(import.meta.path));
 const AGENTS_DIR = join(PROJECT_ROOT, ".claude", "agents");
@@ -1021,6 +1023,18 @@ export function buildAgentPrompt(
         sysParts.push("");
       }
     }
+  }
+
+  // Agent-native tool access: let the agent call Nova's own capabilities (kb search, extract,
+  // playbooks, configured connectors) via the `nova` CLI on PATH. Same pattern as gws above.
+  try {
+    const novaTools = buildNovaToolInstructions(getDb(), agentSlug.toLowerCase());
+    if (novaTools) {
+      sysParts.push(novaTools);
+      sysParts.push("");
+    }
+  } catch {
+    // db not ready (e.g. in isolated unit tests) — skip the connector-aware block gracefully
   }
 
   sysParts.push(
