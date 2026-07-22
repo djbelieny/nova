@@ -10,7 +10,19 @@
 
 import { looksLikeInjection } from './learning-loop';
 import { renderPlaybook } from './playbooks';
+import { generateEmbedding } from './embeddings';
 import type { Automation, Database, Playbook } from './db';
+
+/** Injectable embedder: text → 384-dim vector (or null on failure). */
+export type EmbedFn = (text: string) => Promise<number[] | null>;
+
+/** Dot product of two L2-normalized vectors = cosine similarity. Length-mismatch → 0. */
+function cosine(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0;
+  for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+  return dot;
+}
 
 export type DispatchAgentFn = (userId: string, agentSlug: string, taskDescription: string, metadata?: Record<string, any>) => Promise<string | null>;
 
@@ -27,7 +39,7 @@ export function renderTemplate(template: string, data: Record<string, any>): str
   });
 }
 
-export interface Condition { field: string; op: string; value?: any; }
+export interface Condition { field: string; op: string; value?: any; threshold?: number; }
 
 /** Evaluate a single condition against the event. */
 function evalOne(event: any, c: Condition): boolean {
@@ -47,10 +59,40 @@ function evalOne(event: any, c: Condition): boolean {
   }
 }
 
-/** All conditions must pass (AND). Empty conditions → always true. */
+/** All conditions must pass (AND). Empty conditions → always true. `semantic` ops
+ * always fail here — sync callers (buildDispatch/simulate) don't fire on semantic. */
 export function evaluateConditions(event: any, conditions: Condition[]): boolean {
   if (!conditions || conditions.length === 0) return true;
   return conditions.every((c) => evalOne(event, c));
+}
+
+/** Evaluate one `semantic` condition: embed field text + reference, pass if cosine ≥ threshold. */
+async function evalSemantic(event: any, c: Condition, embed: EmbedFn): Promise<boolean> {
+  const actual = getByPath(event, c.field);
+  const text = actual == null ? '' : String(actual);
+  const reference = c.value == null ? '' : String(c.value);
+  const threshold = typeof c.threshold === 'number' ? c.threshold : 0.5;
+  const [aVec, bVec] = await Promise.all([embed(text), embed(reference)]);
+  if (!aVec || !bVec) return false; // fail safe
+  return cosine(aVec, bVec) >= threshold;
+}
+
+/**
+ * Async form of evaluateConditions. Identical to the sync version for all existing ops,
+ * PLUS a `semantic` op backed by embeddings (cosine similarity ≥ threshold, default 0.5).
+ * All conditions must pass (AND). `embed` is injectable for tests; defaults to generateEmbedding.
+ */
+export async function evaluateConditionsAsync(
+  event: any,
+  conditions: Condition[],
+  embed: EmbedFn = generateEmbedding
+): Promise<boolean> {
+  if (!conditions || conditions.length === 0) return true;
+  for (const c of conditions) {
+    const ok = c.op === 'semantic' ? await evalSemantic(event, c, embed) : evalOne(event, c);
+    if (!ok) return false;
+  }
+  return true;
 }
 
 /** Compose a rendered playbook's steps into a single instruction for headless dispatch. */
@@ -111,6 +153,7 @@ export async function dispatchAutomation(
   event: Record<string, any>,
   dispatchAgent: DispatchAgentFn
 ): Promise<AutomationOutcome> {
+  if (!(await evaluateConditionsAsync(event, automation.conditions))) { return { fired: false, reason: 'conditions-not-met' }; } // [intel]
   const decision = buildDispatch(automation, event, (name) => db.findPlaybook(automation.userId, name));
 
   if (!decision.dispatch) {
