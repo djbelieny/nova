@@ -69,6 +69,67 @@ export function runEnvChecks(env: Record<string, string | undefined>): Check[] {
   return checks;
 }
 
+/** Length-based strength gate: a 64-hex key (or any 32+ char secret) clears this comfortably. */
+function looksStrongKey(k: string): boolean {
+  return Boolean(k) && k.length >= 32;
+}
+
+/** Pure security-posture checks. Reports on Fixes 1-3 flags + deployment hygiene. */
+export function runSecurityChecks(env: Record<string, string | undefined>): Check[] {
+  const checks: Check[] = [];
+  const off = (v?: string) => ["off", "false", "0", "no"].includes((v || "").toLowerCase());
+
+  const key = env.NOVA_ENCRYPTION_KEY || "";
+  checks.push({
+    name: "Encryption key",
+    ok: looksStrongKey(key),
+    detail: !key ? "missing" : looksStrongKey(key) ? "set (strong)" : "weak / too short",
+    fix: looksStrongKey(key) ? undefined : "Set NOVA_ENCRYPTION_KEY to `openssl rand -hex 32` and restart.",
+  });
+
+  const dashHost = env.DASHBOARD_HOST || "127.0.0.1";
+  const exposed = !/^(127\.|localhost|::1)/.test(dashHost);
+  const hasPass = Boolean(env.DASHBOARD_PASS);
+  checks.push({
+    name: "Dashboard auth",
+    ok: hasPass || !exposed,
+    detail: !exposed ? "loopback-only" : hasPass ? "password set" : "EXPOSED without a password",
+    fix: hasPass || !exposed ? undefined : "Set DASHBOARD_PASS or bind DASHBOARD_HOST to 127.0.0.1.",
+  });
+
+  checks.push({
+    name: "Leak firewall",
+    ok: !off(env.NOVA_LEAK_FIREWALL),
+    detail: off(env.NOVA_LEAK_FIREWALL) ? "disabled" : "enabled",
+    fix: off(env.NOVA_LEAK_FIREWALL) ? "Remove NOVA_LEAK_FIREWALL=off to redact/block leaked secrets." : undefined,
+  });
+
+  checks.push({
+    name: "Least-privilege agent env",
+    ok: env.NOVA_AGENT_ENV_STRICT !== "false",
+    detail: env.NOVA_AGENT_ENV_STRICT === "false" ? "disabled (full env passthrough)" : "enabled",
+    fix: env.NOVA_AGENT_ENV_STRICT === "false" ? "Remove NOVA_AGENT_ENV_STRICT=false so agents can't read unrelated secrets." : undefined,
+  });
+
+  checks.push({
+    name: "Untrusted-input firewall",
+    ok: !off(env.NOVA_UNTRUSTED_FIREWALL),
+    detail: off(env.NOVA_UNTRUSTED_FIREWALL) ? "disabled" : "enabled",
+    fix: off(env.NOVA_UNTRUSTED_FIREWALL) ? "Remove NOVA_UNTRUSTED_FIREWALL=off to neutralize injected content." : undefined,
+  });
+
+  const backend = (env.NOVA_SANDBOX_BACKEND || "local").toLowerCase();
+  const untrustedOptIn = ["true", "1", "yes"].includes((env.NOVA_ALLOW_UNSANDBOXED_UNTRUSTED || "").toLowerCase());
+  checks.push({
+    name: "Sandbox posture",
+    ok: backend === "docker" || untrustedOptIn,
+    detail: backend === "docker" ? "docker" : untrustedOptIn ? "local (untrusted opt-in acknowledged)" : "local (untrusted flows unsandboxed)",
+    fix: backend === "docker" || untrustedOptIn ? undefined : "Set NOVA_SANDBOX_BACKEND=docker for untrusted-triggered flows, or ack NOVA_ALLOW_UNSANDBOXED_UNTRUSTED=true.",
+  });
+
+  return checks;
+}
+
 /** Checks a required CLI is present, returning its version string in `detail`. */
 async function checkCommand(name: string, cmd: string, versionFlag: string, run: Runner): Promise<Check> {
   try {
