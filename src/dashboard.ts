@@ -280,13 +280,20 @@ if (!DASHBOARD_PASS) {
 }
 // Refuse to expose an unauthenticated dashboard: without a password, bind loopback-only
 // regardless of what the environment otherwise implies. An explicit DASHBOARD_HOST always wins.
-const BIND_HOST: string | undefined = process.env.DASHBOARD_HOST
-  ? process.env.DASHBOARD_HOST
-  : !DASHBOARD_PASS
-    ? "127.0.0.1"
-    : undefined;
+export function computeBindHost(env: Record<string, string | undefined>): string | undefined {
+  if (env.DASHBOARD_HOST) return env.DASHBOARD_HOST;      // explicit override always wins
+  if (!env.DASHBOARD_PASS) return "127.0.0.1";            // no password → loopback only
+  return undefined;                                        // authenticated → all interfaces (Bun default)
+}
+const BIND_HOST: string | undefined = computeBindHost(process.env);
 if (!DASHBOARD_PASS && !process.env.DASHBOARD_HOST) {
   console.warn("[security] Dashboard has no DASHBOARD_PASS — binding to 127.0.0.1 (loopback) to avoid exposing it unauthenticated. Set DASHBOARD_PASS to serve on all interfaces.");
+}
+// The loopback fallback above only fires when DASHBOARD_HOST is unset. If an operator explicitly
+// sets DASHBOARD_HOST to a non-loopback address with no password, that case is otherwise silent —
+// the dashboard runs as its own process, so relay's startup warnings never fire here.
+if (!DASHBOARD_PASS && BIND_HOST && !/^(127\.|localhost|::1|0:0:0:0:0:0:0:1)/.test(BIND_HOST)) {
+  console.warn(`[security] Dashboard is bound to ${BIND_HOST} with no DASHBOARD_PASS — it is reachable UNAUTHENTICATED. Set DASHBOARD_PASS, or bind DASHBOARD_HOST to 127.0.0.1.`);
 }
 const DASHBOARD_BASE = process.env.DASHBOARD_BASE ?? "/dashboard";
 const COOKIE_PATH = "/"; // Always root path so cookie works across /dashboard, /kanban, etc.
