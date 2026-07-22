@@ -254,7 +254,9 @@
     <a href="#policies">Políticas y cumplimiento</a>
     <a href="#roi">ROI e informes</a>
     <a href="#connectors">Conectores</a>
+    <a href="#data">Datos conectados</a>
     <a href="#operations">Operar y observar</a>
+    <a href="#governance">Gobernanza y hardening</a>
   </div>
   <div class="nav-group">
     <span class="g-label">Superficies</span>
@@ -651,7 +653,7 @@ nova extract list --schema invoice | nova extract export invoice</code></pre>
       <tr><th>Tipo</th><th>Efecto</th></tr>
       <tr><td><code>spend_cap</code></td><td>Un presupuesto diario/mensual comparado con el ledger de acciones — si se supera, fuerza la aprobación.</td></tr>
       <tr><td><code>approval_matrix</code></td><td>Enruta ciertas acciones a aprobadores designados, con un tiempo de escalamiento.</td></tr>
-      <tr><td><code>content_check</code></td><td>Escanea la salida preparada en busca de PII / lenguaje ofensivo → bloquea o advierte antes de que se envíe.</td></tr>
+      <tr><td><code>content_check</code></td><td>Escanea la salida preparada en busca de PII / lenguaje ofensivo. <code>warn</code> la marca; <code>block</code> es un verdadero <strong>bloqueo duro</strong> — impide la ejecución en la frontera de ejecución incluso después de que una persona aprueba (se verifica contra el contenido preparado), de modo que nada se envía.</td></tr>
     </table></div>
     <pre><code>nova policy add spend-cap --cap 500 --period month --department marketing
 nova policy add approval --action email.send --approver &lt;userId&gt; --escalate 30
@@ -676,9 +678,10 @@ nova roi --period 30 | nova roi --by-agent | nova roi --by-department</code></pr
     <h2>Conectores</h2>
     <p>Una capa fina y uniforme sobre sistemas de negocio externos. Los integrados vienen bidireccionales: <strong>Stripe</strong> (cargos/clientes/reembolsos), <strong>Shopify</strong> (pedidos), <strong>Zendesk</strong> (tickets), <strong>HubSpot</strong> (contactos). Cada uno tiene acciones de lectura + escritura y un disparador de sondeo que alimenta las automatizaciones (p. ej. <code>stripe.payment</code>). Las credenciales vienen de variables de entorno o del almacén de credenciales compartido; las acciones de escritura tienen consecuencias.</p>
     <pre><code>nova connector list                    <span class="c">integrados + estado de configuración</span>
-nova connector test stripe
-nova connector run stripe list_charges --input '{"limit":5}'</code></pre>
-    <p>Configura y ejecuta acciones desde el panel <strong>Conectores</strong> del dashboard. Agregar un conector es un solo archivo que implementa la interfaz <code>Connector</code>. Los agentes también pueden llamar a los conectores configurados ellos mismos mediante las herramientas de abajo.</p>
+nova connector describe stripe         <span class="c">sus acciones + parámetros (descubrimiento)</span>
+nova connector run stripe list_charges --input '{"limit":5}'
+nova connector set stripe STRIPE_API_KEY=sk_live_…   <span class="c">almacenado cifrado en reposo</span></code></pre>
+    <p>Configura y ejecuta acciones desde el panel <strong>Conectores</strong> del dashboard. Agregar un conector es un solo archivo que implementa la interfaz <code>Connector</code>. Los agentes llaman a los conectores ellos mismos igual que usan las herramientas MCP bajo <strong>mcp2cli</strong> — descubren bajo demanda (<code>describe</code>) y luego llaman — de modo que el prompt del agente se mantiene ligero sin importar cuántos conectores existan (ver <a href="#operations">Operar y observar</a>).</p>
   </section>
 
   <!-- ══════════════ OPERATIONS ══════════════ -->
@@ -692,7 +695,48 @@ nova connector run stripe list_charges --input '{"limit":5}'</code></pre>
       <li><strong>Reintentos y dead-letter</strong> — un envío fallido se reintenta con backoff; si aun así falla, cae en una cola de dead-letter en lugar de desaparecer. <code>nova dlq list | retry &lt;id&gt; | drop &lt;id&gt;</code>, o la página <strong>Dead letters</strong> del dashboard.</li>
     </ul>
     <h3>Los agentes pueden usar tus herramientas</h3>
-    <p>Los agentes especialistas pueden llamar a las capacidades de Nova ellos mismos mientras trabajan — buscar en la base de conocimiento, extraer un documento, ejecutar un conector configurado o correr un playbook — mediante la CLI <code>nova</code> en su sandbox. Usan las acciones de lectura libremente y <strong>proponen acciones de escritura/con consecuencias para aprobación</strong> en lugar de ejecutarlas directamente.</p>
+    <p>Los agentes especialistas pueden llamar a las capacidades de Nova ellos mismos mientras trabajan — buscar en la base de conocimiento, extraer un documento, consultar una fuente de datos, ejecutar un conector configurado o correr un playbook — mediante la CLI <code>nova</code> en su sandbox. Siguiendo el patrón <strong>mcp2cli</strong>, <em>descubren</em> las herramientas bajo demanda (p. ej. <code>nova connector describe &lt;id&gt;</code>) en lugar de cargar cada esquema en el prompt, usan las acciones de lectura libremente y <strong>proponen acciones de escritura/con consecuencias para aprobación</strong> en lugar de ejecutarlas directamente.</p>
+  </section>
+
+  <!-- ══════════════ CONNECTED DATA ══════════════ -->
+  <section id="data">
+    <span class="sec-eyebrow">[datos conectados]</span>
+    <h2>Datos conectados</h2>
+    <p>Registra las fuentes donde realmente vive tu información de negocio y consúltalas — para informes, para automatizaciones o para un agente en plena tarea. De solo lectura por diseño.</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Tipo</th><th>Lee desde</th></tr>
+      <tr><td><code>http</code></td><td>Un endpoint JSON o CSV (apunta <code>rowsPath</code> al array dentro de un cuerpo JSON).</td></tr>
+      <tr><td><code>sqlite</code></td><td>Un <code>SELECT</code> de solo lectura contra un archivo SQLite — analítica, exportaciones, un almacén local.</td></tr>
+      <tr><td><code>connector</code></td><td>Una acción de <em>lectura</em> de un conector (Stripe, Shopify, …) — las acciones de escritura se rechazan.</td></tr>
+    </table></div>
+    <pre><code>nova data add sales --kind http --url https://api/report.json --rows-path data
+nova data add wh --kind sqlite --path /data/warehouse.db --query "SELECT day, revenue FROM metrics"
+nova data query sales        <span class="c">columnas + filas</span>
+/data query sales            <span class="c">o desde el chat</span></code></pre>
+    <p>Gestiona las fuentes y ejecuta consultas en el panel <strong>Datos</strong> del dashboard. Combina una fuente con el <a href="#scheduling">programador</a> o un <a href="#playbooks">playbook</a> para informes recurrentes. Cero dependencias adicionales.</p>
+  </section>
+
+  <!-- ══════════════ GOVERNANCE ══════════════ -->
+  <section id="governance">
+    <span class="sec-eyebrow">[gobernanza]</span>
+    <h2>Gobernanza y hardening</h2>
+    <p>Controles de nivel producción para ejecutar Nova sin supervisión y en equipo. Todo es aditivo — sin nada configurado, el comportamiento es exactamente como antes.</p>
+    <h3>Roles y permisos</h3>
+    <p>Los admins pueden hacer todo. Los miembros obtienen <strong>capacidades</strong> acotadas — <code>automation.manage</code>, <code>policy.manage</code>, <code>connector.manage</code>, <code>playbook.manage</code>, <code>process.manage</code>, <code>access.manage</code> — que controlan quién puede crear o cambiar cada área gobernada (se aplican en las acciones de escritura del dashboard).</p>
+    <pre><code>nova access grant @teammate automation.manage
+nova access list @teammate
+/access @teammate grant policy.manage</code></pre>
+    <h3>Delegación por ausencia</h3>
+    <p>¿Te vas? Delega tu trabajo para que las asignaciones y aprobaciones se enruten a un compañero (una cadena con protección contra ciclos) hasta que vuelvas.</p>
+    <pre><code>nova ooo set @teammate "de vacaciones" --until 2026-08-01
+/ooo @teammate   ·   /ooo off</code></pre>
+    <h3>Idempotencia, bloqueo y secretos</h3>
+    <ul>
+      <li><strong>Exactamente una vez.</strong> Una automatización puede optar por idempotencia duradera (<code>--idempotent</code>) para que un webhook reenviado dispare una sola vez — no otra vez una hora después.</li>
+      <li><strong>Sin doble disparo.</strong> Bloqueos consultivos envuelven el sondeo de automatizaciones y el despachador de tareas, de modo que ticks solapados o múltiples instancias nunca procesen el mismo trabajo dos veces.</li>
+      <li><strong>Secretos cifrados.</strong> Las credenciales de conectores se almacenan cifradas con AES-256-GCM en reposo (configura <code>NOVA_ENCRYPTION_KEY</code>) vía <code>nova connector set</code>, con auditoría de rotación — sin claves en texto plano en <code>.env</code>.</li>
+    </ul>
+    <p>Gestiona capacidades, delegación y secretos de conectores en el panel <strong>Administración de gobernanza</strong> del dashboard.</p>
   </section>
 
   <!-- ══════════════ SCHEDULING ══════════════ -->

@@ -254,7 +254,9 @@
     <a href="#policies">Policies &amp; compliance</a>
     <a href="#roi">ROI &amp; reporting</a>
     <a href="#connectors">Connectors</a>
+    <a href="#data">Connected data</a>
     <a href="#operations">Operate &amp; observe</a>
+    <a href="#governance">Governance &amp; hardening</a>
   </div>
   <div class="nav-group">
     <span class="g-label">Surfaces</span>
@@ -651,7 +653,7 @@ nova extract list --schema invoice | nova extract export invoice</code></pre>
       <tr><th>Kind</th><th>Effect</th></tr>
       <tr><td><code>spend_cap</code></td><td>A day/month budget checked against the action ledger — over it, force approval.</td></tr>
       <tr><td><code>approval_matrix</code></td><td>Route certain actions to named approvers, with an escalation timeout.</td></tr>
-      <tr><td><code>content_check</code></td><td>Scan prepared output for PII / profanity → block or warn before it ships.</td></tr>
+      <tr><td><code>content_check</code></td><td>Scan prepared output for PII / profanity. <code>warn</code> flags it; <code>block</code> is a true <strong>hard block</strong> — it prevents execution at the execute boundary even after a human approves (checked against the prepared content), so nothing ships.</td></tr>
     </table></div>
     <pre><code>nova policy add spend-cap --cap 500 --period month --department marketing
 nova policy add approval --action email.send --approver &lt;userId&gt; --escalate 30
@@ -676,9 +678,10 @@ nova roi --period 30 | nova roi --by-agent | nova roi --by-department</code></pr
     <h2>Connectors</h2>
     <p>A thin, uniform layer over external business systems. Built-ins ship bidirectional: <strong>Stripe</strong> (charges/customers/refunds), <strong>Shopify</strong> (orders), <strong>Zendesk</strong> (tickets), <strong>HubSpot</strong> (contacts). Each has read + write actions and a poll trigger that feeds automations (e.g. <code>stripe.payment</code>). Credentials come from env vars or the shared credential store; write actions are consequential.</p>
     <pre><code>nova connector list                    <span class="c">built-ins + configured status</span>
-nova connector test stripe
-nova connector run stripe list_charges --input '{"limit":5}'</code></pre>
-    <p>Configure and run actions from the dashboard <strong>Connectors</strong> panel. Adding a connector is one file implementing the <code>Connector</code> interface. Agents can also call configured connectors themselves via the tools below.</p>
+nova connector describe stripe         <span class="c">its actions + parameters (discovery)</span>
+nova connector run stripe list_charges --input '{"limit":5}'
+nova connector set stripe STRIPE_API_KEY=sk_live_…   <span class="c">stored encrypted at rest</span></code></pre>
+    <p>Configure and run actions from the dashboard <strong>Connectors</strong> panel. Adding a connector is one file implementing the <code>Connector</code> interface. Agents call connectors themselves the same way they use MCP tools under <strong>mcp2cli</strong> — discover on demand (<code>describe</code>) then call — so the agent prompt stays lean no matter how many connectors exist (see <a href="#operations">Operate &amp; observe</a>).</p>
   </section>
 
   <!-- ══════════════ OPERATIONS ══════════════ -->
@@ -692,7 +695,48 @@ nova connector run stripe list_charges --input '{"limit":5}'</code></pre>
       <li><strong>Retries &amp; dead-letter</strong> — a failed dispatch retries with backoff; if it still fails it lands in a dead-letter queue instead of vanishing. <code>nova dlq list | retry &lt;id&gt; | drop &lt;id&gt;</code>, or the dashboard <strong>Dead letters</strong> page.</li>
     </ul>
     <h3>Agents can use your tools</h3>
-    <p>Specialist agents can call Nova's capabilities themselves while working — searching the knowledge base, extracting a document, running a configured connector, or running a playbook — via the <code>nova</code> CLI in their sandbox. They use read actions freely and <strong>propose write/consequential actions for approval</strong> rather than executing them directly.</p>
+    <p>Specialist agents call Nova's capabilities themselves while working — searching the knowledge base, extracting a document, querying a data source, running a configured connector, or running a playbook — via the <code>nova</code> CLI in their sandbox. Following the <strong>mcp2cli</strong> pattern, they <em>discover</em> tools on demand (e.g. <code>nova connector describe &lt;id&gt;</code>) rather than carrying every schema in the prompt, use read actions freely, and <strong>propose write/consequential actions for approval</strong> rather than executing them directly.</p>
+  </section>
+
+  <!-- ══════════════ CONNECTED DATA ══════════════ -->
+  <section id="data">
+    <span class="sec-eyebrow">[connected data]</span>
+    <h2>Connected data</h2>
+    <p>Register the sources where your business data actually lives and query them — for reports, for automations, or for an agent mid-task. Read-only by design.</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Kind</th><th>Reads from</th></tr>
+      <tr><td><code>http</code></td><td>A JSON or CSV endpoint (point <code>rowsPath</code> at the array in a JSON body).</td></tr>
+      <tr><td><code>sqlite</code></td><td>A read-only <code>SELECT</code> against a SQLite file — analytics, exports, a local warehouse.</td></tr>
+      <tr><td><code>connector</code></td><td>A connector <em>read</em> action (Stripe, Shopify, …) — write actions are refused.</td></tr>
+    </table></div>
+    <pre><code>nova data add sales --kind http --url https://api/report.json --rows-path data
+nova data add wh --kind sqlite --path /data/warehouse.db --query "SELECT day, revenue FROM metrics"
+nova data query sales        <span class="c">columns + rows</span>
+/data query sales            <span class="c">or from chat</span></code></pre>
+    <p>Manage sources and run queries in the dashboard <strong>Data</strong> panel. Pair a source with the <a href="#scheduling">scheduler</a> or a <a href="#playbooks">playbook</a> for recurring reports. Zero extra dependencies.</p>
+  </section>
+
+  <!-- ══════════════ GOVERNANCE ══════════════ -->
+  <section id="governance">
+    <span class="sec-eyebrow">[governance]</span>
+    <h2>Governance &amp; hardening</h2>
+    <p>Production-grade controls for running Nova unattended and for a team. All additive — with nothing configured, behavior is exactly as before.</p>
+    <h3>Roles &amp; permissions</h3>
+    <p>Admins can do everything. Members get scoped <strong>capabilities</strong> — <code>automation.manage</code>, <code>policy.manage</code>, <code>connector.manage</code>, <code>playbook.manage</code>, <code>process.manage</code>, <code>access.manage</code> — that gate who can create or change each governed area (enforced on the dashboard write actions).</p>
+    <pre><code>nova access grant @teammate automation.manage
+nova access list @teammate
+/access @teammate grant policy.manage</code></pre>
+    <h3>Out-of-office delegation</h3>
+    <p>Going away? Delegate your work so assignments and approvals route to a teammate (a cycle-guarded chain) until you're back.</p>
+    <pre><code>nova ooo set @teammate "on vacation" --until 2026-08-01
+/ooo @teammate   ·   /ooo off</code></pre>
+    <h3>Idempotency, locking &amp; secrets</h3>
+    <ul>
+      <li><strong>Exactly-once.</strong> An automation can opt into durable idempotency (<code>--idempotent</code>) so a re-delivered webhook fires once — not again an hour later.</li>
+      <li><strong>No double-fire.</strong> Advisory locks wrap the automation poller and the task dispatcher, so overlapping ticks or multiple instances never process the same work twice.</li>
+      <li><strong>Encrypted secrets.</strong> Connector credentials are stored AES-256-GCM encrypted at rest (set <code>NOVA_ENCRYPTION_KEY</code>) via <code>nova connector set</code>, with a rotation audit — no plaintext keys in <code>.env</code>.</li>
+    </ul>
+    <p>Manage capabilities, delegation, and connector secrets in the dashboard <strong>Governance Admin</strong> panel.</p>
   </section>
 
   <!-- ══════════════ SCHEDULING ══════════════ -->

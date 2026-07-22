@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova, robustecida para produção: governança, exatamente-uma-vez e dados conectados — Nova</title>
+<meta name="description" content="O lançamento de robustez: políticas de conformidade com bloqueio absoluto, permissões por papel, delegação de ausência, idempotência durável exatamente-uma-vez, travas de exclusão, segredos de conectores criptografados, conectores que os agentes descobrem como ferramentas MCP e uma camada de dados conectados — tudo o que você precisa para deixar a Nova rodando sem supervisão, para uma equipe.">
+<meta property="og:title" content="Nova, robustecida para produção: governança, exatamente-uma-vez e dados conectados">
+<meta property="og:description" content="Políticas de bloqueio absoluto, RBAC, delegação, idempotência exatamente-uma-vez, travas, segredos criptografados, ferramentas de conector com descoberta em primeiro lugar e uma camada de dados conectados — o que é preciso para deixar a Nova rodando sem supervisão, para uma equipe.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/pt-br/blog/governance-hardening/">
+<meta property="og:site_name" content="Nova">
+<meta property="og:image" content="https://mynova.space/pt-br/blog/governance-hardening/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="O lançamento de governança e robustez da Nova — RBAC, políticas de bloqueio absoluto, exatamente-uma-vez, dados conectados">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mynova.space/pt-br/blog/governance-hardening/og.jpg">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 18px; }
+  .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 960px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/governance-hardening/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/governance-hardening/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/governance-hardening/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/governance-hardening/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/pt-br/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/pt-br/#how">Como funciona</a>
+      <a href="/pt-br/#agents">Agentes</a>
+      <a href="/pt-br/#start">Início rápido</a>
+      <a href="/pt-br/blog/">Blog</a>
+      <a href="/pt-br/docs/">Docs</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/governance-hardening/" class="en" hreflang="en">EN</a><a href="/es/blog/governance-hardening/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/governance-hardening/" class="pt-br on" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">O lançamento de robustez</span>
+    <h1>Confiar à Nova a operação sem supervisão</h1>
+    <p class="lede">Construir automações é uma coisa; deixá-las rodando — para uma equipe, com dinheiro de verdade — é outra. Este lançamento é sobre essa segunda coisa: limites rígidos que se mantêm mesmo quando você aprova, permissões e delegação, garantias de exatamente-uma-vez, segredos criptografados e um jeito de a Nova ler os dados sobre os quais o seu negócio de fato roda.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 22 de julho de 2026 <span class="dot">·</span> 8 min de leitura</p>
+
+    <div class="prose">
+      <p>Os últimos lançamentos deram alcance à Nova: uma base de conhecimento, automações orientadas a eventos, playbooks, processos duráveis, conectores, ROI. Este dá a ela <strong>contenção e rigor</strong> — as garantias sem glamour que transformam "demo impressionante" em "você pode deixar rodando para a sua equipe". Cada peça é aditiva: sem nada configurado, a Nova se comporta exatamente como antes.</p>
+
+      <div class="callout">
+        <p><span class="k">A versão de uma linha</span>Limites rígidos que se mantêm mesmo quando você aprova, permissões por papel, delegação de ausência, idempotência exatamente-uma-vez, travas contra disparo duplo, segredos criptografados, conectores que os agentes descobrem como ferramentas MCP e uma camada de dados somente leitura para os sistemas sobre os quais o seu negócio roda.</p>
+      </div>
+
+      <h2>Limites rígidos que se mantêm — mesmo quando você aprova</h2>
+      <p>A etapa de aprovação da Nova sempre foi a âncora de confiança: o trabalho consequente espera pelo seu sim. Mas algumas regras não deveriam poder ser dispensadas por uma pessoa. Se a política diz que os dados pessoais (PII) de clientes nunca saem de casa, um aprovador clicando em "aprovar" rápido demais não deveria poder passar por cima disso.</p>
+      <p>Então agora as políticas de conformidade têm um <strong>bloqueio absoluto</strong> de verdade. Uma verificação de conteúdo configurada para <em>bloquear</em> é imposta na fronteira de execução contra a saída realmente preparada — depois da aprovação, no caminho do piloto automático, em todo lugar. Se ela dispara, nada é enviado, e a Nova te diz o porquê. <em>Avisar</em> ainda só sinaliza; <em>bloquear</em> genuinamente interrompe.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · uma política de bloqueio pega um envio aprovado</div>
+        <div class="bubble me"><span class="who">Você</span>✓ Aprovar e enviar</div>
+        <div class="bubble nova"><span class="who">Nova</span>🛡️ Execução bloqueada por uma política de conformidade (pii). O rascunho contém o CPF/SSN de um cliente — nada foi enviado ou publicado. Revise o conteúdo e tente de novo.</div>
+      </div>
+
+      <h2>Quem pode fazer o quê — e quem te cobre quando você está fora</h2>
+      <p>Uma Nova de uma pessoa e uma Nova de equipe precisam de controles diferentes. Dois chegam aqui:</p>
+      <div class="cards">
+        <div class="card"><h4>Permissões por papel</h4><p>Admins podem fazer tudo. Membros recebem capacidades delimitadas — gerenciar automações, políticas, conectores, playbooks — para que você decida quem pode mudar o quê. Concedidas com <code>nova access grant @teammate automation.manage</code> ou <code>/access</code>.</p></div>
+        <div class="card"><h4>Delegação de ausência</h4><p>Vai viajar? <code>/ooo @teammate</code> e as suas atribuições e aprovações são roteadas para essa pessoa até você voltar — uma cadeia protegida contra ciclos, encerrada com <code>/ooo off</code>.</p></div>
+      </div>
+
+      <h2>As garantias chatas que importam</h2>
+      <p>Automação que reage ao mundo sem supervisão vive ou morre por três propriedades sem glamour:</p>
+      <ul>
+        <li><strong>Exatamente-uma-vez.</strong> Webhooks são retentados; um evento de pagamento pode chegar duas vezes. Uma automação pode optar por idempotência durável (<code>--idempotent</code>) para que dispare uma vez e apenas uma — não de novo uma hora depois quando o remetente retenta.</li>
+        <li><strong>Sem disparo duplo.</strong> Travas de exclusão (advisory locks) agora envolvem o poller de automações e o despachante de tarefas, para que dois ticks sobrepostos — ou duas instâncias em duas máquinas — nunca processem o mesmo trabalho duas vezes.</li>
+        <li><strong>Segredos criptografados.</strong> As credenciais de conectores são armazenadas criptografadas em repouso com <code>AES-256-GCM</code> e definidas com <code>nova connector set stripe STRIPE_API_KEY=…</code>, com uma auditoria de rotação — chega de chaves de API vivas paradas em um <code>.env</code> em texto puro.</li>
+      </ul>
+
+      <hr class="divider">
+
+      <h2>Conectores que os agentes conseguem de fato usar — sem o inchaço</h2>
+      <p>A Nova conduz suas integrações através do <strong>mcp2cli</strong>, uma escolha deliberada: em vez de enfiar o esquema completo de cada ferramenta no prompt de um agente (o que infla o contexto e o custo), os agentes <em>descobrem</em> as ferramentas em tempo de execução — listam, perguntam pelos parâmetros de uma ferramenta e então a chamam. Isso mantém o prompt enxuto por mais ferramentas que existam.</p>
+      <p>Os conectores agora seguem exatamente esse idioma. Um agente roda <code>nova connector describe stripe</code> para conhecer suas ações e parâmetros sob demanda, e então <code>nova connector run …</code> para chamar uma delas — lendo livremente, e propondo qualquer escrita (um reembolso, um novo registro) para a sua aprovação em vez de fazê-la sozinho. Adicionar um conector não faz o prompt crescer; a descoberta faz o trabalho. É a diferença entre entregar a alguém um manual de 200 páginas e dizer onde o manual está.</p>
+
+      <h2>Ler os dados sobre os quais o seu negócio roda</h2>
+      <p>A análise é só tão boa quanto os dados que ela consegue alcançar. A nova <strong>camada de dados conectados</strong> deixa você registrar as fontes onde os seus números de fato vivem e consultá-las — somente leitura, por definição:</p>
+      <div class="cards">
+        <div class="card"><h4>HTTP</h4><p>Qualquer endpoint JSON ou CSV — a URL de um relatório, uma API interna.</p></div>
+        <div class="card"><h4>SQLite</h4><p>Um <code>SELECT</code> somente leitura contra um arquivo de banco de dados — analytics, exportações, um data warehouse local.</p></div>
+        <div class="card"><h4>Conector</h4><p>Uma ação de leitura de conector — puxe pedidos, cobranças ou tickets direto.</p></div>
+      </div>
+      <p>Registre uma vez com <code>nova data add</code>, e então consulte a partir do terminal, do chat (<code>/data query sales</code>), de um agente no meio de uma tarefa, ou em um cronograma para um relatório recorrente. Sem novas dependências, sem warehouse necessário.</p>
+
+      <h2>Ainda a mesma promessa, só que mais robusta</h2>
+      <p>Nada disso muda o que a Nova é — torna-a algo em que você pode confiar com mais. A etapa de aprovação continua de pé; agora há limites que nem ela pode cruzar, permissões sobre quem os define, garantias de que o trabalho roda uma vez e de forma limpa, e alcance sobre os dados e sistemas dos quais o seu negócio depende. A demo cresceu e virou algo que você pode de fato deixar rodando.</p>
+
+      <div class="end-cta">
+        <h3>Rode de verdade — com as proteções ligadas</h3>
+        <p>Código aberto, auto-hospedado, licenciado MIT. Suas chaves, seus dados, a sua etapa de aprovação — agora com limites rígidos, papéis e criptografia à altura.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Obtenha Nova no GitHub</a>
+          <a class="cta ghost" href="/pt-br/docs/#governance">Leia a documentação</a>
+          <a class="cta ghost" href="/pt-br/book/" rel="noopener">Quer que eu configure para você?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — Licenciado MIT. Pegue, customize, faça seu.</span>
+    <span>
+      <a href="/pt-br/">Início</a> &nbsp;·&nbsp;
+      <a href="/pt-br/docs/">Documentação</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Segurança</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -3,19 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>The Nova blog — writing about the open-source AI team</title>
-<meta name="description" content="Nova is a self-hosted, open-source AI team you run from Telegram: 24 specialist agents, an executive board, human approval before anything ships or spends, sandboxed execution, and earned autonomy. Here's what it does and how people use it.">
-<meta property="og:title" content="The Nova blog">
-<meta property="og:description" content="24 specialist agents, an executive board, approval gates, sandboxed execution, and earned autonomy — self-hosted and MIT licensed. What Nova does and how to use it.">
+<title>Nova, production-hardened: governance, exactly-once & connected data — Nova</title>
+<meta name="description" content="The hardening release: hard-block compliance policies, role-based permissions, out-of-office delegation, durable exactly-once idempotency, advisory locks, encrypted connector secrets, connectors agents can discover like MCP tools, and a connected-data layer — everything you need to run Nova unattended, for a team.">
+<meta property="og:title" content="Nova, production-hardened: governance, exactly-once & connected data">
+<meta property="og:description" content="Hard-block policies, RBAC, delegation, exactly-once idempotency, locks, encrypted secrets, discovery-first connector tools, and a connected-data layer — what it takes to run Nova unattended, for a team.">
 <meta property="og:type" content="article">
-<meta property="og:url" content="https://mynova.space/blog/">
+<meta property="og:url" content="https://mynova.space/blog/governance-hardening/">
 <meta property="og:site_name" content="Nova">
-<meta property="og:image" content="https://mynova.space/og-image.jpg">
+<meta property="og:image" content="https://mynova.space/blog/governance-hardening/og.jpg">
 <meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="628">
-<meta property="og:image:alt" content="Nova — an open-source AI team that asks before it acts">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Nova's governance & hardening release — RBAC, hard-block policies, exactly-once, connected data">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://mynova.space/og-image.jpg">
+<meta name="twitter:image" content="https://mynova.space/blog/governance-hardening/og.jpg">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -165,27 +165,16 @@
   .foot-inner a { color: var(--muted); }
   .foot-inner a:hover { color: var(--text); }
 
-  .blog-head { padding: 56px 0 8px; }
-  .post-list { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 20px 0 40px; }
-  @media (max-width: 720px){ .post-list { grid-template-columns: 1fr; } }
-  a.post { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; transition: border-color .15s, transform .15s; }
-  a.post:hover { border-color: var(--tg); transform: translateY(-2px); text-decoration: none; }
-  a.post .tag { font-family: var(--mono); font-size: 12px; color: var(--tg); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 12px; }
-  a.post h3 { font-family: var(--display); font-weight: 700; font-size: 21px; letter-spacing: -0.02em; color: var(--text); margin-bottom: 8px; line-height: 1.15; }
-  a.post p { color: var(--muted); font-size: 15px; margin: 0 0 16px; flex: 1; }
-  a.post .more { font-size: 14px; font-weight: 600; color: var(--tg); }
-  a.post.feature { grid-column: 1 / -1; background: linear-gradient(180deg, var(--panel), var(--panel-2)); }
-
   .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
   .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
   .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
   .langsw a.on { color:var(--text) !important; background:var(--line); }
   @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
 </style>
-<link rel="alternate" hreflang="en" href="https://mynova.space/blog/">
-<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/">
-<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/">
-<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/">
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/governance-hardening/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/governance-hardening/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/governance-hardening/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/governance-hardening/">
 </head>
 <body>
 
@@ -201,7 +190,7 @@
       <a href="/#start">Quick start</a>
       <a href="/blog/">Blog</a>
       <a href="/docs/">Docs</a>
-      <span class="langsw" aria-label="Language"><a href="/blog/" class="en on" hreflang="en">EN</a><a href="/es/blog/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <span class="langsw" aria-label="Language"><a href="/blog/governance-hardening/" class="en on" hreflang="en">EN</a><a href="/es/blog/governance-hardening/" class="es" hreflang="es">ES</a><a href="/pt-br/blog/governance-hardening/" class="pt-br" hreflang="pt-BR">PT</a></span>
       <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
         <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         GitHub
@@ -210,86 +199,75 @@
   </div>
 </nav>
 
-<section class="blog-head">
+<article class="article">
   <div class="wrap">
-    <span class="eyebrow">The Nova blog</span>
-    <h1>Writing about Nova</h1>
-    <p class="lede">What Nova is, how it's built, how to run it, and the ideas behind the decisions — a self-hosted, open-source AI team you run from Telegram.</p>
-  </div>
-</section>
+    <span class="eyebrow">The hardening release</span>
+    <h1>Trusting Nova to run unattended</h1>
+    <p class="lede">Building automations is one thing; leaving them running — for a team, on real money — is another. This release is about that second thing: hard limits that hold even when you approve, permissions and delegation, exactly-once guarantees, encrypted secrets, and a way for Nova to read the data your business actually runs on.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 22 July 2026 <span class="dot">·</span> 8 min read</p>
 
-<section>
-  <div class="wrap">
-    <div class="post-list">
-    <a class="post feature" href="/blog/governance-hardening/">
-      <span class="tag">New</span>
-      <h3>Trusting Nova to run unattended</h3>
-      <p>The hardening release: hard-block compliance policies, role-based permissions, out-of-office delegation, exactly-once idempotency, advisory locks, encrypted secrets, discovery-first connector tools (the mcp2cli way), and a connected-data layer.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/business-automation/">
-      <span class="tag">New</span>
-      <h3>Nova runs the operation now</h3>
-      <p>The automation release: reusable playbooks, event-driven automations with semantic triggers, durable multi-day processes, document extraction, two-way connectors (Stripe/Shopify/Zendesk/HubSpot), compliance policies, and ROI reporting — every consequential step still gated.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/second-brain/">
-      <span class="tag">New</span>
-      <h3>Give Nova a second brain</h3>
-      <p>Feed Nova your documents with RAG: drop in PDFs, docs, notes, or URLs and every agent answers from your material — with citations. Personal, team, and per-agent scopes; four ways to feed it.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/nova-vs-hermes-vs-openclaw/">
-      <span class="tag">Comparison</span>
-      <h3>Nova vs. Hermes vs. OpenClaw</h3>
-      <p>The good, the bad, and the ugly of three self-hosted, open-source AI agents — a sourced, side-by-side look with a feature table and charts.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/whats-new/">
-      <span class="tag">New</span>
-      <h3>Nova speaks every model — and lives in your terminal</h3>
-      <p>Use any LLM alongside your subscription CLIs, a real `nova` command with `nova connect`, terminal + Discord channels, and self-serve team invites.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/what-is-nova/">
-      <span class="tag">Start here</span>
-      <h3>What is Nova?</h3>
-      <p>Your own AI team, run from a Telegram chat — the org chart, not the chatbot. What Nova is, how it works, and how people use it.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/architecture/">
-      <span class="tag">Deep dive</span>
-      <h3>How Nova works</h3>
-      <p>The architecture under the hood: message flow, the 3-tier classifier, split-SQLite storage, provider routing, and the distributed executive board.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/features/">
-      <span class="tag">Tour</span>
-      <h3>Every feature Nova has</h3>
-      <p>The full capability tour — 24 specialist agents, the executive board, approval gates, earned autonomy, memory, proactive services, and integrations.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/case-study/">
-      <span class="tag">Walkthrough</span>
-      <h3>A week launching a product with Nova</h3>
-      <p>An illustrative end-to-end scenario: strategy from the board, content and email drafted for approval, ads gated on spend, and autonomy earned over the week.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/deployment/">
-      <span class="tag">Guide</span>
-      <h3>Deploying Nova</h3>
-      <p>A practical guide to self-hosting: nova init, configuration, running it, sandboxing, and standing up your own executive board backend.</p>
-      <span class="more">Read →</span>
-    </a>
-    <a class="post" href="/blog/design-decisions/">
-      <span class="tag">Ideas</span>
-      <h3>Why Nova is built the way it is</h3>
-      <p>The design decisions and the thinking behind them — an org chart over a chatbot, trust as the product, earned autonomy, and self-hosting.</p>
-      <span class="more">Read →</span>
-    </a>
+    <div class="prose">
+      <p>The last few releases gave Nova reach: a knowledge base, event-driven automations, playbooks, durable processes, connectors, ROI. This one gives it <strong>restraint and rigor</strong> — the unglamorous guarantees that turn "impressive demo" into "you can leave it running for your team." Every piece is additive: with nothing configured, Nova behaves exactly as it did before.</p>
+
+      <div class="callout">
+        <p><span class="k">The one-line version</span>Hard limits that hold even when you approve, role-based permissions, out-of-office delegation, exactly-once idempotency, no-double-fire locking, encrypted secrets, connectors agents discover like MCP tools, and a read-only data layer for the systems your business runs on.</p>
+      </div>
+
+      <h2>Hard limits that hold — even when you approve</h2>
+      <p>Nova's approval gate has always been the trust anchor: consequential work waits for your yes. But some rules shouldn't be a person's to waive. If policy says customer PII never leaves the building, an approver clicking "approve" too fast shouldn't override it.</p>
+      <p>So compliance policies now have a real <strong>hard block</strong>. A content check set to <em>block</em> is enforced at the execute boundary against the actual prepared output — after approval, on the autopilot path, everywhere. If it trips, nothing ships, and Nova tells you why. <em>Warn</em> still just flags; <em>block</em> genuinely stops.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · a block policy catches an approved send</div>
+        <div class="bubble me"><span class="who">You</span>✓ Approve &amp; send</div>
+        <div class="bubble nova"><span class="who">Nova</span>🛡️ Execution blocked by a compliance policy (pii). The draft contains a customer SSN — nothing was sent or published. Revise the content and try again.</div>
+      </div>
+
+      <h2>Who can do what — and who covers you when you're out</h2>
+      <p>A one-person Nova and a team Nova need different controls. Two arrive here:</p>
+      <div class="cards">
+        <div class="card"><h4>Role-based permissions</h4><p>Admins can do everything. Members get scoped capabilities — manage automations, policies, connectors, playbooks — so you decide who can change what. Granted with <code>nova access grant @teammate automation.manage</code> or <code>/access</code>.</p></div>
+        <div class="card"><h4>Out-of-office delegation</h4><p>Going away? <code>/ooo @teammate</code> and your assignments and approvals route to them until you're back — a cycle-guarded chain, cleared with <code>/ooo off</code>.</p></div>
+      </div>
+
+      <h2>The boring guarantees that matter</h2>
+      <p>Automation that reacts to the world unattended lives or dies on three unglamorous properties:</p>
+      <ul>
+        <li><strong>Exactly-once.</strong> Webhooks get retried; a payment event can arrive twice. An automation can opt into durable idempotency (<code>--idempotent</code>) so it fires once and only once — not again an hour later when the sender retries.</li>
+        <li><strong>No double-fire.</strong> Advisory locks now wrap the automation poller and the task dispatcher, so two overlapping ticks — or two instances on two machines — never process the same work twice.</li>
+        <li><strong>Encrypted secrets.</strong> Connector credentials are stored AES-256-GCM encrypted at rest and set with <code>nova connector set stripe STRIPE_API_KEY=…</code>, with a rotation audit — no more live API keys sitting in a plaintext <code>.env</code>.</li>
+      </ul>
+
+      <hr class="divider">
+
+      <h2>Connectors agents can actually use — without the bloat</h2>
+      <p>Nova drives its integrations through <strong>mcp2cli</strong>, a deliberate choice: instead of stuffing every tool's full schema into an agent's prompt (which balloons context and cost), agents <em>discover</em> tools at runtime — list them, ask for a tool's parameters, then call it. It keeps the prompt lean no matter how many tools exist.</p>
+      <p>Connectors now follow that exact idiom. An agent runs <code>nova connector describe stripe</code> to learn its actions and parameters on demand, then <code>nova connector run …</code> to call one — reading freely, and proposing any write (a refund, a new record) for your approval rather than doing it alone. Adding a connector doesn't grow the prompt; discovery does the work. It's the difference between handing someone a 200-page manual and telling them where the manual is.</p>
+
+      <h2>Reading the data your business runs on</h2>
+      <p>Analysis is only as good as the data it can reach. The new <strong>connected-data layer</strong> lets you register the sources your numbers actually live in and query them — read-only, by design:</p>
+      <div class="cards">
+        <div class="card"><h4>HTTP</h4><p>Any JSON or CSV endpoint — a report URL, an internal API.</p></div>
+        <div class="card"><h4>SQLite</h4><p>A read-only <code>SELECT</code> against a database file — analytics, exports, a local warehouse.</p></div>
+        <div class="card"><h4>Connector</h4><p>A connector read action — pull orders, charges, or tickets straight through.</p></div>
+      </div>
+      <p>Register once with <code>nova data add</code>, then query from the terminal, from chat (<code>/data query sales</code>), from an agent mid-task, or on a schedule for a recurring report. No new dependencies, no warehouse required.</p>
+
+      <h2>Still the same promise, just sturdier</h2>
+      <p>None of this changes what Nova is — it makes it something you can trust with more. The approval gate still stands; now there are limits even it can't cross, permissions around who sets them, guarantees that the work runs once and cleanly, and reach into the data and systems your business depends on. The demo grew up into something you can actually leave running.</p>
+
+      <div class="end-cta">
+        <h3>Run it for real — with the guardrails on</h3>
+        <p>Open source, self-hosted, MIT licensed. Your keys, your data, your approval gate — now with hard limits, roles, and encryption to match.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Get Nova on GitHub</a>
+          <a class="cta ghost" href="/docs/#governance">Read the docs</a>
+          <a class="cta ghost" href="/book/" rel="noopener">Want it set up for you?</a>
+        </div>
+      </div>
     </div>
   </div>
-</section>
+</article>
 
 <footer>
   <div class="wrap foot-inner">
@@ -297,7 +275,8 @@
     <span>
       <a href="/">Home</a> &nbsp;·&nbsp;
       <a href="/docs/">Documentation</a> &nbsp;·&nbsp;
-      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a>
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Security</a>
     </span>
   </div>
 </footer>
