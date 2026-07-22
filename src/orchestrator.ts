@@ -29,6 +29,7 @@ import { join, extname } from "path";
 import type { ExecutionPlan, ExecutionPattern } from "./patterns.ts";
 import { findPattern, recordExecution } from "./patterns.ts";
 import { reflectAndPropose } from "./learning-loop.ts";
+import { type TrustLevel } from "./untrusted.ts";
 import {
   initPlanner,
   decompose,
@@ -932,7 +933,10 @@ const AUTO_APPROVE_PHRASES = [
   "pode executar", "faz tudo", "manda ver",
 ];
 
-function detectAutoApprove(text: string): boolean {
+export function detectAutoApprove(text: string, trust: TrustLevel = "trusted"): boolean {
+  // Untrusted-provenance input (e.g. content ingested from an external source) can never
+  // auto-execute — it must always pass through the human approval gate.
+  if (trust !== "trusted") return false;
   // Only match if the phrase appears at the very start of the message
   // (after trimming whitespace) to prevent false positives from quoted/embedded text
   const lower = text.toLowerCase().trim();
@@ -1148,7 +1152,8 @@ export function orchestrate(
   user: any,
   supabase: Database | null,
   sessionKey?: string,
-  channel?: string
+  channel?: string,
+  trust: TrustLevel = "trusted"
 ): void {
   // Generate a request_id for message flow tracking
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
@@ -1190,7 +1195,7 @@ export function orchestrate(
         if (raw === "__ORCHESTRATOR_HANDLED__") return "__SKIP__";
         if (raw === "__NOT_REVISION__") {
           // Continue with normal orchestration
-          orchestrateMain(ctx, text, user, supabase, requestId, sessionKey);
+          orchestrateMain(ctx, text, user, supabase, requestId, sessionKey, trust);
           return "__SKIP__";
         }
         return processMemoryIntents(supabase, raw, user.id, user.timezone, { sessionId: requestId });
@@ -1203,7 +1208,7 @@ export function orchestrate(
   }
 
   // No supabase — go directly to main orchestration
-  orchestrateMain(ctx, text, user, supabase, requestId, sessionKey);
+  orchestrateMain(ctx, text, user, supabase, requestId, sessionKey, trust);
 }
 
 /**
@@ -1215,7 +1220,8 @@ function orchestrateMain(
   user: any,
   supabase: Database | null,
   requestId: string,
-  sessionKey?: string
+  sessionKey?: string,
+  trust: TrustLevel = "trusted"
 ): void {
   // Step 0.5: Dev task detection — prompt user to confirm routing to background dev worker
   if (detectDevTaskRequest(text, supabase, user.id)) {
@@ -1248,7 +1254,7 @@ function orchestrateMain(
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Social media workflow: "${socialReq.topic}" → ${socialReq.platforms.join(", ")}`, classification: "social-media" } });
     _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildSocialMediaPlan(socialReq.topic, socialReq.platforms);
-      await routeComplex(ctx, text, user, supabase, plan, "social-media", requestId, undefined, undefined, sessionKey);
+      await routeComplex(ctx, text, user, supabase, plan, "social-media", requestId, undefined, undefined, sessionKey, trust);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => {
@@ -1266,7 +1272,7 @@ function orchestrateMain(
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Email campaign workflow: "${emailReq.topic}"`, classification: "email-campaign" } });
     _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildEmailCampaignPlan(emailReq.topic, emailReq.audience);
-      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey);
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey, trust);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
@@ -1280,7 +1286,7 @@ function orchestrateMain(
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Blog post workflow: "${blogReq.topic}"`, classification: "blog-post" } });
     _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildBlogPostPlan(blogReq.topic);
-      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey);
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey, trust);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
@@ -1294,7 +1300,7 @@ function orchestrateMain(
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Presentation workflow: "${presReq.topic}"`, classification: "presentation" } });
     _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildPresentationPlan(presReq.topic);
-      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey);
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey, trust);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
@@ -1308,7 +1314,7 @@ function orchestrateMain(
     emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Ad campaign workflow: "${adReq.topic}" → ${adReq.platforms.join(", ")}`, classification: "ad-campaign" } });
     _runTask(ctx as Context, text.substring(0, 50), async () => {
       const plan = buildAdCampaignPlan(adReq.topic, adReq.platforms);
-      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey);
+      await routeComplex(ctx, text, user, supabase, plan, "generic", requestId, undefined, undefined, sessionKey, trust);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }, {
       postProcess: async (raw) => raw === "__ORCHESTRATOR_HANDLED__" ? "__SKIP__" : processMemoryIntents(supabase, raw, user.id, user.timezone, { agentSlug: "planner", sessionId: requestId }),
@@ -1354,7 +1360,7 @@ function orchestrateMain(
               phase: "prepare",
             }],
           };
-          await routeComplex(ctx, text, user, supabase, schemaPlan, undefined, requestId, undefined, undefined, sessionKey);
+          await routeComplex(ctx, text, user, supabase, schemaPlan, undefined, requestId, undefined, undefined, sessionKey, trust);
           recordSchemaExecution(supabase, schemaMatch.id, true).catch(() => {});
           return { prompt: "__ORCHESTRATOR_HANDLED__" };
         }
@@ -1365,7 +1371,7 @@ function orchestrateMain(
     const pattern = await findPattern(supabase, text, user.id);
     if (pattern) {
       emit({ type: "message.classified", level: "info", requestId, userId: user.id, data: { message: `Pattern cache hit: ${pattern.task_signature.substring(0, 50)}`, classification: "cached" } });
-      await routeComplex(ctx, text, user, supabase, pattern.plan, undefined, requestId, undefined, undefined, sessionKey);
+      await routeComplex(ctx, text, user, supabase, pattern.plan, undefined, requestId, undefined, undefined, sessionKey, trust);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }
 
@@ -1401,12 +1407,12 @@ function orchestrateMain(
           phase: "prepare",
         }],
       };
-      await routeComplex(ctx, text, user, supabase, singlePlan, undefined, requestId, undefined, undefined, sessionKey);
+      await routeComplex(ctx, text, user, supabase, singlePlan, undefined, requestId, undefined, undefined, sessionKey, trust);
       return { prompt: "__ORCHESTRATOR_HANDLED__" };
     }
 
     // Complex — decompose and execute
-    await routeComplex(ctx, text, user, supabase, undefined, undefined, requestId, undefined, undefined, sessionKey);
+    await routeComplex(ctx, text, user, supabase, undefined, undefined, requestId, undefined, undefined, sessionKey, trust);
     return { prompt: "__ORCHESTRATOR_HANDLED__" };
   }, {
     postProcess: async (raw) => {
@@ -1566,11 +1572,12 @@ export function runPlan(
   user: any,
   supabase: Database | null,
   plan: ExecutionPlan,
-  sessionKey?: string
+  sessionKey?: string,
+  trust: TrustLevel = "trusted"
 ): void {
   const requestId = `req-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
   if (supabase && user?.id) supabase.insertRunEvent(user.id, { kind: 'playbook', refId: requestId, refName: (text || '').slice(0, 60), status: 'started', detail: (text || '').slice(0, 500) }); // [trust]
-  routeComplex(ctx, text, user, supabase, plan, undefined, requestId, undefined, undefined, sessionKey)
+  routeComplex(ctx, text, user, supabase, plan, undefined, requestId, undefined, undefined, sessionKey, trust)
     .catch((err) => logError(err, "orchestrator:runPlan", user?.id));
 }
 
@@ -1584,10 +1591,11 @@ async function routeComplex(
   requestId?: string,
   existingTaskId?: string,
   existingWorkspaceDir?: string,
-  sessionKey?: string
+  sessionKey?: string,
+  trust: TrustLevel = "trusted"
 ): Promise<void> {
   const startTime = Date.now();
-  const autoApprove = detectAutoApprove(text);
+  const autoApprove = detectAutoApprove(text, trust);
 
   // Declared outside try so the catch block can reference it for cleanup
   let parentTaskId: string | undefined;
