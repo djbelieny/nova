@@ -246,6 +246,17 @@
     <a href="#providers">Proveedores de IA y enrutamiento</a>
   </div>
   <div class="nav-group">
+    <span class="g-label">Automatización</span>
+    <a href="#playbooks">Playbooks</a>
+    <a href="#automations">Automatizaciones</a>
+    <a href="#processes">Procesos duraderos</a>
+    <a href="#extraction">Extracción de documentos</a>
+    <a href="#policies">Políticas y cumplimiento</a>
+    <a href="#roi">ROI e informes</a>
+    <a href="#connectors">Conectores</a>
+    <a href="#operations">Operar y observar</a>
+  </div>
+  <div class="nav-group">
     <span class="g-label">Superficies</span>
     <a href="#mcp">Integraciones MCP</a>
     <a href="#dashboard">Panel web</a>
@@ -573,6 +584,115 @@ nova kb reindex --all                         <span class="c">re-genera embeddin
       <span class="co-label">[seguro por diseño]</span>
       <p>Los pasajes recuperados se <strong>escanean contra inyección</strong> antes de llegar a un prompt — un documento que intenta colar instrucciones se descarta. Tus archivos se tratan como datos, nunca como comandos. Volver a ingerir un archivo editado reemplaza la versión anterior en el mismo lugar (sin duplicados), y los embeddings nunca salen de tu máquina.</p>
     </div>
+  </section>
+
+  <!-- ══════════════ PLAYBOOKS ══════════════ -->
+  <section id="playbooks">
+    <span class="sec-eyebrow">[playbooks]</span>
+    <h2>Playbooks</h2>
+    <p>Un playbook es un <strong>SOP</strong> reutilizable — un proceso de negocio que escribes una vez y ejecutas muchas veces con distintas entradas. Cada uno tiene variables y pasos ordenados (qué agente hace qué, en qué fase); ejecutar uno convierte esos pasos en un plan y lo ejecuta a través del gate de dos fases habitual. A diferencia de los patrones que Nova aprende sola: los playbooks son intencionales, editables y compartibles.</p>
+    <p>Alcances: <code>personal</code> (tuyo) o <code>team</code> (compartido). Carga una biblioteca inicial — onboarding de clientes, gestión de reembolsos, lanzamiento de contenido, informe semanal, seguimiento de leads — con un solo comando.</p>
+    <pre><code>/playbook seed                         <span class="c">carga los SOP iniciales</span>
+/playbook run client-onboarding client=Acme email=a@b.com
+nova playbook list | show &lt;name&gt; | remove &lt;name&gt;</code></pre>
+    <p>Crea y edita playbooks en el panel <strong>Playbooks</strong> del dashboard; ejecútalos desde el chat, o conecta uno a una automatización (más abajo). Las variables se escanean contra inyección; cada edición incrementa una versión.</p>
+  </section>
+
+  <!-- ══════════════ AUTOMATIONS ══════════════ -->
+  <section id="automations">
+    <span class="sec-eyebrow">[automatizaciones]</span>
+    <h2>Automatizaciones — evento → condición → workflow</h2>
+    <p>Las automatizaciones hacen que Nova sea <strong>orientada a eventos</strong>: cuando algo ocurre, ejecuta un workflow. Cada una tiene una fuente (un webhook entrante, una sonda de métrica, o un evento de conector como <code>stripe.payment</code>), condiciones opcionales y una acción — una tarea de agente o un playbook. Cada disparo sigue pasando por el gate de aprobación a menos que hayas otorgado piloto automático.</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Pieza</th><th>Qué hace</th></tr>
+      <tr><td>Condiciones</td><td><code>field:op:value</code> — operadores <code>eq/neq/gt/lt/gte/lte/contains/exists</code>; todas deben cumplirse. Más <strong>semánticas</strong> (abajo).</td></tr>
+      <tr><td>Deduplicación</td><td>Omite repeticiones dentro de una hora según una clave con plantilla (p. ej. <code>{{contact.email}}</code>).</td></tr>
+      <tr><td>Límite de tasa</td><td>Limita los disparos por hora.</td></tr>
+      <tr><td>Acción</td><td><code>--agent &lt;slug&gt; --template "…{{event.field}}…"</code> o <code>--playbook &lt;name&gt; --var k={{…}}</code>.</td></tr>
+    </table></div>
+    <pre><code>nova automation add new-lead --playbook lead-follow-up --var lead={{contact.name}} \
+    --when amount:gt:1000 --dedupe {{contact.email}} --rate 10
+nova automation url new-lead      <span class="c">el endpoint POST firmado para dárselo a tu fuente</span>
+/automations                      <span class="c">lístalas en el chat</span></code></pre>
+    <p>Los eventos entrantes llegan a <code>POST /automation/:userId/:id</code> (verificado por HMAC). El texto del evento renderizado se escanea contra inyección. Diseña y prueba en seco las automatizaciones en el panel <strong>Automatizaciones</strong> del dashboard.</p>
+    <h3>Disparadores semánticos</h3>
+    <p>Más allá de las coincidencias exactas, una condición puede dispararse por <em>significado</em>: <code>body:semantic:a customer complaint:0.55</code> se dispara cuando el campo del evento es semánticamente similar a la frase (embeddings locales, umbral opcional). Ideal para "cuando un correo se lee como una queja / una cancelación / una oportunidad de upsell."</p>
+  </section>
+
+  <!-- ══════════════ PROCESSES ══════════════ -->
+  <section id="processes">
+    <span class="sec-eyebrow">[procesos]</span>
+    <h2>Procesos duraderos</h2>
+    <p>Algunos trabajos abarcan días y eventos externos: <em>enviar contrato → esperar firma → facturar → esperar pago → cumplir.</em> Un proceso duradero es una secuencia de pasos de <strong>acción</strong> y <strong>espera</strong> que sobrevive a los reinicios (estado en SQLite) y se reanuda con un temporizador vencido o un evento con nombre. Los pasos de acción se ejecutan como tareas normales (los que tienen consecuencias pasan por el gate).</p>
+    <pre><code>nova process start onboarding --from-playbook client-onboarding
+nova process list | show &lt;id&gt; | cancel &lt;id&gt;
+/process signal signature.done         <span class="c">reanuda los procesos que esperan ese evento</span></code></pre>
+    <p>Los temporizadores se reanudan automáticamente mediante el despachador de tareas; los eventos se reanudan mediante una señal (un comando de chat o una automatización). Crea secuencias de pasos (con <code>wait|until|+2d</code> o <code>wait|event|&lt;name&gt;</code>) en la línea de tiempo <strong>Procesos</strong> del dashboard.</p>
+  </section>
+
+  <!-- ══════════════ EXTRACTION ══════════════ -->
+  <section id="extraction">
+    <span class="sec-eyebrow">[extracción]</span>
+    <h2>Extracción de documentos</h2>
+    <p>La contraparte de captura de la base de conocimiento: define un esquema de campos y extrae <strong>JSON estructurado y con tipos coercionados</strong> de PDFs, DOCX o texto — facturas, recibos, formularios, contratos. Los valores se coercionan (número/fecha/booleano/arreglo), los campos requeridos se validan y las filas se pueden exportar a CSV.</p>
+    <pre><code>nova extract schema add invoice --field invoice_number:string:required \
+    --field total:number:required --field due_date:date
+nova extract statement.pdf --schema invoice
+nova extract list --schema invoice | nova extract export invoice</code></pre>
+    <p>En el chat, arrastra un documento con un pie como <em>"extract as invoice"</em>. Gestiona esquemas, ejecuta extracciones y exporta desde el panel <strong>Extracción</strong> del dashboard. La extracción se ejecuta localmente sobre tu texto; los destinos (Sheets/CRM) se enrutan a través de los conectores.</p>
+  </section>
+
+  <!-- ══════════════ POLICIES ══════════════ -->
+  <section id="policies">
+    <span class="sec-eyebrow">[políticas]</span>
+    <h2>Políticas y cumplimiento</h2>
+    <p>Gobernanza de negocio sobre la <a href="#approval">escalera de autonomía ganada</a>. Las políticas son <strong>solo restrictivas</strong>: agregan fricción (requerir aprobación, bloquear o advertir) pero nunca otorgan más autonomía de la que la escalera ya permite. Sin ninguna definida, el comportamiento es exactamente como antes.</p>
+    <div class="tbl-wrap"><table>
+      <tr><th>Tipo</th><th>Efecto</th></tr>
+      <tr><td><code>spend_cap</code></td><td>Un presupuesto diario/mensual comparado con el ledger de acciones — si se supera, fuerza la aprobación.</td></tr>
+      <tr><td><code>approval_matrix</code></td><td>Enruta ciertas acciones a aprobadores designados, con un tiempo de escalamiento.</td></tr>
+      <tr><td><code>content_check</code></td><td>Escanea la salida preparada en busca de PII / lenguaje ofensivo → bloquea o advierte antes de que se envíe.</td></tr>
+    </table></div>
+    <pre><code>nova policy add spend-cap --cap 500 --period month --department marketing
+nova policy add approval --action email.send --approver &lt;userId&gt; --escalate 30
+nova policy add content-check --checks pii,profanity --on-fail block
+/policies</code></pre>
+    <p>Gestiona todo en el editor <strong>Políticas</strong> del dashboard. Las políticas se evalúan en el gate, justo antes de Aprobar/Revisar/Cancelar.</p>
+  </section>
+
+  <!-- ══════════════ ROI ══════════════ -->
+  <section id="roi">
+    <span class="sec-eyebrow">[roi]</span>
+    <h2>ROI e informes</h2>
+    <p>Hace legible el valor de la automatización. Los agentes cuantifican los resultados con una etiqueta <code>[VALUE: $X | SAVED: Ymin | DEPT: z]</code>; Nova la registra y la consolida contra el ledger de acciones en <strong>tareas automatizadas, horas ahorradas y $ influenciados frente al costo</strong> — por departamento y por agente.</p>
+    <pre><code>/roi                 <span class="c">últimos 7 días, en el chat</span>
+nova roi --period 30 | nova roi --by-agent | nova roi --by-department</code></pre>
+    <p>La vista <strong>ROI</strong> del dashboard muestra tiles destacados + gráficos; un resumen semanal envía por DM a cada usuario el valor entregado. El ranking de valor por agente/departamento puede indicar dónde apoyarse.</p>
+  </section>
+
+  <!-- ══════════════ CONNECTORS ══════════════ -->
+  <section id="connectors">
+    <span class="sec-eyebrow">[conectores]</span>
+    <h2>Conectores</h2>
+    <p>Una capa fina y uniforme sobre sistemas de negocio externos. Los integrados vienen bidireccionales: <strong>Stripe</strong> (cargos/clientes/reembolsos), <strong>Shopify</strong> (pedidos), <strong>Zendesk</strong> (tickets), <strong>HubSpot</strong> (contactos). Cada uno tiene acciones de lectura + escritura y un disparador de sondeo que alimenta las automatizaciones (p. ej. <code>stripe.payment</code>). Las credenciales vienen de variables de entorno o del almacén de credenciales compartido; las acciones de escritura tienen consecuencias.</p>
+    <pre><code>nova connector list                    <span class="c">integrados + estado de configuración</span>
+nova connector test stripe
+nova connector run stripe list_charges --input '{"limit":5}'</code></pre>
+    <p>Configura y ejecuta acciones desde el panel <strong>Conectores</strong> del dashboard. Agregar un conector es un solo archivo que implementa la interfaz <code>Connector</code>. Los agentes también pueden llamar a los conectores configurados ellos mismos mediante las herramientas de abajo.</p>
+  </section>
+
+  <!-- ══════════════ OPERATIONS ══════════════ -->
+  <section id="operations">
+    <span class="sec-eyebrow">[operar]</span>
+    <h2>Operar y observar</h2>
+    <p>Todo lo que hace la capa de automatización es observable y recuperable.</p>
+    <ul>
+      <li><strong>Feed de actividad</strong> — una línea de tiempo unificada de cada disparo de automatización, transición de proceso y ejecución de playbook. <code>nova activity</code>, <code>/activity</code>, o la página <strong>Actividad</strong> del dashboard.</li>
+      <li><strong>Prueba en seco</strong> — previsualiza exactamente qué haría una automatización contra un evento de muestra antes de habilitarla (<code>nova automation simulate &lt;name&gt; --event '{…}'</code>, o el control "Test / dry-run" del dashboard). No ejecuta nada.</li>
+      <li><strong>Reintentos y dead-letter</strong> — un envío fallido se reintenta con backoff; si aun así falla, cae en una cola de dead-letter en lugar de desaparecer. <code>nova dlq list | retry &lt;id&gt; | drop &lt;id&gt;</code>, o la página <strong>Dead letters</strong> del dashboard.</li>
+    </ul>
+    <h3>Los agentes pueden usar tus herramientas</h3>
+    <p>Los agentes especialistas pueden llamar a las capacidades de Nova ellos mismos mientras trabajan — buscar en la base de conocimiento, extraer un documento, ejecutar un conector configurado o correr un playbook — mediante la CLI <code>nova</code> en su sandbox. Usan las acciones de lectura libremente y <strong>proponen acciones de escritura/con consecuencias para aprobación</strong> en lugar de ejecutarlas directamente.</p>
   </section>
 
   <!-- ══════════════ SCHEDULING ══════════════ -->

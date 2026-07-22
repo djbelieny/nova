@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova ahora dirige la operación: playbooks, automatizaciones y conectores — Nova</title>
+<meta name="description" content="El mayor lanzamiento de Nova la vuelve orientada a eventos y duradera a nivel de procesos: playbooks (SOPs reutilizables), automatizaciones por eventos con disparadores semánticos, procesos duraderos de varios días, extracción de documentos, conectores de negocio (Stripe/Shopify/Zendesk/HubSpot), políticas de cumplimiento y reportes de ROI — con cada paso consecuente aún bajo aprobación.">
+<meta property="og:title" content="Nova ahora dirige la operación: playbooks, automatizaciones y conectores">
+<meta property="og:description" content="El lanzamiento de automatización: playbooks reutilizables, automatizaciones por eventos con disparadores semánticos, procesos duraderos, extracción de documentos, conectores bidireccionales, políticas de cumplimiento y reportes de ROI — auto-alojado, y todavía con aprobación.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mynova.space/es/blog/business-automation/">
+<meta property="og:site_name" content="Nova">
+<meta property="og:image" content="https://mynova.space/es/blog/business-automation/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="El lanzamiento de automatización de negocio de Nova — playbooks, automatizaciones, procesos, conectores">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mynova.space/es/blog/business-automation/og.jpg">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A0F1C'/%3E%3Cpath d='M16 5l2.4 8.6L27 16l-8.6 2.4L16 27l-2.4-8.6L5 16l8.6-2.4z' fill='%232AABEE'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0A0F1C;
+    --panel: #101A2E;
+    --panel-2: #0D1526;
+    --line: #1E2C4A;
+    --text: #E8EDF7;
+    --muted: #8A97B0;
+    --faint: #5B6880;
+    --tg: #2AABEE;
+    --tg-deep: #1B7FBF;
+    --amber: #F0B429;
+    --green: #57C785;
+    --rose: #E86A84;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Instrument Sans", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--tg); color: var(--ink); }
+  a { color: var(--tg); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--tg); outline-offset: 3px; border-radius: 4px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ── */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .wordmark {
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--display); font-weight: 800; font-size: 20px;
+    color: var(--text); letter-spacing: -0.02em;
+  }
+  .wordmark:hover { text-decoration: none; }
+  .nav-links { display: flex; align-items: center; gap: 18px; }
+  .nav-links a { color: var(--muted); font-size: 14px; font-weight: 500; white-space: nowrap; }
+  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  .gh-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--text); color: var(--ink) !important;
+    font-weight: 600; font-size: 15px; padding: 8px 16px; border-radius: 8px;
+  }
+  .gh-btn:hover { background: #fff; text-decoration: none; }
+  @media (max-width: 960px) { .nav-links a:not(.gh-btn) { display: none; } }
+
+  /* ── Article ── */
+  .article { padding: 60px 0 40px; }
+  .article .wrap { max-width: 760px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 13px; color: var(--tg);
+    letter-spacing: 0.05em; text-transform: uppercase; display: block; margin-bottom: 18px;
+  }
+  h1 {
+    font-family: var(--display); font-weight: 800;
+    font-size: clamp(34px, 5vw, 52px); line-height: 1.05; letter-spacing: -0.03em;
+    margin-bottom: 20px;
+  }
+  .article .lede { color: var(--muted); font-size: 20px; line-height: 1.55; margin-bottom: 26px; }
+  .byline { color: var(--faint); font-size: 14.5px; font-family: var(--mono); }
+  .byline .dot { margin: 0 8px; opacity: 0.5; }
+
+  .prose { margin-top: 8px; }
+  .prose h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(24px, 3.4vw, 31px); letter-spacing: -0.02em;
+    margin: 52px 0 16px; padding-top: 12px;
+  }
+  .prose h3 {
+    font-family: var(--display); font-weight: 700; font-size: 20px;
+    margin: 32px 0 10px; color: var(--text);
+  }
+  .prose p { color: #C9D3E6; margin: 0 0 18px; }
+  .prose strong { color: var(--text); font-weight: 600; }
+  .prose ul { margin: 0 0 20px; padding-left: 4px; list-style: none; }
+  .prose ul li { position: relative; padding-left: 26px; margin-bottom: 11px; color: #C9D3E6; }
+  .prose ul li::before {
+    content: ""; position: absolute; left: 4px; top: 11px;
+    width: 7px; height: 7px; border-radius: 2px; background: var(--tg); transform: rotate(45deg);
+  }
+  .prose code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 1px 6px; border-radius: 5px; color: #B7E3FA;
+  }
+  .divider { border: 0; border-top: 1px solid var(--line); margin: 44px 0; }
+
+  .callout {
+    background: linear-gradient(180deg, var(--panel), var(--panel-2));
+    border: 1px solid var(--line); border-left: 3px solid var(--tg);
+    border-radius: 12px; padding: 20px 22px; margin: 28px 0;
+  }
+  .callout p { margin: 0; color: #D5DEEE; }
+  .callout .k { font-family: var(--mono); font-size: 12.5px; color: var(--tg); letter-spacing: 0.04em; text-transform: uppercase; display: block; margin-bottom: 7px; }
+
+  /* Chat mockup */
+  .chat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin: 26px 0; }
+  .chat .head { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .chat .head .dots { display: inline-flex; gap: 5px; }
+  .chat .head .dots i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .bubble { max-width: 82%; padding: 10px 14px; border-radius: 14px; margin-bottom: 10px; font-size: 15.5px; line-height: 1.5; }
+  .bubble.me { background: var(--tg-deep); color: #EAF6FE; margin-left: auto; border-bottom-right-radius: 5px; }
+  .bubble.nova { background: var(--panel); border: 1px solid var(--line); color: #D5DEEE; border-bottom-left-radius: 5px; }
+  .bubble .who { font-family: var(--mono); font-size: 11px; opacity: 0.7; display: block; margin-bottom: 3px; }
+  .bubble .approve { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .bubble .approve span { font-size: 13px; font-weight: 600; padding: 5px 11px; border-radius: 7px; }
+  .approve .yes { background: var(--green); color: #06210f; }
+  .approve .rev { background: var(--amber); color: #2b1d00; }
+  .approve .no { background: #2a3550; color: var(--muted); }
+
+  /* Grid cards */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin: 24px 0; }
+  @media (max-width: 620px) { .cards { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .card h4 { font-family: var(--display); font-weight: 700; font-size: 16.5px; margin-bottom: 6px; color: var(--text); }
+  .card p { font-size: 14.5px; color: var(--muted); margin: 0; }
+
+  .end-cta { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid var(--line); border-radius: 16px; padding: 34px; text-align: center; margin: 48px 0 8px; }
+  .end-cta h3 { font-family: var(--display); font-weight: 800; font-size: 26px; letter-spacing: -0.02em; margin-bottom: 8px; }
+  .end-cta p { color: var(--muted); margin-bottom: 20px; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .cta { display: inline-flex; align-items: center; gap: 9px; font-weight: 600; font-size: 15.5px; padding: 12px 20px; border-radius: 10px; }
+  .cta.primary { background: var(--tg); color: var(--ink); }
+  .cta.primary:hover { background: #4FC0F5; text-decoration: none; }
+  .cta.ghost { border: 1px solid var(--line); color: var(--text); }
+  .cta.ghost:hover { border-color: var(--tg); text-decoration: none; }
+
+  footer { border-top: 1px solid var(--line); padding: 44px 0 60px; margin-top: 40px; }
+  .foot-inner { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; color: var(--faint); font-size: 14.5px; }
+  .foot-inner a { color: var(--muted); }
+  .foot-inner a:hover { color: var(--text); }
+
+  .langsw { display:inline-flex; gap:1px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); border-radius:7px; overflow:hidden; margin-left:6px; vertical-align:middle; }
+  .langsw a { color:var(--muted) !important; padding:4px 9px; display:inline-block; text-decoration:none; }
+  .langsw a:hover { color:var(--text) !important; background:var(--panel); text-decoration:none; }
+  .langsw a.on { color:var(--text) !important; background:var(--line); }
+  @media (max-width:720px){ .nav-links .langsw, .nav-links .langsw a { display:inline-flex !important; } }
+</style>
+<link rel="alternate" hreflang="en" href="https://mynova.space/blog/business-automation/">
+<link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/business-automation/">
+<link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/business-automation/">
+<link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/business-automation/">
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-inner">
+    <a class="wordmark" href="/es/" aria-label="Nova home">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3l3 10.2L29 16l-10 2.8L16 29l-3-10.2L3 16l10-2.8z" fill="#2AABEE"/></svg>
+      Nova
+    </a>
+    <div class="nav-links">
+      <a href="/es/#how">Cómo funciona</a>
+      <a href="/es/#agents">Agentes</a>
+      <a href="/es/#start">Inicio rápido</a>
+      <a href="/es/blog/">Blog</a>
+      <a href="/es/docs/">Documentos</a>
+      <span class="langsw" aria-label="Language"><a href="/blog/business-automation/" class="en" hreflang="en">EN</a><a href="/es/blog/business-automation/" class="es on" hreflang="es">ES</a><a href="/pt-br/blog/business-automation/" class="pt-br" hreflang="pt-BR">PT</a></span>
+      <a class="gh-btn" href="https://github.com/djbelieny/nova" rel="noopener">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<article class="article">
+  <div class="wrap">
+    <span class="eyebrow">El lanzamiento de automatización</span>
+    <h1>Nova ahora dirige la operación</h1>
+    <p class="lede">Un chatbot responde. Un negocio necesita que el trabajo ocurra — en un horario, en respuesta a eventos, a lo largo de días, con un registro. El mayor lanzamiento de Nova la transforma de un asistente al que preguntas a un sistema que ejecuta el trabajo repetible en segundo plano — y aún así pregunta antes de que cualquier cosa se publique, gaste o envíe.</p>
+    <p class="byline">Jake Belieny <span class="dot">·</span> 21 de julio de 2026 <span class="dot">·</span> 9 min de lectura</p>
+
+    <div class="prose">
+      <p>Durante un tiempo, Nova ha sido muy buena en aquello que le pides que haga <em>ahora mismo</em>: descomponer una solicitud, dirigirla a especialistas, preparar el trabajo y esperar tu aprobación antes de que nada salga a producción. Eso es el asistente. Pero un negocio no funciona a base de solicitudes — funciona a base de <strong>trabajo repetible</strong> que ocurre en un horario, reacciona a eventos, abarca días y deja un registro.</p>
+      <p>Este lanzamiento cierra esa brecha. Nova ahora es <strong>orientada a eventos y duradera a nivel de procesos</strong> — toda una capa para construir, ejecutar y vigilar operaciones automatizadas. Y llega sobre el mismo principio que todo lo demás: la mitad segura corre libremente; la mitad consecuente todavía pregunta.</p>
+
+      <div class="callout">
+        <p><span class="k">La versión de una línea</span>Escribe un proceso una vez y ejecútalo muchas veces; dispara flujos de trabajo a partir de eventos del mundo real; mantén en marcha procesos de varios días; extrae datos estructurados de documentos; lee y escribe en tus herramientas de negocio; pon límites al gasto y al cumplimiento; y ve el valor que todo esto entrega — auto-alojado, con tus propias claves.</p>
+      </div>
+
+      <h2>Qué se lanzó</h2>
+      <div class="cards">
+        <div class="card"><h4>Playbooks</h4><p>SOPs reutilizables — escribe un proceso una vez, ejecútalo muchas veces con variables.</p></div>
+        <div class="card"><h4>Automatizaciones</h4><p>Evento → condición → flujo de trabajo, con deduplicación, límites de frecuencia y disparadores semánticos.</p></div>
+        <div class="card"><h4>Procesos duraderos</h4><p>Flujos de varios días que esperan un temporizador o un evento, y luego se reanudan — sobreviviendo a reinicios.</p></div>
+        <div class="card"><h4>Extracción de documentos</h4><p>Facturas, recibos y formularios → datos estructurados y validados.</p></div>
+        <div class="card"><h4>Conectores</h4><p>Stripe, Shopify, Zendesk, HubSpot — leen y escriben, en ambos sentidos.</p></div>
+        <div class="card"><h4>Políticas</h4><p>Topes de gasto, matrices de aprobación y revisiones de contenido — límites que solo restringen.</p></div>
+        <div class="card"><h4>Reportes de ROI</h4><p>Tareas automatizadas, horas ahorradas y valor frente a costo — por departamento y agente.</p></div>
+        <div class="card"><h4>Operar y observar</h4><p>Un feed de actividad unificado, vistas previas de simulación y una cola de mensajes fallidos.</p></div>
+      </div>
+
+      <h2>Playbooks: tus procesos, escritos y ejecutables</h2>
+      <p>Todo negocio tiene un conjunto de procesos del tipo "así hacemos X" — dar de alta a un cliente, gestionar un reembolso, lanzar un producto. Un <strong>playbook</strong> es ese proceso, hecho ejecutable: unos pocos pasos ordenados, cada uno asignado a un especialista, con variables que rellenas al momento de ejecutar. Escríbelo una vez; ejecútalo cuando quieras, con distintas entradas.</p>
+      <p>Los playbooks son personales o para todo el equipo, y están versionados — editarlos incrementa la versión, para que una automatización pueda fijar aquella contra la que se construyó. Nova incluye una biblioteca inicial que puedes clonar y editar.</p>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · ejecutando un SOP</div>
+        <div class="bubble me"><span class="who">Tú</span>/playbook run client-onboarding client="Acme Studio" email=ops@acme.co</div>
+        <div class="bubble nova"><span class="who">Nova</span>▶️ Ejecutando <strong>client-onboarding</strong> (4 pasos): redactando el brief de alta, escribiendo el correo de bienvenida, proponiendo una hora de arranque — luego te lo envío todo para tu aprobación.</div>
+      </div>
+
+      <h2>Automatizaciones: cuando algo pasa, haz el trabajo</h2>
+      <p>El mayor cambio es que Nova ahora <strong>reacciona</strong>. Una automatización tiene una fuente (un webhook entrante, una métrica que cruza un umbral, o un evento de negocio como un nuevo pago de Stripe), condiciones opcionales y una acción — ejecutar un agente, o ejecutar un playbook. Llega un nuevo prospecto, falla un pago, entra un formulario — Nova lo recoge y hace lo siguiente, a través de la misma puerta de aprobación.</p>
+      <ul>
+        <li><strong>Las condiciones</strong> filtran por campos (<code>amount &gt; 1000</code>, remitentes VIP, y así), con deduplicación por hora y límites de frecuencia para que una fuente ruidosa no te sature.</li>
+        <li><strong>Los disparadores semánticos</strong> van más allá: se activan por <em>significado</em>, no por coincidencias exactas. "Cuando un correo se lee como una queja" o "suena a una cancelación" — detectado con las mismas incrustaciones locales que impulsan la base de conocimiento.</li>
+      </ul>
+
+      <div class="chat">
+        <div class="head"><span class="dots"><i style="background:#E86A84"></i><i style="background:#F0B429"></i><i style="background:#57C785"></i></span> Telegram · un evento de pago dispara una automatización</div>
+        <div class="bubble nova"><span class="who">Nova · automatización "big-payment"</span>💳 Un cargo de Stripe por $4,200 de Northwind acaba de completarse (por encima de tu umbral de $1k). Según tu playbook he redactado un agradecimiento + un arranque de alta con guante blanco. ¿Apruebas para enviar?
+          <div class="approve"><span class="yes">✓ Aprobar</span><span class="rev">✎ Revisar</span><span class="no">✕ Cancelar</span></div>
+        </div>
+      </div>
+
+      <h2>Procesos: para trabajo que abarca días</h2>
+      <p>Algunas cosas no terminan en una sola ejecución: <em>envía el contrato → espera una firma → factura → espera el pago → cumple.</em> Un <strong>proceso duradero</strong> es una secuencia de pasos de acción y espera que sobrevive a reinicios y se reanuda con un temporizador vencido o un evento con nombre. Nova mantiene el estado, espera con paciencia y retoma justo donde lo dejó — sin enredos de cron, sin hilos perdidos.</p>
+
+      <h2>Extracción: convierte documentos en datos</h2>
+      <p>La base de conocimiento se trataba de <em>recuperación</em> — pregunta, y Nova responde desde tu material. La extracción es la imagen espejo: <strong>captura</strong>. Define los campos que te importan y Nova saca JSON limpio y verificado por tipos de un PDF, un DOCX o un formulario escaneado — número de factura, total, fecha de vencimiento, líneas de detalle — validado y listo para enviarlo a una hoja o a tu CRM. Suelta un documento en el chat con "extract as invoice", o conéctalo a una automatización para que cada factura entrante se archive sola.</p>
+
+      <hr class="divider">
+
+      <h2>Conectores: Nova, te presento tu stack</h2>
+      <p>La automatización tiene que vivir donde tu negocio ya funciona. Nova ahora habla con sistemas externos a través de una capa de <strong>conectores</strong> delgada y uniforme, con cuatro incluidos y bidireccionales: <strong>Stripe</strong> (cargos, clientes, reembolsos), <strong>Shopify</strong> (pedidos), <strong>Zendesk</strong> (tickets) y <strong>HubSpot</strong> (contactos). Cada uno aporta acciones de lectura y escritura además de un disparador que alimenta automatizaciones — así que <code>stripe.payment</code> o <code>shopify.order</code> pueden iniciar un flujo de trabajo. Agregar el tuyo propio es un solo archivo.</p>
+
+      <h2>Políticas: límites que solo se ajustan</h2>
+      <p>Entregarle trabajo a un sistema autónomo solo resulta cómodo si puedes acotarlo. Las políticas se sitúan sobre la escalera de autonomía ganada de Nova y <strong>solo restringen</strong> — pueden exigir aprobación, bloquear o advertir, pero nunca otorgan más libertad de la que la escalera ya permite. Fija un tope de gasto mensual por departamento, dirige ciertas acciones a un aprobador designado con un tiempo de escalamiento, o escanea el contenido saliente en busca de PII antes de que se envíe. Sin políticas configuradas, nada cambia.</p>
+
+      <h2>ROI: demuestra que funciona</h2>
+      <p>Una automatización que no puedes medir es una automatización que tarde o temprano apagarás. Cuando un agente termina algo cuantificable, etiqueta el resultado; Nova los suma frente a su propio libro de costos hasta llegar a los números que importan — <strong>tareas automatizadas, horas ahorradas y dólares influidos frente a lo que costó la IA</strong>, desglosado por departamento y agente. Un resumen semanal llega a tu chat, y el panel muestra la tendencia.</p>
+
+      <h2>Construida para dejarla corriendo</h2>
+      <p>Reaccionar al mundo sin supervisión eleva el listón de la operabilidad, así que este lanzamiento también incluye las partes aburridas y esenciales:</p>
+      <ul>
+        <li><strong>Simulación.</strong> Previsualiza exactamente lo que haría una automatización contra un evento de muestra antes de activarla. No ejecuta nada — solo ves la decisión.</li>
+        <li><strong>Un feed de actividad unificado.</strong> Cada disparo de automatización, transición de proceso y ejecución de playbook en una sola línea de tiempo — en el chat, la CLI o el panel.</li>
+        <li><strong>Reintentos + una cola de mensajes fallidos.</strong> Un envío fallido se reintenta con retroceso; si aun así falla, va a parar a una cola que puedes inspeccionar y reintentar, en lugar de desvanecerse.</li>
+      </ul>
+      <p>Y los propios agentes ahora pueden usar estas capacidades mientras trabajan — buscando en tu base de conocimiento, extrayendo un documento, ejecutando un conector configurado — usando acciones de lectura libremente y <strong>proponiendo para tu aprobación cualquier cosa consecuente</strong> en lugar de hacerla por su cuenta.</p>
+
+      <h2>La misma promesa de siempre</h2>
+      <p>Nada de esto afloja el modelo de confianza — lo extiende. Cada paso consecuente que da una automatización, un proceso o un playbook sigue fluyendo por preparar → aprobar → ejecutar. La diferencia es que ahora el <em>disparador</em> puede ser un evento, un horario o una firma en lugar de únicamente un mensaje que escribiste. Nova creció de algo con lo que hablas a algo que dirige tu operación — y sigue preguntando primero.</p>
+
+      <div class="end-cta">
+        <h3>Pon tu operación en piloto automático — con los frenos puestos</h3>
+        <p>Código abierto, auto-alojado, con licencia MIT. Tus herramientas, tus claves, tu puerta de aprobación.</p>
+        <div class="cta-row">
+          <a class="cta primary" href="https://github.com/djbelieny/nova" rel="noopener">Obtén Nova en GitHub</a>
+          <a class="cta ghost" href="/es/docs/#playbooks">Leer los documentos</a>
+          <a class="cta ghost" href="/es/book/" rel="noopener">¿Quieres que te lo configure?</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap foot-inner">
+    <span>Nova — licencia MIT. Tómalo, personalízalo, hazlo tuyo.</span>
+    <span>
+      <a href="/es/">Inicio</a> &nbsp;·&nbsp;
+      <a href="/es/docs/">Documentación</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova" rel="noopener">GitHub</a> &nbsp;·&nbsp;
+      <a href="https://github.com/djbelieny/nova/blob/main/SECURITY.md" rel="noopener">Seguridad</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
