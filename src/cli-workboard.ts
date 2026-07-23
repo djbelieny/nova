@@ -10,6 +10,7 @@
  *   nova workboard card update <card-id> --fields '{…}'
  *   nova workboard query <board> [--stage <key>]
  *   nova workboard run <board> --stage <key> --playbook <name> [key=value ...]
+ *   nova workboard sync <board>
  *
  * Agents call these mid-task via the bash tool. Card writes are local and reversible, so they
  * are prepare-phase safe; consequential work stays behind the approval gate.
@@ -18,6 +19,7 @@
 import { getDb, type DatabaseType, type Workboard, type WorkboardCard } from "./db.ts";
 import { addCards, createBoard, moveCard, updateCard } from "./workboard-service.ts";
 import { buildStageRun } from "./workboard-reactive.ts";
+import { pullBoard } from "./workboard-sync.ts";
 import type { FieldDef, StageDef } from "./workboards.ts";
 
 function adminId(db: DatabaseType): string {
@@ -223,6 +225,17 @@ function runStage(boardName: string, argv: string[]): number {
   return 0;
 }
 
+async function runSync(boardName: string): Promise<number> {
+  const db = getDb();
+  const userId = adminId(db);
+  const board = db.findWorkboard(userId, boardName);
+  if (!board) return fail([`No workboard named "${boardName}"`]);
+  const r = await pullBoard(db, userId, board);
+  if (r.errors.length) return fail(r.errors);
+  console.log(`  ✓ ${board.name}: ${r.created} created, ${r.updated} updated`);
+  return 0;
+}
+
 function runQuery(boardName: string, argv: string[]): number {
   const db = getDb();
   const userId = adminId(db);
@@ -242,6 +255,7 @@ export async function runWorkboardCli(argv: string[]): Promise<number> {
     case "create": return positional[0] ? runCreate(positional[0], rest) : fail(["Usage: nova workboard create <name> --fields '<json>' --stages '<json>'"]);
     case "query": return positional[0] ? runQuery(positional[0], rest) : fail(["Usage: nova workboard query <board> [--stage <key>]"]);
     case "run": return positional[0] ? runStage(positional[0], rest) : fail(["Usage: nova workboard run <board> --stage <key> --playbook <name>"]);
+    case "sync": return positional[0] ? await runSync(positional[0]) : fail(["Usage: nova workboard sync <board>"]);
     case "card": {
       const [verb, ...cardRest] = rest;
       const cardPositional = positionalArgs(cardRest);
