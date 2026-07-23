@@ -215,6 +215,13 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     // move straight through the adapter and skip fireOnEnter/enqueue/connector-push entirely.
     const src = getCardSource(found.board.source);
     if (src) {
+      // The adapters fall back to a default status for a key they don't recognise, so an
+      // unknown stage would silently reopen a closed ticket and report success. planMove does
+      // this check for card-backed boards; adapter boards need it before applyMove.
+      if (!found.board.stages.some((s) => s.key === input.toStage)) {
+        const keys = found.board.stages.map((s) => s.key).join(", ");
+        return json({ errors: [`unknown stage "${input.toStage}" — this board has: ${keys}`] }, 400);
+      }
       const ok = src.applyMove(db, userId, moveMatch[1], input.toStage);
       return ok
         ? json({ card: { ...found.card, stageKey: input.toStage }, fires: false, pendingPush: null })

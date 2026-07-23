@@ -305,6 +305,39 @@ test("moving a system board card through the API writes to the ticket's status c
   expect(db.listWorkboardCards(tickets.scope, userId, tickets.id).length).toBe(0);
 });
 
+test("moving a system board card to a stage the board does not have is refused, leaving the ticket alone", async () => {
+  const { db, userId } = newAdmin();
+  ensureSystemBoards(db, userId);
+  const ticketId = db.insertSupportTicket({
+    user_id: userId, source: "resend", client_email: "a@client.com", subject: "Closed one", body_raw: "Fixed",
+  });
+  db.updateSupportTicket(userId, ticketId, { status: "deployed" });
+
+  const req = new Request(`http://x/api/workboards/cards/${ticketId}/move`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ toStage: "resolved" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${ticketId}/move`, req, { db, userId });
+  expect(res!.status).toBe(400);
+  const body = await res!.json();
+  expect(body.errors.join(" ")).toContain('unknown stage "resolved"');
+  expect(db.getSupportTicket(userId, ticketId)!.status).toBe("deployed");
+});
+
+test("moving an agent-task card to a stage the board does not have is refused, leaving the task alone", async () => {
+  const { db, userId } = newAdmin();
+  ensureSystemBoards(db, userId);
+  const taskId = db.insertTask({ agent: "kai", description: "Ship it", status: "done", user_id: userId });
+
+  const req = new Request(`http://x/api/workboards/cards/${taskId}/move`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ toStage: "archived" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${taskId}/move`, req, { db, userId });
+  expect(res!.status).toBe(400);
+  expect(db.getTaskById(taskId, userId)!.status).toBe("done");
+});
+
 test("a schema-edit attempt against a system board is refused", async () => {
   const { db, userId } = newAdmin();
   const { tasks } = ensureSystemBoards(db, userId);
