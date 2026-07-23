@@ -34,7 +34,7 @@ import { groupTicketsByColumn, TICKET_COLUMNS } from "./ticket-board.ts";
 import { handleTicketApproval } from "../services/ticket-worker.ts";
 import { sendTicketEmail } from "./resend-client.ts";
 import { verifyLogin } from "./web-auth.ts";
-import { handleWorkboardApi } from "./dashboard-workboards.ts";
+import { handleWorkboardApi, renderWorkboard, renderWorkboardIndex } from "./dashboard-workboards.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -7009,6 +7009,7 @@ export function renderDashboard(): string {
       <select class="user-select" id="user-selector"><option value="">All Users</option></select>
       <a href="/governance" class="topbar-action">Governance</a>
       <a href="/kanban" class="topbar-action">Kanban</a>
+<a href="/workboards" class="topbar-action">Workboards</a>
       <a href="/tickets" class="topbar-action">Tickets</a>
       <a href="/integrations" class="topbar-action">Integrations</a>
       <a href="/shared-credentials" class="topbar-action">Shared Creds</a>
@@ -8862,6 +8863,29 @@ const server = Bun.serve({
     if (path === "/kanban") {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
       return new Response(renderKanban(), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
+        },
+      });
+    }
+
+    // Workboards index page (admin only)
+    if (path === "/workboards") {
+      if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderWorkboardIndex(getDb(), me?.userId ?? ""), {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
+        },
+      });
+    }
+
+    // Workboard detail page (admin only)
+    const wbPage = path.match(/^\/workboards\/([\w-]+)$/);
+    if (wbPage) {
+      if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      return new Response(renderWorkboard(getDb(), me?.userId ?? "", wbPage[1]), {
         headers: {
           "Content-Type": "text/html",
           "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
