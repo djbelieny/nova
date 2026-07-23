@@ -1368,11 +1368,12 @@ These can be included in messages and Nova will parse and act on them:
 
 ## 27. Workboards
 
-A workboard is a board of structured cards that Nova and its agents can create, fill, and move
-through **stages** — columns you define, not a fixed workflow. Ask for one in chat ("make me a
-purchasing board tracking POs", "generate leads and put them on a board") and Nova proposes a
-field schema and a set of stages; once you confirm, the board exists and agents can add or update
-cards on it through the CLI. Open it in the web dashboard to see it as a drag-and-drop board.
+A workboard is a board of structured cards that Nova's agents can fill and move through **stages** —
+columns you define, not a fixed workflow. Create one with `nova workboard create`, or ask a
+specialist agent to put a set of results on a board ("put these leads on a board") — agents have
+the create/add/move/query verbs and use them mid-task. Chat itself has no board-creation handling:
+asking Nova in a plain conversation to design a schema and make you a board will not create one.
+Open a board in the web dashboard to see it as a drag-and-drop board.
 
 Every board declares its own fields — two boards can look completely different. A stage is inert
 by default; a board can optionally be made **reactive**, and a reactive stage can carry an action
@@ -1406,8 +1407,11 @@ A field definition is `{ key, label, type, required?, options?, primary? }`. The
 
 Agents drive workboards through this CLI mid-task via the shell — see `.claude/agents/shared/skills.md`
 and `src/agent-tools.ts` for what agents are told. Card writes (add, move, update) are local and
-reversible, so they're prepare-phase safe and don't need the approval gate; running a stage's
-action or syncing a connector does.
+reversible, so they're prepare-phase safe and don't need the approval gate. Neither does a
+connector sync: `sync` only pulls and upserts, and a stage change on a bound board *describes* the
+write back rather than performing it (see Connector-Bound Boards below) — nothing there goes
+through the approval gate. Running a stage's action is the consequential one, and it goes to the
+relay's durable queue rather than running inline.
 
 | Command | Flags | Description |
 |---------|-------|--------------|
