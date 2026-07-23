@@ -158,3 +158,24 @@ test("cross-user isolation: user A cannot see, read, write, move, or patch user 
   expect(patchBRes!.status).toBe(404);
   expect(a.db.getWorkboardCard("personal", b.userId, cardIdB)).toEqual(cardBBefore);
 });
+
+test("DELETE /api/workboards/cards/:id archives the card and returns success", async () => {
+  const { db, userId, board } = seed();
+  const add = new Request(`http://x/api/workboards/${board.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "Acme" } }),
+  });
+  const added = await (await handleWorkboardApi(`/api/workboards/${board.id}/cards`, add, ctxFor(db, userId)))!.json();
+  const cardId = added.cards[0].id;
+
+  const cardsBefore = db.listWorkboardCards("personal", userId, board.id);
+  expect(cardsBefore.some((c: any) => c.id === cardId)).toBe(true);
+
+  const del = new Request(`http://x/api/workboards/cards/${cardId}`, { method: "DELETE" });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${cardId}`, del, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.ok).toBe(true);
+
+  const cardsAfter = db.listWorkboardCards("personal", userId, board.id);
+  expect(cardsAfter.some((c: any) => c.id === cardId)).toBe(false);
+});

@@ -112,7 +112,8 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     const found = findCardBoard(db, userId, cardMatch[1]);
     if (!found) return json({ errors: ["no such card"] }, 404);
     if (req.method === "DELETE") {
-      archiveCard(db, userId, found.board, cardMatch[1], userId);
+      const r = archiveCard(db, userId, found.board, cardMatch[1], userId);
+      if (!r.ok) return json({ errors: r.errors }, 400);
       return json({ ok: true });
     }
     const parsed = await body(req);
