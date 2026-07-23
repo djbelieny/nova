@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
-import { createBoard, addCards, moveCard, updateCard, toDef } from "../src/workboard-service.ts";
+import { createBoard, addCards, moveCard, updateCard, archiveCard, toDef } from "../src/workboard-service.ts";
 import { addListener, removeListener, type NovaEvent } from "../src/events.ts";
 
 let seq = 0;
@@ -214,6 +214,28 @@ test("updateCard persists the fields, logs an updated event, and emits workboard
     expect(updated[0].data.cardId).toBe(card.id);
     expect(updated[0].level).toBe("info");
     expect(updated[0].userId).toBe(userId);
+  } finally {
+    removeListener(listener);
+  }
+});
+
+test("archiveCard fails when the card does not exist and writes no event", () => {
+  const { db, userId, board } = seed();
+  const fakeCardId = "nonexistent-card-id";
+
+  const events: NovaEvent[] = [];
+  const listener = (e: NovaEvent) => events.push(e);
+  addListener(listener);
+  try {
+    const r = archiveCard(db, userId, board, fakeCardId, userId);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors.join(" ")).toContain("failed to archive card");
+
+    const dbEvents = db.listWorkboardEvents("personal", userId, board.id);
+    expect(dbEvents.some((e) => e.kind === "archived")).toBe(false);
+
+    const archived = events.filter((e) => e.type === "workboard.card.updated" && e.data.archived);
+    expect(archived.length).toBe(0);
   } finally {
     removeListener(listener);
   }

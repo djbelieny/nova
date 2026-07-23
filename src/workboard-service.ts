@@ -180,12 +180,14 @@ export function updateCard(
  * "archived" so the card history panel can tell the two apart. */
 export function archiveCard(
   db: DatabaseType, userId: string, board: Workboard, cardId: string, actor: string
-): WorkboardCard | null {
+): ServiceResult<WorkboardCard> {
   const updated = db.updateWorkboardCard(board.scope, userId, cardId, { archived: true });
+  if (!updated) return { ok: false, errors: [`failed to archive card ${cardId}`] };
+
   db.insertWorkboardEvent(board.scope, userId, { boardId: board.id, cardId, kind: "archived", actor });
   emit({
     type: "workboard.card.updated", level: "info", userId,
     data: { boardId: board.id, cardId, archived: true },
   });
-  return updated;
+  return { ok: true, value: updated };
 }
