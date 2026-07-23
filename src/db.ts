@@ -395,6 +395,63 @@ function applyPlaybookSchema(db: BunDatabase): void {
 }
 
 /**
+ * Workboards — boards of structured cards. Personal scope lives in the per-user db,
+ * team scope in shared.db; the facade routes by scope (same idiom as playbooks).
+ */
+function applyWorkboardSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workboards (
+      id                TEXT PRIMARY KEY,
+      scope             TEXT NOT NULL,
+      user_id           TEXT,
+      name              TEXT NOT NULL,
+      purpose           TEXT,
+      source            TEXT NOT NULL DEFAULT 'cards',
+      fields            TEXT NOT NULL DEFAULT '[]',
+      stages            TEXT NOT NULL DEFAULT '[]',
+      reactive          INTEGER NOT NULL DEFAULT 0,
+      connector_binding TEXT,
+      system            INTEGER NOT NULL DEFAULT 0,
+      created_at        TEXT DEFAULT (datetime('now')),
+      updated_at        TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workboard_cards (
+      id          TEXT PRIMARY KEY,
+      board_id    TEXT NOT NULL,
+      stage_key   TEXT NOT NULL,
+      position    REAL NOT NULL DEFAULT 1,
+      title       TEXT NOT NULL,
+      fields      TEXT NOT NULL DEFAULT '{}',
+      origin      TEXT NOT NULL DEFAULT 'user',
+      origin_ref  TEXT,
+      external_id TEXT,
+      archived    INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT DEFAULT (datetime('now')),
+      updated_at  TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workboard_events (
+      id         TEXT PRIMARY KEY,
+      board_id   TEXT NOT NULL,
+      card_id    TEXT,
+      kind       TEXT NOT NULL,
+      from_stage TEXT,
+      to_stage   TEXT,
+      actor      TEXT NOT NULL,
+      detail     TEXT,
+      at         TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_wb_cards_board ON workboard_cards(board_id, stage_key, archived)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_wb_cards_ext ON workboard_cards(board_id, external_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_wb_events_board ON workboard_events(board_id, at DESC)`);
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wb_name ON workboards(scope, user_id, name)`);
+}
+
+/**
  * Automation engine (event → condition → workflow). All automations live in shared.db,
  * scoped by user_id. The legacy webhook_triggers table stays; automations is the superset.
  */
@@ -756,6 +813,115 @@ function mapPlaybook(r: any): Playbook {
     id: r.id, scope: r.scope, userId: r.user_id, name: r.name, description: r.description ?? null,
     version: r.version, variables: parseJson(r.variables, []), steps: parseJson(r.steps, []),
     enabled: !!r.enabled, createdAt: r.created_at, updatedAt: r.updated_at,
+  };
+}
+
+export type WorkboardScope = 'personal' | 'team';
+export type CardSourceKind = 'cards' | 'agent_tasks' | 'tickets';
+export type CardOrigin = 'agent' | 'user' | 'automation' | 'connector';
+export type WorkboardEventKind = 'created' | 'moved' | 'updated' | 'archived' | 'fired' | 'sync';
+
+export interface Workboard {
+  id: string;
+  scope: WorkboardScope;
+  userId: string;
+  name: string;
+  purpose: string | null;
+  source: CardSourceKind;
+  fields: import('./workboards.ts').FieldDef[];
+  stages: import('./workboards.ts').StageDef[];
+  reactive: boolean;
+  connectorBinding: Record<string, any> | null;
+  system: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkboardInput {
+  scope: WorkboardScope;
+  userId: string;
+  name: string;
+  purpose?: string | null;
+  source?: CardSourceKind;
+  fields: import('./workboards.ts').FieldDef[];
+  stages: import('./workboards.ts').StageDef[];
+  reactive?: boolean;
+  connectorBinding?: Record<string, any> | null;
+  system?: boolean;
+}
+
+export interface WorkboardCard {
+  id: string;
+  boardId: string;
+  stageKey: string;
+  position: number;
+  title: string;
+  fields: Record<string, unknown>;
+  origin: CardOrigin;
+  originRef: string | null;
+  externalId: string | null;
+  archived: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CardInput {
+  boardId: string;
+  stageKey: string;
+  title: string;
+  fields: Record<string, unknown>;
+  origin: CardOrigin;
+  originRef?: string | null;
+  externalId?: string | null;
+  position?: number;
+}
+
+export interface WorkboardEvent {
+  id: string;
+  boardId: string;
+  cardId: string | null;
+  kind: WorkboardEventKind;
+  fromStage: string | null;
+  toStage: string | null;
+  actor: string;
+  detail: Record<string, any> | null;
+  at: string;
+}
+
+export interface WorkboardEventInput {
+  boardId: string;
+  cardId?: string | null;
+  kind: WorkboardEventKind;
+  fromStage?: string | null;
+  toStage?: string | null;
+  actor: string;
+  detail?: Record<string, any> | null;
+}
+
+function mapWorkboard(row: any): Workboard {
+  return {
+    id: row.id, scope: row.scope, userId: row.user_id, name: row.name,
+    purpose: row.purpose ?? null, source: row.source ?? 'cards',
+    fields: parseJson(row.fields, []), stages: parseJson(row.stages, []),
+    reactive: !!row.reactive, connectorBinding: parseJson(row.connector_binding, null),
+    system: !!row.system, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+function mapWorkboardCard(row: any): WorkboardCard {
+  return {
+    id: row.id, boardId: row.board_id, stageKey: row.stage_key, position: row.position,
+    title: row.title, fields: parseJson(row.fields, {}), origin: row.origin,
+    originRef: row.origin_ref ?? null, externalId: row.external_id ?? null,
+    archived: !!row.archived, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+function mapWorkboardEvent(row: any): WorkboardEvent {
+  return {
+    id: row.id, boardId: row.board_id, cardId: row.card_id ?? null, kind: row.kind,
+    fromStage: row.from_stage ?? null, toStage: row.to_stage ?? null,
+    actor: row.actor, detail: parseJson(row.detail, null), at: row.at,
   };
 }
 
@@ -1158,6 +1324,8 @@ class SharedDatabase {
     applyKbSchema(this.db);
     // Playbooks — team scope lives in shared.db
     applyPlaybookSchema(this.db);
+    // Workboards — team scope lives in shared.db
+    applyWorkboardSchema(this.db);
     // Automation engine — all automations live in shared.db
     applyAutomationSchema(this.db);
     // Policy / compliance layer — all in shared.db
@@ -1950,6 +2118,8 @@ class UserDatabase {
     applyKbSchema(this.db);
     // Playbooks — personal scope lives in the per-user db
     applyPlaybookSchema(this.db);
+    // Workboards — personal scope lives in the per-user db
+    applyWorkboardSchema(this.db);
     // Durable processes — per-user db
     applyProcessSchema(this.db);
     // Document extraction — per-user db
@@ -5475,6 +5645,151 @@ export class Database {
 
   deletePlaybook(scope: string, userId: string, id: string): void {
     this.pbHandle(scope, userId).run(`DELETE FROM playbooks WHERE id = ?`, [id]);
+  }
+
+  // ============================================================
+  // Workboards — personal → per-user db, team → shared.db
+  // ============================================================
+
+  private wbHandle(scope: string, userId: string): BunDatabase {
+    return scope === 'personal' ? this.getUserDb(userId).db : this.shared.db;
+  }
+
+  insertWorkboard(input: WorkboardInput): Workboard {
+    const h = this.wbHandle(input.scope, input.userId);
+    const id = crypto.randomUUID();
+    h.run(
+      `INSERT INTO workboards (id, scope, user_id, name, purpose, source, fields, stages, reactive, connector_binding, system)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, input.scope, input.userId, input.name, input.purpose ?? null, input.source ?? 'cards',
+       JSON.stringify(input.fields ?? []), JSON.stringify(input.stages ?? []),
+       input.reactive ? 1 : 0, input.connectorBinding ? JSON.stringify(input.connectorBinding) : null,
+       input.system ? 1 : 0]
+    );
+    return this.getWorkboardById(input.scope, input.userId, id)!;
+  }
+
+  getWorkboardById(scope: WorkboardScope, userId: string, id: string): Workboard | null {
+    const row = this.wbHandle(scope, userId).query(`SELECT * FROM workboards WHERE id = ?`).get(id) as any;
+    return row ? mapWorkboard(row) : null;
+  }
+
+  /** Personal board of that name first, then a team board. */
+  findWorkboard(userId: string, name: string): Workboard | null {
+    const personal = this.getUserDb(userId).db
+      .query(`SELECT * FROM workboards WHERE scope = 'personal' AND user_id = ? AND name = ?`)
+      .get(userId, name) as any;
+    if (personal) return mapWorkboard(personal);
+    const team = this.shared.db.query(`SELECT * FROM workboards WHERE scope = 'team' AND name = ?`).get(name) as any;
+    return team ? mapWorkboard(team) : null;
+  }
+
+  listWorkboardsVisible(userId: string): Workboard[] {
+    const personal = (this.getUserDb(userId).db
+      .query(`SELECT * FROM workboards WHERE scope = 'personal' AND user_id = ? ORDER BY updated_at DESC`)
+      .all(userId) as any[]).map(mapWorkboard);
+    const team = (this.shared.db
+      .query(`SELECT * FROM workboards WHERE scope = 'team' ORDER BY updated_at DESC`)
+      .all() as any[]).map(mapWorkboard);
+    return [...personal, ...team];
+  }
+
+  updateWorkboard(scope: WorkboardScope, userId: string, id: string, patch: Partial<WorkboardInput>): Workboard | null {
+    const sets: string[] = [];
+    const args: any[] = [];
+    if (patch.name !== undefined) { sets.push('name = ?'); args.push(patch.name); }
+    if (patch.purpose !== undefined) { sets.push('purpose = ?'); args.push(patch.purpose); }
+    if (patch.fields !== undefined) { sets.push('fields = ?'); args.push(JSON.stringify(patch.fields)); }
+    if (patch.stages !== undefined) { sets.push('stages = ?'); args.push(JSON.stringify(patch.stages)); }
+    if (patch.reactive !== undefined) { sets.push('reactive = ?'); args.push(patch.reactive ? 1 : 0); }
+    if (patch.connectorBinding !== undefined) {
+      sets.push('connector_binding = ?');
+      args.push(patch.connectorBinding ? JSON.stringify(patch.connectorBinding) : null);
+    }
+    if (!sets.length) return this.getWorkboardById(scope, userId, id);
+    sets.push(`updated_at = datetime('now')`);
+    this.wbHandle(scope, userId).run(`UPDATE workboards SET ${sets.join(', ')} WHERE id = ?`, [...args, id]);
+    return this.getWorkboardById(scope, userId, id);
+  }
+
+  insertWorkboardCard(scope: WorkboardScope, userId: string, input: CardInput): WorkboardCard {
+    return this.insertWorkboardCards(scope, userId, [input])[0];
+  }
+
+  /** Bulk insert in one transaction — the lead-generation path writes 50 cards in one call. */
+  insertWorkboardCards(scope: WorkboardScope, userId: string, inputs: CardInput[]): WorkboardCard[] {
+    const h = this.wbHandle(scope, userId);
+    const ids: string[] = [];
+    const insert = h.transaction((rows: CardInput[]) => {
+      for (const r of rows) {
+        const id = crypto.randomUUID();
+        ids.push(id);
+        const nextPos = (h.query(`SELECT MAX(position) AS p FROM workboard_cards WHERE board_id = ? AND stage_key = ?`)
+          .get(r.boardId, r.stageKey) as any)?.p ?? 0;
+        h.run(
+          `INSERT INTO workboard_cards (id, board_id, stage_key, position, title, fields, origin, origin_ref, external_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, r.boardId, r.stageKey, r.position ?? nextPos + 1, r.title, JSON.stringify(r.fields ?? {}),
+           r.origin, r.originRef ?? null, r.externalId ?? null]
+        );
+      }
+    });
+    insert(inputs);
+    return ids.map((id) => this.getWorkboardCard(scope, userId, id)!).filter(Boolean);
+  }
+
+  getWorkboardCard(scope: WorkboardScope, userId: string, id: string): WorkboardCard | null {
+    const row = this.wbHandle(scope, userId).query(`SELECT * FROM workboard_cards WHERE id = ?`).get(id) as any;
+    return row ? mapWorkboardCard(row) : null;
+  }
+
+  listWorkboardCards(
+    scope: WorkboardScope, userId: string, boardId: string,
+    opts: { stageKey?: string; limit?: number; offset?: number } = {}
+  ): WorkboardCard[] {
+    const where = ['board_id = ?', 'archived = 0'];
+    const args: any[] = [boardId];
+    if (opts.stageKey) { where.push('stage_key = ?'); args.push(opts.stageKey); }
+    const limit = opts.limit ?? 200;
+    const offset = opts.offset ?? 0;
+    const rows = this.wbHandle(scope, userId)
+      .query(`SELECT * FROM workboard_cards WHERE ${where.join(' AND ')} ORDER BY stage_key, position LIMIT ? OFFSET ?`)
+      .all(...args, limit, offset) as any[];
+    return rows.map(mapWorkboardCard);
+  }
+
+  updateWorkboardCard(
+    scope: WorkboardScope, userId: string, id: string,
+    patch: { stageKey?: string; position?: number; title?: string; fields?: Record<string, unknown>; archived?: boolean }
+  ): WorkboardCard | null {
+    const sets: string[] = [];
+    const args: any[] = [];
+    if (patch.stageKey !== undefined) { sets.push('stage_key = ?'); args.push(patch.stageKey); }
+    if (patch.position !== undefined) { sets.push('position = ?'); args.push(patch.position); }
+    if (patch.title !== undefined) { sets.push('title = ?'); args.push(patch.title); }
+    if (patch.fields !== undefined) { sets.push('fields = ?'); args.push(JSON.stringify(patch.fields)); }
+    if (patch.archived !== undefined) { sets.push('archived = ?'); args.push(patch.archived ? 1 : 0); }
+    if (!sets.length) return this.getWorkboardCard(scope, userId, id);
+    sets.push(`updated_at = datetime('now')`);
+    this.wbHandle(scope, userId).run(`UPDATE workboard_cards SET ${sets.join(', ')} WHERE id = ?`, [...args, id]);
+    return this.getWorkboardCard(scope, userId, id);
+  }
+
+  insertWorkboardEvent(scope: WorkboardScope, userId: string, input: WorkboardEventInput): void {
+    this.wbHandle(scope, userId).run(
+      `INSERT INTO workboard_events (id, board_id, card_id, kind, from_stage, to_stage, actor, detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [crypto.randomUUID(), input.boardId, input.cardId ?? null, input.kind,
+       input.fromStage ?? null, input.toStage ?? null, input.actor,
+       input.detail ? JSON.stringify(input.detail) : null]
+    );
+  }
+
+  listWorkboardEvents(scope: WorkboardScope, userId: string, boardId: string, limit = 50): WorkboardEvent[] {
+    const rows = this.wbHandle(scope, userId)
+      .query(`SELECT * FROM workboard_events WHERE board_id = ? ORDER BY at DESC, rowid DESC LIMIT ?`)
+      .all(boardId, limit) as any[];
+    return rows.map(mapWorkboardEvent);
   }
 
   // ============================================================
