@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { createBoard, addCards, moveCard, updateCard, archiveCard, toDef } from "../src/workboard-service.ts";
 import { addListener, removeListener, type NovaEvent } from "../src/events.ts";
+import { processMemoryIntents } from "../src/memory.ts";
 
 let seq = 0;
 function newUser() {
@@ -239,4 +240,87 @@ test("archiveCard fails when the card does not exist and writes no event", () =>
   } finally {
     removeListener(listener);
   }
+});
+
+// ── [WORKBOARD: …] intent tag → processMemoryIntents ──
+// Integration coverage for the chat-authored board tag lives here (next to createBoard) since
+// there's no dedicated intent-tag test file for src/memory.ts.
+
+test("[WORKBOARD: …] creates the board, strips the tag, and confirms name/fields/stages/path", async () => {
+  const { db, userId } = newUser();
+  const tag =
+    "[WORKBOARD: wbtag-purchasing | Track purchase orders | " +
+    "FIELDS: vendor:text*, po_number:text, amount:money, due_date:date, status:select(draft|sent|paid) | " +
+    "STAGES: draft > sent > paid]";
+  const response = `Setting that up now. ${tag} All done.`;
+
+  const clean = await processMemoryIntents(db, response, userId);
+
+  expect(clean).not.toContain("[WORKBOARD:");
+  expect(clean).toContain("Setting that up now.");
+  expect(clean).toContain("All done.");
+
+  const board = db.findWorkboard(userId, "wbtag-purchasing");
+  expect(board).not.toBeNull();
+  if (!board) throw new Error("board not created");
+  expect(board.fields.length).toBe(5);
+  expect(board.stages.map((s) => s.key)).toEqual(["draft", "sent", "paid"]);
+  expect(board.purpose).toBe("Track purchase orders");
+
+  expect(clean).toContain("wbtag-purchasing");
+  expect(clean).toContain("5 fields");
+  expect(clean).toContain("Draft → Sent → Paid");
+  expect(clean).toContain(`/workboards/${board.id}`);
+});
+
+test("[WORKBOARD: …] with a select field whose options contain pipes still creates a clean board", async () => {
+  const { db, userId } = newUser();
+  const tag = "[WORKBOARD: wbtag-orders | Order tracker | FIELDS: name:text*, status:select(a|b|c|d) | STAGES: new > done]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  const board = db.findWorkboard(userId, "wbtag-orders");
+  expect(board).not.toBeNull();
+  if (!board) throw new Error("board not created");
+  expect(board.fields[1].options).toEqual(["a", "b", "c", "d"]);
+  expect(clean).not.toContain("[WORKBOARD:");
+});
+
+test("[WORKBOARD: …] with an unknown field type still creates the board from the good fields, and reports the bad one", async () => {
+  const { db, userId } = newUser();
+  const tag = "[WORKBOARD: wbtag-unknowntype | desc | FIELDS: name:text*, weird:frobnicate | STAGES: a > b]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  const board = db.findWorkboard(userId, "wbtag-unknowntype");
+  expect(board).not.toBeNull();
+  if (!board) throw new Error("board not created");
+  expect(board.fields.map((f) => f.key)).toEqual(["name"]);
+  expect(clean).toContain("frobnicate");
+});
+
+test("[WORKBOARD: …] with a malformed field spec still creates the board from the surviving fields", async () => {
+  const { db, userId } = newUser();
+  const tag = "[WORKBOARD: wbtag-malformed | desc | FIELDS: name:text*, ///not-a-field///, amount:money | STAGES: a > b]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  const board = db.findWorkboard(userId, "wbtag-malformed");
+  expect(board).not.toBeNull();
+  if (!board) throw new Error("board not created");
+  expect(board.fields.map((f) => f.key)).toEqual(["name", "amount"]);
+  expect(clean).toContain("malformed field spec");
+});
+
+test("[WORKBOARD: …] for a name that already exists surfaces the createBoard rejection to the user", async () => {
+  const { db, userId } = newUser();
+  const tag = "[WORKBOARD: wbtag-dup | desc | FIELDS: name:text* | STAGES: a > b]";
+
+  const first = await processMemoryIntents(db, tag, userId);
+  expect(first).toContain("wbtag-dup");
+  expect(first).not.toContain("Couldn't create");
+
+  const second = await processMemoryIntents(db, tag, userId);
+  expect(second).toContain("Couldn't create");
+  expect(second).toContain("already exists");
 });

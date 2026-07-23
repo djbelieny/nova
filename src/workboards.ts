@@ -178,3 +178,140 @@ export function positionBetween(before: number | null, after: number | null): nu
   if (after === null) return before + 1;
   return (before + after) / 2;
 }
+
+// ── Chat-authored board tag ──
+//
+// [WORKBOARD: <name> | <purpose> | FIELDS: <field-list> | STAGES: <stage-list>]
+//
+// e.g. [WORKBOARD: purchasing | Track purchase orders | FIELDS: vendor:text*, po_number:text,
+//   amount:money, due_date:date, status:select(draft|sent|paid) | STAGES: draft > sent > paid]
+//
+// `|` separates the four top-level segments AND separates a select's options inside
+// `select(a|b|c)`, so the split has to track paren depth instead of running straight through.
+
+const FIELD_TYPES: FieldType[] = [
+  "text", "longtext", "number", "money", "date",
+  "email", "url", "select", "checkbox", "agent", "link",
+];
+
+/** Split on `delimiter` at paren-depth 0 only — a delimiter inside `(...)` stays put. */
+function splitOutsideParens(input: string, delimiter: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of input) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    if (ch === delimiter && depth === 0) {
+      parts.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current);
+  return parts;
+}
+
+/** "in_progress" → "In Progress"; "po_number" → "Po Number". */
+function titleCase(key: string): string {
+  return key
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+type FieldSpecResult = { field: FieldDef; error?: never } | { field?: never; error: string };
+
+/** Parse one `key:type[(opt|opt)][*]` field spec. */
+function parseFieldSpec(spec: string): FieldSpecResult {
+  const m = spec.match(/^([a-zA-Z_][\w-]*)\s*:\s*([a-zA-Z]+)\s*(\(([^)]*)\))?\s*(\*)?$/);
+  if (!m) return { error: `malformed field spec "${spec}" — expected key:type[(opt|opt)][*]` };
+  const [, key, rawType, , rawOptions, star] = m;
+  const type = rawType as FieldType;
+  if (!FIELD_TYPES.includes(type)) {
+    return { error: `unknown field type "${rawType}" — expected one of: ${FIELD_TYPES.join(", ")}` };
+  }
+  if (rawOptions !== undefined && type !== "select") {
+    return { error: `field "${key}" declares options but is type "${type}", not select` };
+  }
+  const options = type === "select" && rawOptions !== undefined
+    ? rawOptions.split("|").map((o) => o.trim()).filter(Boolean)
+    : undefined;
+  return {
+    field: {
+      key, label: titleCase(key), type,
+      ...(star ? { required: true } : {}),
+      ...(options ? { options } : {}),
+    },
+  };
+}
+
+type StageSpecResult = { stage: StageDef; error?: never } | { stage?: never; error: string };
+
+/** Parse one `key` or `key=Label` stage spec. `order` is the position in the tag's stage list. */
+function parseStageSpec(spec: string, order: number): StageSpecResult {
+  const eq = spec.indexOf("=");
+  const key = (eq >= 0 ? spec.slice(0, eq) : spec).trim();
+  const label = eq >= 0 ? spec.slice(eq + 1).trim() : "";
+  if (!key) return { error: `empty stage key in "${spec}"` };
+  if (!/^[\w-]+$/.test(key)) return { error: `invalid stage key "${key}" — use letters, digits, _ or -` };
+  return { stage: { key, label: label || titleCase(key), order } };
+}
+
+export interface WorkboardTagParse {
+  name: string;
+  purpose: string;
+  fields: FieldDef[];
+  stages: StageDef[];
+  errors: string[];
+}
+
+/**
+ * Parse a `[WORKBOARD: ...]` tag body (the text between `WORKBOARD:` and the closing `]`).
+ *
+ * A malformed field or stage is reported in `errors` and dropped — it never blocks the rest of
+ * the tag from parsing. This module doesn't decide whether the board actually gets created from
+ * a partial result; that call belongs to whoever holds the DB (see workboard-service.ts's
+ * validateDefinition, which already rejects an empty field/stage list, duplicate keys, and a
+ * select with no options). Keeping this function permissive is the point of choosing a bracket
+ * tag over JSON: one bad clause reports itself instead of killing the whole board.
+ */
+export function parseWorkboardTag(raw: string): WorkboardTagParse {
+  const errors: string[] = [];
+  const top = splitOutsideParens(raw, "|").map((p) => p.trim());
+  const name = top[0] ?? "";
+  const purpose = top[1] ?? "";
+  const fieldsPart = top.find((p) => /^FIELDS:/i.test(p));
+  const stagesPart = top.find((p) => /^STAGES:/i.test(p));
+
+  if (!name) errors.push("board name is required");
+  if (!fieldsPart) errors.push("missing FIELDS: section");
+  if (!stagesPart) errors.push("missing STAGES: section");
+
+  const fields: FieldDef[] = [];
+  if (fieldsPart) {
+    const body = fieldsPart.replace(/^FIELDS:\s*/i, "");
+    for (const item of splitOutsideParens(body, ",").map((s) => s.trim()).filter(Boolean)) {
+      const parsed = parseFieldSpec(item);
+      if (parsed.error) errors.push(parsed.error);
+      else fields.push(parsed.field);
+    }
+    // The first successfully-parsed field becomes the card title. The tag grammar has no way to
+    // mark a different one as primary, so "first" is the whole rule — documented, not guessed.
+    if (fields.length) fields[0].primary = true;
+  }
+
+  const stages: StageDef[] = [];
+  if (stagesPart) {
+    const body = stagesPart.replace(/^STAGES:\s*/i, "");
+    body.split(">").map((s) => s.trim()).filter(Boolean).forEach((item, i) => {
+      const parsed = parseStageSpec(item, i);
+      if (parsed.error) errors.push(parsed.error);
+      else stages.push(parsed.stage);
+    });
+  }
+
+  return { name, purpose, fields, stages, errors };
+}

@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { validateCardFields, planMove, positionBetween, resolveStage, diffSchema, type FieldDef, type StageDef, type WorkboardDef } from "../src/workboards.ts";
+import { validateCardFields, planMove, positionBetween, resolveStage, diffSchema, parseWorkboardTag, type FieldDef, type StageDef, type WorkboardDef } from "../src/workboards.ts";
 
 const FIELDS: FieldDef[] = [
   { key: "vendor", label: "Vendor", type: "text", required: true, primary: true },
@@ -163,4 +163,76 @@ test("diffSchema flags a select that gains options where it had none as destruct
   const d = diffSchema(before, [{ key: "tier", label: "Tier", type: "select", options: ["gold"] }]);
   expect(d.narrowed).toEqual(["tier"]);
   expect(d.destructive).toBe(true);
+});
+
+// ── parseWorkboardTag ──
+
+const PURCHASING_TAG =
+  "purchasing | Track purchase orders | FIELDS: vendor:text*, po_number:text, amount:money, " +
+  "due_date:date, status:select(draft|sent|paid) | STAGES: draft > sent > paid";
+
+test("the full example round-trips: name, purpose, five fields, three ordered stages", () => {
+  const r = parseWorkboardTag(PURCHASING_TAG);
+  expect(r.errors).toEqual([]);
+  expect(r.name).toBe("purchasing");
+  expect(r.purpose).toBe("Track purchase orders");
+
+  expect(r.fields.map((f) => f.key)).toEqual(["vendor", "po_number", "amount", "due_date", "status"]);
+  expect(r.fields.map((f) => f.type)).toEqual(["text", "text", "money", "date", "select"]);
+  expect(r.fields[0].required).toBe(true);
+  expect(r.fields[0].primary).toBe(true);
+  expect(r.fields.slice(1).every((f) => !f.required)).toBe(true);
+  expect(r.fields[4].options).toEqual(["draft", "sent", "paid"]);
+
+  expect(r.stages.map((s) => s.key)).toEqual(["draft", "sent", "paid"]);
+  expect(r.stages.map((s) => s.order)).toEqual([0, 1, 2]);
+});
+
+test("a select's pipe-separated options do not break the top-level | split", () => {
+  const r = parseWorkboardTag(
+    "orders | | FIELDS: name:text*, status:select(a|b|c|d) | STAGES: new > done"
+  );
+  expect(r.errors).toEqual([]);
+  expect(r.name).toBe("orders");
+  expect(r.fields.map((f) => f.key)).toEqual(["name", "status"]);
+  expect(r.fields[1].options).toEqual(["a", "b", "c", "d"]);
+  expect(r.stages.map((s) => s.key)).toEqual(["new", "done"]);
+});
+
+test("two select fields each with piped options both survive the split", () => {
+  const r = parseWorkboardTag(
+    "orders | desc | FIELDS: status:select(a|b), priority:select(low|high) | STAGES: new > done"
+  );
+  expect(r.errors).toEqual([]);
+  expect(r.fields[0].options).toEqual(["a", "b"]);
+  expect(r.fields[1].options).toEqual(["low", "high"]);
+});
+
+test("an unknown field type is reported as an error, not silently accepted", () => {
+  const r = parseWorkboardTag("board | desc | FIELDS: name:text*, weird:frobnicate | STAGES: a > b");
+  expect(r.fields.map((f) => f.key)).toEqual(["name"]);
+  expect(r.errors.some((e) => e.includes("frobnicate"))).toBe(true);
+});
+
+test("a malformed field is dropped and reported, the good fields still parse", () => {
+  const r = parseWorkboardTag("board | desc | FIELDS: name:text*, ///not-a-field///, amount:money | STAGES: a > b");
+  expect(r.fields.map((f) => f.key)).toEqual(["name", "amount"]);
+  expect(r.errors.length).toBe(1);
+  expect(r.errors[0]).toContain("malformed field spec");
+});
+
+test("stage key=Label syntax overrides the title-cased default", () => {
+  const r = parseWorkboardTag("board | desc | FIELDS: name:text* | STAGES: new > in_progress=Working On It > done");
+  expect(r.stages.map((s) => s.label)).toEqual(["New", "Working On It", "Done"]);
+});
+
+test("a bare stage key defaults to its title-cased form", () => {
+  const r = parseWorkboardTag("board | desc | FIELDS: name:text* | STAGES: in_progress > done");
+  expect(r.stages[0].label).toBe("In Progress");
+});
+
+test("a select field with no options is passed through — validateDefinition rejects it downstream", () => {
+  const r = parseWorkboardTag("board | desc | FIELDS: name:text*, status:select | STAGES: a > b");
+  expect(r.errors).toEqual([]);
+  expect(r.fields[1].options).toBeUndefined();
 });

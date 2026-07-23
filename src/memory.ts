@@ -14,6 +14,8 @@
 import type { Database } from "./db.ts";
 import { memwright } from "./memwright-client.ts";
 import type { RecallResult } from "./memwright-client.ts";
+import { parseWorkboardTag } from "./workboards.ts";
+import { createBoard } from "./workboard-service.ts";
 
 /** Escape SQL LIKE/ILIKE wildcards to prevent wildcard injection. */
 function escapeIlike(text: string): string {
@@ -496,6 +498,27 @@ export async function processMemoryIntents(
       console.error("[memory] Inter-user message failed:", err);
     }
     clean = clean.replace(msgMatch[0], "");
+  }
+
+  // [WORKBOARD: name | purpose | FIELDS: field-list | STAGES: stage-list] — create a board
+  for (const match of response.matchAll(/\[WORKBOARD:\s*([^\]]+)\]/gi)) {
+    const parsed = parseWorkboardTag(match[1]);
+    const result = createBoard(db, userId, {
+      name: parsed.name,
+      purpose: parsed.purpose || null,
+      fields: parsed.fields,
+      stages: parsed.stages,
+    });
+    clean = clean.replace(match[0], "");
+    if (result.ok) {
+      const board = result.value;
+      const stageLine = board.stages.map((s) => s.label).join(" → ");
+      clean += `\n\nCreated the "${board.name}" workboard — ${board.fields.length} field${board.fields.length === 1 ? "" : "s"}, stages: ${stageLine}. View it at /workboards/${board.id}.`;
+      if (parsed.errors.length) clean += ` (skipped: ${parsed.errors.join("; ")})`;
+    } else {
+      const reasons = [...new Set([...parsed.errors, ...result.errors])];
+      clean += `\n\nCouldn't create the "${parsed.name || match[1].trim()}" workboard: ${reasons.join("; ")}`;
+    }
   }
 
   return clean.trim();

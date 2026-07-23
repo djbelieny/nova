@@ -3129,6 +3129,14 @@ function buildPrompt(
   );
 
   sysParts.push(
+    "\nWORKBOARDS: [WORKBOARD: name | purpose | FIELDS: field-list | STAGES: stage-list] — create a board of cards in chat." +
+      "\nField: key:type, add * if required, e.g. vendor:text*. A select carries its options in parens, pipe-separated: status:select(draft|sent|paid)." +
+      "\nStages: keys separated by >, e.g. draft > sent > paid. Override the auto title-cased label with key=Label." +
+      "\nExample: [WORKBOARD: purchasing | Track purchase orders | FIELDS: vendor:text*, amount:money, status:select(draft|sent|paid) | STAGES: draft > sent > paid]" +
+      "\nField types: text, longtext, number, money, date, email, url, select, checkbox, agent, link. The first field becomes the card title."
+  );
+
+  sysParts.push(
     "\nSCHEDULING:" +
       "\n[SCHEDULE: title | datetime | instructions] [SCHEDULE: ... | RECUR: rule] [SCHEDULE: ... | RECUR: rule | IF: condition]" +
       "\n[SCHEDULE_CANCEL: title] — delete. [SCHEDULE_PAUSE: title] — pause (keeps it). [SCHEDULE_RESUME: title] — reactivate a paused task." +
