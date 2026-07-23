@@ -8,7 +8,7 @@ import { addCards, archiveCard, createBoard, moveCard, updateCard, validateDefin
 import { fireOnEnter, needsBulkConfirm } from "./workboard-reactive.ts";
 import { buildPush, type ConnectorBinding } from "./workboard-sync.ts";
 import { getCardSource } from "./workboard-sources.ts";
-import { diffSchema } from "./workboards.ts";
+import { conformCardFields, diffSchema } from "./workboards.ts";
 import type { DispatchAgentFn } from "./automation-engine.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
@@ -302,16 +302,24 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
       // transaction so a crash mid-edit leaves the board untouched rather than half-migrated.
       const updated = db.withWorkboardTransaction(board.scope, userId, () => {
         if (diff.destructive) {
+          // Snapshot AND rewrite in the same walk: a card that keeps a removed key, or a value the
+          // new type can't take, fails validateCardFields forever after — every later edit, every
+          // connector update. conformCardFields drops what the new schema no longer declares; the
+          // event written below is what those values are recovered from.
           const preserved: { id: string; fields: Record<string, unknown> }[] = [];
           for (const page of allCardsForSchemaEdit(db, board, userId)) {
-            for (const card of page) preserved.push({ id: card.id, fields: card.fields });
+            for (const card of page) {
+              preserved.push({ id: card.id, fields: card.fields });
+              db.updateWorkboardCard(board.scope, userId, card.id, {
+                fields: conformCardFields(patch.fields, card.fields),
+              });
+            }
           }
           db.insertWorkboardEvent(board.scope, userId, {
             boardId: board.id, kind: "updated", actor: userId,
             detail: { diff, preserved },
           });
-        }
-        if (diff.added.length) {
+        } else if (diff.added.length) {
           for (const page of allCardsForSchemaEdit(db, board, userId)) {
             for (const card of page) {
               const backfilled = { ...card.fields };

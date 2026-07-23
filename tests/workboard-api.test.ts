@@ -362,6 +362,52 @@ test("PATCH board with a destructive field change and confirm proceeds, and the 
   expect(preserved?.fields.company).toBe("Acme");
 });
 
+test("after a confirmed destructive field removal the cards are rewritten, so a card is still editable", async () => {
+  const { db, userId, board, card } = seedForSchemaEdit();
+  const destructiveFields = board.fields.filter((f) => f.key !== "amount");
+  const editReq = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: destructiveFields, confirm: true }),
+  });
+  expect((await handleWorkboardApi(`/api/workboards/${board.id}`, editReq, ctxFor(db, userId)))!.status).toBe(200);
+
+  const rewritten = db.getWorkboardCard(board.scope, userId, card.id);
+  expect(Object.keys(rewritten!.fields)).toEqual(["company"]);
+
+  const patch = new Request(`http://x/api/workboards/cards/${card.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: { company: "Acme Two" } }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}`, patch, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  expect(db.getWorkboardCard(board.scope, userId, card.id)?.fields.company).toBe("Acme Two");
+});
+
+test("a retyped field whose stored value cannot coerce is nulled, not left poisoning every later edit", async () => {
+  const { db, userId, board } = seedForSchemaEdit();
+  const [card] = db.insertWorkboardCards(board.scope, userId, [{
+    boardId: board.id, stageKey: "new", title: "Globex",
+    fields: { company: "Globex", amount: "N/A" }, origin: "user" as const,
+  }]);
+  const retyped = board.fields.map((f) => (f.key === "amount" ? { ...f, type: "money" as const } : f));
+  const asText = board.fields.map((f) => (f.key === "amount" ? { ...f, type: "text" as const } : f));
+  // amount starts as money; retype to text and back so the stored "N/A" meets a type it can't take.
+  const toText = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: asText, confirm: true }),
+  });
+  expect((await handleWorkboardApi(`/api/workboards/${board.id}`, toText, ctxFor(db, userId)))!.status).toBe(200);
+  const toMoney = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: retyped, confirm: true }),
+  });
+  expect((await handleWorkboardApi(`/api/workboards/${board.id}`, toMoney, ctxFor(db, userId)))!.status).toBe(200);
+
+  expect(db.getWorkboardCard(board.scope, userId, card.id)?.fields.amount).toBe(null);
+  const patch = new Request(`http://x/api/workboards/cards/${card.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: { amount: 50 } }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}`, patch, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  expect(db.getWorkboardCard(board.scope, userId, card.id)?.fields.amount).toBe(50);
+});
+
 test("PATCH board with an invalid definition (duplicate stage keys) is refused with 400 and leaves the board unchanged", async () => {
   const { db, userId, board } = seedForSchemaEdit();
   const req = new Request(`http://x/api/workboards/${board.id}`, {

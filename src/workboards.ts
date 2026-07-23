@@ -91,6 +91,21 @@ export function validateCardFields(fields: FieldDef[], input: Record<string, unk
   return errors.length ? { ok: false, errors } : { ok: true, values };
 }
 
+/**
+ * Force a stored card's values onto a (possibly changed) schema: keys the schema no longer
+ * declares are dropped, surviving values are re-coerced to their declared type, and a value the
+ * new type cannot take becomes null. Used after a destructive schema edit so every card still
+ * validates — the pre-edit values are already snapshotted into the board's event history.
+ */
+export function conformCardFields(fields: FieldDef[], stored: Record<string, unknown>): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const def of fields) {
+    const { value, error } = coerce(def, stored[def.key]);
+    values[def.key] = error ? null : value;
+  }
+  return values;
+}
+
 export interface MoveInput {
   board: WorkboardDef;
   card: { id: string; stageKey: string; archived: boolean };
