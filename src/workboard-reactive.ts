@@ -134,35 +134,63 @@ export function needsBulkConfirm(count: number, limit = BULK_CONFIRM_LIMIT): boo
  * pending rows oldest-first, reconstructs the board and card, and re-runs the SAME fireOnEnter
  * used by the inline path — so exactly-once claiming, retries, and dead-lettering are not
  * duplicated here. A row whose board or card is gone (archived/deleted between the drag and the
- * drain) is marked failed and skipped rather than thrown; every other row is still attempted.
+ * drain) is marked failed rather than thrown; every other row is still attempted.
+ *
+ * A row's captured `stageKey` is checked against the card's CURRENT stage before firing: if the
+ * card has since moved on, fireOnEnter would derive its idempotency claim and event's `toStage`
+ * from the card's current stage, not the row's, and fire a stale action against the wrong stage.
+ * That row is skipped, not fired.
+ *
+ * Each row's processing is isolated in its own try/catch: an unexpected throw (a transient write
+ * error inside fireOnEnter's claim, event, or dead-letter writes) marks only that row failed and
+ * lets the loop continue, so one bad row can't starve every pending row behind it.
  */
 export async function drainWorkboardQueue(
   db: DatabaseType,
   dispatchAgent: DispatchAgentFn,
   limit = 25
-): Promise<{ processed: number; fired: number; failed: number }> {
+): Promise<{ processed: number; fired: number; skipped: number; failed: number }> {
   const rows = db.listPendingWorkboardActions(limit);
   let fired = 0;
+  let skipped = 0;
   let failed = 0;
 
   for (const row of rows) {
-    const board = db.getWorkboardById(row.boardScope, row.userId, row.boardId);
-    if (!board) {
-      db.markWorkboardActionFailed(row.id, "board not found");
-      failed++;
-      continue;
-    }
-    const card = db.getWorkboardCard(row.boardScope, row.userId, row.cardId);
-    if (!card || card.archived) {
-      db.markWorkboardActionFailed(row.id, card ? "card archived" : "card not found");
-      failed++;
-      continue;
-    }
+    try {
+      const board = db.getWorkboardById(row.boardScope, row.userId, row.boardId);
+      if (!board) {
+        db.markWorkboardActionFailed(row.id, "board not found");
+        failed++;
+        continue;
+      }
+      const card = db.getWorkboardCard(row.boardScope, row.userId, row.cardId);
+      if (!card || card.archived) {
+        db.markWorkboardActionFailed(row.id, card ? "card archived" : "card not found");
+        failed++;
+        continue;
+      }
+      if (card.stageKey !== row.stageKey) {
+        db.markWorkboardActionSkipped(
+          row.id,
+          `stale stage: captured "${row.stageKey}", card now in "${card.stageKey}"`
+        );
+        skipped++;
+        continue;
+      }
 
-    const outcome = await fireOnEnter(db, row.userId, board, card, row.action, dispatchAgent);
-    db.markWorkboardActionDone(row.id, outcome.fired ? null : outcome.reason ?? null);
-    if (outcome.fired) fired++;
+      const outcome = await fireOnEnter(db, row.userId, board, card, row.action, dispatchAgent);
+      if (outcome.fired) {
+        db.markWorkboardActionDone(row.id);
+        fired++;
+      } else {
+        db.markWorkboardActionSkipped(row.id, outcome.reason ?? "not dispatched");
+        skipped++;
+      }
+    } catch (err) {
+      db.markWorkboardActionFailed(row.id, err instanceof Error ? err.message : String(err));
+      failed++;
+    }
   }
 
-  return { processed: rows.length, fired, failed };
+  return { processed: rows.length, fired, skipped, failed };
 }

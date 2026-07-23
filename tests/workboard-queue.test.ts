@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
-import { addCards, archiveCard, createBoard } from "../src/workboard-service.ts";
+import { addCards, archiveCard, createBoard, moveCard } from "../src/workboard-service.ts";
 import { buildOnEnterDispatch, drainWorkboardQueue } from "../src/workboard-reactive.ts";
 import { handleWorkboardApi } from "../src/dashboard-workboards.ts";
 
@@ -61,6 +61,9 @@ test("drainWorkboardQueue picks up a pending row, dispatches the same agent/task
   const expected = buildOnEnterDispatch(action, card, () => null);
   if ("skip" in expected) throw new Error("expected a dispatch, got a skip");
 
+  const moved = moveCard(db, userId, board, card.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!moved.ok) throw new Error(moved.errors.join(", "));
+
   const enqueued = db.enqueueWorkboardAction({
     userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
   });
@@ -91,6 +94,8 @@ test("a row whose card has been archived is marked failed with a reason, and the
   if (!archived.ok) throw new Error(archived.errors.join(", "));
 
   const action = board.stages.find((s) => s.key === "nurture")!.onEnter!;
+  const okMoved = moveCard(db, userId, board, okCard.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!okMoved.ok) throw new Error(okMoved.errors.join(", "));
   const staleRow = db.enqueueWorkboardAction({
     userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
   });
@@ -134,6 +139,8 @@ test("draining twice does not dispatch twice for the same card/stage/action", as
   const { db, userId, board, card } = seed();
   await flushQueue(db);
   const action = board.stages.find((s) => s.key === "nurture")!.onEnter!;
+  const moved = moveCard(db, userId, board, card.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!moved.ok) throw new Error(moved.errors.join(", "));
   db.enqueueWorkboardAction({
     userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
   });
@@ -232,4 +239,153 @@ test("a confirmed bulk move into an armed stage with no dispatcher enqueues one 
   const cardIdSet = new Set(many.value.map((c) => c.id));
   const pending = db.listPendingWorkboardActions(200).filter((r) => cardIdSet.has(r.cardId));
   expect(pending.length).toBe(3);
+});
+
+test("a queued row whose card has since moved to a different stage does not dispatch, and records both stages", async () => {
+  const { db, userId, board, card } = seed();
+  await flushQueue(db);
+  const action = board.stages.find((s) => s.key === "nurture")!.onEnter!;
+
+  const entered = moveCard(db, userId, board, card.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!entered.ok) throw new Error(entered.errors.join(", "));
+  const row = db.enqueueWorkboardAction({
+    userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
+  });
+
+  const left = moveCard(db, userId, board, card.id, "new", "test-setup", { actorIsOnEnter: true });
+  if (!left.ok) throw new Error(left.errors.join(", "));
+
+  let dispatched = 0;
+  const dispatch = async () => { dispatched++; return "task-1"; };
+  const result = await drainWorkboardQueue(db, dispatch);
+
+  expect(result.processed).toBe(1);
+  expect(result.fired).toBe(0);
+  expect(result.skipped).toBe(1);
+  expect(dispatched).toBe(0);
+
+  const after = db.getWorkboardQueueRow(row.id)!;
+  expect(after.status).toBe("skipped");
+  expect(after.error).toContain("nurture");
+  expect(after.error).toContain("new");
+});
+
+test("a queued row whose card is still in the captured stage dispatches (Fix 1 does not break the normal path)", async () => {
+  const { db, userId, board, card } = seed();
+  await flushQueue(db);
+  const action = board.stages.find((s) => s.key === "nurture")!.onEnter!;
+
+  const entered = moveCard(db, userId, board, card.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!entered.ok) throw new Error(entered.errors.join(", "));
+  const row = db.enqueueWorkboardAction({
+    userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
+  });
+
+  let dispatched = 0;
+  const dispatch = async () => { dispatched++; return "task-1"; };
+  const result = await drainWorkboardQueue(db, dispatch);
+
+  expect(result.processed).toBe(1);
+  expect(result.fired).toBe(1);
+  expect(dispatched).toBe(1);
+
+  const after = db.getWorkboardQueueRow(row.id)!;
+  expect(after.status).toBe("done");
+});
+
+test("the three outcomes (dispatched, attempted-not-dispatched, could-not-attempt) land in three distinguishable statuses", async () => {
+  const { db, userId, board, card } = seed();
+  await flushQueue(db);
+  const action = board.stages.find((s) => s.key === "nurture")!.onEnter!;
+
+  const entered = moveCard(db, userId, board, card.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!entered.ok) throw new Error(entered.errors.join(", "));
+  const doneRow = db.enqueueWorkboardAction({
+    userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
+  });
+  // Drained immediately, while the card is still in the captured stage, so this row dispatches
+  // before the card is moved away for the skipped-row case below.
+  const dispatch = async () => "task-1";
+  await drainWorkboardQueue(db, dispatch);
+
+  const left = moveCard(db, userId, board, card.id, "new", "test-setup", { actorIsOnEnter: true });
+  if (!left.ok) throw new Error(left.errors.join(", "));
+  const skippedRow = db.enqueueWorkboardAction({
+    userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
+  });
+
+  const failedRow = db.enqueueWorkboardAction({
+    userId, boardScope: "personal", boardId: "no-such-board", cardId: "no-such-card",
+    stageKey: "nurture", action,
+  });
+
+  await drainWorkboardQueue(db, dispatch);
+
+  expect(db.getWorkboardQueueRow(doneRow.id)!.status).toBe("done");
+  expect(db.getWorkboardQueueRow(skippedRow.id)!.status).toBe("skipped");
+  expect(db.getWorkboardQueueRow(failedRow.id)!.status).toBe("failed");
+
+  const statuses = new Set([
+    db.getWorkboardQueueRow(doneRow.id)!.status,
+    db.getWorkboardQueueRow(skippedRow.id)!.status,
+    db.getWorkboardQueueRow(failedRow.id)!.status,
+  ]);
+  expect(statuses.size).toBe(3);
+});
+
+/**
+ * fireOnEnter's own dispatch loop already swallows a throwing dispatcher into its retry/
+ * dead-letter path (three attempts, then a dead-letter write) — that throw never escapes to
+ * drainWorkboardQueue, so injecting it through the dispatcher cannot reach Fix 3's row-isolation
+ * catch. To exercise that catch for real, this test forces the throw one level deeper, in
+ * claimIdempotencyKey, which fireOnEnter does NOT wrap in its own try/catch. Coverage note: the
+ * dispatcher-only injection path described in the task is not sufficient here — this is the one
+ * uncovered-by-dispatcher case, addressed instead by overriding the db method for the duration
+ * of this test.
+ */
+test("a row whose processing throws is marked failed and does not block a later pending row in the same drain", async () => {
+  const { db, userId, board, card } = seed();
+  await flushQueue(db);
+  const action = board.stages.find((s) => s.key === "nurture")!.onEnter!;
+
+  const enteredA = moveCard(db, userId, board, card.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!enteredA.ok) throw new Error(enteredA.errors.join(", "));
+  const rowA = db.enqueueWorkboardAction({
+    userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
+  });
+
+  const otherBatch = addCards(db, userId, board, "new", [{ fields: { company: "Gamma", email: "g@gamma.com" } }], "agent");
+  if (!otherBatch.ok) throw new Error("setup failed");
+  const otherCard = otherBatch.value[0];
+  const enteredB = moveCard(db, userId, board, otherCard.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!enteredB.ok) throw new Error(enteredB.errors.join(", "));
+  const rowB = db.enqueueWorkboardAction({
+    userId, boardScope: board.scope, boardId: board.id, cardId: otherCard.id, stageKey: "nurture", action,
+  });
+
+  const originalClaim = db.claimIdempotencyKey.bind(db);
+  db.claimIdempotencyKey = ((key: string, scope?: string, ttlSeconds?: number) => {
+    if (key.includes(card.id)) throw new Error("simulated transient write error");
+    return originalClaim(key, scope, ttlSeconds);
+  }) as typeof db.claimIdempotencyKey;
+
+  const calls: string[] = [];
+  const dispatch = async (uid: string, agent: string, task: string) => { calls.push(task); return "task-1"; };
+
+  try {
+    const result = await drainWorkboardQueue(db, dispatch);
+    expect(result.processed).toBe(2);
+    expect(result.failed).toBe(1);
+    expect(result.fired).toBe(1);
+    expect(calls.length).toBe(1);
+  } finally {
+    db.claimIdempotencyKey = originalClaim;
+  }
+
+  const rowAAfter = db.getWorkboardQueueRow(rowA.id)!;
+  expect(rowAAfter.status).toBe("failed");
+  expect(rowAAfter.error).toContain("simulated transient write error");
+
+  const rowBAfter = db.getWorkboardQueueRow(rowB.id)!;
+  expect(rowBAfter.status).toBe("done");
 });

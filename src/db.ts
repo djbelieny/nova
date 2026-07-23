@@ -956,7 +956,7 @@ function mapWorkboardEvent(row: any): WorkboardEvent {
   };
 }
 
-export type WorkboardQueueStatus = 'pending' | 'done' | 'failed';
+export type WorkboardQueueStatus = 'pending' | 'done' | 'skipped' | 'failed';
 
 /** Everything the drainer needs to reconstruct a fireOnEnter call in a different process. */
 export interface WorkboardQueueInput {
@@ -5886,11 +5886,18 @@ export class Database {
     return rows.map(mapWorkboardQueue);
   }
 
-  /** `note` records the fireOnEnter outcome (e.g. "deduped") even though the row succeeded. */
-  markWorkboardActionDone(id: string, note?: string | null): void {
+  markWorkboardActionDone(id: string): void {
     this.shared.db.run(
-      `UPDATE workboard_queue SET status = 'done', error = ?, updated_at = datetime('now') WHERE id = ?`,
-      [note ?? null, id]
+      `UPDATE workboard_queue SET status = 'done', error = NULL, updated_at = datetime('now') WHERE id = ?`,
+      [id]
+    );
+  }
+
+  /** Row was attempted but did not dispatch: skipped, deduped, dead-lettered, or a stale-stage skip. */
+  markWorkboardActionSkipped(id: string, reason: string): void {
+    this.shared.db.run(
+      `UPDATE workboard_queue SET status = 'skipped', error = ?, updated_at = datetime('now') WHERE id = ?`,
+      [reason, id]
     );
   }
 
