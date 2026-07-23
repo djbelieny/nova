@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { addCards, archiveCard, createBoard, moveCard } from "../src/workboard-service.ts";
-import { buildOnEnterDispatch, drainWorkboardQueue } from "../src/workboard-reactive.ts";
+import { buildOnEnterDispatch, drainWorkboardQueue, drainWorkboardQueueLocked } from "../src/workboard-reactive.ts";
 import { handleWorkboardApi } from "../src/dashboard-workboards.ts";
 
 let seq = 0;
@@ -388,4 +388,30 @@ test("a row whose processing throws is marked failed and does not block a later 
 
   const rowBAfter = db.getWorkboardQueueRow(rowB.id)!;
   expect(rowBAfter.status).toBe("done");
+});
+
+test("the locked drain skips its round while another holder owns the lock, and runs once it is released", async () => {
+  const { db, userId, board, card } = seed();
+  await flushQueue(db);
+  const action = board.stages.find((s) => s.key === "nurture")!.onEnter!;
+  const entered = moveCard(db, userId, board, card.id, "nurture", "test-setup", { actorIsOnEnter: true });
+  if (!entered.ok) throw new Error(entered.errors.join(", "));
+  const row = db.enqueueWorkboardAction({
+    userId, boardScope: board.scope, boardId: board.id, cardId: card.id, stageKey: "nurture", action,
+  });
+
+  let dispatched = 0;
+  const dispatch = async () => { dispatched++; return "task-1"; };
+
+  expect(db.acquireLock("workboard-queue-drain", "another-relay", 60)).toBe(true);
+  const blocked = await drainWorkboardQueueLocked(db, dispatch);
+  expect(blocked.ran).toBe(false);
+  expect(dispatched).toBe(0);
+  expect(db.getWorkboardQueueRow(row.id)!.status).toBe("pending");
+
+  db.releaseLock("workboard-queue-drain", "another-relay");
+  const ran = await drainWorkboardQueueLocked(db, dispatch);
+  expect(ran.ran).toBe(true);
+  expect(dispatched).toBe(1);
+  expect(db.getWorkboardQueueRow(row.id)!.status).toBe("done");
 });

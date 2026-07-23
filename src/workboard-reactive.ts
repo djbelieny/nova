@@ -9,6 +9,7 @@
 
 import { composePlaybookTask, renderTemplate, type DispatchAgentFn } from "./automation-engine.ts";
 import { looksLikeInjection } from "./learning-loop.ts";
+import { withLock } from "./locks.ts";
 import { renderPlaybook } from "./playbooks.ts";
 import type { OnEnterAction } from "./workboards.ts";
 import type { DatabaseType, Playbook, Workboard, WorkboardCard } from "./db.ts";
@@ -206,4 +207,27 @@ export async function drainWorkboardQueue(
   }
 
   return { processed: rows.length, fired, skipped, failed };
+}
+
+/** TTL for the drain's advisory lock. Longer than the default tick so a slow drain still holds it
+ * when the next tick arrives, and short enough that a process killed mid-drain frees it quickly. */
+export const DRAIN_LOCK_TTL_SECONDS = 90;
+
+/**
+ * The drain under an advisory lock — what a periodic caller should use, mirroring the automation
+ * poller. Without it a slow drain overlaps its own next tick (or a second relay instance) and the
+ * two passes race: the first fires a row and marks it done, the second re-reads the same still-
+ * pending row and records it as "skipped: deduped", so the audit trail contradicts what happened.
+ * `ran: false` means another holder had the lock and this round did nothing.
+ */
+export async function drainWorkboardQueueLocked(
+  db: DatabaseType,
+  dispatchAgent: DispatchAgentFn,
+  limit = 25
+): Promise<{ ran: boolean; processed: number; fired: number; skipped: number; failed: number }> {
+  const { ran, result } = await withLock(db, "workboard-queue-drain", DRAIN_LOCK_TTL_SECONDS, () =>
+    drainWorkboardQueue(db, dispatchAgent, limit));
+  return ran && result
+    ? { ran: true, ...result }
+    : { ran: false, processed: 0, fired: 0, skipped: 0, failed: 0 };
 }
