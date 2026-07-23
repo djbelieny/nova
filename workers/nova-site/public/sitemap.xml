@@ -1,39 +1,388 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://mynova.space/</loc></url>
-  <url><loc>https://mynova.space/blog/</loc></url>
-  <url><loc>https://mynova.space/blog/architecture/</loc></url>
-  <url><loc>https://mynova.space/blog/case-study/</loc></url>
-  <url><loc>https://mynova.space/blog/deployment/</loc></url>
-  <url><loc>https://mynova.space/blog/design-decisions/</loc></url>
-  <url><loc>https://mynova.space/blog/features/</loc></url>
-  <url><loc>https://mynova.space/blog/nova-vs-hermes-vs-openclaw/</loc></url>
-  <url><loc>https://mynova.space/blog/what-is-nova/</loc></url>
-  <url><loc>https://mynova.space/blog/whats-new/</loc></url>
-  <url><loc>https://mynova.space/book/</loc></url>
-  <url><loc>https://mynova.space/docs/</loc></url>
-  <url><loc>https://mynova.space/es/</loc></url>
-  <url><loc>https://mynova.space/es/blog/</loc></url>
-  <url><loc>https://mynova.space/es/blog/architecture/</loc></url>
-  <url><loc>https://mynova.space/es/blog/case-study/</loc></url>
-  <url><loc>https://mynova.space/es/blog/deployment/</loc></url>
-  <url><loc>https://mynova.space/es/blog/design-decisions/</loc></url>
-  <url><loc>https://mynova.space/es/blog/features/</loc></url>
-  <url><loc>https://mynova.space/es/blog/nova-vs-hermes-vs-openclaw/</loc></url>
-  <url><loc>https://mynova.space/es/blog/what-is-nova/</loc></url>
-  <url><loc>https://mynova.space/es/blog/whats-new/</loc></url>
-  <url><loc>https://mynova.space/es/book/</loc></url>
-  <url><loc>https://mynova.space/es/docs/</loc></url>
-  <url><loc>https://mynova.space/pt-br/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/architecture/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/case-study/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/deployment/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/design-decisions/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/features/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/nova-vs-hermes-vs-openclaw/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/what-is-nova/</loc></url>
-  <url><loc>https://mynova.space/pt-br/blog/whats-new/</loc></url>
-  <url><loc>https://mynova.space/pt-br/book/</loc></url>
-  <url><loc>https://mynova.space/pt-br/docs/</loc></url>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>https://mynova.space/blog/architecture/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/architecture/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/architecture/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/architecture/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/architecture/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/architecture/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/architecture/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/business-automation/</loc>
+    <lastmod>2026-07-21</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/business-automation/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/business-automation/</loc>
+    <lastmod>2026-07-21</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/business-automation/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/business-automation/</loc>
+    <lastmod>2026-07-21</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/business-automation/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/business-automation/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/case-study/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/case-study/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/case-study/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/case-study/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/case-study/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/case-study/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/case-study/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/deployment/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/deployment/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/deployment/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/deployment/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/deployment/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/deployment/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/deployment/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/design-decisions/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/design-decisions/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/design-decisions/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/design-decisions/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/design-decisions/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/design-decisions/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/design-decisions/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/features/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/features/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/features/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/features/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/features/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/features/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/features/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/governance-hardening/</loc>
+    <lastmod>2026-07-22</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/governance-hardening/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/governance-hardening/</loc>
+    <lastmod>2026-07-22</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/governance-hardening/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/governance-hardening/</loc>
+    <lastmod>2026-07-22</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/governance-hardening/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/governance-hardening/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/nova-vs-hermes-vs-openclaw/</loc>
+    <lastmod>2026-07-20</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/nova-vs-hermes-vs-openclaw/</loc>
+    <lastmod>2026-07-20</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/nova-vs-hermes-vs-openclaw/</loc>
+    <lastmod>2026-07-20</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/nova-vs-hermes-vs-openclaw/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/nova-vs-hermes-vs-openclaw/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/second-brain/</loc>
+    <lastmod>2026-07-21</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/second-brain/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/second-brain/</loc>
+    <lastmod>2026-07-21</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/second-brain/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/second-brain/</loc>
+    <lastmod>2026-07-21</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/second-brain/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/second-brain/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/what-is-nova/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/what-is-nova/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/what-is-nova/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/what-is-nova/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/what-is-nova/</loc>
+    <lastmod>2026-07-15</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/what-is-nova/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/what-is-nova/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/whats-new/</loc>
+    <lastmod>2026-07-20</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/whats-new/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/whats-new/</loc>
+    <lastmod>2026-07-20</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/whats-new/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/whats-new/</loc>
+    <lastmod>2026-07-20</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/whats-new/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/whats-new/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/blog/workboards/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/workboards/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/blog/workboards/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/workboards/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/blog/workboards/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/blog/workboards/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/blog/workboards/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/book/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/book/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/book/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/book/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/book/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/book/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/book/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/book/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/book/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/book/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/book/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/book/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/book/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/book/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/book/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/docs/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/docs/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/docs/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/docs/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/docs/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/docs/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/docs/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/docs/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/docs/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/docs/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/docs/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/docs/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/docs/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/docs/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/docs/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/es/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/"/>
+  </url>
+  <url>
+    <loc>https://mynova.space/pt-br/</loc>
+    <lastmod>2026-07-23</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://mynova.space/"/>
+    <xhtml:link rel="alternate" hreflang="es" href="https://mynova.space/es/"/>
+    <xhtml:link rel="alternate" hreflang="pt-BR" href="https://mynova.space/pt-br/"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://mynova.space/"/>
+  </url>
 </urlset>

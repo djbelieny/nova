@@ -1,0 +1,2080 @@
+# Nova — full text for LLMs
+
+> Concatenated Markdown of Nova's documentation and every blog post. Open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova
+
+==============================================================================
+
+# Nova Documentation
+
+> Complete Nova documentation: installation, every environment variable, channels, agents, memory tags, scheduling, MCP integrations, dashboard, voice, the executive board, and troubleshooting.
+
+*Source: https://mynova.space/docs/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Everything you need to install, configure, and run your self-hosted AI team — from the first Telegram message to a seven-node executive board.
+
+## What Nova is
+
+Nova is an open-source, self-hosted AI platform. It's a team of **24 specialist agents** plus an **automation layer** that runs the repeatable work in the background — and it runs on your own model subscriptions and your own machine. Four pillars:
+
+| Pillar | What it means |
+| --- | --- |
+| **Multi-agent** | A request is classified cheaply, then answered, routed to one specialist, or decomposed into a dependency-ordered plan run across several (an optional 7-role executive board deliberates on strategy). |
+| **Event-driven** | It doesn't only wait for a message. A webhook, a metric, a connector event, or a semantic match can fire an automation or playbook; durable processes span days. |
+| **Your models, your machine** | It drives the vendor CLIs (Claude, Gemini, Codex) as subprocesses so it runs on subscriptions you already pay for — plus any OpenAI-compatible API. Storage is local SQLite; embeddings and the knowledge base are local. Your keys, your data. |
+| **Trust & governance** | Two-phase prepare → approve → execute gates interactive requests; policies, spending caps, and role-based permissions govern the autonomous ones. |
+
+Everything runs on your machine: **Bun + TypeScript**, local SQLite with vector search, your own AI accounts, and credentials AES-256-GCM encrypted at rest. MIT licensed — [source on GitHub](https://github.com/djbelieny/nova).
+
+## Installation
+
+### Prerequisites
+
+- A **Telegram account** (to create your bot)
+
+- macOS 13+ or Ubuntu 22.04+ (Windows via WSL2); 2 GB RAM minimum (4 GB recommended)
+
+That's it to start — the installer takes care of the rest. It automatically installs **[Bun](https://bun.sh)** and the **[Claude Code](https://claude.ai/claude-code) CLI** if they're missing, so you don't have to set them up by hand. Optional accounts unlock more: Gemini, Groq (free voice transcription), Twilio (phone calls), Perplexity (web research), Meta, Notion, Google Workspace, and more — all covered in Configuration.
+
+### Option A — one line (recommended)
+
+A single line clones Nova to `~/nova`, installs any missing prerequisites, then launches a friendly **setup wizard**. The wizard walks you through connecting Telegram and an AI provider — no file editing — and can even **detect your Telegram user ID automatically** (it just asks you to message your bot). It's **resumable**: close it and re-run to pick up where you left off.
+
+```
+$ curl -fsSL https://mynova.space/install | bash
+```
+
+Prefer to clone it yourself? That's the same as running:
+
+```
+$ git clone https://github.com/djbelieny/nova && cd nova
+$ bash bootstrap.sh      # installs prerequisites, then runs the setup wizard
+```
+
+Just want to check what's already installed? `bash bootstrap.sh --check` reports your system and changes nothing.
+
+### Option B — manual setup
+
+```
+$ git clone https://github.com/djbelieny/nova && cd nova
+$ bun run setup           # install deps, create .env
+$ vim .env                # bot token, user ID, encryption key
+$ cp .mcp.example.json .mcp.json
+$ cp config/profile.example.md config/profile.md
+$ bun run test:telegram   # verify the bot connects
+$ bun run test:sqlite     # verify the database
+$ bun run start
+```
+
+The local embedding model (all-MiniLM-L6-v2, ~23 MB) downloads on first use. When Nova starts, it sends you a welcome message on Telegram with tappable starter ideas — so your first interaction works without typing anything. Run `nova doctor` anytime for a health check, or `nova update` to pull the latest and reinstall.
+
+### Command reference
+
+The installer puts a `nova` command on your PATH — that's the front door for everyday use (`nova start`, `nova doctor`, `nova connect`, and the rest). The underlying `bun run <script>` scripts still work if you prefer them, and advanced scripts (`test:*`, `setup:*`, `exec:*`) are only exposed through `bun run`.
+
+| Command | What it does |
+| --- | --- |
+| `bash bootstrap.sh` | Install prerequisites and launch the setup wizard (`--check` for a dry run) |
+| `nova init` | Run the setup wizard on its own (resumable) |
+| `nova doctor` | Health check + copyable diagnostics |
+| `nova update` | Pull the latest and reinstall dependencies |
+| `nova start` | Start the relay (main bot process) |
+| `nova dev` | Start with auto-reload on file changes |
+| `nova chat` | Talk to Nova right in your terminal |
+| `nova connect` | Connect to a running Nova (local or remote) with a live view and inline approvals |
+| `nova dashboard` | Start the web dashboard on port 3033 |
+| `nova providers add` / `list` / `test` / `default` | Add and manage AI models (see AI providers) |
+| `nova invite [member|admin]` | Generate an invite code to add a teammate |
+| `nova kb add` / `list` / `search` / `remove` / `reindex` | Feed and manage the knowledge base (see Knowledge base) |
+| `nova voice` | Start the Twilio voice-call server |
+| `nova setup` | Install dependencies, create `.env` from the example |
+| `nova backup` | Archive `data/`, `config/`, and `.env` to `~/.nova/backups/` |
+| `bun run test:telegram` / `test:sqlite` / `test:voice` | Verify Telegram token, database, and voice transcription |
+| `bun run setup:verify` | Full installation health check |
+| `bun run setup:launchd` / `setup:systemd` / `setup:services` | Configure always-on services (macOS / Linux / PM2) |
+| `bun run typecheck` / `bun run test` | TypeScript check; run the test suite against an isolated DB |
+| `bun run exec:ceo` … `exec:critic` | Start an executive board node |
+
+## Configuration
+
+All secrets live in `.env` (copied from `.env.example`). Personal context lives in `config/profile.md`, loaded into every prompt. MCP servers are declared in `.mcp.json` (copied from `.mcp.example.json`).
+
+**`NOVA_ENCRYPTION_KEY`** — Nova will not start without it. Generate with `openssl rand -hex 32`. It encrypts OAuth tokens and stored credentials with AES-256-GCM.
+
+### Core
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | — | **Required.** From @BotFather |
+| `TELEGRAM_USER_ID` | — | **Required.** Your numeric ID, from @userinfobot |
+| `NOVA_ENCRYPTION_KEY` | — | **Required.** 64-char hex; credential encryption at rest |
+| `BOT_NAME` | `Nova` | The name your assistant calls itself |
+| `USER_NAME` | — | Your first name (recommended) |
+| `USER_TIMEZONE` | `UTC` | IANA timezone, e.g. `America/New_York` |
+| `CLAUDE_PATH` | `claude` | Claude CLI path (auto-detected if in PATH) |
+| `RELAY_DIR` | `~/.nova` | Relay data directory (workspace, uploads, logs) |
+| `PROJECT_DIR` | repo dir | Working directory handed to Claude |
+
+### Channels
+
+| Variable | Purpose |
+| --- | --- |
+| `WHATSAPP_WEBHOOK_URL` | Public URL Kapso posts WhatsApp webhooks to (per-user Kapso key + phone-number ID are added in the dashboard) |
+| `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-…`), Socket Mode |
+| `SLACK_APP_TOKEN` | Slack app-level token (`xapp-…`) |
+| `DISCORD_BOT_TOKEN` | Discord bot token — enables the Discord channel |
+
+### AI providers & research
+
+| Variable | Purpose |
+| --- | --- |
+| `GEMINI_API_KEY` | Enables the Gemini provider |
+| `CODEX_PATH` | Path to the Codex CLI (auto-detected if in PATH) |
+| `GROQ_API_KEY` | Voice transcription (free tier at console.groq.com) |
+| `PERPLEXITY_API_KEY` | Web research: sonar-pro (ask), sonar-deep-research, sonar-reasoning-pro |
+
+### Voice & phone
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VOICE_PROVIDER` | `groq` | `groq` or `local` (whisper.cpp) |
+| `WHISPER_BINARY` / `WHISPER_MODEL_PATH` | `whisper-cpp` | Local transcription binary and model file |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_PHONE_NUMBER` | — | Phone calls & SMS |
+| `USER_PHONE` / `USER_PIN` | — | Your number and a private PIN for call authentication |
+| `VOICE_SERVER_PORT` | `80` | Voice server port (production deployments typically use 8080 behind a proxy) |
+| `VOICE_SERVER_URL` / `WEBHOOK_BASE_URL` | — | Public URLs Twilio calls back to |
+| `ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID` | George | Text-to-speech for voice replies |
+
+### Dashboard, integrations & services
+
+| Variable | Purpose |
+| --- | --- |
+| `DASHBOARD_USER` / `DASHBOARD_PASS` | Dashboard login — **the dashboard stays disabled until `DASHBOARD_PASS` is set** |
+| `DASHBOARD_PUBLIC_URL` | Public dashboard URL; used as the OAuth redirect base |
+| `GOOGLE_CLIENT_ID/SECRET`, `NOTION_CLIENT_ID/SECRET`, `ZOOM_CLIENT_ID/SECRET`, `TIKTOK_CLIENT_KEY/SECRET` | OAuth apps you create; users connect accounts from the dashboard |
+| `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID`, `META_APP_ID`, `META_APP_SECRET` | Meta Ads API (`act_XXXXX` account format) |
+| `SQUARE_LOCATIONS` | Comma-separated `Name (LOCATION_ID)` pairs the voice assistant may mention |
+| `HEYGEN_API_KEY` / `FAL_API_KEY` | AI avatar video / text-to-video |
+| `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `TICKET_SUPPORT_FROM`, `TICKET_OPERATOR_USER_ID`, `TELEGRAM_ADMIN_ID`, `TICKET_DEPLOY_DRYRUN` | Support-ticket pipeline (see Support tickets) |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Executive board shared database (see Executive board) |
+| `MEMWRIGHT_URL` / `MEMWRIGHT_DATA_DIR` | Optional long-term memory service (defaults `http://localhost:8765`, `./data/memwright`); Nova degrades gracefully without it |
+| `HEARTBEAT_*` | Proactive check-in controls (see Scheduling) |
+
+### Your profile
+
+`config/profile.md` is freeform markdown about you — role, businesses, preferences, constraints — injected into every conversation. Start from `config/profile.example.md`. It's gitignored; it never leaves your machine.
+
+## Connecting channels
+
+### Telegram (required)
+
+1. Message **@BotFather** → `/newbot` → pick a display name, then a username ending in `bot`.
+
+2. Copy the token (looks like `7123…:AAH…`) into `TELEGRAM_BOT_TOKEN`.
+
+3. Your numeric user ID is **detected automatically** by the setup wizard — it just asks you to message your bot. (You can still set `TELEGRAM_USER_ID` by hand from **@userinfobot** if you prefer.)
+
+4. Verify: `bun run test:telegram`.
+
+### WhatsApp
+
+WhatsApp runs through [Kapso](https://kapso.ai) (Meta Cloud API). Set `WHATSAPP_WEBHOOK_URL` to a public URL that reaches the relay's `POST /webhook/kapso` endpoint, then add each user's Kapso API key and phone-number ID from the dashboard's WhatsApp page.
+
+### Slack
+
+1. Create an app at api.slack.com/apps → *From scratch*.
+
+2. Enable **Socket Mode**; create an app-level token (`xapp-…`) → `SLACK_APP_TOKEN`.
+
+3. Add bot scopes `channels:history`, `chat:write`, `im:history`, `im:write`; install to your workspace.
+
+4. Copy the bot token (`xoxb-…`) → `SLACK_BOT_TOKEN`.
+
+### Terminal
+
+Talk to Nova straight from your shell with `nova chat` — the same pipeline, classification, and approval gates as every other channel, no bot token required. To reach a Nova that's already running (locally or on your VPS), use `nova connect` (see Talking to Nova).
+
+### Discord
+
+Run Nova as a Discord bot: create an application at [discord.com/developers](https://discord.com/developers/applications), add a bot, and set `DISCORD_BOT_TOKEN`. Discord uses the same adapter pattern as Telegram — messages flow through the identical two-phase, approval-gated pipeline.
+
+## Talking to Nova
+
+Just write naturally. Every message runs through three classification tiers — a fast heuristic for short messages, a pattern cache of plans that worked before, and LLM classification only for genuinely new complex requests. You can also steer explicitly:
+
+- **Address an agent directly** by name: `Pixel, create a week of Instagram content`.
+
+- **Force a provider**: prefix with `/claude`, `/gemini`, or `/codex`.
+
+- **Voice messages** are transcribed automatically (Groq or local Whisper).
+
+### From any terminal — nova connect
+
+Because Nova runs always-on, you can drop into a running instance from any terminal — local or your VPS — with `nova connect --url https://your-nova`. You get a live view of what your agents are doing and can **approve, change, or cancel** inline, right from the shell. For a plain conversation without connecting to a remote instance, `nova chat` talks to your local Nova.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `/start` / `/help` | Friendly welcome with tappable starter ideas, and plain-language help |
+| `/team` | Meet your 24 specialists, grouped by what you want to get done |
+| `/examples` | Starter ideas you can tap to run right now |
+| `/agents` | Browse all 24 agents with one-tap "Use" buttons |
+| `/memory` / `/goals` / `/tasks` | Show stored facts, goals, and agent tasks |
+| `/knowledge` / `/kb` | List the documents in your knowledge base, grouped by scope |
+| `/schedule`, `/schedule list` | Manage scheduled tasks |
+| `/usage` | Cost and usage summary |
+| `/board <question>` | Convene the executive board (if configured) |
+| `/voice` | Voice settings |
+| `/feedback good|bad` (or 👍/👎) | Rate the last response — feeds pattern learning |
+| `/settings autopilot <category> [limit_usd]` | Auto-approve a category, optionally capped: `social_post`, `email`, `ad_spend`, `code_deploy`, `seo`, `research`, `general`, `*` |
+| `/settings access @user <level>` | Per-user visibility: `none`, `tasks-only`, `tasks+goals`, `full-summary` |
+| `/settings role <job_role>` | Tell Nova your role for better context |
+| `/codebase add <name> <git-url>` / `list` / `remove` | Register repos for dev tasks |
+| `/devtask <description>` | Queue a background coding task on a registered repo |
+
+### Admin commands
+
+Users with the `admin` role also get `/adduser`, `/removeuser`, `/listusers`, `/share <fact>` (shared memory), `/status`, `/reload`, `/revert`, `/schedules`, `/budget`, `/project`, `/webhook`, `/zoom`, and `/reputation`.
+
+### Adding teammates — invite codes
+
+You no longer need to look up a numeric user ID to add someone. Run `nova invite` (`nova invite member` or `nova invite admin` to set the role) to generate an invite code, hand it to the person, and they redeem it on **Telegram or Discord** — you approve the pairing with a tap. Invites can also be managed from the dashboard.
+
+## The 24 agents
+
+Each agent is a markdown file in `.claude/agents/` — YAML frontmatter (name, description) plus a system prompt. The router picks agents during decomposition, or you address one by name.
+
+**Helios** · paid ads**Pixel** · social media**Kai** · content**Orion** · email**Morpheus** · video**Architect** · web dev**Athena** · strategy**Digit** · analytics**Echo** · support**Flux** · funnels**Quill** · grants**Lex** · legal**Helia** · PR**Bridge** · partnerships**Oracle** · trends**Cipher** · data science**Rift** · security**Joule** · automation**Nexus** · community**Aura** · brand voice**Zen** · productivity**Tesseract** · systems**Magnus** · SEO**Cyra** · site optimization
+
+### Adding your own
+
+Create `.claude/agents/yourname.md` with frontmatter and a system prompt, map its tools and skills in `src/agent-router.ts`, and it joins the roster. Agent knowledge-base PDFs can be dropped in `agent-team/knowledge_bases/` (optional).
+
+## Skills
+
+45 reusable skills live in `.claude/skills/` — agents invoke them as needed. Highlights: document creation (`docx`, `xlsx`, `pptx`, `pdf`), `image-gen`, `canvas-design`, `ai-video-creator`, `content-research-writer`, `ghostwriter` (full book pipeline), `social-media-manager`, `email-marketing`, `meta-ads-manager`, `competitive-ads-extractor`, `lead-research-assistant`, `customer-support`, `reviews-testimonials`, `platform-maker` (SaaS generator), `ui-ux-pro-max`, `file-organizer`, `telegram-file-sender`, `notebooklm`, `skill-creator`, plus suites for Google Workspace (`gws-*`: Gmail, Calendar, Drive, Docs, Sheets), GoHighLevel (`ghl-*`: contacts, marketing, billing, content, admin), and Cloudflare (`cloudflare-dns`, `cloudflare-workers`).
+
+To add one, use the `skill-creator` skill or write a `SKILL.md` by hand in a new directory — keep it generic, with credentials referenced from `.env`.
+
+## Memory & intent tags
+
+Nova remembers facts, goals, and tasks in local SQLite with vector search — recalled semantically and injected into context (up to 50 facts/goals, 12 recent messages, 5 semantic matches, 20 tasks). The model manages memory through intent tags in its responses; Nova parses them, acts, and strips them before you see the reply. You can trigger them naturally ("remember that…", "set a goal to…").
+
+```
+[REMEMBER: fact]                      save a fact (with embedding)
+[SHARE: fact]                         fact visible to all users
+[GOAL: text | DEADLINE: date]         save a goal
+[DONE: search text]                   complete a matching goal
+[TASK: agent | description]           create an agent task
+[TASK_START|TASK_DONE|TASK_BLOCKED|TASK_CANCEL: …]
+[SCHEDULE: title | datetime | instructions]
+[SCHEDULE: … | RECUR: rule]           recurring
+[SCHEDULE: … | RECUR: rule | IF: condition]
+[SCHEDULE_CANCEL: search text]
+[DEVTASK: project | description]      queue a background dev task
+```
+
+### Recurrence DSL
+
+`daily:HH:MM` · `weekly:DAY:HH:MM` (0=Sunday) · `weekdays:HH:MM` · `interval:SECONDS`
+
+## Knowledge base
+
+Where memory holds what Nova *learns*, the knowledge base holds what you already *have*. Feed it a document, file, or URL and Nova ingests it — extracting text (PDF, DOCX, Markdown, plain text, or a web page), splitting it into overlapping passages, and turning each into a vector with a model that runs **on your own machine** (all-MiniLM, the same local embedder used for memory). Nothing is sent to a third-party embedding API. When you ask a question, Nova pulls the closest passages into the answer and **cites the source document**.
+
+### Three scopes
+
+| Scope | Who sees it | Good for |
+| --- | --- | --- |
+| `personal` | Only you (stored in your own per-user database) | Your notes, drafts, private research |
+| `team` | Everyone on your Nova (shared database) | Handbook, brand guide, pricing — shared truth |
+| `agent` | One specialist's pack, plus that user's personal + team docs | Contracts for Lex, brand voice for Aura, API docs for Architect |
+
+An agent retrieves from your *personal* docs, the *team* base, *and* its own pack — never another agent's pack. Personal + team passages are also auto-injected into ordinary conversations, so recall is effortless.
+
+### Four ways to feed it
+
+- **Drop a file in Telegram** — send a document with a caption like `add to knowledge`, `add to team knowledge`, or `for Lex's pack`, and it's ingested with that scope on the spot.
+
+- **Dashboard** — the web dashboard has a **Knowledge** panel: drag files in, set each one's scope, search, and delete.
+
+- **The `nova kb` command** — manage the whole lifecycle from a terminal (below).
+
+- **A watched folder** — anything dropped into `~/.nova/knowledge/` is ingested automatically; subfolders set the scope (`team/`, `agents/<slug>/`). Delete a file and its passages leave the base. Disable with `NOVA_KB_WATCH=false`.
+
+### The nova kb command
+
+```
+nova kb add report.pdf --scope team          add a file to the team base
+nova kb add https://example.com/spec --agent architect
+nova kb add notes.md                          defaults to personal scope
+nova kb list                                  list docs, grouped by scope
+nova kb search "refund window"                search across visible scopes
+nova kb remove <id> --scope team
+nova kb reindex --all                         re-embed after edits
+```
+
+In chat, `/knowledge` (or `/kb`) lists everything Nova currently knows, grouped by scope.
+
+Retrieved passages are **injection-scanned** before they reach a prompt — a document that tries to smuggle in instructions is dropped. Your files are treated as data, never as commands. Re-ingesting an edited file replaces the old version in place (no duplicates), and embeddings never leave your machine.
+
+## Playbooks
+
+A playbook is a reusable **SOP** — a business process you author once and run many times with different inputs. Each has variables and ordered steps (which agent does what, in which phase); running one renders those steps into a plan and executes it through the normal two-phase gate. Distinct from Nova's auto-learned patterns: playbooks are intentional, editable, and shareable.
+
+Scopes: `personal` (yours) or `team` (shared). Load a starter library — client onboarding, refund handling, content launch, weekly report, lead follow-up — with one command.
+
+```
+/playbook seed                         load the starter SOPs
+/playbook run client-onboarding client=Acme email=a@b.com
+nova playbook list | show <name> | remove <name>
+```
+
+Author and edit playbooks in the dashboard **Playbooks** panel; run them from chat, or wire one to an automation (below). Variables are injection-scanned; edits bump a version.
+
+## Automations — event → condition → workflow
+
+Automations make Nova **event-driven**: when something happens, run a workflow. Each has a source (an inbound webhook, a metric probe, or a connector event like `stripe.payment`), optional conditions, and an action — an agent task or a playbook. Every fire still passes the approval gate unless you've granted autopilot.
+
+| Piece | What it does |
+| --- | --- |
+| Conditions | `field:op:value` — ops `eq/neq/gt/lt/gte/lte/contains/exists`; all must pass. Plus **semantic** (below). |
+| Dedupe | Skip repeats within an hour by a templated key (e.g. `{{contact.email}}`). |
+| Rate limit | Cap fires per hour. |
+| Action | `--agent <slug> --template "…{{event.field}}…"` or `--playbook <name> --var k={{…}}`. |
+
+```
+nova automation add new-lead --playbook lead-follow-up --var lead={{contact.name}} \
+    --when amount:gt:1000 --dedupe {{contact.email}} --rate 10
+nova automation url new-lead      the signed POST endpoint to give your source
+/automations                      list them in chat
+```
+
+Inbound events arrive at `POST /automation/:userId/:id` (HMAC-verified). Rendered event text is injection-scanned. Design and dry-run automations in the dashboard **Automations** panel.
+
+### Semantic triggers
+
+Beyond exact matches, a condition can fire on *meaning*: `body:semantic:a customer complaint:0.55` fires when the event field is semantically similar to the phrase (local embeddings, threshold optional). Great for "when an email reads like a complaint / a cancellation / an upsell opportunity."
+
+## Durable processes
+
+Some work spans days and external events: *send contract → wait for signature → invoice → wait for payment → fulfill.* A durable process is a sequence of **action** and **wait** steps that survives restarts (state in SQLite) and resumes on a due timer or a named event. Action steps run as normal tasks (consequential ones pass the gate).
+
+```
+nova process start onboarding --from-playbook client-onboarding
+nova process list | show <id> | cancel <id>
+/process signal signature.done         resume processes waiting on that event
+```
+
+Timers resume automatically via the task dispatcher; events resume via a signal (a chat command or an automation). Author step sequences (with `wait|until|+2d` or `wait|event|<name>`) in the dashboard **Processes** timeline.
+
+## Document extraction
+
+The capture counterpart to the knowledge base: define a field schema and pull **structured, type-coerced JSON** out of PDFs, DOCX, or text — invoices, receipts, forms, contracts. Values are coerced (number/date/boolean/array), required fields validated, and rows exportable to CSV.
+
+```
+nova extract schema add invoice --field invoice_number:string:required \
+    --field total:number:required --field due_date:date
+nova extract statement.pdf --schema invoice
+nova extract list --schema invoice | nova extract export invoice
+```
+
+In chat, drop a document with a caption like *"extract as invoice"*. Manage schemas, run extractions, and export from the dashboard **Extraction** panel. Extraction runs locally against your text; destinations (Sheets/CRM) route through the connectors.
+
+## Policies & compliance
+
+Business governance on top of the earned-autonomy ladder. Policies are **restrictive-only**: they add friction (require approval, block, or warn) but never grant more autonomy than the ladder already allows. With none defined, behavior is exactly as before.
+
+| Kind | Effect |
+| --- | --- |
+| `spend_cap` | A day/month budget checked against the action ledger — over it, force approval. |
+| `approval_matrix` | Route certain actions to named approvers, with an escalation timeout. |
+| `content_check` | Scan prepared output for PII / profanity. `warn` flags it; `block` is a true **hard block** — it prevents execution at the execute boundary even after a human approves (checked against the prepared content), so nothing ships. |
+
+```
+nova policy add spend-cap --cap 500 --period month --department marketing
+nova policy add approval --action email.send --approver <userId> --escalate 30
+nova policy add content-check --checks pii,profanity --on-fail block
+/policies
+```
+
+Manage everything in the dashboard **Policies** editor. Policies are evaluated at the gate, just before Approve/Revise/Cancel.
+
+## ROI & reporting
+
+Makes the automation's value legible. Agents quantify outcomes with a `[VALUE: $X | SAVED: Ymin | DEPT: z]` tag; Nova records it and rolls it up against the action ledger into **tasks automated, hours saved, and $ influenced vs. cost** — by department and agent.
+
+```
+/roi                 last 7 days, in chat
+nova roi --period 30 | nova roi --by-agent | nova roi --by-department
+```
+
+The dashboard **ROI** view shows hero tiles + charts; a weekly digest DMs each user the value delivered. Value ranking by agent/department can inform where to lean in.
+
+## Connectors
+
+A thin, uniform layer over external business systems. Built-ins ship bidirectional: **Stripe** (charges/customers/refunds), **Shopify** (orders), **Zendesk** (tickets), **HubSpot** (contacts). Each has read + write actions and a poll trigger that feeds automations (e.g. `stripe.payment`). Credentials come from env vars or the shared credential store; write actions are consequential.
+
+```
+nova connector list                    built-ins + configured status
+nova connector describe stripe         its actions + parameters (discovery)
+nova connector run stripe list_charges --input '{"limit":5}'
+nova connector set stripe STRIPE_API_KEY=sk_live_…   stored encrypted at rest
+```
+
+Configure and run actions from the dashboard **Connectors** panel. Adding a connector is one file implementing the `Connector` interface. Agents call connectors themselves the same way they use MCP tools under **mcp2cli** — discover on demand (`describe`) then call — so the agent prompt stays lean no matter how many connectors exist (see Operate & observe).
+
+## Operate & observe
+
+Everything the automation layer does is observable and recoverable.
+
+- **Activity feed** — a unified timeline of every automation fire, process transition, and playbook run. `nova activity`, `/activity`, or the dashboard **Activity** page.
+
+- **Dry-run** — preview exactly what an automation would do against a sample event before enabling it (`nova automation simulate <name> --event '{…}'`, or the "Test / dry-run" control in the dashboard). Executes nothing.
+
+- **Retries & dead-letter** — a failed dispatch retries with backoff; if it still fails it lands in a dead-letter queue instead of vanishing. `nova dlq list | retry <id> | drop <id>`, or the dashboard **Dead letters** page.
+
+### Agents can use your tools
+
+Specialist agents call Nova's capabilities themselves while working — searching the knowledge base, extracting a document, querying a data source, running a configured connector, or running a playbook — via the `nova` CLI in their execution environment. Following the **mcp2cli** pattern, they *discover* tools on demand (e.g. `nova connector describe <id>`) rather than carrying every schema in the prompt, use read actions freely, and **propose write/consequential actions for approval** rather than executing them directly.
+
+## Connected data
+
+Register the sources where your business data actually lives and query them — for reports, for automations, or for an agent mid-task. Read-only by design.
+
+| Kind | Reads from |
+| --- | --- |
+| `http` | A JSON or CSV endpoint (point `rowsPath` at the array in a JSON body). |
+| `sqlite` | A read-only `SELECT` against a SQLite file — analytics, exports, a local warehouse. |
+| `connector` | A connector *read* action (Stripe, Shopify, …) — write actions are refused. |
+
+```
+nova data add sales --kind http --url https://api/report.json --rows-path data
+nova data add wh --kind sqlite --path /data/warehouse.db --query "SELECT day, revenue FROM metrics"
+nova data query sales        columns + rows
+/data query sales            or from chat
+```
+
+Manage sources and run queries in the dashboard **Data** panel. Pair a source with the scheduler or a playbook for recurring reports. Zero extra dependencies.
+
+## Governance & hardening
+
+Production-grade controls for running Nova unattended and for a team. All additive — with nothing configured, behavior is exactly as before.
+
+### Roles & permissions
+
+Admins can do everything. Members get scoped **capabilities** — `automation.manage`, `policy.manage`, `connector.manage`, `playbook.manage`, `process.manage`, `access.manage` — that gate who can create or change each governed area (enforced on the dashboard write actions).
+
+```
+nova access grant @teammate automation.manage
+nova access list @teammate
+/access @teammate grant policy.manage
+```
+
+### Out-of-office delegation
+
+Going away? Delegate your work so assignments and approvals route to a teammate (a cycle-guarded chain) until you're back.
+
+```
+nova ooo set @teammate "on vacation" --until 2026-08-01
+/ooo @teammate   ·   /ooo off
+```
+
+### Idempotency, locking & secrets
+
+- **Exactly-once.** An automation can opt into durable idempotency (`--idempotent`) so a re-delivered webhook fires once — not again an hour later.
+
+- **No double-fire.** Advisory locks wrap the automation poller and the task dispatcher, so overlapping ticks or multiple instances never process the same work twice.
+
+- **Encrypted secrets.** Connector credentials are stored AES-256-GCM encrypted at rest (set `NOVA_ENCRYPTION_KEY`) via `nova connector set`, with a rotation audit — no plaintext keys in `.env`.
+
+Manage capabilities, delegation, and connector secrets in the dashboard **Governance Admin** panel.
+
+## Scheduling & proactive services
+
+Beyond one-off schedules, Nova ships background services that work while you don't (times below are the cron defaults, UTC):
+
+| Service | Schedule | What it does |
+| --- | --- | --- |
+| Task dispatcher | every 60s | Runs due scheduled tasks |
+| Morning briefing | daily | Day summary: calendar, goals, tasks, news |
+| Smart check-in | several/day | Context-aware nudges, capped by heartbeat limits |
+| AI news monitor | 3×/day | Curated AI/tech news |
+| Social post suggester | daily | Post ideas from your context |
+| Lead suggester | daily | Business lead ideas |
+| Meta ads report | daily | Ad performance summary |
+| Memory review | daily | Dedupes and curates memory |
+| Health monitor | every 30 min | Polls `/health`; DMs you after 3 consecutive failures |
+| Log monitor / Dream mode | periodic | Error triage / idle-time reflection |
+
+### Heartbeat controls
+
+`HEARTBEAT_ENABLED=true` · `HEARTBEAT_INTERVAL_MIN=30` · `HEARTBEAT_MAX_DAILY=3` (proactive messages per user per day) · `HEARTBEAT_ACTIVE_HOURS=8-22` (your timezone). Emptying `config/heartbeat.md` disables proactive check-ins entirely.
+
+## AI providers & routing
+
+Nova drives AI through CLIs you've already authenticated — no raw API keys needed for Claude. Routing precedence: **force prefix → user preference → task hint → MCP dependency → rate-limit fallback**.
+
+| Provider | Via | Tiers |
+| --- | --- | --- |
+| Claude | `claude` CLI | fast=Haiku · standard=Sonnet · premium=Opus |
+| Gemini | `gemini` CLI | fast=Flash · standard=Pro · premium=Ultra |
+| Codex | `codex` CLI | standard |
+| Groq | API | Whisper voice transcription |
+
+### Adding any OpenAI-compatible model
+
+Beyond the subscription CLIs, you can add **any OpenAI-compatible model** — an OpenRouter route, an OpenAI model, or a local `Ollama` / `vLLM` endpoint. Add one with `nova providers add` (or the dashboard's **Models** panel); manage the rest with `nova providers list`, `nova providers test`, and `nova providers default`. Definitions live in `config/providers.json`, and each model uses its own API key. The subscription CLIs remain the default — added models slot in alongside them and drive the same MCP tools and connectors.
+
+## MCP integrations
+
+Copy `.mcp.example.json` to `.mcp.json`. Each server runs on demand via `npx`; credentials come from `.env` or per-user storage (encrypted, managed in the dashboard — `src/integrations.ts` generates each user's MCP config).
+
+| Server | Purpose | Credentials |
+| --- | --- | --- |
+| `notion` | Docs, databases, pages | OAuth via dashboard (or `NOTION_MCP_HEADERS`) |
+| `google-workspace` | Gmail, Calendar, Drive, Docs, Sheets | OAuth via dashboard (`GOOGLE_CLIENT_*`) |
+| `playwright` | Browser automation, scraping, screenshots | none |
+| `cloudflare` | Workers, DNS, edge | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+| `zoom` | Meetings | `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_*` |
+| `square` | POS, sales data | `SQUARE_ACCESS_TOKEN` |
+| `clickup` | Task management | `CLICKUP_API_TOKEN` |
+| `gohighlevel` | CRM, campaigns, publishing | `GHL_BEARER_TOKEN` |
+| `firecrawl` | Web scraping | `FIRECRAWL_API_KEY` |
+| `tavily` / `exa` | Web search / semantic search | `TAVILY_API_KEY` / `EXA_API_KEY` |
+| `browserbase` | Cloud browser sessions | `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` |
+
+Service-based MCPs in `services/` add YouTube, TikTok, Zoom, and Meta social publishing. The optional `memwright` server provides long-term vector memory (port 8765).
+
+### mcp2cli — tools without the context tax
+
+Loading every MCP tool's JSON schema into an agent's prompt is expensive — hundreds of tool definitions can dominate the context window. Nova instead exposes MCP servers through **mcp2cli**: agents get a short instruction to *discover* tools on demand from the shell — `mcp2cli … --list` to see a server's tools, then `--tool <name> --param k=v` to call one — so only the tools actually used cost any context. The same discovery-first idiom applies to Nova's own capabilities (`nova connector describe <id>`, `nova kb search`, …), so an agent's toolset can grow without bloating its prompt.
+
+## Web dashboard
+
+A full admin and per-user surface on **port 3033**: set `DASHBOARD_PASS` (and optionally `DASHBOARD_USER`, default `admin`), then `bun run dashboard` and open `http://localhost:3033`. Sessions are cookie-based with rate limiting; non-admin users only ever see their own data.
+
+- **Dashboard & Kanban** — live activity, task board, agent status
+
+- **Approvals** — resolve pending approval gates from the browser
+
+- **Integrations** — connect Google, Notion, Zoom, TikTok via OAuth (callback: `http://localhost:3033/auth/<provider>/callback`, or your `DASHBOARD_PUBLIC_URL`)
+
+- **Memory, History, Schedules, Skills** — inspect and edit what Nova knows and runs
+
+- **Tickets, WhatsApp, Shared credentials, Health, Costs** — operations pages
+
+## Voice
+
+### Voice messages (transcription)
+
+**Groq** (recommended, free tier ~2000/day): `VOICE_PROVIDER=groq` + `GROQ_API_KEY`. **Local**: install ffmpeg + whisper.cpp, download `ggml-base.en.bin` (~142 MB) to `~/whisper-models/`, set `VOICE_PROVIDER=local`. Verify with `bun run test:voice`.
+
+### Phone calls (Twilio)
+
+Run `bun run voice` to start the call server (default port 80; production typically 8080 behind a reverse proxy). Configure the Twilio env vars plus `USER_PIN` — callers authenticate by PIN, talk to Nova, and actionable requests are extracted from the transcript and executed after the call. Replies use ElevenLabs TTS when configured. Webhooks are HMAC-verified; endpoints: `/voice/*`, `/sms/*`, `/audio/*`, `/health`.
+
+## Support tickets
+
+An email-driven pipeline: inbound support email (via [Resend](https://resend.com) webhooks, signature-verified) becomes a ticket → triage → an agent drafts a fix in the matched client repo → you approve from Telegram → deploy. Configure `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`, `TICKET_SUPPORT_FROM`, `TICKET_OPERATOR_USER_ID`, and `TELEGRAM_ADMIN_ID`; the worker (`bun run ticket-worker`) polls every 60 seconds. `TICKET_DEPLOY_DRYRUN=true` (the default) keeps deploys simulated until you flip it.
+
+## Executive board
+
+An optional multi-node layer: seven executive roles — CEO, CFO, CMO, CTO, COO, Research, Critic — each a process with a distinct reasoning persona and its own AI provider, coordinating through a shared Postgres database over PostgREST. Ask `/board should we switch to usage-based pricing?` and you get independent analyses, an adversarial pre-mortem from the Critic, and 3–5 synthesized options with confidence scores. Pick one; the decision is recorded and the COO dispatches execution.
+
+### Setup
+
+1. Stand up the shared DB — **self-hosted Postgres + PostgREST** (`bun run migrate:board`, see `deploy/board/`), or a Supabase project if you prefer a hosted one.
+
+2. Set `BOARD_DB_URL` and `BOARD_DB_KEY` in `.env` (the `SUPABASE_*` names still work as aliases). The board tables use row-level security with no anonymous access — the key must only live on trusted servers.
+
+3. Create `.env.<role>` per node (`EXEC_ROLE`, `EXEC_NODE_ID`, a bot token, optional `EXEC_AI_PROVIDER`).
+
+4. Start the roles: `bun run exec:ceo`, `exec:cfo`, … `exec:critic`. They're just processes — run all seven on one host, or spread them across machines (systemd units `nova-exec-<role>`). Separate hosts with separate AI keys is a recommendation for rate limits, not a requirement.
+
+Executives use their own intent tags: `[DELEGATE: agent | task]` (optionally `| PROVIDER: claude`), `[BRIEF: role|all | summary]`, and `[DECISION: question | chosen | rationale | CONFIDENCE: 0.8]`.
+
+## Running always-on
+
+### macOS — launchd
+
+```
+$ bun run setup:launchd -- --service core   # just the relay
+$ bun run setup:launchd -- --service all    # relay + dashboard + proactive services
+$ launchctl list | grep com.nova            # verify
+$ bun run setup:logrotate                   # daily log rotation
+```
+
+Services install as `~/Library/LaunchAgents/com.nova.*.plist`; individual services: `core`, `dashboard`, `memwright`, `checkin`, `briefing`, `memory-review`, `dispatcher`, `health-monitor`, `voice`.
+
+### Linux — systemd
+
+```
+$ sudo bun run setup:systemd --service all
+$ systemctl enable --now nova-relay nova-dashboard
+$ journalctl -u nova-relay -f               # logs
+```
+
+### Windows / anywhere — PM2
+
+```
+$ bun run setup:services -- --service all
+$ npx pm2 status
+```
+
+For public exposure (webhooks, dashboard, voice), put Caddy or another reverse proxy in front — see `DEPLOY.md` in the repo for a production walkthrough.
+
+## Database & backups
+
+Split SQLite with `sqlite-vec` for vector search. Embeddings are computed locally (all-MiniLM-L6-v2, 384 dimensions) — nothing leaves your machine.
+
+```
+data/shared.db       # users, status, logs, cost tracking, shared memory
+data/users/{id}.db   # per-user: messages, memory, tasks, approvals, schedules, patterns
+data/memwright/      # optional long-term memory service store
+```
+
+**Backups:** `bun run backup` archives `data/`, `config/`, and `.env` to `~/.nova/backups/` (last 7 kept; scheduled daily when services are installed). To restore: stop services, extract the archive, copy the three paths back, restart.
+
+## Security model
+
+- **Approval gates** separate consequential actions from safe ones, per category and per user — **the default safety boundary** (see the caveat below).
+
+- **Sandboxing is opt-in.** By default agent tools run **unsandboxed on your host**. A hardened Docker sandbox exists (`NOVA_SANDBOX_BACKEND=docker`: read-only FS, dropped caps, no network, workspace-only mount) but is off by default and **falls back to unsandboxed if Docker isn't installed**. Run Nova as a dedicated user / on its own VPS, and enable the Docker sandbox if isolation matters to you.
+
+- **Autonomous paths.** The approval gate covers *interactive* requests. Scheduled tasks, automations, and durable-process steps are **pre-authorized when you create them** and run headless; the controls there are the autonomy ladder's **spending caps** and **hard-block** content policies (which stop execution even on those paths).
+
+- **Credentials at rest** — OAuth tokens and connector secrets are AES-256-GCM encrypted with `NOVA_ENCRYPTION_KEY`.
+
+- **Webhooks verified** — Twilio HMAC with timing-safe comparison; Resend svix signatures; automation webhooks HMAC-signed.
+
+- **Dashboard** — authenticated sessions, per-user data isolation, capability-gated management routes, rate limiting. Always set `DASHBOARD_PASS` and serve over HTTPS if exposed.
+
+- **Executive board** — RLS on all shared tables (self-hosted Postgres + PostgREST or Supabase); the DB key on trusted servers only.
+
+- **SQL** — fully parameterized queries; AI CLIs invoked with argv arrays (no shell interpolation of your messages).
+
+### Security posture
+
+Nova has access to private data, receives untrusted input (messages, web content, tool output), and has outbound paths (chat replies, API calls). That's the "lethal trifecta" — the hardening below cuts each leg for the untrusted/leaking case. Run `nova doctor --security` to grade your deployment against it.
+
+- **Least-privilege agent env** (`NOVA_AGENT_ENV_STRICT`, on by default) — agent subprocesses get only the vars they need, not the full host environment.
+
+- **Egress leak firewall** (`NOVA_LEAK_FIREWALL`, on by default) — redacts secrets from chat replies and logs, hard-blocks secrets leaving at the execute boundary.
+
+- **Untrusted-input firewall** (`NOVA_UNTRUSTED_FIREWALL`, on by default) — neutralizes tool/web/email content before it enters an agent prompt.
+
+- **Dashboard** binds loopback-only unless `DASHBOARD_PASS` is set.
+
+Found a vulnerability? Report privately via [GitHub Security Advisories](https://github.com/djbelieny/nova/security) — see `SECURITY.md`.
+
+## Open source
+
+Nova is MIT licensed and built on a lot of other people's work. Each project below is used under its own license (full texts ship in `node_modules`) — thank you to their maintainers.
+
+| Area | Projects |
+| --- | --- |
+| Runtime & AI | [Bun](https://bun.sh), [TypeScript](https://www.typescriptlang.org), [sqlite-vec](https://github.com/asg017/sqlite-vec) (vector search), [Transformers.js](https://www.npmjs.com/package/@huggingface/transformers) running [all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), the [MCP SDK](https://www.npmjs.com/package/@modelcontextprotocol/sdk) |
+| **mcp2cli** | the MCP-to-CLI bridge Nova drives so agents call MCP tools from the shell (see MCP integrations) |
+| **[RTK](https://github.com/rtk-ai/rtk)** (Apache-2.0) | Rust Token Killer — installed by `bootstrap.sh` and on by default; compresses command output (git, build, test, grep…) by 60–90% before it re-enters an agent's context. Safe by design — unknown commands pass through unchanged. Disable with `NOVA_RTK=off`. |
+| Channels & UI | [grammY](https://grammy.dev) (Telegram), [Bolt](https://www.npmjs.com/package/@slack/bolt) (Slack), [discord.js](https://discord.js.org), [Ink](https://www.npmjs.com/package/ink) + [React](https://react.dev) |
+| Documents & media | [pdf-parse](https://www.npmjs.com/package/pdf-parse), [mammoth](https://www.npmjs.com/package/mammoth), [docx](https://www.npmjs.com/package/docx), [PptxGenJS](https://www.npmjs.com/package/pptxgenjs), [sharp](https://sharp.pixelplumbing.com), [Playwright](https://playwright.dev) |
+| Other | [groq-sdk](https://www.npmjs.com/package/groq-sdk) (transcription), [Resend](https://resend.com) (email), [dotenv](https://www.npmjs.com/package/dotenv) |
+
+Nova **runs on** the official vendor CLIs — [Claude Code](https://claude.ai/claude-code), the Gemini CLI, and Codex — driven as subprocesses under your own subscriptions; those are proprietary tools, not bundled. Nova also grew out of Goda's minimal [Claude Code Telegram Relay](https://github.com/godagoo) pattern, since almost entirely rewritten.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Nova won't start | `NOVA_ENCRYPTION_KEY` set? Generate with `openssl rand -hex 32` and restart. Then `claude "hello"` to confirm the CLI is authenticated. |
+| Bot doesn't reply | Token has no stray spaces; `TELEGRAM_USER_ID` matches @userinfobot; `bun run test:telegram`; check relay logs. |
+| Dashboard unreachable | `DASHBOARD_PASS` must be set or login is disabled; `curl http://localhost:3033`; is the dashboard process running? |
+| Database errors | `bun run test:sqlite`; confirm `data/` exists and sqlite-vec loaded. |
+| Claude CLI not found | `npm install -g @anthropic-ai/claude-code`, or set `CLAUDE_PATH`. |
+| Voice transcription fails | `bun run test:voice`; Groq key valid, or whisper binary + model path correct. |
+| High memory use | 200–500 MB is normal for the relay; restart the service if it exceeds ~1 GB. |
+| Gemini errors | `gemini auth login` to refresh CLI credentials. |
+
+Still stuck? [Open an issue](https://github.com/djbelieny/nova/issues) — include your OS, Bun version, and relay logs (secrets redacted).
+
+
+==============================================================================
+
+# Boards your agents fill in
+
+> Nova can now build you a board. Ask for one in chat, it proposes the fields and stages, agents fill the cards, and you drag them in the dashboard. Stages can run a playbook when a card lands. Enough to replace a light CRM.
+
+*Source: https://mynova.space/blog/workboards/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Ask Nova for a board and it builds one — typed fields, ordered stages, and cards its agents fill for you. Open the dashboard and drag them. Arm a stage and the work runs when a card lands there. It is enough to stop paying for a light CRM.
+
+Jake Belieny · 23 July 2026 · 7 min read
+
+Nova generates records all day. It researches leads, drafts purchase orders, triages tickets, pulls the numbers for a report. Until this week all of that arrived as *messages* — a good answer in a chat thread, scrolled past by Thursday.
+
+There was nowhere to *see* a set of those records. Nowhere to move one along. No way to say "run the follow-up on everything in that column." So you kept a CRM open next to Nova, mostly to hold state that Nova had already produced, and you retyped it by hand.
+
+That is what **Workboards** fixes.
+
+**The one-line version** Ask for a board in chat. Nova picks the fields and the stages, its agents fill the cards, you drag them in the dashboard — and a stage can run a playbook the moment a card arrives.
+
+## Ask for a board, get a board
+
+You describe it the way you'd describe it to a colleague. Nova works out what the board needs to hold, builds it, and hands you the link.
+
+That second one is the part worth sitting with. The board and the research are one request. An agent goes and does the work, and the output lands as cards you can sort and move — not as a wall of text you have to reformat into something usable.
+
+## Every board has its own shape
+
+A purchasing board and a lead board have nothing in common, so Nova doesn't force them into one schema. Each board declares its own **typed fields** — text, money, date, email, a dropdown with your options, a link, a checkbox — and every card on that board carries that shape.
+
+Typed fields are what make a board more than a wall of sticky notes. A money column totals itself per stage. A date column sorts. A dropdown can't drift into four spellings of the same status. And a playbook can reliably read *this card's* amount, because it's always there and always a number.
+
+Schemas change, so editing one is handled carefully: **adding** a field is instant and backfills every existing card. **Removing or retyping** one asks you to confirm first, then keeps the old values in the board's history — so a field you drop in a hurry is recoverable, not gone.
+
+## Stages that do the work
+
+By default a stage is just a column — a label, somewhere to drag a card. That's the right default; most boards want to be a whiteboard.
+
+But a board can be made **reactive**, and then a stage can carry an action: a playbook, or a task for a named agent. Drop a card into it and the work starts, with the card's own fields as the inputs. A lead dragged into *Nurture* gets the nurture sequence written for *that* company. A PO dragged into *Send* gets sent.
+
+Handing a drag-and-drop gesture the power to start real work deserves guardrails, so it has them:
+
+- **Card content is treated as data, never as instructions.** A card whose notes field says *"ignore your previous instructions and…"* is caught and the action is skipped — the same screening Nova already applies to anything untrusted that reaches an agent.
+
+- **It fires once.** A double-drag, a duplicate request, a restart mid-run — the action runs a single time.
+
+- **Bulk moves ask first.** Drag forty cards into an armed stage and Nova asks once for the batch instead of quietly starting forty jobs.
+
+- **Failures are visible.** An action that can't complete goes to the dead-letter queue with its reason attached, rather than disappearing.
+
+- **The gate still applies.** Anything consequential downstream — sending, publishing, spending — still stops for your approval exactly as it always has.
+
+## Pull in what already lives elsewhere
+
+A board can bind to a connector you've configured — HubSpot, Stripe, Shopify, Zendesk — and pull records onto cards. Sync is **upsert-only**: it adds and updates, and never deletes. A flaky API or an expired token can leave you with stale cards, but it can't empty a board.
+
+Going the other way is deliberately slower. When you move a card on a bound board, Nova *describes* the write it would make to that system and records it — it doesn't reach out and change a record in your CRM because you dragged something. Writing to systems you depend on is a decision, not a side effect.
+
+## The boards you already had moved in
+
+Nova has shown agent tasks and support tickets on fixed, read-only boards for a while. Both now run on this engine: same look, same interactions, and draggable for the first time. Their columns are locked — a ticket board should mean what everyone thinks it means — but moving a card genuinely updates the ticket or the task underneath.
+
+One board UI instead of three, and every improvement lands on all of them at once.
+
+## What it isn't
+
+It isn't Salesforce. There's no lead scoring engine, no email sequencer bolted on, no reporting suite. If you need enterprise CRM, buy enterprise CRM.
+
+What it is: the place your agents' output goes so it stops being a chat message. For a lot of small teams the CRM was only ever a schema, a few columns, and a follow-up reminder — and Nova can hold all three now, on your own machine, next to the agents already doing the work.
+
+
+==============================================================================
+
+# Nova runs the operation now: playbooks, automations & connectors
+
+> Nova's biggest release turns it event-driven and process-durable: playbooks (reusable SOPs), event automations with semantic triggers, durable multi-day processes, document extraction, business connectors (Stripe/Shopify/Zendesk/HubSpot), compliance policies, and ROI reporting — every consequential step still gated.
+
+*Source: https://mynova.space/blog/business-automation/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+A chatbot answers. A business needs work to happen — on a schedule, in response to events, across days, with a paper trail. Nova's biggest release turns it from an assistant you ask into a system that runs the repeatable work in the background — and still asks before anything ships, spends, or sends.
+
+Jake Belieny · 21 July 2026 · 9 min read
+
+For a while, Nova has been very good at the thing you ask it to do *right now*: decompose a request, route it to specialists, prepare the work, and wait for your approval before anything goes live. That's the assistant. But a business doesn't run on requests — it runs on **repeatable work** that happens on a schedule, reacts to events, spans days, and leaves a paper trail.
+
+This release closes that gap. Nova is now **event-driven and process-durable** — a whole layer for building, running, and watching automated operations. And it lands on the same principle everything else does: the safe half runs freely; the consequential half still asks.
+
+**The one-line version** Author a process once and run it many times; fire workflows off real-world events; keep multi-day processes moving; pull structured data out of documents; read and write your business tools; put guardrails on spend and compliance; and see the value it all delivers — self-hosted, on your keys.
+
+## What shipped
+
+#### Playbooks
+
+Reusable SOPs — author a process once, run it many times with variables.
+
+#### Automations
+
+Event → condition → workflow, with dedupe, rate limits, and semantic triggers.
+
+#### Durable processes
+
+Multi-day flows that wait for a timer or an event, then resume — surviving restarts.
+
+#### Document extraction
+
+Invoices, receipts, and forms → structured, validated data.
+
+#### Connectors
+
+Stripe, Shopify, Zendesk, HubSpot — read and write, two-way.
+
+#### Policies
+
+Spend caps, approval matrices, and content checks — restrictive-only guardrails.
+
+#### ROI reporting
+
+Tasks automated, hours saved, and value vs. cost — by department and agent.
+
+#### Operate & observe
+
+A unified activity feed, dry-run previews, and a dead-letter queue for failures.
+
+## Playbooks: your processes, written down and runnable
+
+Every business has a set of "how we do X" processes — onboard a client, handle a refund, ship a launch. A **playbook** is that process, made runnable: a few ordered steps, each assigned to a specialist, with variables you fill in at run time. Author it once; run it whenever, with different inputs.
+
+Playbooks are personal or team-wide, and they're versioned — editing bumps a version, so an automation can pin the one it was built against. Nova ships a starter library you can clone and edit.
+
+## Automations: when something happens, do the work
+
+The biggest shift is that Nova now **reacts**. An automation has a source (an inbound webhook, a metric crossing a threshold, or a business event like a new Stripe payment), optional conditions, and an action — run an agent, or run a playbook. A new lead arrives, a payment fails, a form comes in — Nova picks it up and does the next thing, through the same approval gate.
+
+- **Conditions** filter on fields (`amount > 1000`, VIP senders, and so on), with per-hour dedupe and rate limits so a noisy source can't spam you.
+
+- **Semantic triggers** go further: fire on *meaning*, not exact matches. "When an email reads like a complaint" or "sounds like a cancellation" — matched with the same local embeddings that power the knowledge base.
+
+## Processes: for work that spans days
+
+Some things don't finish in one run: *send the contract → wait for a signature → invoice → wait for payment → fulfill.* A **durable process** is a sequence of action and wait steps that survives restarts and resumes on a due timer or a named event. Nova holds the state, waits patiently, and picks up exactly where it left off — no cron spaghetti, no dropped threads.
+
+## Extraction: turn documents into data
+
+The knowledge base was about *retrieval* — ask, and Nova answers from your material. Extraction is the mirror image: **capture**. Define the fields you care about and Nova pulls clean, type-checked JSON out of a PDF, a DOCX, or a scanned form — invoice number, total, due date, line items — validated and ready to push into a sheet or your CRM. Drop a document in chat with "extract as invoice," or wire it to an automation so every incoming invoice files itself.
+
+## Connectors: Nova, meet your stack
+
+Automation has to live where your business already runs. Nova now speaks to external systems through a thin, uniform **connector** layer, with four built in and bidirectional: **Stripe** (charges, customers, refunds), **Shopify** (orders), **Zendesk** (tickets), and **HubSpot** (contacts). Each brings read and write actions plus a trigger that feeds automations — so `stripe.payment` or `shopify.order` can start a workflow. Adding your own is a single file.
+
+## Policies: guardrails that only tighten
+
+Handing work to an autonomous system is only comfortable if you can bound it. Policies sit on top of Nova's earned-autonomy ladder and are **restrictive-only** — they can require approval, block, or warn, but never grant more freedom than the ladder already allows. Set a monthly spend cap per department, route certain actions to a named approver with an escalation timeout, or scan outgoing content for PII before it ships. With no policies set, nothing changes.
+
+## ROI: prove it's working
+
+An automation you can't measure is an automation you'll eventually switch off. When an agent finishes something quantifiable, it tags the outcome; Nova rolls those up against its own cost ledger into the numbers that matter — **tasks automated, hours saved, and dollars influenced versus what the AI cost**, broken down by department and agent. A weekly digest lands in your chat, and the dashboard shows the trend.
+
+## Built to be left running
+
+Reacting to the world unattended raises the bar on operability, so this release ships the boring, essential parts too:
+
+- **Dry-run.** Preview exactly what an automation would do against a sample event before you enable it. It executes nothing — you just see the decision.
+
+- **A unified activity feed.** Every automation fire, process transition, and playbook run in one timeline — in chat, the CLI, or the dashboard.
+
+- **Retries + a dead-letter queue.** A failed dispatch retries with backoff; if it still fails it lands in a queue you can inspect and retry, instead of vanishing.
+
+And the agents themselves can now use these capabilities while they work — searching your knowledge base, extracting a document, running a configured connector — using read actions freely and **proposing anything consequential for your approval** rather than doing it on their own.
+
+## Still the same promise
+
+None of this loosens the trust model — it extends it. Every consequential step an automation, process, or playbook takes still flows through prepare → approve → execute. The difference is that now the *trigger* can be an event, a schedule, or a signature instead of only a message you typed. Nova grew from something you talk to into something that runs your operation — and it still asks first.
+
+
+==============================================================================
+
+# Give Nova a second brain: feed it your documents with RAG
+
+> Nova now has a scoped knowledge base — a second brain. Drop in PDFs, docs, notes, or URLs and Nova learns them: chunked, embedded locally, and retrieved across every agent with source citations. Personal, team, and per-agent scopes. Four ways to feed it.
+
+*Source: https://mynova.space/blog/second-brain/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Nova now has a knowledge base you feed yourself. Drop in a PDF, a doc, a note, or a URL and Nova learns it — chunked, embedded on your own machine, and pulled back into any agent's answer with a citation. Personal, team-wide, or tied to one specialist.
+
+Jake Belieny · 21 July 2026 · 7 min read
+
+Nova has always had a memory — it remembers facts about you and your work and pulls them into a conversation when they're relevant. But memory is for the things Nova *learns* in passing. It was never a place to put the things you already *have*: the contract, the brand guide, the product spec, the 40-page research report you want every answer to be grounded in.
+
+That's what shipped this week. Nova now has a proper **knowledge base** — a second brain you feed on purpose. Hand it a document and it becomes something Nova can quote, reason over, and cite, across every agent, on every channel.
+
+**The one-line version** Drop in a PDF, doc, note, or URL. Nova splits it into passages, embeds them locally, and stores them. From then on your agents answer *from your material* — and tell you which document each fact came from.
+
+## How it actually works
+
+When a document arrives, Nova runs it through a small, boring, reliable pipeline — the kind you want handling your data:
+
+- **Extract** — text is pulled out of PDFs, Word docs, Markdown, plain text, or a web page.
+
+- **Chunk** — the text is split into overlapping passages of a few hundred words, so a match returns a focused, quotable snippet rather than a whole file.
+
+- **Embed** — each passage is turned into a vector by a model that runs **on your own machine** (all-MiniLM, the same local embedder Nova already uses). No document ever leaves for a third-party embedding API.
+
+- **Store & retrieve** — passages live in Nova's local vector store. When you ask something, Nova embeds your question, finds the closest passages, and folds them into the answer.
+
+Retrieval is **hybrid**, which is the part that makes it feel effortless. The most relevant passage or two is injected automatically into the conversation — you don't ask Nova to "search the knowledge base," it just knows. And when an agent needs to dig deeper, it can query the base directly. Either way, what comes back carries its source, so Nova can say *"(from contract-v3.pdf)"* instead of asking you to take its word for it.
+
+## Personal, team, and per-agent — one base, three scopes
+
+Not every document belongs to everyone. Nova's knowledge base has three scopes, and they compose:
+
+#### Personal
+
+Yours alone. Your notes, your drafts, the research only you should see. It lives in your own local database and no teammate can retrieve it.
+
+#### Team
+
+Shared across everyone on your Nova. The handbook, the brand guide, the pricing — the things you want every answer to respect.
+
+#### Per-agent
+
+A pack tied to one specialist. Contracts for Lex, the brand voice for Aura, the API docs for Architect — so the right expert carries the right material and no one else is cluttered by it.
+
+When an agent answers, it draws on your personal docs, the team base, *and* its own pack — but never another agent's pack. A specialist stays specialized.
+
+## Four ways to feed it
+
+The best knowledge base is the one you actually keep current, so Nova gives you four doors — use whichever fits the moment:
+
+### 1 · Drop a file in Telegram
+
+Send Nova a document with a caption like *"add to knowledge"* — or *"add to team knowledge"*, or *"for Lex's pack"* — and it's ingested on the spot, scope and all. `/knowledge` lists everything Nova currently knows, grouped by scope.
+
+### 2 · The dashboard
+
+The web dashboard has a **Knowledge** panel: drag files in, set each one's scope, search across everything, and delete what's stale. It's the comfortable place to manage a growing base.
+
+### 3 · The `nova kb` command
+
+Prefer the terminal? The unified CLI covers the whole lifecycle:
+
+- `nova kb add report.pdf --scope team`
+
+- `nova kb add https://example.com/spec --agent architect`
+
+- `nova kb list` · `nova kb search "refund window"` · `nova kb reindex --all`
+
+### 4 · A watched folder
+
+Point-and-forget: anything you drop into `~/.nova/knowledge/` is ingested automatically, and subfolders set the scope — `team/` for team, `agents/lex/` for an agent pack. Delete a file and its passages leave the base. It turns your knowledge base into a folder you already know how to use.
+
+## Built to the same standard as the rest of Nova
+
+A second brain is only worth having if you can trust what it feeds back. So the knowledge base inherits Nova's guardrails:
+
+- **Injection-scanned.** A document that tries to smuggle in instructions — *"ignore your previous rules…"* hidden in a paragraph — is caught and dropped before it can reach a prompt. Your files are treated as *data*, never as commands.
+
+- **Local and private.** Extraction and embeddings run on your machine. Your documents don't get shipped to anyone's API to be indexed.
+
+- **Clean re-ingests.** Re-add a file you've edited and Nova replaces the old version in place — no duplicates, no stale passages lingering.
+
+It also reuses the machinery Nova already had — the same local embedder, the same vector store, the same document parsers — rather than bolting on a parallel system. Less to break, and it behaves like the Nova you already know.
+
+## Where this goes
+
+A knowledge base changes what you can hand Nova. Instead of pasting the relevant paragraph into every request, you load the source once and every agent is grounded in it from then on. Support answers match your real policies. Legal reads your real contracts. Your brand voice is *your* brand guide, not a generic guess. The team stops re-explaining the same context and starts building on it.
+
+It's the difference between an assistant that's smart in general and a team that's smart about *your* business.
+
+
+==============================================================================
+
+# Nova, production-hardened: governance, exactly-once & connected data
+
+> The hardening release: hard-block compliance policies, role-based permissions, out-of-office delegation, durable exactly-once idempotency, advisory locks, encrypted connector secrets, connectors agents can discover like MCP tools, and a connected-data layer — everything you need to run Nova unattended, for a team.
+
+*Source: https://mynova.space/blog/governance-hardening/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Building automations is one thing; leaving them running — for a team, on real money — is another. This release is about that second thing: hard limits that hold even when you approve, permissions and delegation, exactly-once guarantees, encrypted secrets, and a way for Nova to read the data your business actually runs on.
+
+Jake Belieny · 22 July 2026 · 8 min read
+
+The last few releases gave Nova reach: a knowledge base, event-driven automations, playbooks, durable processes, connectors, ROI. This one gives it **restraint and rigor** — the unglamorous guarantees that turn "impressive demo" into "you can leave it running for your team." Every piece is additive: with nothing configured, Nova behaves exactly as it did before.
+
+**The one-line version** Hard limits that hold even when you approve, role-based permissions, out-of-office delegation, exactly-once idempotency, no-double-fire locking, encrypted secrets, connectors agents discover like MCP tools, and a read-only data layer for the systems your business runs on.
+
+## Hard limits that hold — even when you approve
+
+Nova's approval gate has always been the trust anchor: consequential work waits for your yes. But some rules shouldn't be a person's to waive. If policy says customer PII never leaves the building, an approver clicking "approve" too fast shouldn't override it.
+
+So compliance policies now have a real **hard block**. A content check set to *block* is enforced at the execute boundary against the actual prepared output — after approval, on the autopilot path, everywhere. If it trips, nothing ships, and Nova tells you why. *Warn* still just flags; *block* genuinely stops.
+
+## Who can do what — and who covers you when you're out
+
+A one-person Nova and a team Nova need different controls. Two arrive here:
+
+#### Role-based permissions
+
+Admins can do everything. Members get scoped capabilities — manage automations, policies, connectors, playbooks — so you decide who can change what. Granted with `nova access grant @teammate automation.manage` or `/access`.
+
+#### Out-of-office delegation
+
+Going away? `/ooo @teammate` and your assignments and approvals route to them until you're back — a cycle-guarded chain, cleared with `/ooo off`.
+
+## The boring guarantees that matter
+
+Automation that reacts to the world unattended lives or dies on three unglamorous properties:
+
+- **Exactly-once.** Webhooks get retried; a payment event can arrive twice. An automation can opt into durable idempotency (`--idempotent`) so it fires once and only once — not again an hour later when the sender retries.
+
+- **No double-fire.** Advisory locks now wrap the automation poller and the task dispatcher, so two overlapping ticks — or two instances on two machines — never process the same work twice.
+
+- **Encrypted secrets.** Connector credentials are stored AES-256-GCM encrypted at rest and set with `nova connector set stripe STRIPE_API_KEY=…`, with a rotation audit — no more live API keys sitting in a plaintext `.env`.
+
+## Connectors agents can actually use — without the bloat
+
+Nova drives its integrations through **mcp2cli**, a deliberate choice: instead of stuffing every tool's full schema into an agent's prompt (which balloons context and cost), agents *discover* tools at runtime — list them, ask for a tool's parameters, then call it. It keeps the prompt lean no matter how many tools exist.
+
+Connectors now follow that exact idiom. An agent runs `nova connector describe stripe` to learn its actions and parameters on demand, then `nova connector run …` to call one — reading freely, and proposing any write (a refund, a new record) for your approval rather than doing it alone. Adding a connector doesn't grow the prompt; discovery does the work. It's the difference between handing someone a 200-page manual and telling them where the manual is.
+
+## Reading the data your business runs on
+
+Analysis is only as good as the data it can reach. The new **connected-data layer** lets you register the sources your numbers actually live in and query them — read-only, by design:
+
+#### HTTP
+
+Any JSON or CSV endpoint — a report URL, an internal API.
+
+#### SQLite
+
+A read-only `SELECT` against a database file — analytics, exports, a local warehouse.
+
+#### Connector
+
+A connector read action — pull orders, charges, or tickets straight through.
+
+Register once with `nova data add`, then query from the terminal, from chat (`/data query sales`), from an agent mid-task, or on a schedule for a recurring report. No new dependencies, no warehouse required.
+
+## Still the same promise, just sturdier
+
+None of this changes what Nova is — it makes it something you can trust with more. The approval gate still stands; now there are limits even it can't cross, permissions around who sets them, guarantees that the work runs once and cleanly, and reach into the data and systems your business depends on. The demo grew up into something you can actually leave running.
+
+
+==============================================================================
+
+# Nova vs. Hermes vs. OpenClaw: the good, the bad, and the ugly
+
+> An honest, sourced comparison of three self-hosted, open-source AI agents — OpenClaw, Hermes, and Nova — with a feature table, charts, and the good, the bad, and the ugly of each.
+
+*Source: https://mynova.space/blog/nova-vs-hermes-vs-openclaw/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Three open-source, self-hosted AI agents you run yourself and talk to from your chat apps — and three very different bets on how much to trust an AI with the keys. An honest, side-by-side look.
+
+Jake Belieny · 20 July 2026 · 12 min read
+
+**Full disclosure** I build Nova. I've worked to keep this fair — the numbers are sourced, and Nova gets its own *bad* and *ugly* like everyone else. If anything reads as unfair to Hermes or OpenClaw, tell me and I'll correct it.
+
+Self-hosted AI agents had a breakout year. You run them on your own hardware, point them at your files and your chat apps, and they don't just answer — they *do things*: send messages, run commands, browse the web, automate your busywork. Three get talked about the most: **OpenClaw**, the viral juggernaut; **Hermes**, the research-grade agent from Nous Research; and **Nova** — the one I build.
+
+They share a shape but disagree, deeply, on one question: **how much should an AI be allowed to do on its own?** That single disagreement explains almost everything else about them — so keep it in mind as we go.
+
+## The landscape
+
+Two of these are giants. OpenClaw went from launch (as "Clawdbot") in November 2025 to a quarter-million GitHub stars within months; Hermes, backed by a well-funded AI research lab, isn't far behind. Nova is the newcomer — just open-sourced, essentially zero stars. I'm not pretending Nova wins a popularity contest. It doesn't.
+
+GitHub stars, July 2026 (live). Reach, not fit — everything below is about fit.
+
+## Meet the three
+
+**OpenClaw** — a personal AI assistant that lives in your chat apps. Built in TypeScript/Node with a Swift companion, it connects any model — Claude, GPT, Gemini, DeepSeek, or fully local — to 20+ messaging channels, 100+ community "skills," voice, a live canvas, and mobile apps. Its signature move is a *heartbeat*: every 30 minutes it wakes, reads a `HEARTBEAT.md`, and acts on its own. MIT-licensed; now stewarded by the OpenClaw Foundation after its creator, Peter Steinberger, joined OpenAI in February 2026.
+
+**Hermes** — Nous Research's self-improving agent, in Python. Model-agnostic to a fault: any OpenAI-compatible endpoint, and it can even reuse your vendor CLI's subscription tokens. It creates and refines its own skills from experience, models you with a dialectic memory system (Honcho), runs a "code mode" that calls tools over RPC, and can hibernate on serverless backends. It ships a terminal TUI, editor (ACP) integration, ~28 channels, and even tooling to generate training data. MIT.
+
+**Nova** — an AI *team*, not a chatbot: 24 named specialists and an executive board, coordinated by task decomposition, in Bun/TypeScript. The defining choice is **two-phase execution** — it prepares safe work, then asks for your approval before anything ships, sends, or spends. It drives your Claude/Gemini/Codex *subscriptions* within their terms (and now any OpenAI-compatible model too). Telegram, WhatsApp, Slack, Discord, and your terminal. MIT.
+
+## Side by side
+
+|  | OpenClaw | Hermes | Nova |
+| --- | --- | --- | --- |
+| Runtime | TypeScript / Node | Python | Bun / TypeScript |
+| License | MIT | MIT | MIT |
+| GitHub stars (Jul 2026) | ~384k | ~218k | new |
+| Primary interface | Chat apps | Terminal + chat | Chat apps + terminal |
+| Messaging channels | 20+ | ~28 | 5 (TG / WA / Slack / Discord / CLI) |
+| Models | Any, incl. local | Any, incl. subscription-token reuse | Subscription CLIs + any OpenAI-compatible |
+| Multi-agent | Session routing | Subagents + code-mode | 24 specialists + executive board |
+| Human approval before acting | ✗ off by default | ✗ off by default | ✓ on by default |
+| Proactive / autonomous | Heartbeat, every 30 min | Background review + cron | Scheduler + services (scheduled runs unattended) |
+| Self-improving skills | ✗ static | ✓ auto-created | ✓ promotes proven wins |
+| Default execution surface | host (sandbox opt-in) | sandbox backends | Approval gate; host by default, Docker opt-in |
+| Backing | Foundation (creator → OpenAI) | Nous Research lab | Solo (Jake) |
+| Maturity | Battle-tested, huge | Research-grade, active | New (2026) |
+
+## Where each one sits
+
+Strip away the feature lists and they line up on two axes: **how much it acts without you**, and **how much it's a single assistant versus a whole team**.
+
+The one chart that matters: Nova sits alone on the "asks first" side — on purpose.
+
+## The good, the bad, and the ugly
+
+### OpenClaw
+
+The ecosystem is unmatched — 20+ channels, 100+ skills, mobile apps, voice, a slick control UI. If you want an always-on assistant in WhatsApp that just works and actually does things, nothing else is this polished or this widely used. And it runs on truly any model.
+
+By default, tools run **on your host, autonomously** — the main session executes without an approval step. Convenient, but it's a lot of trust to hand a probabilistic system with reach into your shell, email, and messages. Sandboxing exists, but it's opt-in for non-main sessions.
+
+That trust has bitten people. Cisco researchers documented third-party skills performing **data exfiltration and prompt injection without the user's awareness**, against a largely unvetted skill registry. In March 2026, Chinese authorities restricted state enterprises, agencies, and banks from running it over data-deletion and leak concerns. And in the widely-reported "MoltMatch" episode, an agent created a dating profile — reportedly using a real person's photos without consent. Power without a gate cuts both ways.
+
+### Hermes
+
+The most *interesting* of the three. It genuinely learns — forking a background copy of itself to write and refine skills after hard tasks — builds a model of you over time, and will run on literally any endpoint, including a serverless box that costs almost nothing when idle. For researchers and serious tinkerers, it's a playground with real depth (down to generating training data for tool-calling models).
+
+It's heavy. Core files run into the hundreds of kilobytes; there's a large surface area to understand and operate, and the self-improving loop can sprawl if you don't watch it. And it's Python — great if that's your stack, friction if it isn't.
+
+To get subscription pricing on Claude or Codex, Hermes **reuses the vendor CLI's OAuth tokens** to call the subscription backends directly from its own process. It's clever and it saves money — but it plausibly runs against those subscriptions' terms, and it breaks whenever a vendor rotates auth. Like OpenClaw, its default posture is broad autonomy, not approval.
+
+### Nova
+
+The whole thing is built around **not** trusting the AI blindly. Two-phase execution means nothing ships, sends, or spends until you approve it — with a readable preview of what's about to happen. It reads like an org chart (24 specialists plus an executive board), drives your subscription CLIs *within their terms* (no token games), and it's a coherent Bun/TypeScript codebase you can actually sit down and read. And it quietly **learns**: repeat a task enough and Nova promotes the winning plan into a reusable skill, reassigns and self-heals failed steps mid-run, and tracks which specialists perform.
+
+It's brand-new and tiny. Essentially zero stars, a community of roughly one, thinner docs, fewer integrations, and none of the free battle-testing a 200k-star project gets. Fewer channels than OpenClaw. If you want a huge skill marketplace *today*, it isn't here yet.
+
+Its learning is earned, not instant — Nova promotes a skill only after a handful of *successful* runs, so it improves through repetition rather than the on-the-fly reflection Hermes does. The org-chart model has a learning curve, and while simple asks take a fast path (not the full board), the default posture is hands-on: the approval gate keeps you in the loop, and you loosen it with autopilot and earned autonomy as trust grows. If you want a fully hands-off agent from minute one, that deliberate caution will feel like friction.
+
+## So which should you pick?
+
+- **OpenClaw** — if you want the biggest ecosystem and a polished, hands-off assistant in your chat apps today, and you're willing to sandbox it and vet skills yourself.
+
+- **Hermes** — if you're a researcher or serious tinkerer who wants a model-agnostic, self-improving agent, and you don't mind Python heft or the token-reuse caveat.
+
+- **Nova** — if you want an AI *team* that asks before it acts, stays inside your subscription terms, and keeps you in the loop by design — and you can live with a young project.
+
+There's no universal winner here — only a winner for *your* risk tolerance. OpenClaw and Hermes bet that autonomy is worth the exposure. Nova bets the opposite: that the thing standing between a helpful agent and an expensive mistake is a human tapping *approve*. Pick the bet you're comfortable making with your shell, your keys, and your customers.
+
+Sources & notes: star counts from the GitHub API (July 2026); OpenClaw history, naming, and documented security/regulatory issues from [Wikipedia](https://en.wikipedia.org/wiki/OpenClaw) and public reporting; Hermes and Nova details from their public repositories. Numbers move — treat them as a July-2026 snapshot.
+
+
+==============================================================================
+
+# Nova speaks every model now
+
+> A batch of upgrades: run any OpenAI-compatible model alongside your subscription CLIs, a real nova command with nova connect, terminal + Discord channels, and self-serve team invites — without touching the self-hosted, approval-gated trust model.
+
+*Source: https://mynova.space/blog/whats-new/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+A batch of upgrades makes Nova more flexible and easier to live with — any model, a real CLI, more places to talk to it, and self-serve team access — without changing what it is.
+
+Jake Belieny · 20 July 2026 · 6 min read
+
+Nova has always been a self-hosted, approval-gated AI team you run on your own machine. This release doesn't touch any of that. What it does is widen the doors: more models can drive your agents, there's finally a real command to run them, you can talk to Nova from more places, and adding a teammate no longer means editing config files.
+
+Four themes: **any model**, **a real CLI**, **more places to talk to it**, and **easier setup and team access**. None of it changes the trust model — Nova still asks before anything ships or spends.
+
+## Use any model — without losing the subscription advantage
+
+Nova already runs on your Claude, Gemini, and Codex **subscriptions** by driving their CLIs directly. That's the whole trick behind its economics: a flat monthly cost instead of a metered API bill, and full agentic tool use — the same plan you already pay for, put to work by a team of agents.
+
+Now you can add **any OpenAI-compatible model** alongside them — an [OpenRouter](https://openrouter.ai) route, an OpenAI model, or a local `Ollama` or `vLLM` box on your own network. Add one with a single entry in `config/providers.json`, with `nova providers add`, or with a click in the dashboard's Models panel. The subscription CLIs stay the default and stay first; new models slot in beside them.
+
+And API models aren't second-class citizens. They can use your tools too — driving the very same sandbox and MCP bridge the CLIs use — so an agent on a local model can still browse, write files, and call integrations under the same approval gates.
+
+**A principled line** Nova keeps **driving the official CLIs** rather than harvesting subscription tokens to hit private endpoints. That's what keeps your subscription squarely within terms — and any new model you add uses its own proper API key, not a borrowed one.
+
+## A real `nova` command
+
+No more remembering `bun run this, bun run that`. There's now one `nova` CLI, installed on your PATH, that fronts everything:
+
+- `nova start` — bring your Nova up.
+
+- `nova doctor` — health check and copyable diagnostics.
+
+- `nova update` — pull the latest and reinstall.
+
+- `nova providers add` — wire in a new model.
+
+- `nova invite` — generate a code to add a teammate.
+
+The standout is **`nova connect`** — a terminal client that connects to your *running* Nova, whether it's on this laptop or on your VPS. You get a live view of what your agents are doing right now, and you can **approve, change, or cancel** inline without leaving the terminal. Because Nova runs always-on, you can drop into it from any terminal, anywhere, and pick up exactly where things are.
+
+## New places to talk to Nova
+
+Nova was already multi-channel — Telegram, WhatsApp, and Slack all feed the same pipeline. This release adds two more:
+
+- Your **terminal** — `nova chat` gives you a full conversation with Nova right in the shell.
+
+- **Discord** — run Nova as a Discord bot for you or your community.
+
+Both are just new adapters on the existing pattern: same message pipeline, same classification, same two-phase execution, same approval gates. A request you make in Discord is handled exactly like one you'd send in Telegram — nothing about how Nova decides or acts changes with the surface.
+
+## Easier setup, and adding your team
+
+You can now manage models, channels, and invites from the **dashboard** or the **CLI** — no hand-editing config to turn something on. Flip a channel, add a model, issue an invite, all from a screen or a single command.
+
+Adding a teammate used to mean tracking down a numeric user ID and pasting it into a file. Now you generate an **invite code** with `nova invite`, hand it to the person, and they redeem it on Telegram or Discord — you approve with a tap. Roles come along for the ride: `nova invite member` or `nova invite admin`.
+
+**Secrets stay put** Nothing about this moves your credentials off your server. The management screens show only which keys are *set* — never their values. Your keys never leave the machine you run Nova on.
+
+## Still the same Nova
+
+Everything that made Nova worth trusting is untouched. It's still self-hosted and MIT licensed. It still runs on your keys and your machine. And it still asks for your approval before anything ships, sends, or spends.
+
+These upgrades add reach and polish — more models, a real command, more channels, self-serve invites — without touching the trust model underneath. Same team, more doors.
+
+
+==============================================================================
+
+# Every feature Nova has, and what they're built to do
+
+> 24 specialist agents, an executive board, earned autonomy, two-phase approval, persistent memory with semantic recall, 12 MCP integrations, 45 skills, proactive services, and full audit trails. Here's everything Nova can do.
+
+*Source: https://mynova.space/blog/features/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+24 specialist agents, an executive board that reasons strategically, two-phase approval before anything ships, earned autonomy built on trust, persistent memory with semantic recall, 12 MCP integrations, 45 pre-built skills, and complete audit trails. Here's everything Nova has and how it works together.
+
+Jake Belieny · 15 July 2026 · 11 min read
+
+## 24 Specialist Agents
+
+Nova's roster spans almost every function a company needs. Each agent has its own system prompt, dedicated tools, and MCP integrations. Nova routes your request to the specialist without requiring you to know their names — but it helps to see the shape of the team you're hiring.
+
+#### Growth & marketing
+
+**Helios** runs paid ads across Google, Facebook, and LinkedIn. **Pixel** manages social media and community growth. **Kai** writes and develops brand narrative. **Orion** designs and executes email campaigns. **Magnus** handles SEO and organic search strategy.
+
+#### Creative & content
+
+**Morpheus** writes video scripts and storyboards. **Aura** discovers and maintains brand voice and tone guidelines. **Flux** engineers sales funnels and conversion flows. **Cyra** audits and optimizes websites for UX, CRO, and performance.
+
+#### Strategy & operations
+
+**Athena** owns business strategy and competitive analysis. **Oracle** forecasts trends and plans for the future. **Tesseract** applies systems thinking and identifies leverage points. **Zen** optimizes workflows and productivity. **Bridge** identifies and develops partnerships.
+
+#### Data & engineering
+
+**Digit** turns data into dashboards and actionable insights. **Cipher** runs machine learning and statistical analysis. **Architect** designs and builds web applications and infrastructure. **Joule** automates workflows and wires together APIs.
+
+#### Risk & voice
+
+**Rift** audits security and assesses vulnerabilities. **Lex** reviews contracts and handles legal compliance. **Helia** manages public relations and media outreach. **Nexus** builds and moderates online communities.
+
+#### Support & operations
+
+**Echo** drafts customer support responses and builds knowledge bases. **Quill** writes grant proposals and business funding documents. **Digit** analyzes business metrics and produces reports. Together they handle the work that keeps operations running.
+
+Each agent also has access to a shared library of **45 pre-built skills**: image generation, document creation (DOCX, XLSX, PPTX, PDF), web research, Google Workspace integration, Notion databases, and more. If an agent needs a tool, it already has hands.
+
+## The Executive Board
+
+For decisions that deserve more than one opinion, Nova convenes an executive board of seven distinct thinkers. Each has its own AI provider, persona, and mental model:
+
+- **CEO** (modeled after Jeff Bezos) focuses on Day-1 thinking and customer obsession. Owns long-term vision and flywheel effects.
+
+- **CFO** (Patrick Campbell) reasons about unit economics, pricing, and capital efficiency. Ensures every dollar compounds.
+
+- **CMO** (Seth Godin) builds remarkable brands and tribes. Focuses on permission marketing and Purple Cow ideas, not incremental campaigns.
+
+- **CTO** (Werner Vogels) designs systems with "everything fails" as the starting point. Ensures technical choices serve business outcomes.
+
+- **COO** tracks execution, finds bottlenecks, and turns strategy into results. The engine that makes things happen.
+
+- **Head of Research** (Ben Thompson) synthesizes trends and platform dynamics. Provides the intellectual foundation for decisions.
+
+- **Critic** (Charlie Munger) does pre-mortems, finds failure modes, and keeps everyone honest. Never executes—only analyzes.
+
+Invoke the board with `/board your question`. The flow: each executive contributes independently, the Critic performs a pre-mortem, Nova synthesizes 3–5 options with confidence scores, and you choose the path. The decision gets recorded and fed to the execution engine.
+
+## Two-Phase Execution: Approval Before Action
+
+The moment that separates Nova from a blank check is the approval gate. Every consequential action — publish, send, spend, create — happens in two phases:
+
+- **Prepare** — The safe half. Research, draft copy, generate images, analyze data, design pages. Nothing leaves the building yet.
+
+- **Approve** — Nova shows you exactly what it's about to do: preview the email, the social post, the ad creative, the code. Telegram buttons: *Approve*, *Revise*, or *Cancel*.
+
+- **Execute** — Only after your sign-off does it do the irreversible thing.
+
+For routine tasks you trust completely, you can auto-approve: messages starting with "just do it", "go ahead", or "ship it" skip the gate. The gate stays closed until you train it otherwise.
+
+If you tap *Revise*, the session is saved to the database. Your next message is treated as feedback, and Nova re-runs the prepare phase with your guidance.
+
+## Earned Autonomy: Trust Built on Track Record
+
+Autonomy isn't a blank check — it's earned. Every type of action starts at **always ask**. As an agent builds a clean track record on a specific task — say, "send the weekly newsletter" — it graduates in stages:
+
+- **Level 0 (Ask)** — Nova prepares and waits for your approval every time.
+
+- **Level 1 (Notify)** — Nova executes and notifies you after. You can still review what happened.
+
+- **Level 2 (Autonomous)** — Nova runs fully on its own, within a spending cap you set per action type.
+
+One failure or one rejection and it drops straight back to Level 0. You set the cap (daily spend, email list size, infrastructure cost), and you can change it anytime from the dashboard. It's trust that survives failure.
+
+## Memory & Goals: Semantic Recall That Compounds
+
+Every conversation feeds a persistent knowledge base. Nova uses a two-part system:
+
+**Intent tags** let you save facts, set goals, create tasks, and schedule work — all via structured tags Nova parses from responses:
+
+- `[REMEMBER: fact]` — Save a fact with vector embeddings for semantic search.
+
+- `[GOAL: grow newsletter to 10k | DEADLINE: 2026-12-31]` — Set a goal with optional deadline. Nova checks progress.
+
+- `[TASK: Kai | write 3 blog posts on AI trends]` — Delegate to a specialist.
+
+- `[SCHEDULE: social post | 2026-07-20 at 9am | RECUR: weekly:monday:9am]` — One-time or recurring. Conditional rules supported.
+
+Nova stores these in SQLite with vector embeddings (all-MiniLM-L6-v2 model, 384 dimensions) and injects relevant facts into every message. So when you ask a question three weeks later, Nova already knows your context — what you're building, what you've tried, what failed, and what's working.
+
+## Proactive Services: Background Intelligence That Stays Current
+
+Nova doesn't just wait for you to ask. Several proactive services run on schedules you configure:
+
+#### Morning Briefing
+
+Daily digest: key metrics, new leads, support tickets, schedule changes. Delivered to your Telegram before you start work.
+
+#### Smart Check-in
+
+Context-aware prompts when you're idle. Offers next actions based on your goals and unfinished tasks — not a dumb "how are you" bot.
+
+#### AI News Monitor
+
+Curated news about AI developments and industry trends, parsed so you get signal not noise.
+
+#### Social Post Suggester
+
+Ideas for social content based on what's trending in your niche and your brand voice.
+
+#### Lead Suggester
+
+Identifies warm leads from your network and explains why they're relevant to your current goals.
+
+#### Meta Ads Report
+
+Daily analysis of ad performance, cost per lead trends, and recommendations for pausing or scaling.
+
+Each service is opt-in. Most default to daily or periodic schedules, but you can customize timing, disable, or add conditions (e.g., "only send if there's a crisis").
+
+## Multi-Channel & Integrations
+
+### Talk to Nova where you already are
+
+Nova works via Telegram, WhatsApp, and Slack. The same agent team, the same approval gate, the same memory — you just pick where you want to chat. Messages sync across channels, so you can start a task in Slack and revise it in Telegram.
+
+### 12 MCP integrations built in
+
+Nova connects to the tools your business already uses:
+
+- **Google Workspace** — Gmail, Calendar, Drive, Docs, Sheets. Draft emails, create schedules, pull data.
+
+- **Notion** — Read and write databases, pages, and documentation. Keep institutional knowledge in sync.
+
+- **Playwright** — Browser automation, screenshots, scraping. Agents can log into your apps and take actions.
+
+- **Cloudflare** — Workers, DNS, edge functions. Deploy serverless code and manage infrastructure from Nova.
+
+- **ClickUp** — Task management. Agents create tasks, update statuses, and track dependencies.
+
+- **GoHighLevel** — CRM, campaigns, social publishing. Agents can create leads, launch campaigns, and publish posts.
+
+- **Square** — POS and sales data. Agents can analyze revenue, refunds, and customer transactions.
+
+- **Zoom** — Schedule meetings directly from Nova without leaving Telegram.
+
+- **Firecrawl** — Web scraping at scale. Agents can gather competitor data or customer research.
+
+- **Tavily** — Web search API. Agents research topics, find best practices, and analyze trends.
+
+- **Exa** — Semantic web search. Find papers, articles, and resources by concept, not keywords.
+
+- **Browserbase** — Headless browser sessions. Agents can interact with modern web apps that require JavaScript.
+
+Each integration uses your own credentials or API keys — Nova doesn't mediate access. Your data, your rules.
+
+## Built to Be Trusted: Audit, Sandboxing & Verification
+
+### Sandboxed execution
+
+Agent tasks can run inside a hardened container: read-only system, isolated filesystem, no access to your host except a per-task workspace, no path to your credentials. If an agent encounters a malicious webpage or prompt injection, it stays contained. And sandboxing doesn't force you to pay-per-token — Nova runs your subscription inside the sandbox instead of quietly switching billing.
+
+### Autonomous verification
+
+After each task, the agent automatically verifies its own work. Did the email send? Does the page render? Did the database update? If it fails, you see the error immediately. If it succeeds, you get a signed ledger entry.
+
+### Complete action ledger
+
+Every consequential action is logged: what ran, which agent, which user approved it, what it cost, when it finished, whether it succeeded. Query the ledger by date range, agent, action type, or cost. Business-grade mostly means *answerable after the fact*, and Nova is.
+
+### Governance dashboard
+
+See real-time spending, cost per agent, which tasks are running, which agents have highest error rates, and which operations need your attention. Spend caps are enforced — if an agent hits its budget, it stops and alerts you.
+
+**Why this matters** An AI team that can send emails and spend money is only useful if it's also *safe*. Sandboxing, verification, and audit trails turn "it probably won't do anything dumb" into real guarantees you can defend.
+
+## Smart AI Routing
+
+Nova runs on Claude, Gemini, or other providers. Rather than forcing one model for everything, Nova routes based on task type, cost tier, and rate limits. A fast question might go to Haiku. A complex strategic analysis gets Opus. You can override anytime with a prefix: `/claude your question` forces Claude, `/gemini your question` forces Gemini.
+
+This matters because some tasks are cheap to think through and others need the biggest model. Nova makes that choice automatically, but you're never locked in.
+
+## Pattern Caching: The Same Request, Instantly
+
+Every successful decomposition plan — the breakdown of a complex task into agent subtasks — gets cached with semantic indexing. The next time you ask a similar question, Nova recognizes the pattern and skips classification. This saves both tokens and latency. As you use Nova, it gets faster on your recurring work.
+
+
+==============================================================================
+
+# How Nova works: the architecture under the hood
+
+> A technical deep dive into Nova's architecture: 3-tier message classification, task decomposition with dependency resolution, parallel execution, two-phase approval gates, split SQLite with vector search, and intelligent AI routing across Claude, Gemini, and Codex.
+
+*Source: https://mynova.space/blog/architecture/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Nova's power comes from how it thinks, not just what it can do. Here's a technical walkthrough of the pipeline that turns a Telegram message into coordinated work across 24 specialist agents, how it learns from patterns, and why it asks before it acts.
+
+Jake Belieny · 15 July 2026 · 13 min read
+
+A traditional chatbot takes your message and runs it straight to an LLM. Nova takes a longer, smarter route. Every message gets **classified** into one of three buckets, each handled differently. Simple things stay fast. Focused work routes to a specialist. Big decomposable problems get broken into subtasks and run in parallel. And nothing consequential happens until you say so.
+
+It's a pipeline, not a black box. At every stage — classification, decomposition, execution — the system makes a deliberate decision. You can read the code. You can change it.
+
+## How Nova decides what to do with your message
+
+When you send a message, Nova doesn't immediately ask Claude to reason about it. Instead it uses a **3-tier classification system** designed to keep as many requests as possible out of the LLM entirely.
+
+### Tier 1: The heuristic (instant, zero cost)
+
+Messages under 15 words with no action verbs get a direct answer from Claude. "What time is it?" stays instant. This catches quick lookups, status checks, and casual questions — the kind where routing overhead would be silly.
+
+### Tier 2: Pattern matching and single-agent routing
+
+Nova remembers successful task decompositions. If you asked "draft a newsletter" last week and got a plan that worked, and you ask something similar today, Nova reuses that same plan without re-running the LLM. For new requests, Nova pattern-matches against known task templates — things like "social media post", "email campaign", "blog article", "ad creative" — and routes them straight to the right specialist agent.
+
+### Tier 3: LLM classification (only when necessary)
+
+Everything else goes to Claude Sonnet, which classifies it as simple (direct answer), routed (single agent), or complex (decompose and parallelize). This happens once per unique type of request, then gets cached.
+
+**The result** Simple messages get answered without an LLM call at all. Repeated tasks reuse a cached plan. Only genuinely new requests pay for a classification call — and each one becomes a pattern that makes the next similar request faster.
+
+## Breaking complex work into independent pieces
+
+When you ask Nova something big — "plan and launch our Q3 campaign" — the planner takes over. It breaks the request into subtasks, figures out dependencies, and runs everything that can happen in parallel.
+
+Some of Nova's most complex workflows are **deterministic pipelines**, not LLM-generated each time. A social media campaign always follows the same shape: research → content → image → preview → publish. A blog post is always research → write → hero image → preview → publish. This means you get a predictable, reproducible process for work you do repeatedly.
+
+For truly novel requests, the LLM decomposes the task. It returns JSON: an array of subtasks, each with a description, which agent should handle it, and which other tasks it depends on. Dependencies are resolved, then independent subtasks run at the same time.
+
+## Two phases: prepare first, ask permission, then execute
+
+The moment a task touches the real world — publish a post, send an email, spend money — it needs approval. Nova implements this as two distinct phases.
+
+**Prepare** is the safe half. Research, write the copy, generate images, run analytics. Artifacts flow from subtask to subtask. Everything is reversible or at least refundable. This phase produces a summary and artifacts, sent to you in Telegram with three buttons: Approve, Revise, or Cancel.
+
+**Execute** only runs after you tap Approve. It publishes, sends, creates, spends — all the irreversible stuff. But it runs with full context from prepare: the copy is already written, the image is already generated, the timing is already planned.
+
+Users who run the same task weekly can eventually **earn autonomy**. After a few clean executions of "send the newsletter", the system can graduate it: first to "send it and notify you after", then to "send it autonomously up to a $50 budget". One rejection and it drops back to asking. You're always in control of how much rope each task gets.
+
+## How Nova stores what it knows
+
+Nova uses a **split SQLite architecture**: one shared database for Nova's own state, and one per-user database for everything private to that user.
+
+#### Shared database
+
+User accounts, cost tracking, logs, global facts, service state. One instance per Nova deployment.
+
+#### Per-user database
+
+Messages, personal memory, agent tasks, approvals, scheduled work, execution patterns. Stays on your machine.
+
+Both use `sqlite-vec` for vector search. Every fact, every memory, every message gets embedded with `all-MiniLM-L6-v2` (384 dimensions). When the planner needs context — "what do we know about pricing strategy?" — it does a semantic search instead of keyword matching. This means Nova can find relevant context even when you don't use the exact same words.
+
+Embeddings are cheap to compute locally, and the search results are cached. Your data never leaves your machine. Your keys, your subscription, your database.
+
+## Choosing the right AI for the job
+
+Nova can route work to Claude, Gemini, Codex, or Groq. The decision happens automatically using **smart routing**: force override (you prefix with `/claude` or `/gemini`) beats your default. Your default beats hint-based routing. Hint-based beats rate-limit fallback.
+
+The routing logic considers the task type. MCP-heavy work (managing Notion docs, Calendar events, Gmail) routes to Claude because of its native MCP support. Research and web synthesis go to Gemini because of its free tier and strong synthesis. Fast classification goes to whichever provider has the cheapest fast model.
+
+Each provider has three tiers: `fast` (classification, cheap), `standard` (task execution, balanced), and `premium` (critical reasoning, best quality). The router picks the tier based on the task criticality.
+
+## The building blocks: patterns, memory, and integrations
+
+### Pattern learning
+
+Every successful task execution gets recorded as a pattern. The next time you ask something similar, Nova scores your request against those patterns by keyword overlap. When a request closely matches a previous plan that already has two or more clean executions, Nova reuses it. This turns repeated tasks into one-step actions — and a pattern that keeps succeeding is eventually promoted into a reusable skill.
+
+### Persistent memory
+
+Nova embeds everything you tell it to remember. Use `[REMEMBER: fact]` in a response and it saves the fact, deduplicates against existing memory, and makes it available for semantic search on every future request. You can also set `[GOAL: text | DEADLINE: date]` to track objectives, and Nova will remind you of progress and blockers.
+
+### 12 MCP integrations
+
+Nova ships pre-configured with Notion, Google Workspace (Gmail, Calendar, Drive, Docs, Sheets), Playwright, Cloudflare Workers, Zoom, Square, ClickUp, GoHighLevel, Firecrawl, Tavily, Exa, and Browserbase. Each agent can access the ones relevant to its domain. You provide the credentials once during setup, and they stay on your machine.
+
+### Scheduled and proactive work
+
+Nova can run tasks on a schedule: daily briefings, weekly reports, monthly audits. It learns your patterns — when you're most likely to want news, which reports matter most, which team members to loop in — and proactively reaches out. A morning briefing isn't just "here's your calendar", it's "here's your calendar plus the three most important emails plus your top priority for today based on your goals".
+
+## The executive board: strategy at scale
+
+For the biggest decisions, Nova runs a **board meeting**. Seven executives — CEO, CFO, CMO, CTO, COO, Head of Research, and Critic — each with a distinct persona and priority agents, convene on your strategic question.
+
+The meeting follows a structured flow: each executive independently analyzes the question, the Critic identifies failure modes and gives a GO/NO-GO, then Nova synthesizes 3–5 options ranked by confidence. You pick one, the decision gets recorded to the ledger, and the executive team delegates autonomous work based on the decision through the main Nova orchestrator.
+
+The executives use different AI providers (Claude for strategy, Gemini for analytics, Codex for technical depth) and coordinate through a shared database. Each executive node runs independently on its own VPS, making it possible to scale across unlimited work without a central bottleneck.
+
+## Why this architecture?
+
+Nova's design makes five things possible:
+
+- **Speed** — many messages never touch an LLM at all. Heuristics and cached patterns keep the fast path fast.
+
+- **Cost efficiency** — Every route chooses the cheapest model adequate for the task. Fast tiers for classification, standard for execution, premium only when reasoning matters.
+
+- **Parallelism** — Independent subtasks run concurrently. A 10-step campaign doesn't take 10× the time; many steps collapse into 2–3 batches.
+
+- **Auditability** — Every decision is logged. You can see why Nova routed to an agent, what the dependencies were, whether it used a cached pattern or called the LLM.
+
+- **Control** — Two-phase execution means consequential work stops for approval. Patterns and autonomy escalation mean you gradually trust more work to run unsupervised as the system proves itself.
+
+
+==============================================================================
+
+# Why Nova is built the way it is
+
+> The philosophy behind Nova's architecture: why an org chart instead of a chatbot, why trust is engineered, why autonomy must be earned, and why sandboxing and auditability are non-negotiable.
+
+*Source: https://mynova.space/blog/design-decisions/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Eight design decisions that make Nova trustworthy, autonomous, and truly yours. The philosophy behind every choice, from architecture to autonomy to auditability.
+
+Jake Belieny · 15 July 2026 · 12 min read
+
+Building a system that can act on your behalf is not the same as building a system that works well. Nova's shape comes from seven years of thinking about the difference. This essay describes why each piece is there and what problem it solves — and where I chose one good design over another better one, because "better" would have made the platform unusable.
+
+## An org chart, not a chatbot
+
+The first decision: Nova isn't one model playing the role of every job. It's 24 specialists, each with a domain, a playbook, and dedicated tools. Some people see that and ask: isn't that just routing? Don't you still need the general reasoning engine underneath?
+
+No. Each specialist is. Helios knows paid advertising because all of their context, training, and tool access is structured around it. Cipher knows how to reason about data because that's the entire shape of their system prompt. Lex isn't a general assistant reading legalese; they're a lawyer.
+
+The alternative — one model routing to different tool sets — feels simpler. It saves you from managing 24 prompts. But it loses something crucial: depth. A general model reasoning about your Meta campaigns for the first time makes different tradeoffs than a specialist who has reasoned about 10,000 campaigns. They prioritize differently. They ask questions you didn't think to ask. They spot risks because that's all they watch for.
+
+The tradeoff is routing complexity. You have to classify every incoming request (heuristic → pattern cache → LLM) and pick the right agent. That's three tiers of classification to avoid calling the expensive one every time. Worth it, because the specialist's answer is better.
+
+Above the specialists sits an **Executive Board** — seven roles, each modeled on a distinct way of thinking. The CEO reasons in terms of flywheel loops and Day-1 questions. The CFO thinks about unit economics. The Critic does pre-mortems. When you ask something hard — "should we expand into a new market?" — they don't just debate; they reason from their different first principles, and you get seven perspectives plus a synthesis. Not consensus, but decision-support.
+
+**Design choice** Specialists beat generalists on depth. A single reasoning engine loses the rigor that comes from expertise.
+
+## Trust is the product
+
+You don't trust a system because it's confident. You trust it because it asks before it does anything that matters. Two-phase execution is where that lives.
+
+Phase one: prepare. Research, write, generate images, run the analysis. Everything that's safe and reversible. Nothing has left the building. You get to see exactly what's about to happen.
+
+Phase two: execute. Publish the post. Send the email. Spend the money. Create the campaign. Only after you tap *Approve* on Telegram.
+
+That's it. That's the core of the trust mechanism. Not "Nova is smart enough that it won't do anything dumb" — that's not true, and it's not the point. Instead: "Nova does the safe work, shows you the plan, and stops until you say yes." Nothing consequential happens without a human in the loop. Nothing.
+
+The alternative is autonomy by trust level — some actions run without asking if Nova has a clean track record. Nova has that (earned autonomy, described below), but it's a power-up. The floor is always: ask before you execute.
+
+What makes this actually work is that the approval gate lives in your messaging app (Telegram, Slack, WhatsApp). You don't have to navigate to a dashboard or remember a password. You get a notification. You read it. You tap a button. Frictionless approval makes it worthwhile: you actually do it instead of waving away warnings.
+
+## Earned autonomy, not a blank check
+
+The moment a system never asks is the moment you can't trust it. And the moment it asks for everything is the moment it becomes a nuisance and you stop paying attention.
+
+Earned autonomy lives in between. Every action type (send newsletters, publish social posts, create ad campaigns) starts at *always ask*. If an agent builds a clean track record — say, three successful newsletter sends in a row with zero rejections — it graduates: first to *notify you after it happens*, then to *fully autonomous within a spending cap*. One failure or one rejection and it drops back to asking immediately.
+
+You set the rules. You decide how much rope each agent gets, per action type. You can see and change it on the dashboard. The system learns and defers to your history, but never silently. If an agent fails enough times, they've earned their demotion.
+
+This solves the real problem, which isn't "should the AI be autonomous?" It's "on what basis does it get to be autonomous?" The basis is earned trust — a track record on that specific action type. Not global confidence. Not a toggle. Not a prayer.
+
+## Self-hosted and local-first
+
+Nova runs on your machine. It reads your Telegram messages from your bot. It stores your data in local SQLite databases on your disk. Your API keys stay in your `.env` file. You never send your data to a cloud unless you explicitly ask a Nova agent to, and even then only what's needed for that task.
+
+This was not the easier choice. A hosted service is simpler to build, simpler to scale, and much simpler to charge for. Hosting it means I become the data controller — I collect the information, I'm responsible for the security, I get sued when something breaks. Self-hosting pushes that responsibility onto you. If Nova leaks your data, it's because you didn't secure your VPS properly, not because I had a security incident at my data center.
+
+But that's exactly the point. Your data should be your responsibility. Your Telegram messages shouldn't transit through a server I control. Your Ad spend shouldn't require giving me API keys. You should be able to read every line of code, fork the whole thing, and owe me nothing.
+
+Self-hosting also makes Nova radically cheaper. You're not paying me per-message or per-month-per-seat. You're paying for your Claude subscription (or Gemini, or OpenAI). That's it. Nova just uses what you already have. This only works because Nova is open source and MIT licensed — you can take it, change it, run it forever.
+
+## Subscription-first routing
+
+When Nova classifies a request or decomposes a complex task, it has to call an AI model. Three choices: use your existing Claude/Gemini/OpenAI subscription, or switch you to per-token billing, or negotiate a wholesale rate with the provider.
+
+Nova picks your subscription. Always. If you have a Claude Pro plan, Nova prefers it. If you have a Gemini business plan, it prefers that. Only if you've explicitly configured a different preference — or your subscription hits its rate limit — does Nova fall back to a different provider.
+
+This is a small decision with large consequences. It means the cost of running Nova doesn't surprise you. It doesn't appear on a separate bill. It doesn't require you to set up OAuth and trust a third party with your API credentials. You just use what you're already paying for.
+
+The tradeoff is that Nova can't optimize purely on cost or latency. If you're on Gemini but Claude would be faster, Nova still prefers Gemini because that's your subscription. That's a deliberate loss of optimization in exchange for transparency and predictability.
+
+## Sandboxing is the ticket to real autonomy
+
+An agent that can send emails or spend ad budget is only acceptable if it can't somehow read your SSH keys, exfiltrate your database, or pivot to other systems. Sandboxing is how that works.
+
+When a Nova agent executes a task that involves untrusted input — scraping a webpage, analyzing a file a customer uploaded, running code somebody handed you — that execution happens inside a hardened container. Read-only system, no filesystem access beyond a task-specific staging directory, no path to your credentials. A malicious webpage can't hijack the agent and use it as a stepping stone to your machine.
+
+Without sandboxing, you can't safely delegate consequential work to an agent. An attacker who found a jailbreak in the AI's reasoning could potentially compromise your whole system. Sandboxing doesn't prevent the jailbreak, but it limits the blast radius: the agent runs in a cage.
+
+This is non-negotiable for any system you're trusting with real work. And it's expensive — containerization has overhead, network latency, resource costs. But the alternative is: don't trust the agent with consequential work. I chose the expensive path.
+
+## An executive board with distinct personas
+
+Single-source-of-truth thinking is what gets companies killed. You make a decision based on one perspective, miss the risk, and the company absorbs the hit. The executive board is Nova's way of preventing that.
+
+Instead of one confident answer, you get seven. The CEO thinks in terms of leverage and flywheel effects. The CFO thinks in unit economics. The CMO thinks in tribes and permission. The CTO thinks about systems failing. The Critic thinks about what could go wrong. They reason from different first principles. They spot different risks. None of them is smarter than the others; they're just thinking in different directions.
+
+When you ask the board a hard question, you get back three to five scored options, each with a confidence level and a rationale. You pick one. The decision gets logged. That matters.
+
+The tradeoff is latency and cost — you're running seven reasoning sessions instead of one. And you have to pick an option yourself instead of getting a recommendation. But that second part is the whole point. For decisions that matter, you should see the reasoning, weigh the options, and choose. The board gives you the raw material to think with.
+
+## An audit trail for everything
+
+After a Nova agent runs a task, you have a log of what happened: which agent, what they did, how long it took, how much it cost, whether it worked. After the task completes, the agent even verifies its own work — "did the email actually send?" "does the page render?" — before reporting done. If verification fails, the task stays open until you decide what to do.
+
+This isn't security theater. It's the foundation of business-grade AI. You can't be responsible for something you can't explain. You can't debug something you didn't measure. You can't defend something you can't describe.
+
+The cost is that every decision, every action, gets written to a ledger. More storage, more I/O, more data to manage. More importantly, it means you have to face what the system actually did, not what you hoped it did. That's uncomfortable sometimes. It's also the only way to run this responsibly.
+
+**Design choice** "Business grade" mostly means answerable after the fact. Auditability is not a feature; it's the requirement.
+
+## The tradeoffs are real
+
+Each of these decisions costs something. Specialists beat generalists but add routing complexity. Approval gates build trust but add friction. Earned autonomy prevents blank checks but requires tracking state. Sandboxing blocks attacks but adds latency. Self-hosting is cheap but puts operational burden on you. An executive board prevents groupthink but slows down decisions. Auditability builds responsibility but requires logging everything.
+
+I chose each tradeoff because the alternative — a confident, autonomous, high-velocity AI system that nobody really trusts with anything important — seemed worse.
+
+Nova is slower than it could be. It's more complex than it could be. It costs more to run (on your infrastructure, not mine). It asks more questions than a optimized system would ask. All of this is deliberate. The goal isn't to build an AI that moves fast. The goal is to build an AI team that actually works, that you can hand a real problem to, that you'd trust to run something important, and that you can explain and defend when something goes wrong.
+
+That's harder. It takes longer. But it's the only kind of autonomous system worth building.
+
+
+==============================================================================
+
+# Deploying Nova: A practical guide to self-hosting
+
+> Self-host Nova in under 5 minutes. From the init wizard to production on a VPS, here's everything you need to know to run your own AI team on your machine, your keys, your approval gates.
+
+*Source: https://mynova.space/blog/deployment/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+From a fresh clone to running on your machine or VPS. Learn how to initialize Nova, configure it for your AI provider and integrations, enable sandboxing, and set up the executive board — with approval gates that keep you in control.
+
+Jake Belieny · 15 July 2026 · 10 min read
+
+Nova is designed to be self-hosted. Your machine, your API keys, your data, your approval gates. This guide walks through every step: from the first `bash bootstrap.sh` to a production instance running on a VPS, with optional features like sandboxed execution and a distributed executive board.
+
+Most of this takes under five minutes. The optional bits — sandboxing, multi-VPS board coordination, advanced governance — you turn on when you're ready.
+
+## What you'll need
+
+Before you start, gather these pieces:
+
+#### A computer or server
+
+macOS, Linux, or Windows via WSL2. The installer sets up everything else — the Bun runtime and the Claude Code CLI are installed for you automatically.
+
+#### A Telegram account
+
+Nova communicates via Telegram by default (WhatsApp and Slack also work). You'll get a bot token from @BotFather.
+
+#### One AI provider key
+
+Claude (recommended), Gemini, Codex, or Groq. Start with what you already use; Nova switches providers based on task type.
+
+#### MCP credentials (optional)
+
+Google Workspace, Notion, Cloudflare, etc. Each one adds a tool to your agents. You can skip these for now and add them later.
+
+## The fast path: `bash bootstrap.sh`
+
+Nova ships with a one-command installer and a guided setup wizard that asks exactly what it needs and no more. Clone the repo, run one command, and you're done in about 3 minutes:
+
+**Quick start** 
+ `git clone https://github.com/djbelieny/nova.git`
+
+ `cd nova`
+
+ `bash bootstrap.sh`
+
+`bootstrap.sh` installs any missing prerequisites (Bun, the Claude Code CLI), then launches the wizard. It's resumable — close it and re-run to continue — and `bash bootstrap.sh --check` reports your system without changing anything. The wizard will ask you for:
+
+- A Telegram bot token from @BotFather (follow the prompts)
+
+- That's all you type for Telegram — your user ID is **detected automatically** when you message your bot (no @userinfobot step)
+
+- Which AI provider you want to start with (Claude/Gemini/etc.)
+
+- Your API key for that provider
+
+- Your name and timezone (for personalization)
+
+It writes a minimal `.env` file, creates `.mcp.json` from the example, and verifies the Telegram connection. When Nova starts, it greets you on Telegram with tappable starter ideas — so your very first interaction works without typing. Run `bun run doctor` anytime for a health check.
+
+**That's it** You now have a working Nova instance that understands classified requests, routes to the right agent, and asks for approval before anything consequential happens.
+
+## Configuration: Know your three files
+
+Nova's configuration lives in three places. You rarely need to edit them directly — `bun run init` handles the basics — but understanding them helps when you want to add a feature or debug.
+
+### .env — Secrets and API keys
+
+Never commit this file. It holds your Telegram bot token, AI provider keys, and any third-party credentials. Start with the example:
+
+**Essential variables** 
+ TELEGRAM_BOT_TOKEN=your_token_here
+
+ TELEGRAM_USER_ID=your_id
+
+ ANTHROPIC_API_KEY=sk-ant-...
+
+ USER_NAME=Jake
+
+ USER_TIMEZONE=America/New_York
+
+Optional variables enable features as you add them: `GROQ_API_KEY` for voice transcription, `GOOGLE_WORKSPACE_CREDS` for Gmail/Drive, `CLOUDFLARE_API_TOKEN` for workers, and so on.
+
+### config/profile.md — Who you are
+
+A markdown file describing your context. It gets loaded on every message so Nova understands your goals, constraints, and communication style. Fill it in once:
+
+**Example profile.md** 
+ # Your Profile
+
+ 
+
+ Your name: Jake
+
+ What you do: Run a SaaS company
+
+ Your goals: 10x content output, grow to 5k newsletter subscribers
+
+ Constraints: I have 4 hours a week free
+
+ Timezone: America/New_York
+
+### .mcp.json — Integrations and tools
+
+Specifies which MCP servers Nova can connect to: Notion, Google Workspace, Playwright, Cloudflare, Square, GoHighLevel, and 12 others. The init wizard copies `.mcp.example.json` and sets up placeholders. As you add integrations, uncomment the ones you use and add credentials.
+
+## Running Nova: Start it, keep it running
+
+Once configured, start the bot:
+
+**Development** 
+ `bun run start`
+
+It listens for Telegram messages. Ctrl+C to stop. Test it: send your bot a message on Telegram and wait for it to reply.
+
+For production — so Nova runs in the background and restarts on crash — use your OS's process manager:
+
+### macOS: launchd
+
+**Set up and enable** 
+ `bun run setup:launchd -- --service core`
+
+This auto-generates a plist file with the right paths and loads it into launchd. Nova runs in the background, starts on boot, and restarts if it crashes. Check status with `launchctl list | grep nova`.
+
+### Linux/Windows: PM2
+
+**Set up and enable** 
+ `bun run setup:services -- --service core`
+
+Uses PM2 for process management. Verify with `npx pm2 status`.
+
+## Sandboxed execution (0.2.0)
+
+When agents run tasks, they run in your machine's memory by default. Sandboxing is optional but powerful: it runs each task in a hardened Docker container — read-only filesystem except for a per-task workspace, no access to your credentials, limited system calls.
+
+A malicious webpage that tries to trick an agent into exfiltrating data can't escape the sandbox. And Nova stays on your subscription: instead of switching to pay-per-token billing, it shares your Claude/Gemini plan into the sandbox.
+
+To enable sandboxing:
+
+**Optional: Enable sandboxing** 
+ `NOVA_SANDBOX_BACKEND=docker`
+
+ Build the image: `bun run sandbox:verify`
+
+ Set subscription mode: `NOVA_SANDBOX_SHARE_AUTH=true`
+
+That's it. Agents now run inside a container. You can see the container logs and tune isolation as needed.
+
+## The executive board (0.2.0)
+
+For hard strategic questions, Nova has an optional executive board: CEO, CFO, CMO, CTO, COO, Head of Research, and a Critic. Each models a different way of thinking. They convene, give independent analysis, the Critic does a pre-mortem to surface failure modes, and Nova synthesizes options with confidence scores.
+
+The board can run on a single VPS or distributed across 7 separate machines. All 7 executives coordinate through a shared Postgres database.
+
+### Single-VPS board setup
+
+Run Postgres locally and register it:
+
+**Board database** 
+ `bash deploy/board/setup.sh`
+
+ Set in .env: `BOARD_DB_URL=postgres://...your-local-db...`
+
+Then start the executive services:
+
+**Enable executives** 
+ `bun run setup:launchd -- --service all`
+
+Seven new launchd services start: `nova-exec-ceo`, `nova-exec-cfo`, and so on. Each one can receive DMs on Telegram (or run autonomously with rate limiting).
+
+### Multi-VPS board (advanced)
+
+Deploy a PostgREST API on one VPS and point each executive node to it. Each executive runs in a separate container with its own AI provider key. They coordinate entirely through the shared database. This is optional and only worth doing if you need the executives to run independently and scale.
+
+## Governance: Approval gates and earned autonomy
+
+Out of the box, Nova always asks before it publishes, sends, or spends. You tap Approve/Revise/Cancel on Telegram inline buttons.
+
+As an agent builds a clean track record, it graduates: first to *notify you after*, then to *fully autonomous within a spending cap*. One failure and it drops back to asking. You manage autonomy levels from a dashboard:
+
+**Governance dashboard** 
+ `GET /governance`
+
+ View and adjust autonomy levels per agent
+
+ Set spending budgets
+
+ Review the audit ledger
+
+Every action is logged: who ran what, at what cost, whether it succeeded. You can reverse any decision, adjust trust levels, and see a full history.
+
+## Security checklist
+
+Before you trust Nova with real work:
+
+**Before production** 
+ Never commit .env or .mcp.json with real credentials
+
+ Set TELEGRAM_USER_ID so only you can message the bot
+
+ Use a strong Telegram bot token (if exposed, regenerate from @BotFather)
+
+ If using sandboxing, verify the Docker image builds and runs
+
+ Test the approval flow on a low-stakes task first
+
+ Review the audit ledger for the first week of use
+
+ Enable spending caps on agents that touch billing APIs
+
+Nova's approval gates, sandboxing, and audit trails are designed to make consequences reversible. But the starting position is always "ask first, then execute" — you stay in control.
+
+## Next: Run it, build on it
+
+You now have everything you need to run Nova on your machine or on a VPS. Send it a message and watch it work. Turn on sandboxing and the executive board when you're ready. Adjust autonomy levels as you trust it more. Add MCP integrations as you need them.
+
+Nova is MIT licensed. Read the code, fork it, customize agents, add your own tools. It's your team now.
+
+
+==============================================================================
+
+# A week launching a product with Nova
+
+> How a solo founder used Nova to launch a new product feature: strategy board, concurrent agent work, approval gates, and earned autonomy. An illustrative walkthrough.
+
+*Source: https://mynova.space/blog/case-study/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Here's how a solo founder might run a product launch over a week using Nova — from strategy board to execution, approval gates to earned autonomy. This is an illustrative scenario: not a real customer story, but a detailed walkthrough of how the platform actually works.
+
+Jake Belieny · 15 July 2026 · 7 min read
+
+## Monday: strategy and the board
+
+It's Monday morning, and you're launching an export feature Friday. The positioning question is open: are you leading with power-user efficiency ("export everything in one format") or emphasizing the breadth of destinations ("export to 20+ places")? Different pitch, different customer. You could decide alone, but Nova's executive board brings seven perspectives and a pre-mortem.
+
+Within minutes, your launch direction is locked, and you have the failure modes the Critic flagged. Now the team knows what to build toward.
+
+## Tuesday: concurrent work, one approval queue
+
+Tuesday morning, you're running four teams in parallel. Content, email, ads, and ops. Nova launches them all at once, and they prepare independently—nothing ships until you approve.
+
+While they work, you're free to think. No guessing whether the draft will need revisions—they'll show you first.
+
+By 11 AM Tuesday, your entire launch is in motion. Emails sent, ads live, content queued. Every piece went through your approval gate. Nothing happened behind your back.
+
+## Wednesday: autonomy levels and the ledger
+
+Wednesday, Aura (brand voice) flags a tone consistency issue in the social copy. Meanwhile, the Digit (data) agent has been tracking performance, and you want a daily sync. One thing you notice: you've approved "post to social" five times now, and each time the work is solid. Nova's autonomy system has been watching.
+
+Notice what happened: Pixel earned autonomy on social posting because the pattern was proven. Digit is providing live data without being asked. Aura is catching details you might have missed. And everything is moving because the approval gates are fast and visible—you're making decisions, not managing processes.
+
+## Thursday: verification and the action ledger
+
+By Thursday afternoon, four days into the launch, Nova shows you the complete audit trail. Every consequential action, who did it, what it cost, and whether it actually worked.
+
+**Verification in action** When Orion sent the email, it didn't just say "email sent." It verified the send actually completed, checked that bounce rates were within normal range, and confirmed links were clickable. When Helios launched the ad campaign, it verified the ads appeared and logged the exact targeting, bid, and spend. The entire launch is auditable.
+
+The action ledger shows:
+
+- **Tuesday 10:32 AM** — Kai drafted launch blog (850w) — approved by you at 10:45 AM
+
+- **Tuesday 10:47 AM** — Pixel drafted social calendar (12 posts, 3 weeks) — revisions requested, re-approved 11:02 AM
+
+- **Tuesday 11:05 AM** — Orion sent 3-email sequence to 12,340 subscribers — verified delivery, open link working
+
+- **Tuesday 11:08 AM** — Helios launched Campaign A (Facebook + LinkedIn, $3,000 budget) — verified ads live, tracking pixels firing
+
+- **Wednesday 9:00 AM** — Pixel posted to social (autonomy: "notify after") — verified posts live on all 3 platforms
+
+- **Wednesday 2:15 PM** — Digit delivered mid-week report — 7 leads, 2.5% CTR, email open 28%
+
+- **Thursday 4:30 PM** — You requested budget hold on Campaign A pending Sunday review
+
+Nothing is a black box. If someone asks "Did the launch email actually send?" or "What did we spend on ads?" or "How many leads came in?", you have receipts.
+
+## Friday: launch day, autonomy in motion
+
+Friday morning, the feature goes live. Social posts publish automatically (Pixel at autonomy level "notify after"). The blog goes live. Helios adjusts bids based on early performance data. Orion watches email metrics. Digit flags if anything looks off.
+
+You're not in constant approval mode anymore. You're steering. Checking in. Trusting the team because you've seen them earn it.
+
+**What changed from Monday** Monday you didn't have enough bandwidth to run marketing, ops, and ads simultaneously. By Friday, you're running all three in parallel, every decision is recorded, and the agents that proved reliable have graduated from "ask every time" to "notify after." You're not hiring staff—you're organizing specialists you already have access to. You're not managing by committee—you're managing through fast approval gates and earned autonomy.
+
+## Why this matters
+
+For solo founders, this is the launch process that used to require a marketing manager, a content strategist, an ad ops person, and a data analyst. For small teams, it's the grind—reports, drafts, scheduling—offloaded to agents that ask before they act.
+
+The pattern you see here is what Nova is built for: **complex work that requires multiple specialists, approval gates that keep you in control, and earned autonomy that lets reliable tasks run unsupervised**. Every action is logged. Every agent verifies its own work. You're not trusting blind — you're verifying, and once trust is earned, you accelerate.
+
+This is also just one launch. Over weeks and months, Nova learns your preferences, caches successful task plans, and gets faster. Your approval queue gets shorter. Your autonomy levels compound. And you remain the person who decides—you just have better help, and you can actually see what help is doing.
+
+
+==============================================================================
+
+# What is Nova? Your open-source AI team, explained
+
+> Nova is a self-hosted, open-source AI team you run from Telegram: 24 specialist agents, an executive board, human approval before anything ships or spends, sandboxed execution, and earned autonomy. Here's what it does and how people use it.
+
+*Source: https://mynova.space/blog/what-is-nova/*  
+*Nova — open-source, self-hosted multi-agent AI orchestration. MIT licensed. https://github.com/djbelieny/nova*
+
+---
+
+Nova is a self-hosted, open-source platform that turns a group of specialist AI agents into something closer to a company than a chatbot — and it asks before it does anything that ships, spends, or sends.
+
+Jake Belieny · 15 July 2026 · 8 min read
+
+Most "AI assistants" are one model behind a text box. You ask, it answers, and every consequential step is still on you. Nova takes a different shape. It's an **org chart**: two dozen specialists, an executive board that reasons about strategy, and a coordination layer that decomposes a request into tasks, runs them in parallel, and pauses for your approval before it touches the real world.
+
+And it runs where you already are. You message Nova in Telegram (or WhatsApp or Slack) the same way you'd message a coworker — and it runs on **your** machine, on **your** API keys or subscriptions, with your data staying in local storage. It's MIT licensed, so you can read every line, change anything, and owe nobody a per-seat fee.
+
+**The one-line version** Nova is self-hosted AI staff: a team of agents that plan, draft, and analyze on their own — but get your sign-off before anything leaves the building.
+
+## How a message becomes work
+
+When you send Nova a message, it first **classifies** what you're asking for. A quick question gets a direct answer. A focused task gets routed to the right specialist. Something big — "plan and launch our spring campaign" — gets **decomposed** into a dependency-aware plan and executed across several agents at once.
+
+Then comes the part that makes Nova trustworthy. Work happens in **two phases**:
+
+- **Prepare** — the safe half. Research, write the copy, generate the image, crunch the numbers. Nothing has left the building yet.
+
+- **Approve** — Nova shows you exactly what it's about to do, with inline buttons: *Approve*, *Revise*, or *Cancel*.
+
+- **Execute** — only after you approve does it do the consequential thing: publish the post, send the emails, launch the campaign, spend the money.
+
+## The team you're actually hiring
+
+Under the hood, Nova is **24 specialist agents**, each with its own domain, tools, and system prompt. You don't have to know their names — Nova routes to the right one — but it helps to see the shape of the roster:
+
+#### Growth & marketing
+
+Helios (paid ads), Pixel (social), Kai (content), Orion (email), Magnus (SEO), Morpheus (video), Flux (funnels).
+
+#### Strategy & ops
+
+Athena (business strategy), Oracle (trend forecasting), Tesseract (systems thinking), Zen (productivity), Bridge (partnerships).
+
+#### Data & engineering
+
+Digit (analytics), Cipher (data science), Architect (web dev), Joule (automation), Rift (security).
+
+#### Voice & support
+
+Aura (brand voice), Echo (customer support), Helia (PR), Nexus (community), Quill (grants), Lex (legal), Cyra (site optimization).
+
+Above the specialists sits an **Executive Board** — CEO, CFO, CMO, CTO, COO, Head of Research, and a Critic — each modeled on a distinct way of thinking. Ask a hard strategic question with `/board` and they convene: independent analysis, a pre-mortem from the Critic, then a synthesis of options with confidence scores for you to choose from.
+
+## Built so you can actually trust it with the keys
+
+An AI team that can send emails and spend ad budget is only useful if it's also *safe*. Nova's most recent release is all about that — turning "it probably won't do anything dumb" into real guarantees.
+
+### Sandboxed execution
+
+Agent tasks can run inside a hardened container — read-only system, no access to your host files beyond a per-task workspace, no path to your credentials — so a webpage that tries to hijack an agent through a cleverly-worded paragraph can't reach anything that matters. And it stays on your **subscription**: Nova shares your Claude, OpenAI, or Gemini plan into the sandbox instead of quietly switching you to pay-per-token billing.
+
+### Earned autonomy, not a blank check
+
+Every kind of action starts at **always ask**. As an agent builds a clean track record on a given task — say, "send the weekly newsletter" — it graduates: first to *notify you after*, then to *fully autonomous within a spending cap*. One failure or one rejection and it drops straight back to asking. You decide how much rope each agent gets, and you can see and change it from a dashboard.
+
+### An audit trail for everything
+
+Every consequential action is written to a ledger — what ran, which agent, what it cost, whether it worked. After each task an agent even **verifies its own work** ("did the email actually send? does the page render?") before reporting done. Business-grade mostly means *answerable after the fact*, and Nova is.
+
+## What people use it for
+
+Because Nova is a team rather than a single tool, the useful requests tend to be the ones you'd hand to a capable employee. A few real shapes:
+
+### Run the marketing that runs on a schedule
+
+Newsletters, social calendars, ad reports. "Post three times this week about the launch," "summarize how last month's ad spend performed," "turn this blog post into a LinkedIn thread and a carousel." Nova drafts, you approve, it publishes — and once you trust a recurring task, you let it run on its own.
+
+### Turn a standing goal into ongoing work
+
+Tell Nova a goal — "grow the newsletter to 5,000 subscribers" — and it doesn't just nod. It breaks the goal into concrete tasks, schedules them, executes over days and weeks, and reports progress. It's the difference between a tool you operate and staff that pursue an outcome.
+
+### Make the big calls with a board behind you
+
+For the decisions that deserve more than one opinion, the executive board is a genuine thinking partner. "Should we expand into the EU?" convenes seven perspectives, surfaces the failure modes you didn't think of, and hands you scored options — not a single confident guess.
+
+#### Solo founders
+
+A whole marketing, data, and ops team you can afford — on your own accounts, asking before it spends.
+
+#### Small teams
+
+Offload the recurring grind (reports, drafts, scheduling) with a paper trail and approval gates the whole team can see.
+
+#### Builders & tinkerers
+
+MIT licensed and self-hosted. Read it, fork it, add your own agents, wire in your own tools.
+
+#### Privacy-minded
+
+Your data lives in local storage on your machine. Your keys, your subscription, your rules.
+
+## Getting started
+
+Nova is designed to get you from clone to first message with almost no friction. One command — `bash bootstrap.sh` — installs anything missing ([Bun](https://bun.sh), the Claude Code CLI) and launches a guided wizard that asks for a Telegram bot token and one AI provider, sets up a few starter agents, and verifies the connection. It even detects your Telegram user ID automatically, and it's resumable if you step away. The rest (the executive board, extra integrations) you can turn on when you want them.
+
+- Clone the repo and run `bash bootstrap.sh`.
+
+- Message your bot in Telegram — Nova greets you with tappable starter ideas, and `/team` introduces your specialists in plain language.
+
+- Turn on sandboxing, autonomy, and the self-hosted board as you grow into them — all opt-in, nothing forced.
+
+
+==============================================================================

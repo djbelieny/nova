@@ -1,0 +1,32 @@
+# Nova
+
+> Nova is an open-source, self-hosted multi-agent AI orchestration platform. A team of 24 specialist agents plus an automation layer runs your operation from Telegram, Slack, Discord, or a terminal — on your own model subscriptions and your own machine. It prepares work freely, then asks before anything ships, spends, or sends. MIT licensed.
+
+Nova drives the official vendor CLIs (Claude, Gemini, Codex) as subprocesses, so it runs on subscriptions you already pay for rather than metered API tokens; it also supports any OpenAI-compatible endpoint. Storage is local SQLite with vector search; embeddings and the knowledge base run locally. Consequential actions pass a human approval gate. Source: https://github.com/djbelieny/nova
+
+Every page on this site is available as clean Markdown by appending `/index.md` to its URL. Spanish and Brazilian-Portuguese translations live under `/es/` and `/pt-br/`.
+
+## Documentation
+
+- [Documentation](https://mynova.space/docs/index.md): Full install, configuration, channels, approvals, the 24 agents, skills, memory and intent tags, knowledge base, AI providers, and the executive board — the complete reference.
+- [What is Nova](https://mynova.space/index.md): Home page — the one-screen overview of the platform, the request pipeline, and the trust model.
+
+## Blog
+
+- [Boards your agents fill in](https://mynova.space/blog/workboards/index.md): Nova can now build you a board. Ask for one in chat, it proposes the fields and stages, agents fill the cards, and you drag them in the dashboard. Stages can run a playbook when a card lands. Enough to replace a light CRM.
+- [Nova runs the operation now: playbooks, automations & connectors](https://mynova.space/blog/business-automation/index.md): Nova's biggest release turns it event-driven and process-durable: playbooks (reusable SOPs), event automations with semantic triggers, durable multi-day processes, document extraction, business connectors (Stripe/Shopify/Zendesk/HubSpot), compliance policies, and ROI reporting — every consequential step still gated.
+- [Give Nova a second brain: feed it your documents with RAG](https://mynova.space/blog/second-brain/index.md): Nova now has a scoped knowledge base — a second brain. Drop in PDFs, docs, notes, or URLs and Nova learns them: chunked, embedded locally, and retrieved across every agent with source citations. Personal, team, and per-agent scopes. Four ways to feed it.
+- [Nova, production-hardened: governance, exactly-once & connected data](https://mynova.space/blog/governance-hardening/index.md): The hardening release: hard-block compliance policies, role-based permissions, out-of-office delegation, durable exactly-once idempotency, advisory locks, encrypted connector secrets, connectors agents can discover like MCP tools, and a connected-data layer — everything you need to run Nova unattended, for a team.
+- [Nova vs. Hermes vs. OpenClaw: the good, the bad, and the ugly](https://mynova.space/blog/nova-vs-hermes-vs-openclaw/index.md): An honest, sourced comparison of three self-hosted, open-source AI agents — OpenClaw, Hermes, and Nova — with a feature table, charts, and the good, the bad, and the ugly of each.
+- [Nova speaks every model now](https://mynova.space/blog/whats-new/index.md): A batch of upgrades: run any OpenAI-compatible model alongside your subscription CLIs, a real nova command with nova connect, terminal + Discord channels, and self-serve team invites — without touching the self-hosted, approval-gated trust model.
+- [Every feature Nova has, and what they're built to do](https://mynova.space/blog/features/index.md): 24 specialist agents, an executive board, earned autonomy, two-phase approval, persistent memory with semantic recall, 12 MCP integrations, 45 skills, proactive services, and full audit trails. Here's everything Nova can do.
+- [How Nova works: the architecture under the hood](https://mynova.space/blog/architecture/index.md): A technical deep dive into Nova's architecture: 3-tier message classification, task decomposition with dependency resolution, parallel execution, two-phase approval gates, split SQLite with vector search, and intelligent AI routing across Claude, Gemini, and Codex.
+- [Why Nova is built the way it is](https://mynova.space/blog/design-decisions/index.md): The philosophy behind Nova's architecture: why an org chart instead of a chatbot, why trust is engineered, why autonomy must be earned, and why sandboxing and auditability are non-negotiable.
+- [Deploying Nova: A practical guide to self-hosting](https://mynova.space/blog/deployment/index.md): Self-host Nova in under 5 minutes. From the init wizard to production on a VPS, here's everything you need to know to run your own AI team on your machine, your keys, your approval gates.
+- [A week launching a product with Nova](https://mynova.space/blog/case-study/index.md): How a solo founder used Nova to launch a new product feature: strategy board, concurrent agent work, approval gates, and earned autonomy. An illustrative walkthrough.
+- [What is Nova? Your open-source AI team, explained](https://mynova.space/blog/what-is-nova/index.md): Nova is a self-hosted, open-source AI team you run from Telegram: 24 specialist agents, an executive board, human approval before anything ships or spends, sandboxed execution, and earned autonomy. Here's what it does and how people use it.
+
+## Optional
+
+- [Have Nova set up for you](https://mynova.space/book/index.md): Book a call to scope a managed setup, advisory, or custom build.
+- [Sitemap](https://mynova.space/sitemap.xml): Every page, all three languages.
