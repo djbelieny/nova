@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { parseCardArgs, runWorkboardCli } from "../src/cli-workboard.ts";
+import { parseCardArgs, runWorkboardCli, QUERY_CARD_LIMIT } from "../src/cli-workboard.ts";
 import { getDb } from "../src/db.ts";
 import { ensureSystemBoards } from "../src/workboard-service.ts";
 import { mkdtempSync } from "fs";
@@ -38,6 +38,18 @@ async function runCli(args: string[]): Promise<{ code: number; errors: string[] 
     return { code, errors };
   } finally {
     console.error = orig;
+  }
+}
+
+async function runCliCapturingOutput(args: string[]): Promise<{ code: number; out: string }> {
+  const out: string[] = [];
+  const orig = console.log;
+  console.log = (...a: any[]) => { out.push(a.join(" ")); };
+  try {
+    const code = await runWorkboardCli(args);
+    return { code, out: out.join("\n") };
+  } finally {
+    console.log = orig;
   }
 }
 
@@ -179,6 +191,38 @@ test("card move into an inert stage queues nothing", async () => {
   expect(db.listPendingWorkboardActions(1000).length).toBe(before);
 });
 
+test("query prints every card on a board bigger than the db facade's own default page", async () => {
+  const boardName = `wb-cli-query-big-${Date.now()}`;
+  expect((await runCli(["create", boardName, "--fields", JSON.stringify(FIELDS), "--stages", JSON.stringify(STAGES)])).code).toBe(0);
+  const board = db.findWorkboard(adminUserId, boardName);
+  if (!board) throw new Error("setup failed");
+  const total = 230; // > the facade's 200 default, which query used to inherit silently
+  db.insertWorkboardCards(board.scope, adminUserId, Array.from({ length: total }, (_, i) => ({
+    boardId: board.id, stageKey: "new", title: `Card ${i}`,
+    fields: { company: `Co ${i}`, score: i }, origin: "agent" as const,
+  })));
+
+  const r = await runCliCapturingOutput(["query", boardName]);
+  expect(r.code).toBe(0);
+  expect(JSON.parse(r.out).length).toBe(total);
+});
+
+test("query --limit narrows the read below the default", async () => {
+  const boardName = `wb-cli-query-limit-${Date.now()}`;
+  expect((await runCli(["create", boardName, "--fields", JSON.stringify(FIELDS), "--stages", JSON.stringify(STAGES)])).code).toBe(0);
+  const board = db.findWorkboard(adminUserId, boardName);
+  if (!board) throw new Error("setup failed");
+  db.insertWorkboardCards(board.scope, adminUserId, Array.from({ length: 12 }, (_, i) => ({
+    boardId: board.id, stageKey: "new", title: `Card ${i}`,
+    fields: { company: `Co ${i}`, score: i }, origin: "agent" as const,
+  })));
+
+  const r = await runCliCapturingOutput(["query", boardName, "--limit", "5"]);
+  expect(r.code).toBe(0);
+  expect(JSON.parse(r.out).length).toBe(5);
+  expect(QUERY_CARD_LIMIT).toBeGreaterThan(200);
+});
+
 test("run without a board name fails clearly instead of naming \"undefined\"", async () => {
   const r = await runCli(["run"]);
   expect(r.code).toBe(1);
@@ -271,4 +315,18 @@ test("run where one of several cards is rejected enqueues nothing at all", async
   const r = await runCli(["run", boardName, "--stage", "new", "--playbook", pbName, "client={{card.company}}"]);
   expect(r.code).toBe(1);
   expect(db.listPendingWorkboardActions(1000).length).toBe(before);
+});
+
+test("list counts an adapter-backed system board from its own table, not from workboard_cards", async () => {
+  const { tasks } = ensureSystemBoards(db, adminUserId);
+  db.insertTask({ agent: "kai", description: "Count me", status: "pending", user_id: adminUserId });
+  const expected = Object.values(db.countAgentTasksByStatus(adminUserId)).reduce((s: number, n: number) => s + n, 0);
+  expect(expected).toBeGreaterThan(0);
+  // The board itself owns no workboard_cards rows — the old count read exactly this and said 0.
+  expect(db.countWorkboardCards(tasks.scope, adminUserId, tasks.id)).toBe(0);
+
+  const r = await runCliCapturingOutput(["list"]);
+  expect(r.code).toBe(0);
+  const line = r.out.split("\n").find((l) => l.includes(tasks.name));
+  expect(line).toContain(`${expected} cards`);
 });

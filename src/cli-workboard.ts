@@ -8,7 +8,7 @@
  *   nova workboard card add-many <board> --stage <key> --file cards.json
  *   nova workboard card move <card-id> --to <stage>
  *   nova workboard card update <card-id> --fields '{…}'
- *   nova workboard query <board> [--stage <key>]
+ *   nova workboard query <board> [--stage <key>] [--limit <n>]
  *   nova workboard run <board> --stage <key> --playbook <name> [key=value ...]
  *   nova workboard sync <board>
  *
@@ -259,12 +259,19 @@ async function runSync(boardName: string, opts: WorkboardCliOpts = {}): Promise<
   return 0;
 }
 
+/** The dashboard sends a viewer here to read the cards its per-stage cap hid, and agents are told
+ * this is how they read a whole board — so it must not inherit the facade's own 200 default and
+ * truncate identically without saying so. Explicit and high; `--limit` narrows it. */
+export const QUERY_CARD_LIMIT = 10000;
+
 function runQuery(boardName: string, argv: string[]): number {
   const db = getDb();
   const userId = adminId(db);
   const board = db.findWorkboard(userId, boardName);
   if (!board) return fail([`No workboard named "${boardName}"`]);
-  const cards = db.listWorkboardCards(board.scope, userId, board.id, { stageKey: flag(argv, "stage") });
+  const asked = Number(flag(argv, "limit"));
+  const limit = Number.isFinite(asked) && asked > 0 ? Math.floor(asked) : QUERY_CARD_LIMIT;
+  const cards = db.listWorkboardCards(board.scope, userId, board.id, { stageKey: flag(argv, "stage"), limit });
   console.log(JSON.stringify(cards.map((c) => ({ id: c.id, stage: c.stageKey, title: c.title, fields: c.fields })), null, 2));
   return 0;
 }
@@ -276,7 +283,7 @@ export async function runWorkboardCli(argv: string[], opts: WorkboardCliOpts = {
     case "list": case undefined: return runList();
     case "describe": return positional[0] ? runDescribe(positional[0]) : fail(["Usage: nova workboard describe <board>"]);
     case "create": return positional[0] ? runCreate(positional[0], rest) : fail(["Usage: nova workboard create <name> --fields '<json>' --stages '<json>'"]);
-    case "query": return positional[0] ? runQuery(positional[0], rest) : fail(["Usage: nova workboard query <board> [--stage <key>]"]);
+    case "query": return positional[0] ? runQuery(positional[0], rest) : fail(["Usage: nova workboard query <board> [--stage <key>] [--limit <n>]"]);
     case "run": return positional[0] ? runStage(positional[0], rest) : fail(["Usage: nova workboard run <board> --stage <key> --playbook <name>"]);
     case "sync": return positional[0] ? await runSync(positional[0], opts) : fail(["Usage: nova workboard sync <board>"]);
     case "card": {

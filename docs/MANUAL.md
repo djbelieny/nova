@@ -1418,7 +1418,7 @@ action or syncing a connector does.
 | `nova workboard card add-many <board>` | `--stage <key>` `--file <path>` | Add many cards from a JSON file (an array of `{ title?, fields }`). `--file` is required |
 | `nova workboard card move <card-id>` | `--to <stage>` | Move a card to another stage. `--to` is required. If the move enters an armed stage, the action is queued for the relay to dispatch — the CLI has no dispatcher of its own |
 | `nova workboard card update <card-id>` | `--fields '{…}'` `--title <text>` | Patch a card's fields and/or title |
-| `nova workboard query <board>` | `--stage <key>` | Print the board's cards as JSON, optionally filtered to one stage |
+| `nova workboard query <board>` | `--stage <key>` `--limit <n>` | Print the board's cards as JSON, optionally filtered to one stage. Reads the whole board by default (10,000 cards), not the 200 a dashboard stage shows; `--limit` narrows it |
 | `nova workboard run <board>` | `--stage <key>` `--playbook <name>` `[key=value ...]` | Queue every card currently in `--stage` to run the named playbook. This queues the run for the relay to dispatch shortly — it does not run inline |
 | `nova workboard sync <board>` | — | Pull records from the board's bound connector and upsert them onto cards. Fails if the board has no connector binding |
 

@@ -38,7 +38,7 @@ export function buildNovaToolInstructions(db: Database | null, agentSlug?: strin
     "  nova workboard card add <board> --stage <k> --fields '{…}'    # add one card",
     "  nova workboard card add-many <board> --stage <k> --file <f>   # add many at once",
     "  nova workboard card move <card-id> --to <stage>               # advance a card",
-    "  nova workboard query <board> [--stage <k>]                    # read cards back (read-only)",
+    "  nova workboard query <board> [--stage <k>] [--limit <n>]      # read cards back (read-only)",
   ];
 
   const configured = listConnectors().filter((c) => isConnectorConfigured(c, db));

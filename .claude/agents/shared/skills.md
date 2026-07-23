@@ -79,7 +79,7 @@ nova workboard card add <board> --stage <key> --fields '{…}'
 nova workboard card add-many <board> --stage <key> --file cards.json
 nova workboard card move <card-id> --to <stage>
 nova workboard card update <card-id> --fields '{…}'
-nova workboard query <board> [--stage <key>]         # read the cards back as JSON
+nova workboard query <board> [--stage <key>] [--limit <n>]   # read the cards back as JSON
 ```
 
 Field types: `text`, `longtext`, `number`, `money`, `date`, `email`, `url`, `select` (needs
