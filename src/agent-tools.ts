@@ -34,8 +34,11 @@ export function buildNovaToolInstructions(db: Database | null, agentSlug?: strin
     "  nova playbook run <name> key=value    # run a saved SOP/playbook",
     "  nova data list  |  nova data query <name>   # read a connected data source (read-only)",
     "  nova workboard list | describe <board>      # boards of structured cards",
+    "  nova workboard create <name> --fields '<json>' --stages '<json>'   # make a new board",
     "  nova workboard card add <board> --stage <k> --fields '{…}'    # add one card",
     "  nova workboard card add-many <board> --stage <k> --file <f>   # add many at once",
+    "  nova workboard card move <card-id> --to <stage>               # advance a card",
+    "  nova workboard query <board> [--stage <k>]                    # read cards back (read-only)",
   ];
 
   const configured = listConnectors().filter((c) => isConnectorConfigured(c, db));
@@ -55,7 +58,7 @@ export function buildNovaToolInstructions(db: Database | null, agentSlug?: strin
     "- For any WRITE / consequential action (refunds, sending, creating/updating records), do NOT execute it directly — describe exactly what you intend and let the approval gate handle it."
   );
   lines.push(
-    "- Workboards: run `nova workboard describe <board>` first to learn its fields and stages, then write cards that match. Adding or moving cards is safe and reversible — do it directly."
+    "- Workboards: when a task produces a SET of like things to track, put them on a board — `nova workboard create` if none fits, then add cards. Run `nova workboard describe <board>` first to learn an existing board's fields and stages and write cards that match. Creating a board, adding, and moving cards are safe and reversible — do them directly; a move into a stage that carries an action only QUEUES it for the relay, so say that rather than claiming it ran."
   );
 
   return lines.join("\n");

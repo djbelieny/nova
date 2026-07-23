@@ -57,3 +57,12 @@ test("nova tool instructions advertise workboard discovery, not every verb inlin
   expect(block).toContain("nova workboard card add");
   expect(block).not.toContain("pipeline");
 });
+
+test("agents are told how to create a board, move a card, and read one back — the feature's front door", () => {
+  const block = buildNovaToolInstructions(null);
+  expect(block).toContain("nova workboard create");
+  expect(block).toContain("nova workboard card move");
+  expect(block).toContain("nova workboard query");
+  // A move only queues a stage action; the prompt must not let an agent claim it ran.
+  expect(block).toMatch(/QUEUES it for the relay/);
+});

@@ -478,7 +478,8 @@ export function renderWorkboardIndex(db: DatabaseType, userId: string): string {
           <div class="f">${esc(b.purpose ?? "")}</div>
           <div class="f">${b.stages.length} stages · ${count} cards · ${esc(b.scope)}</div></a>`;
       }).join("")
-    : `<div class="tile">No workboards yet. Ask Nova in chat to create one.</div>`;
+    : `<div class="tile">No workboards yet. Create one with <code>nova workboard create</code>,
+        or ask an agent to put a set of results on a board.</div>`;
   return shell("Workboards", `<h1>Workboards</h1>
     <div class="sub">Boards of structured cards. Agents fill them; you move them.</div>
     <div class="grid">${tiles}</div>`);
