@@ -9,6 +9,7 @@
  *   nova workboard card move <card-id> --to <stage>
  *   nova workboard card update <card-id> --fields '{…}'
  *   nova workboard query <board> [--stage <key>]
+ *   nova workboard run <board> --stage <key> --playbook <name>
  *
  * Agents call these mid-task via the bash tool. Card writes are local and reversible, so they
  * are prepare-phase safe; consequential work stays behind the approval gate.
@@ -16,6 +17,7 @@
 
 import { getDb, type DatabaseType, type Workboard, type WorkboardCard } from "./db.ts";
 import { addCards, createBoard, moveCard, updateCard } from "./workboard-service.ts";
+import { buildStageRun } from "./workboard-reactive.ts";
 import type { FieldDef, StageDef } from "./workboards.ts";
 
 function adminId(db: DatabaseType): string {
@@ -185,6 +187,25 @@ function runCardUpdate(cardId: string, argv: string[]): number {
   return 0;
 }
 
+function runStage(boardName: string, argv: string[]): number {
+  const db = getDb();
+  const userId = adminId(db);
+  const board = db.findWorkboard(userId, boardName);
+  if (!board) return fail([`No workboard named "${boardName}"`]);
+  const playbook = flag(argv, "playbook");
+  const stage = flag(argv, "stage");
+  if (!playbook || !stage) return fail(["Usage: nova workboard run <board> --stage <key> --playbook <name>"]);
+  const cards = db.listWorkboardCards(board.scope, userId, board.id, { stageKey: stage });
+  if (!cards.length) { console.log(`  No cards in ${board.name}/${stage}.`); return 0; }
+  const runs = buildStageRun(playbook, cards, (n) => db.findPlaybook(userId, n));
+  const skips = runs.filter((r) => "skip" in r);
+  if (skips.length) return fail(skips.map((s) => `card ${(s as any).cardId}: ${(s as any).skip}`));
+  console.log(`  ${runs.length} card${runs.length === 1 ? "" : "s"} ready to run "${playbook}".`);
+  console.log("  Run it in a conversation so each step passes the approval gate:");
+  console.log(`    /playbook run ${playbook} --board ${board.name} --stage ${stage}`);
+  return 0;
+}
+
 function runQuery(boardName: string, argv: string[]): number {
   const db = getDb();
   const userId = adminId(db);
@@ -203,6 +224,7 @@ export async function runWorkboardCli(argv: string[]): Promise<number> {
     case "describe": return positional[0] ? runDescribe(positional[0]) : fail(["Usage: nova workboard describe <board>"]);
     case "create": return positional[0] ? runCreate(positional[0], rest) : fail(["Usage: nova workboard create <name> --fields '<json>' --stages '<json>'"]);
     case "query": return positional[0] ? runQuery(positional[0], rest) : fail(["Usage: nova workboard query <board> [--stage <key>]"]);
+    case "run": return positional[0] ? runStage(positional[0], rest) : fail(["Usage: nova workboard run <board> --stage <key> --playbook <name>"]);
     case "card": {
       const [verb, ...cardRest] = rest;
       const cardPositional = positionalArgs(cardRest);

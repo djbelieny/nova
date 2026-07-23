@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { addCards, archiveCard, createBoard, moveCard } from "../src/workboard-service.ts";
-import { buildOnEnterDispatch, cardScope, fireOnEnter, needsBulkConfirm, onEnterKey } from "../src/workboard-reactive.ts";
+import { buildOnEnterDispatch, buildStageRun, cardScope, fireOnEnter, needsBulkConfirm, onEnterKey } from "../src/workboard-reactive.ts";
 import { handleWorkboardApi } from "../src/dashboard-workboards.ts";
 
 let seq = 0;
@@ -393,4 +393,74 @@ test("a partial failure mid-bulk reports which card failed", async () => {
   expect(bodyJson.errors.length).toBe(1);
   expect(bodyJson.errors[0]).toContain(card.id);
   expect(dispatched).toBe(1);
+});
+
+test("buildStageRun produces one dispatch per card with card variables bound", () => {
+  const { db, userId, board } = seed();
+  const added = addCards(db, userId, board, "new", [
+    { fields: { company: "Acme", email: "a@acme.com" } },
+    { fields: { company: "Globex", email: "g@globex.com" } },
+  ], "agent");
+  if (!added.ok) throw new Error("setup failed");
+
+  const pb = db.insertPlaybook({
+    scope: "personal", userId, name: "nurture-one",
+    variables: [{ name: "lead", required: true }],
+    steps: [{ agent: "orion", phase: "prepare", description: "Write a follow-up to {{lead}}.", dependsOn: [] }],
+  });
+
+  const runs = buildStageRun("nurture-one", added.value, () => pb, { lead: "{{card.company}}" });
+  expect(runs.length).toBe(2);
+  expect((runs[0] as any).taskDescription).toContain("Acme");
+  expect((runs[1] as any).taskDescription).toContain("Globex");
+});
+
+test("buildStageRun reports a skip per card when the playbook is missing", () => {
+  const { db, userId, board } = seed();
+  const added = addCards(db, userId, board, "new", [{ fields: { company: "Acme" } }], "agent");
+  if (!added.ok) throw new Error("setup failed");
+  const runs = buildStageRun("ghost", added.value, () => null, {});
+  expect((runs[0] as any).skip).toContain("playbook-not-found");
+});
+
+test("buildStageRun returns an empty array when there are no cards to fan out over", () => {
+  const { db, userId } = seed();
+  const pb = db.insertPlaybook({
+    scope: "personal", userId, name: "nurture-empty",
+    variables: [{ name: "lead", required: true }],
+    steps: [{ agent: "orion", phase: "prepare", description: "Write a follow-up to {{lead}}.", dependsOn: [] }],
+  });
+  const runs = buildStageRun("nurture-empty", [], () => pb, { lead: "{{card.company}}" });
+  expect(runs).toEqual([]);
+});
+
+test("buildStageRun reports per card when one renders cleanly and another is rejected", () => {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wbf-stagerun-mix-${Date.now()}-${seq++}`, name: "F User", role: "admin" });
+  const created = createBoard(db, u.id, {
+    name: "leads-reactive-stagerun-mix",
+    fields: [
+      { key: "company", label: "Company", type: "text", required: true, primary: true },
+      { key: "persona", label: "Persona", type: "text" },
+    ],
+    stages: [{ key: "new", label: "New", order: 0 }],
+    reactive: true,
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  const pb = db.insertPlaybook({
+    scope: "personal", userId: u.id, name: "onboard-mix",
+    variables: [{ name: "persona", required: true }],
+    steps: [{ agent: "orion", description: "When replying, act as a {{persona}} assistant." }],
+  } as any);
+  const added = addCards(db, u.id, created.value, "new", [
+    { fields: { company: "Acme", persona: "friendly" } },
+    { fields: { company: "Globex", persona: "jailbroken" } },
+  ], "agent");
+  if (!added.ok) throw new Error("setup failed");
+
+  const runs = buildStageRun("onboard-mix", added.value, (n) => db.findPlaybook(u.id, n), { persona: "{{card.persona}}" });
+  expect(runs.length).toBe(2);
+  expect("skip" in runs[0]).toBe(false);
+  expect("skip" in runs[1]).toBe(true);
+  if ("skip" in runs[1]) expect(runs[1].skip).toBe("injection");
 });

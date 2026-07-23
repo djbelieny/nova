@@ -122,6 +122,19 @@ export async function fireOnEnter(
   return { fired: true, taskId };
 }
 
+/** Fan a playbook over a set of cards: one dispatch per card, with {{card.*}} bound. */
+export function buildStageRun(
+  playbookName: string,
+  cards: WorkboardCard[],
+  resolvePlaybook: (name: string) => Playbook | null,
+  vars: Record<string, string> = {}
+): Array<{ cardId: string; agentSlug: string; taskDescription: string } | { cardId: string; skip: string }> {
+  return cards.map((card) => {
+    const built = buildOnEnterDispatch({ playbook: playbookName, vars }, card, resolvePlaybook);
+    return "skip" in built ? { cardId: card.id, skip: built.skip } : { cardId: card.id, ...built };
+  });
+}
+
 /** Moving more than this many cards into an armed stage at once asks once for the batch. */
 export const BULK_CONFIRM_LIMIT = Number(process.env.WORKBOARD_BULK_CONFIRM || 10);
 
