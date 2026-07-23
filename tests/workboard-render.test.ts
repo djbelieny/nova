@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { createBoard, addCards } from "../src/workboard-service.ts";
-import { renderWorkboard, renderWorkboardIndex } from "../src/dashboard-workboards.ts";
+import { boardPayload, renderWorkboard, renderWorkboardIndex, STAGE_CARD_LIMIT } from "../src/dashboard-workboards.ts";
 
 let seq = 0;
 function seed() {
@@ -85,6 +85,45 @@ test("a board with no numeric field renders no stage total", () => {
   addCards(db, u.id, created.value, "draft", [{ fields: { vendor: "Acme" } }], "user");
   const html = renderWorkboard(db, u.id, created.value.id);
   expect(html).not.toContain('<span class="total">');
+});
+
+test("a stage past the card cap still reports its true count and total, and a later stage is not starved of cards", () => {
+  const { db, userId, board } = seed();
+  const crowded = Array.from({ length: STAGE_CARD_LIMIT + 3 }, (_, i) => ({
+    boardId: board.id, stageKey: "draft", title: `Draft ${i}`,
+    fields: { vendor: `V${i}`, amount: 10 }, origin: "user" as const,
+  }));
+  db.insertWorkboardCards(board.scope, userId, crowded);
+  db.insertWorkboardCards(board.scope, userId, [
+    { boardId: board.id, stageKey: "sent", title: "Late One", fields: { vendor: "Late One", amount: 7 }, origin: "user" as const },
+    { boardId: board.id, stageKey: "sent", title: "Late Two", fields: { vendor: "Late Two", amount: 3 }, origin: "user" as const },
+  ]);
+
+  const payload = boardPayload(db, userId, board);
+  const draft = payload.stages.find((s) => s.key === "draft")!;
+  const sent = payload.stages.find((s) => s.key === "sent")!;
+  // seed() already added one 1,200 card to draft.
+  expect(draft.count).toBe(STAGE_CARD_LIMIT + 4);
+  expect(draft.shown).toBe(STAGE_CARD_LIMIT);
+  expect(draft.total).toBe(1200 + (STAGE_CARD_LIMIT + 3) * 10);
+  expect(sent.count).toBe(2);
+  expect(payload.cards.sent.length).toBe(2);
+  expect(sent.total).toBe(10);
+
+  const html = renderWorkboard(db, userId, board.id);
+  expect(html).toContain("Late One");
+  expect(html).toContain("Late Two");
+  expect(html).toContain(`Showing ${STAGE_CARD_LIMIT} of ${STAGE_CARD_LIMIT + 4}`);
+});
+
+test("index tiles count every card on a board, not just the first page", () => {
+  const { db, userId, board } = seed();
+  db.insertWorkboardCards(board.scope, userId, Array.from({ length: STAGE_CARD_LIMIT + 2 }, (_, i) => ({
+    boardId: board.id, stageKey: "draft", title: `Draft ${i}`,
+    fields: { vendor: `V${i}` }, origin: "user" as const,
+  })));
+  const html = renderWorkboardIndex(db, userId);
+  expect(html).toContain(`${STAGE_CARD_LIMIT + 3} cards`);
 });
 
 test("client script guards a card against a second move while one is in flight", () => {

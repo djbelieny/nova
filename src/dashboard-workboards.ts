@@ -34,15 +34,49 @@ export function isValidUserId(userId: string): boolean {
 const NO_PERSONAL_ACCOUNT_MSG =
   "workboards need a personal account — the master admin login has no per-user database; sign in as a user";
 
-/** Everything a board page needs in one payload. */
+/** How many cards a single stage renders. The cap is per stage, not per board: one crowded
+ * stage must never starve the stages after it of every card the way a whole-board read does. */
+export const STAGE_CARD_LIMIT = 200;
+
+/** The board's numeric field, if it has one — its per-stage sum is shown in the stage header. */
+function totalsField(board: Workboard) {
+  return board.fields.find((f) => f.type === "money" || f.type === "number") ?? null;
+}
+
+/** True card count for a board, whatever its cards are read from. */
+export function boardCardCount(db: DatabaseType, userId: string, board: Workboard): number {
+  const source = getCardSource(board.source);
+  if (source) return source.readCards(db, userId, board.id).length;
+  return db.countWorkboardCards(board.scope, userId, board.id);
+}
+
+/** Everything a board page needs in one payload. Counts and totals come from COUNT(*)/SUM() over
+ * the whole board; only the card lists are capped, and each stage reports how much it is showing
+ * so the page can say so. */
 export function boardPayload(db: DatabaseType, userId: string, board: Workboard) {
   const source = getCardSource(board.source);
-  const cards = source
-    ? source.readCards(db, userId, board.id)
-    : db.listWorkboardCards(board.scope, userId, board.id);
+  const money = totalsField(board);
   const byStage: Record<string, WorkboardCard[]> = {};
   for (const s of board.stages) byStage[s.key] = [];
-  for (const c of cards) (byStage[c.stageKey] ??= []).push(c);
+
+  let counts: Record<string, number> = {};
+  let totals: Record<string, number> = {};
+  if (source) {
+    for (const c of source.readCards(db, userId, board.id)) (byStage[c.stageKey] ??= []).push(c);
+    for (const [key, cards] of Object.entries(byStage)) {
+      counts[key] = cards.length;
+      if (money) totals[key] = cards.reduce((sum, c) => sum + (Number(c.fields[money.key]) || 0), 0);
+    }
+  } else {
+    counts = db.countWorkboardCardsByStage(board.scope, userId, board.id);
+    if (money) totals = db.sumWorkboardCardFieldByStage(board.scope, userId, board.id, money.key);
+    for (const s of board.stages) {
+      byStage[s.key] = db.listWorkboardCards(board.scope, userId, board.id, {
+        stageKey: s.key, limit: STAGE_CARD_LIMIT,
+      });
+    }
+  }
+
   return {
     board: {
       id: board.id, name: board.name, purpose: board.purpose, reactive: board.reactive,
@@ -50,7 +84,9 @@ export function boardPayload(db: DatabaseType, userId: string, board: Workboard)
     },
     stages: board.stages.map((s) => ({
       ...s,
-      count: byStage[s.key]?.length ?? 0,
+      count: counts[s.key] ?? 0,
+      shown: byStage[s.key]?.length ?? 0,
+      total: money ? (totals[s.key] ?? 0) : null,
       armed: board.reactive && !!s.onEnter,
     })),
     cards: byStage,
@@ -139,7 +175,7 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
   if (path === "/api/workboards" && req.method === "GET") {
     const boards = db.listWorkboardsVisible(userId).map((b) => ({
       id: b.id, name: b.name, purpose: b.purpose, scope: b.scope, reactive: b.reactive,
-      stages: b.stages.length, cards: db.listWorkboardCards(b.scope, userId, b.id).length,
+      stages: b.stages.length, cards: boardCardCount(db, userId, b),
       updatedAt: b.updatedAt,
     }));
     return json({ boards });
@@ -383,6 +419,7 @@ const SHELL_CSS = `
   .card .f{color:var(--dim);font-size:12px}
   .armed{color:var(--indigo)}
   .total{font-variant-numeric:tabular-nums}
+  .more{margin-top:6px;font-style:italic}
   .err{background:#ef4444;color:#fff;padding:8px 12px;border-radius:8px;position:fixed;
        bottom:16px;left:50%;transform:translateX(-50%);display:none}
 `;
@@ -407,7 +444,7 @@ export function renderWorkboardIndex(db: DatabaseType, userId: string): string {
   const boards = db.listWorkboardsVisible(userId);
   const tiles = boards.length
     ? boards.map((b) => {
-        const count = db.listWorkboardCards(b.scope, userId, b.id).length;
+        const count = boardCardCount(db, userId, b);
         return `<a class="tile" href="/workboards/${esc(b.id)}">
           <div class="t">${esc(b.name)}${b.reactive ? ' <span class="armed">•</span>' : ""}</div>
           <div class="f">${esc(b.purpose ?? "")}</div>
@@ -498,23 +535,22 @@ export function renderWorkboard(db: DatabaseType, userId: string, boardId: strin
     <div class="sub"><a href="/workboards">Back to workboards</a></div>`);
 
   const payload = boardPayload(db, userId, board);
-  const money = board.fields.find((f) => f.type === "money" || f.type === "number");
   const primaries = board.fields.filter((f) => f.primary).slice(0, 3);
 
   const columns = payload.stages.map((s) => {
     const cards = payload.cards[s.key] ?? [];
-    const total = money
-      ? cards.reduce((sum, c) => sum + (Number(c.fields[money.key]) || 0), 0)
-      : null;
     const cardHtml = cards.map((c) => {
       const lines = primaries.map((f) => `${esc(f.label)}: ${esc(c.fields[f.key] ?? "—")}`).join(" · ");
       return `<div class="card" draggable="true" data-id="${esc(c.id)}">
         <div class="t">${esc(c.title)}</div><div class="f">${lines}</div></div>`;
     }).join("");
-    const totalHtml = total !== null ? ` <span class="total">${total.toLocaleString("en-US")}</span>` : "";
+    const totalHtml = s.total !== null ? ` <span class="total">${s.total.toLocaleString("en-US")}</span>` : "";
+    const moreHtml = s.shown < s.count
+      ? `<div class="f more">Showing ${s.shown} of ${s.count} — open the board's stage in the CLI (<code>nova workboard query</code>) to see the rest</div>`
+      : "";
     return `<div class="stage" data-stage="${esc(s.key)}">
       <h2><span>${esc(s.label)}${s.armed ? ' <span class="armed">⚡</span>' : ""}</span>
-      <span>${s.count}${totalHtml}</span></h2>${cardHtml}</div>`;
+      <span>${s.count}${totalHtml}</span></h2>${cardHtml}${moreHtml}</div>`;
   }).join("");
 
   return shell(board.name, `<h1>${esc(board.name)}</h1>

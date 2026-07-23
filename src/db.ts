@@ -5843,6 +5843,37 @@ export class Database {
     return rows.map(mapWorkboardCard);
   }
 
+  /** Live card count for a board. From COUNT(*), so it stays right on a board bigger than any
+   * page a caller reads — a `.length` on a capped read would silently undercount. */
+  countWorkboardCards(scope: WorkboardScope, userId: string, boardId: string): number {
+    const row = this.wbHandle(scope, userId)
+      .query(`SELECT COUNT(*) AS n FROM workboard_cards WHERE board_id = ? AND archived = 0`)
+      .get(boardId) as any;
+    return row?.n ?? 0;
+  }
+
+  /** Live card count per stage key, same reasoning as countWorkboardCards. */
+  countWorkboardCardsByStage(scope: WorkboardScope, userId: string, boardId: string): Record<string, number> {
+    const rows = this.wbHandle(scope, userId)
+      .query(`SELECT stage_key, COUNT(*) AS n FROM workboard_cards
+              WHERE board_id = ? AND archived = 0 GROUP BY stage_key`)
+      .all(boardId) as any[];
+    return Object.fromEntries(rows.map((r) => [r.stage_key, r.n as number]));
+  }
+
+  /** Sum of one numeric field per stage, read out of the card's fields JSON so the total covers
+   * every card on the board rather than the page a caller happened to load. */
+  sumWorkboardCardFieldByStage(
+    scope: WorkboardScope, userId: string, boardId: string, fieldKey: string
+  ): Record<string, number> {
+    const path = `$."${fieldKey.replace(/["\\]/g, '')}"`;
+    const rows = this.wbHandle(scope, userId)
+      .query(`SELECT stage_key, SUM(CAST(json_extract(fields, ?) AS REAL)) AS total
+              FROM workboard_cards WHERE board_id = ? AND archived = 0 GROUP BY stage_key`)
+      .all(path, boardId) as any[];
+    return Object.fromEntries(rows.map((r) => [r.stage_key, Number(r.total) || 0]));
+  }
+
   updateWorkboardCard(
     scope: WorkboardScope, userId: string, id: string,
     patch: { stageKey?: string; position?: number; title?: string; fields?: Record<string, unknown>; archived?: boolean }

@@ -95,7 +95,7 @@ function runList(): number {
   const boards = db.listWorkboardsVisible(adminId(db));
   if (!boards.length) { console.log("  No workboards yet. Ask Nova in chat to create one."); return 0; }
   for (const b of boards) {
-    const cards = db.listWorkboardCards(b.scope, b.userId, b.id).length;
+    const cards = db.countWorkboardCards(b.scope, b.userId, b.id);
     console.log(`  ${b.name} (${b.scope}) — ${b.stages.length} stages, ${cards} cards${b.reactive ? ", reactive" : ""}`);
   }
   return 0;
