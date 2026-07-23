@@ -3,7 +3,7 @@
  *
  * Validation, stage resolution, move rules, and ordering live here with no DB or IO so they
  * stay testable. Persistence is the Database facade; dispatch is the automation engine.
- * Columns are "stages" — this feature never uses the word pipeline.
+ * Columns are "stages" — see StageDef.
  */
 
 export type FieldType =
@@ -88,10 +88,5 @@ export function validateCardFields(fields: FieldDef[], input: Record<string, unk
     values[def.key] = value;
   }
 
-  if (errors.length) {
-    const result: { ok: false; errors: string[] } = { ok: false, errors };
-    return result;
-  }
-  const result: { ok: true; values: Record<string, unknown> } = { ok: true, values };
-  return result;
+  return errors.length ? { ok: false, errors } : { ok: true, values };
 }
