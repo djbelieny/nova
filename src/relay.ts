@@ -4439,10 +4439,10 @@ startAutomationPoller(supabase, async (userId, agentSlug, taskDescription) =>
 // Workboard stage-action queue drainer — the dashboard process has no dispatcher, so it enqueues
 // stage actions instead of firing them; drain them here with the real dispatcher.
 const WORKBOARD_QUEUE_DRAIN_MS = Math.max(30_000, Number(process.env.NOVA_WORKBOARD_QUEUE_MS) || 45_000);
+const dispatchWorkboardAction = async (userId: string, agentSlug: string, taskDescription: string) =>
+  dispatchAutonomousTask(userId, agentSlug, taskDescription, "workboard");
 setInterval(() => {
-  const dispatch = async (userId: string, agentSlug: string, taskDescription: string) =>
-    dispatchAutonomousTask(userId, agentSlug, taskDescription, "workboard");
-  drainWorkboardQueue(supabase, dispatch).catch((err) => {
+  drainWorkboardQueue(supabase, dispatchWorkboardAction).catch((err) => {
     emit({ type: "error", level: "warn", data: { message: `Workboard queue drain failed: ${err}`, module: "workboard-reactive" } });
   });
 }, WORKBOARD_QUEUE_DRAIN_MS);
