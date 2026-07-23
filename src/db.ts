@@ -449,6 +449,9 @@ function applyWorkboardSchema(db: BunDatabase): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_wb_cards_ext ON workboard_cards(board_id, external_id)`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_wb_events_board ON workboard_events(board_id, at DESC)`);
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wb_name ON workboards(scope, user_id, name)`);
+  // Team boards are shared, so their names must be unique across the whole team — not per author,
+  // or findWorkboard's team lookup (which matches on name alone) resolves arbitrarily.
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_wb_team_name ON workboards(name) WHERE scope = 'team'`);
 }
 
 /**

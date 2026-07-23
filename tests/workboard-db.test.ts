@@ -81,3 +81,32 @@ test("workboard events append and read back newest first", () => {
   expect(events[0].kind).toBe("moved");
   expect(events[0].toStage).toBe("qualified");
 });
+
+test("two different users can each create a personal board named 'leads'", () => {
+  const { db, userId: userA } = newUser();
+  const { userId: userB } = newUser();
+  const boardA = db.insertWorkboard({
+    scope: "personal", userId: userA, name: "leads", purpose: "Inbound leads",
+    source: "cards", fields: FIELDS, stages: STAGES, reactive: false,
+  });
+  const boardB = db.insertWorkboard({
+    scope: "personal", userId: userB, name: "leads", purpose: "Inbound leads",
+    source: "cards", fields: FIELDS, stages: STAGES, reactive: false,
+  });
+  expect(boardA.name).toBe("leads");
+  expect(boardB.name).toBe("leads");
+  expect(boardA.id).not.toBe(boardB.id);
+});
+
+test("two different users cannot both create a team board named 'leads'", () => {
+  const { db, userId: userA } = newUser();
+  const { userId: userB } = newUser();
+  db.insertWorkboard({
+    scope: "team", userId: userA, name: "leads", purpose: "Inbound leads",
+    source: "cards", fields: FIELDS, stages: STAGES, reactive: false,
+  });
+  expect(() => db.insertWorkboard({
+    scope: "team", userId: userB, name: "leads", purpose: "Inbound leads",
+    source: "cards", fields: FIELDS, stages: STAGES, reactive: false,
+  })).toThrow();
+});
