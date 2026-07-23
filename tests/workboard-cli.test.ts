@@ -141,6 +141,44 @@ test("create -> card add -> card update round-trips through the db facade", asyn
   expect(cardAfter?.fields.company).toBe("Acme");
 });
 
+test("card move into an armed stage queues the stage action for the relay", async () => {
+  const boardName = `wb-cli-move-armed-${Date.now()}`;
+  const stages = [
+    { key: "new", label: "New", order: 0 },
+    { key: "nurture", label: "Nurture", order: 1, onEnter: { agent: "orion", task: "Email {{card.company}}" } },
+  ];
+  const created = await runCli(["create", boardName, "--fields", JSON.stringify(FIELDS), "--stages", JSON.stringify(stages), "--reactive"]);
+  expect(created.code).toBe(0);
+  const board = db.findWorkboard(adminUserId, boardName);
+  if (!board) throw new Error("setup failed");
+  expect(await runCli(["card", "add", boardName, "--stage", "new", "--fields", JSON.stringify({ company: "Acme", score: 1 })])).toMatchObject({ code: 0 });
+  const card = db.listWorkboardCards(board.scope, adminUserId, board.id)[0];
+
+  const moved = await runCli(["card", "move", card.id, "--to", "nurture"]);
+  expect(moved.code).toBe(0);
+
+  const pending = db.listPendingWorkboardActions(1000).filter((row) => row.boardId === board.id);
+  expect(pending.length).toBe(1);
+  expect(pending[0].cardId).toBe(card.id);
+  expect(pending[0].stageKey).toBe("nurture");
+  expect(pending[0].action).toEqual({ agent: "orion", task: "Email {{card.company}}" });
+});
+
+test("card move into an inert stage queues nothing", async () => {
+  const boardName = `wb-cli-move-inert-${Date.now()}`;
+  const stages = [{ key: "new", label: "New", order: 0 }, { key: "done", label: "Done", order: 1 }];
+  const created = await runCli(["create", boardName, "--fields", JSON.stringify(FIELDS), "--stages", JSON.stringify(stages)]);
+  expect(created.code).toBe(0);
+  const board = db.findWorkboard(adminUserId, boardName);
+  if (!board) throw new Error("setup failed");
+  expect(await runCli(["card", "add", boardName, "--stage", "new", "--fields", JSON.stringify({ company: "Acme", score: 1 })])).toMatchObject({ code: 0 });
+  const card = db.listWorkboardCards(board.scope, adminUserId, board.id)[0];
+
+  const before = db.listPendingWorkboardActions(1000).length;
+  expect((await runCli(["card", "move", card.id, "--to", "done"])).code).toBe(0);
+  expect(db.listPendingWorkboardActions(1000).length).toBe(before);
+});
+
 test("run without a board name fails clearly instead of naming \"undefined\"", async () => {
   const r = await runCli(["run"]);
   expect(r.code).toBe(1);

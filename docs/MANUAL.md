@@ -1416,7 +1416,7 @@ action or syncing a connector does.
 | `nova workboard create <name>` | `--purpose '<text>'` `--fields '<json array>'` `--stages '<json array>'` `--reactive` | Create a board. `--fields` and `--stages` are JSON arrays of field/stage definitions; `--reactive` (no value) opts the board into stage actions. Boards created this way are always personal-scope — there's no `--scope` flag |
 | `nova workboard card add <board>` | `--stage <key>` `--fields '{…}'` `--title <text>` | Add one card. `--stage` defaults to the board's first stage if omitted. Fails on a system board — those read cards from another table |
 | `nova workboard card add-many <board>` | `--stage <key>` `--file <path>` | Add many cards from a JSON file (an array of `{ title?, fields }`). `--file` is required |
-| `nova workboard card move <card-id>` | `--to <stage>` | Move a card to another stage. `--to` is required. Reports whether the move armed a stage action |
+| `nova workboard card move <card-id>` | `--to <stage>` | Move a card to another stage. `--to` is required. If the move enters an armed stage, the action is queued for the relay to dispatch — the CLI has no dispatcher of its own |
 | `nova workboard card update <card-id>` | `--fields '{…}'` `--title <text>` | Patch a card's fields and/or title |
 | `nova workboard query <board>` | `--stage <key>` | Print the board's cards as JSON, optionally filtered to one stage |
 | `nova workboard run <board>` | `--stage <key>` `--playbook <name>` `[key=value ...]` | Queue every card currently in `--stage` to run the named playbook. This queues the run for the relay to dispatch shortly — it does not run inline |

@@ -303,6 +303,35 @@ test("DELETE /api/workboards/cards/:id archives the card and returns success", a
   expect(cardsAfter.some((c: any) => c.id === cardId)).toBe(false);
 });
 
+test("a move into an armed stage reports the action as queued, not as running", async () => {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wba-armed-${Date.now()}-${seq++}`, name: "Armed User", role: "admin" });
+  const created = createBoard(db, u.id, {
+    name: `armed-board-${Date.now()}-${seq++}`,
+    reactive: true,
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [
+      { key: "new", label: "New", order: 0 },
+      { key: "nurture", label: "Nurture", order: 1, onEnter: { agent: "orion", task: "Email {{card.company}}" } },
+    ],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  const board = created.value;
+  const [card] = db.insertWorkboardCards(board.scope, u.id, [{
+    boardId: board.id, stageKey: "new", title: "Acme", fields: { company: "Acme" }, origin: "user" as const,
+  }]);
+
+  const move = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
+    method: "POST", body: JSON.stringify({ toStage: "nurture" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}/move`, move, ctxFor(db, u.id));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.firing).toBe("queued");
+  expect(body.fires).toBe(true);
+  expect(db.listPendingWorkboardActions(1000).some((r: any) => r.cardId === card.id)).toBe(true);
+});
+
 test("moving a card on a connector-bound board returns a pending push and records it in history", async () => {
   const { db, userId, board, card } = seedBound();
   const move = new Request(`http://x/api/workboards/cards/${card.id}/move`, {

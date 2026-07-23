@@ -189,7 +189,16 @@ function runCardMove(cardId: string, argv: string[]): number {
   if (!found) return fail([`No card ${cardId}`]);
   const r = moveCard(db, userId, found.board, cardId, to, "cli");
   if (!r.ok) return fail(r.errors);
-  console.log(`  ✓ Moved ${cardId} → ${to}${r.value.fires ? " (stage action armed)" : ""}`);
+  // The CLI has no dispatcher of its own — same as the dashboard — so an armed stage is queued
+  // for the relay to fire rather than dropped. Mirrors runStage below.
+  if (r.value.fires) {
+    db.enqueueWorkboardAction({
+      userId, boardScope: found.board.scope, boardId: found.board.id,
+      cardId: r.value.card.id, stageKey: r.value.card.stageKey, action: r.value.fires,
+    });
+  }
+  const queued = r.value.fires ? " — stage action queued, the relay will dispatch it shortly" : "";
+  console.log(`  ✓ Moved ${cardId} → ${to}${queued}`);
   return 0;
 }
 

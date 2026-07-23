@@ -141,6 +141,14 @@ test("client script guards a card against a second move while one is in flight",
   expect(inFlightClears).toBeGreaterThanOrEqual(2);
 });
 
+test("client script tells the truth about a queued stage action and a recorded connector write", () => {
+  const { db, userId, board } = seed();
+  const html = renderWorkboard(db, userId, board.id);
+  expect(html).toContain("Stage action queued — the relay will run it shortly.");
+  expect(html).toContain("recorded in board history");
+  expect(html).not.toContain("needs approval in chat");
+});
+
 test("client script drop handler short-circuits a same-stage drop", () => {
   const { db, userId, board } = seed();
   const html = renderWorkboard(db, userId, board.id);

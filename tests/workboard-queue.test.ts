@@ -171,7 +171,7 @@ test("an API move into an armed stage with no dispatcher in the context enqueues
   const bodyJson = await res!.json();
 
   expect(res!.status).toBe(200);
-  expect(bodyJson.fires).toBe(false); // nothing fired inline
+  expect(bodyJson.firing).toBe("queued"); // promised to the relay, not run inline
 
   const pending = db.listPendingWorkboardActions(50).filter((r) => r.cardId === card.id);
   expect(pending.length).toBe(1);
@@ -189,7 +189,7 @@ test("the same move WITH a dispatcher in the context fires inline and enqueues n
   const bodyJson = await res!.json();
 
   expect(res!.status).toBe(200);
-  expect(bodyJson.fires).toBe(true);
+  expect(bodyJson.firing).toBe("dispatched");
   expect(dispatched).toBe(1);
 
   const pending = db.listPendingWorkboardActions(50).filter((r) => r.cardId === card.id);

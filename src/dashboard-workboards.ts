@@ -225,16 +225,20 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
       beforeId: input.beforeId, afterId: input.afterId,
     });
     if (!r.ok) return json({ errors: r.errors }, 400);
-    let fired = false;
+    // "dispatched" only when a dispatcher was on hand AND the dispatch went through; the
+    // dashboard has none, so its armed moves report "queued" — a promise the relay will keep,
+    // not work already done. Anything else (skipped, deduped, dead-lettered) is neither.
+    let firing: "dispatched" | "queued" | null = null;
     if (r.value.fires) {
       if (ctx.dispatchAgent) {
         const outcome = await fireOnEnter(db, userId, found.board, r.value.card, r.value.fires, ctx.dispatchAgent);
-        fired = outcome.fired;
+        firing = outcome.fired ? "dispatched" : null;
       } else {
         db.enqueueWorkboardAction({
           userId, boardScope: found.board.scope, boardId: found.board.id,
           cardId: r.value.card.id, stageKey: r.value.card.stageKey, action: r.value.fires,
         });
+        firing = "queued";
       }
     }
     const binding = found.board.connectorBinding as ConnectorBinding | null;
@@ -249,7 +253,7 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
         });
       }
     }
-    return json({ card: r.value.card, fires: fired, pendingPush });
+    return json({ card: r.value.card, fires: firing !== null, firing, pendingPush });
   }
 
   if (path === "/api/workboards/cards/move-many" && req.method === "POST") {
@@ -497,9 +501,10 @@ function boardScript(boardId: string): string {
          if(!res.ok){from.appendChild(card);showErr((res.body.errors||['move failed']).join(', '));return;}
          ownMoves[card.dataset.id]=Date.now();
          var notices=[];
-         if(res.body.fires)notices.push('Stage action running — check activity.');
+         if(res.body.firing==='queued')notices.push('Stage action queued — the relay will run it shortly.');
+         else if(res.body.firing==='dispatched')notices.push('Stage action running — check activity.');
          if(res.body.pendingPush)notices.push('Stage synced locally. The '+res.body.pendingPush.connector+
-           ' write needs approval in chat.');
+           ' write was recorded in board history — run it yourself when you want it applied.');
          if(notices.length)showErr(notices.join(' '));
        })
        .catch(function(){
