@@ -34,6 +34,7 @@ import { groupTicketsByColumn, TICKET_COLUMNS } from "./ticket-board.ts";
 import { handleTicketApproval } from "../services/ticket-worker.ts";
 import { sendTicketEmail } from "./resend-client.ts";
 import { verifyLogin } from "./web-auth.ts";
+import { handleWorkboardApi } from "./dashboard-workboards.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -9104,6 +9105,13 @@ const server = Bun.serve({
     const userId = isAdmin ? (url.searchParams.get("user_id") || undefined) : me?.userId;
     // Guard for system-wide / cross-user endpoints: returns 403 for non-admins, null for admins
     const adminApi = (): Response | null => { if (!isAdmin) return jsonResponse({ error: "Admin only" }, 403); return null; };
+
+    if (path.startsWith("/api/workboards")) {
+      const wbUserId = userId || me?.userId;
+      if (!wbUserId) return jsonResponse({ error: "user_id required" }, 400);
+      const handled = await handleWorkboardApi(path, req, { db: getDb(), userId: wbUserId });
+      if (handled) return handled;
+    }
 
     if (path === "/api/users" && req.method === "GET") {
       const me = getSessionUser(req);
