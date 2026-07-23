@@ -319,9 +319,11 @@ function boardScript(boardId: string): string {
          card.removeAttribute('data-moving');card.setAttribute('draggable','true');card.classList.remove('moving');
          if(!res.ok){from.appendChild(card);showErr((res.body.errors||['move failed']).join(', '));return;}
          ownMoves[card.dataset.id]=Date.now();
-         if(res.body.fires)showErr('Stage action running — check activity.');
-         if(res.body.pendingPush){showErr('Stage synced locally. The '+res.body.pendingPush.connector+
-           ' write needs approval in chat.');}
+         var notices=[];
+         if(res.body.fires)notices.push('Stage action running — check activity.');
+         if(res.body.pendingPush)notices.push('Stage synced locally. The '+res.body.pendingPush.connector+
+           ' write needs approval in chat.');
+         if(notices.length)showErr(notices.join(' '));
        })
        .catch(function(){
          card.removeAttribute('data-moving');card.setAttribute('draggable','true');card.classList.remove('moving');

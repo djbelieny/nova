@@ -231,7 +231,7 @@ test("moving a card on a connector-bound board returns a pending push and record
   const body = await res!.json();
   expect(body.pendingPush).toEqual({
     connector: "hubspot", action: "update_contact",
-    input: { id: "42", "properties.lifecycle": "customer" },
+    input: { id: "42", properties: { lifecycle: "customer" } },
   });
 
   const events = db.listWorkboardEvents(board.scope, userId, board.id, 10);

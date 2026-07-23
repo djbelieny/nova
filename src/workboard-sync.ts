@@ -163,6 +163,22 @@ export async function pullBoard(
   return { ok: true, created: creatable.length, updated, skipped, truncated, warning };
 }
 
+/** Set a nested value by dot path, merging into (not replacing) any object already at the path's
+ *  root: setByPath({ id: "1" }, "properties.lifecycle", "customer") ===
+ *  { id: "1", properties: { lifecycle: "customer" } }. The mirror of getByPath's read side. */
+export function setByPath(obj: Record<string, any>, path: string, value: unknown): Record<string, any> {
+  const keys = path.split(".");
+  const last = keys.pop() as string;
+  let cursor = obj;
+  for (const key of keys) {
+    const existing = cursor[key];
+    cursor[key] = existing && typeof existing === "object" ? existing : {};
+    cursor = cursor[key];
+  }
+  cursor[last] = value;
+  return obj;
+}
+
 /**
  * Describe the connector write a stage change implies. Nothing here performs it — a write to a
  * real external system is consequential, so the caller routes it through the approval gate.
@@ -180,6 +196,6 @@ export function buildPush(
   return {
     connector: binding.connector,
     action: binding.writeAction,
-    input: { id: card.externalId, [binding.stageField]: remoteValue },
+    input: setByPath({ id: card.externalId }, binding.stageField, remoteValue),
   };
 }

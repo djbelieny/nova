@@ -315,7 +315,7 @@ test("buildPush maps the target stage onto the remote field", () => {
     expect(p.connector).toBe("hubspot");
     expect(p.action).toBe("update_contact");
     expect(p.input.id).toBe("42");
-    expect(p.input["properties.lifecycle"]).toBe("customer");
+    expect(p.input.properties).toEqual({ lifecycle: "customer" });
   }
 });
 
@@ -334,4 +334,12 @@ test("buildPush skips when the binding is pull-only", () => {
 test("buildPush skips a stage with no remote equivalent", () => {
   const card = { id: "c1", externalId: "42", fields: {} } as any;
   expect("skip" in buildPush(PUSH_BINDING, card, "nurture")).toBe(true);
+});
+
+test("buildPush skips a binding with no stageField", () => {
+  const card = { id: "c1", externalId: "42", fields: {} } as any;
+  const binding: ConnectorBinding = { ...PUSH_BINDING, stageField: undefined };
+  const p = buildPush(binding, card, "won");
+  expect("skip" in p).toBe(true);
+  if ("skip" in p) expect(p.skip).toContain("stageField");
 });
