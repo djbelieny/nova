@@ -49,3 +49,11 @@ test("formatConnectorTools renders a compact names-only list", () => {
   expect(out).toBe("stripe (Stripe (payments)), shopify (Shopify (orders))");
   expect(formatConnectorTools([])).toBe("");
 });
+
+test("nova tool instructions advertise workboard discovery, not every verb inline", () => {
+  const block = buildNovaToolInstructions(null);
+  expect(block).toContain("nova workboard list");
+  expect(block).toContain("nova workboard describe");
+  expect(block).toContain("nova workboard card add");
+  expect(block).not.toContain("pipeline");
+});

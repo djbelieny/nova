@@ -33,6 +33,9 @@ export function buildNovaToolInstructions(db: Database | null, agentSlug?: strin
     "  nova extract <file> --schema <name>   # extract structured data from a document (read-only)",
     "  nova playbook run <name> key=value    # run a saved SOP/playbook",
     "  nova data list  |  nova data query <name>   # read a connected data source (read-only)",
+    "  nova workboard list | describe <board>      # boards of structured cards",
+    "  nova workboard card add <board> --stage <k> --fields '{…}'    # add one card",
+    "  nova workboard card add-many <board> --stage <k> --file <f>   # add many at once",
   ];
 
   const configured = listConnectors().filter((c) => isConnectorConfigured(c, db));
@@ -50,6 +53,9 @@ export function buildNovaToolInstructions(db: Database | null, agentSlug?: strin
   lines.push("- Use read actions freely to gather data mid-task.");
   lines.push(
     "- For any WRITE / consequential action (refunds, sending, creating/updating records), do NOT execute it directly — describe exactly what you intend and let the approval gate handle it."
+  );
+  lines.push(
+    "- Workboards: run `nova workboard describe <board>` first to learn its fields and stages, then write cards that match. Adding or moving cards is safe and reversible — do it directly."
   );
 
   return lines.join("\n");
