@@ -108,9 +108,16 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     });
     if (!r.ok) return json({ errors: r.errors }, 400);
     let fired = false;
-    if (r.value.fires && ctx.dispatchAgent) {
-      const outcome = await fireOnEnter(db, userId, found.board, r.value.card, r.value.fires, ctx.dispatchAgent);
-      fired = outcome.fired;
+    if (r.value.fires) {
+      if (ctx.dispatchAgent) {
+        const outcome = await fireOnEnter(db, userId, found.board, r.value.card, r.value.fires, ctx.dispatchAgent);
+        fired = outcome.fired;
+      } else {
+        db.enqueueWorkboardAction({
+          userId, boardScope: found.board.scope, boardId: found.board.id,
+          cardId: r.value.card.id, stageKey: r.value.card.stageKey, action: r.value.fires,
+        });
+      }
     }
     return json({ card: r.value.card, fires: fired });
   }
@@ -150,8 +157,15 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
       const r = moveCard(db, userId, first.board, id, input.toStage, userId);
       if (!r.ok) { errors.push(...r.errors.map((e) => `card ${id}: ${e}`)); continue; }
       moved.push(id);
-      if (r.value.fires && ctx.dispatchAgent) {
-        await fireOnEnter(db, userId, first.board, r.value.card, r.value.fires, ctx.dispatchAgent);
+      if (r.value.fires) {
+        if (ctx.dispatchAgent) {
+          await fireOnEnter(db, userId, first.board, r.value.card, r.value.fires, ctx.dispatchAgent);
+        } else {
+          db.enqueueWorkboardAction({
+            userId, boardScope: first.board.scope, boardId: first.board.id,
+            cardId: r.value.card.id, stageKey: r.value.card.stageKey, action: r.value.fires,
+          });
+        }
       }
     }
     return json({ moved: moved.length, errors });

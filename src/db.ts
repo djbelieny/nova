@@ -455,6 +455,34 @@ function applyWorkboardSchema(db: BunDatabase): void {
 }
 
 /**
+ * Workboard stage-action queue — shared.db ONLY (not called from the per-user init site).
+ *
+ * The dashboard API is a standalone process with no dispatcher; it enqueues a row here instead
+ * of firing inline. A single always-on drainer (the relay) polls this table for every user, so
+ * it must live somewhere a single query reaches all pending rows regardless of which user's
+ * board they belong to — that's shared.db, not a per-user db the drainer would otherwise have
+ * to open one-by-one for every known user just to check for work.
+ */
+function applyWorkboardQueueSchema(db: BunDatabase): void {
+  db.run(`
+    CREATE TABLE IF NOT EXISTS workboard_queue (
+      id          TEXT PRIMARY KEY,
+      user_id     TEXT NOT NULL,
+      board_scope TEXT NOT NULL,
+      board_id    TEXT NOT NULL,
+      card_id     TEXT NOT NULL,
+      stage_key   TEXT NOT NULL,
+      action      TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'pending',
+      error       TEXT,
+      created_at  TEXT DEFAULT (datetime('now')),
+      updated_at  TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_wb_queue_pending ON workboard_queue(status, created_at)`);
+}
+
+/**
  * Automation engine (event → condition → workflow). All automations live in shared.db,
  * scoped by user_id. The legacy webhook_triggers table stays; automations is the superset.
  */
@@ -928,6 +956,40 @@ function mapWorkboardEvent(row: any): WorkboardEvent {
   };
 }
 
+export type WorkboardQueueStatus = 'pending' | 'done' | 'failed';
+
+/** Everything the drainer needs to reconstruct a fireOnEnter call in a different process. */
+export interface WorkboardQueueInput {
+  userId: string;
+  boardScope: WorkboardScope;
+  boardId: string;
+  cardId: string;
+  stageKey: string;
+  action: import('./workboards.ts').OnEnterAction;
+}
+
+export interface WorkboardQueueRow {
+  id: string;
+  userId: string;
+  boardScope: WorkboardScope;
+  boardId: string;
+  cardId: string;
+  stageKey: string;
+  action: import('./workboards.ts').OnEnterAction;
+  status: WorkboardQueueStatus;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function mapWorkboardQueue(row: any): WorkboardQueueRow {
+  return {
+    id: row.id, userId: row.user_id, boardScope: row.board_scope, boardId: row.board_id,
+    cardId: row.card_id, stageKey: row.stage_key, action: parseJson(row.action, {} as any),
+    status: row.status, error: row.error ?? null, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
 export type KbScope = 'personal' | 'team' | 'agent';
 
 export interface KbDocInput {
@@ -1329,6 +1391,8 @@ class SharedDatabase {
     applyPlaybookSchema(this.db);
     // Workboards — team scope lives in shared.db
     applyWorkboardSchema(this.db);
+    // Workboard stage-action queue — always shared.db, see applyWorkboardQueueSchema doc comment
+    applyWorkboardQueueSchema(this.db);
     // Automation engine — all automations live in shared.db
     applyAutomationSchema(this.db);
     // Policy / compliance layer — all in shared.db
@@ -5793,6 +5857,48 @@ export class Database {
       .query(`SELECT * FROM workboard_events WHERE board_id = ? ORDER BY at DESC, rowid DESC LIMIT ?`)
       .all(boardId, limit) as any[];
     return rows.map(mapWorkboardEvent);
+  }
+
+  // ============================================================
+  // Workboard stage-action queue — always shared.db (see applyWorkboardQueueSchema)
+  // ============================================================
+
+  enqueueWorkboardAction(input: WorkboardQueueInput): WorkboardQueueRow {
+    const id = crypto.randomUUID();
+    this.shared.db.run(
+      `INSERT INTO workboard_queue (id, user_id, board_scope, board_id, card_id, stage_key, action)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, input.userId, input.boardScope, input.boardId, input.cardId, input.stageKey, JSON.stringify(input.action)]
+    );
+    return this.getWorkboardQueueRow(id)!;
+  }
+
+  getWorkboardQueueRow(id: string): WorkboardQueueRow | null {
+    const row = this.shared.db.query(`SELECT * FROM workboard_queue WHERE id = ?`).get(id) as any;
+    return row ? mapWorkboardQueue(row) : null;
+  }
+
+  /** Oldest pending rows first, for the drainer to work through in order. */
+  listPendingWorkboardActions(limit = 25): WorkboardQueueRow[] {
+    const rows = this.shared.db
+      .query(`SELECT * FROM workboard_queue WHERE status = 'pending' ORDER BY created_at ASC, rowid ASC LIMIT ?`)
+      .all(limit) as any[];
+    return rows.map(mapWorkboardQueue);
+  }
+
+  /** `note` records the fireOnEnter outcome (e.g. "deduped") even though the row succeeded. */
+  markWorkboardActionDone(id: string, note?: string | null): void {
+    this.shared.db.run(
+      `UPDATE workboard_queue SET status = 'done', error = ?, updated_at = datetime('now') WHERE id = ?`,
+      [note ?? null, id]
+    );
+  }
+
+  markWorkboardActionFailed(id: string, error: string): void {
+    this.shared.db.run(
+      `UPDATE workboard_queue SET status = 'failed', error = ?, updated_at = datetime('now') WHERE id = ?`,
+      [error, id]
+    );
   }
 
   // ============================================================

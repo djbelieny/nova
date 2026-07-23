@@ -128,3 +128,41 @@ export const BULK_CONFIRM_LIMIT = Number(process.env.WORKBOARD_BULK_CONFIRM || 1
 export function needsBulkConfirm(count: number, limit = BULK_CONFIRM_LIMIT): boolean {
   return count > limit;
 }
+
+/**
+ * Drains the durable queue a process with no dispatcher (the dashboard) enqueued into. Reads
+ * pending rows oldest-first, reconstructs the board and card, and re-runs the SAME fireOnEnter
+ * used by the inline path — so exactly-once claiming, retries, and dead-lettering are not
+ * duplicated here. A row whose board or card is gone (archived/deleted between the drag and the
+ * drain) is marked failed and skipped rather than thrown; every other row is still attempted.
+ */
+export async function drainWorkboardQueue(
+  db: DatabaseType,
+  dispatchAgent: DispatchAgentFn,
+  limit = 25
+): Promise<{ processed: number; fired: number; failed: number }> {
+  const rows = db.listPendingWorkboardActions(limit);
+  let fired = 0;
+  let failed = 0;
+
+  for (const row of rows) {
+    const board = db.getWorkboardById(row.boardScope, row.userId, row.boardId);
+    if (!board) {
+      db.markWorkboardActionFailed(row.id, "board not found");
+      failed++;
+      continue;
+    }
+    const card = db.getWorkboardCard(row.boardScope, row.userId, row.cardId);
+    if (!card || card.archived) {
+      db.markWorkboardActionFailed(row.id, card ? "card archived" : "card not found");
+      failed++;
+      continue;
+    }
+
+    const outcome = await fireOnEnter(db, row.userId, board, card, row.action, dispatchAgent);
+    db.markWorkboardActionDone(row.id, outcome.fired ? null : outcome.reason ?? null);
+    if (outcome.fired) fired++;
+  }
+
+  return { processed: rows.length, fired, failed };
+}
