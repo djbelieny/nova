@@ -18,7 +18,9 @@ function seed() {
   return { db, userId: u.id, board: created.value };
 }
 
-const ctxFor = (db: any, userId: string) => ({ db, userId });
+/** Acts as the board's own user. Tests that need an admin acting on someone else's board pass an
+ * explicit actorId — there is no implicit fallback to the owner. */
+const ctxFor = (db: any, userId: string) => ({ db, userId, actorId: userId });
 
 const PUSH_BINDING: ConnectorBinding = {
   connector: "hubspot",
@@ -280,6 +282,40 @@ test("an admin acting on another user's board is gated on the admin, not on the 
   const res = await handleWorkboardApi(`/api/workboards/${created.value.id}/cards`, req,
     { db, userId: owner.id, actorId: admin.id });
   expect(res!.status).toBe(200);
+});
+
+test("a member without the capability is refused on a board owned by an admin — the gate never falls back to the owner", async () => {
+  const db = getDb();
+  const admin = db.upsertUser({ telegram_id: `wba-owner2-${Date.now()}-${seq++}`, name: "Owner", role: "admin" });
+  const member = db.upsertUser({ telegram_id: `wba-member2-${Date.now()}-${seq++}`, name: "Member", role: "member" });
+  const created = createBoard(db, admin.id, {
+    name: `owner-gate-${Date.now()}-${seq++}`, scope: "team",
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [{ key: "new", label: "New", order: 0 }],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+
+  const req = new Request(`http://x/api/workboards/${created.value.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "Acme" } }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${created.value.id}/cards`, req,
+    { db, userId: admin.id, actorId: member.id });
+  expect(res!.status).toBe(403);
+  expect(db.listWorkboardCards(created.value.scope, admin.id, created.value.id).length).toBe(0);
+});
+
+test("the master bootstrap identity acting on a real user's board is told it has no personal account, not that it lacks a capability", async () => {
+  const { db, userId, board } = seed();
+  const req = new Request(`http://x/api/workboards/${board.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "Acme" } }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${board.id}/cards`, req,
+    { db, userId, actorId: "__master__" });
+  expect(res!.status).toBe(400);
+  const body = await res!.json();
+  expect(body.errors.join(" ")).toContain("personal account");
+  expect(body.errors.join(" ")).not.toContain("workboard.manage");
+  expect(db.listWorkboardCards(board.scope, userId, board.id).length).toBe(0);
 });
 
 test("GET /api/workboards/:id/rev changes when another process writes a card, so an open board can notice", async () => {

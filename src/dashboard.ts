@@ -8522,9 +8522,10 @@ const server = Bun.serve({
     const adminApi = (): Response | null => { if (!isAdmin) return jsonResponse({ error: "Admin only" }, 403); return null; };
 
     if (path.startsWith("/api/workboards")) {
-      const wbUserId = userId || me?.userId;
-      if (!wbUserId) return jsonResponse({ error: "user_id required" }, 400);
-      const handled = await handleWorkboardApi(path, req, { db: getDb(), userId: wbUserId, actorId: me?.userId });
+      if (!me) return jsonResponse({ error: "unauthenticated" }, 401);
+      const handled = await handleWorkboardApi(path, req, {
+        db: getDb(), userId: userId || me.userId, actorId: me.userId,
+      });
       if (handled) return handled;
     }
 

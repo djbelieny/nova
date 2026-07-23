@@ -14,8 +14,10 @@ import type { DispatchAgentFn } from "./automation-engine.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
 /** `userId` owns the data being read or written; `actorId` is who is asking (an admin may act on
- * another user's boards via ?user_id=). Capability checks use the actor, never the owner. */
-export interface WorkboardApiCtx { db: DatabaseType; userId: string; actorId?: string; dispatchAgent?: DispatchAgentFn; }
+ * another user's boards via ?user_id=). Capability checks use the actor, never the owner —
+ * `actorId` is required so no caller can fall back to gating on the board's owner, which for an
+ * admin-owned team board would mean "always allowed". */
+export interface WorkboardApiCtx { db: DatabaseType; userId: string; actorId: string; dispatchAgent?: DispatchAgentFn; }
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -177,8 +179,13 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
   // stage is functionally an automation — so a write here can arm and trigger an autonomous agent
   // dispatch. Gate writes the way /api/automations and /api/playbooks gate theirs; reads stay open
   // to any authenticated session, like their GETs.
-  if (MUTATING_METHODS.has(req.method) && !hasCapability(db, ctx.actorId ?? userId, "workboard.manage")) {
-    return json({ errors: ["permission denied — workboard.manage is required to change a board"] }, 403);
+  if (MUTATING_METHODS.has(req.method)) {
+    // The master bootstrap login has no database row, so hasCapability would just say false and
+    // the 403 would blame a missing capability no one can grant it. Name the real problem.
+    if (!isValidUserId(ctx.actorId)) return json({ errors: [NO_PERSONAL_ACCOUNT_MSG] }, 400);
+    if (!hasCapability(db, ctx.actorId, "workboard.manage")) {
+      return json({ errors: ["permission denied — workboard.manage is required to change a board"] }, 403);
+    }
   }
 
   if (path === "/api/workboards" && req.method === "GET") {

@@ -163,7 +163,7 @@ test("draining twice does not dispatch twice for the same card/stage/action", as
 
 test("an API move into an armed stage with no dispatcher in the context enqueues exactly one row and fires nothing inline", async () => {
   const { db, userId, board, card } = seed();
-  const ctx = { db, userId }; // no dispatchAgent
+  const ctx = { db, userId, actorId: userId }; // no dispatchAgent
   const req = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
     method: "POST", body: JSON.stringify({ toStage: "nurture" }),
   });
@@ -181,7 +181,7 @@ test("an API move into an armed stage with no dispatcher in the context enqueues
 test("the same move WITH a dispatcher in the context fires inline and enqueues nothing", async () => {
   const { db, userId, board, card } = seed();
   let dispatched = 0;
-  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId, actorId: userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
     method: "POST", body: JSON.stringify({ toStage: "nurture" }),
   });
@@ -202,7 +202,7 @@ test("an unconfirmed over-threshold bulk move into an armed stage enqueues nothi
     Array.from({ length: 12 }, (_, i) => ({ fields: { company: `Co ${i}`, email: `c${i}@x.com` } })), "agent");
   if (!many.ok) throw new Error("setup failed");
 
-  const ctx = { db, userId }; // no dispatchAgent
+  const ctx = { db, userId, actorId: userId }; // no dispatchAgent
   const req = new Request("http://x/api/workboards/cards/move-many", {
     method: "POST",
     body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture" }),
@@ -227,7 +227,7 @@ test("a confirmed bulk move into an armed stage with no dispatcher enqueues one 
     Array.from({ length: 3 }, (_, i) => ({ fields: { company: `Co ${i}`, email: `c${i}@x.com` } })), "agent");
   if (!many.ok) throw new Error("setup failed");
 
-  const ctx = { db, userId }; // no dispatchAgent
+  const ctx = { db, userId, actorId: userId }; // no dispatchAgent
   const req = new Request("http://x/api/workboards/cards/move-many", {
     method: "POST",
     body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture", confirm: true }),

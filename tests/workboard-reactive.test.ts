@@ -219,7 +219,7 @@ test("needsBulkConfirm triggers above the limit only", () => {
 test("moving a card via the API into an armed stage dispatches once", async () => {
   const { db, userId, board, card } = seed();
   let dispatched = 0;
-  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId, actorId: userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
     method: "POST", body: JSON.stringify({ toStage: "nurture" }),
   });
@@ -234,7 +234,7 @@ test("a bulk move over the limit returns needsConfirm and fires nothing", async 
     Array.from({ length: 12 }, (_, i) => ({ fields: { company: `Co ${i}`, email: `c${i}@x.com` } })), "agent");
   if (!many.ok) throw new Error("setup failed");
   let dispatched = 0;
-  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId, actorId: userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request("http://x/api/workboards/cards/move-many", {
     method: "POST", body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture" }),
   });
@@ -250,7 +250,7 @@ test("a confirmed bulk move fires once per card", async () => {
     Array.from({ length: 12 }, (_, i) => ({ fields: { company: `Co ${i}`, email: `c${i}@x.com` } })), "agent");
   if (!many.ok) throw new Error("setup failed");
   let dispatched = 0;
-  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId, actorId: userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request("http://x/api/workboards/cards/move-many", {
     method: "POST",
     body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture", confirm: true }),
@@ -287,7 +287,7 @@ test("a mixed-board bulk request returns 400, moves nothing, and dispatches noth
   if (!cardA.ok || !cardB.ok) throw new Error("setup failed");
 
   let dispatched = 0;
-  const ctx = { db, userId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId: u.id, actorId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request("http://x/api/workboards/cards/move-many", {
     method: "POST",
     body: JSON.stringify({ cardIds: [cardA.value[0].id, cardB.value[0].id], toStage: "nurture" }),
@@ -327,7 +327,7 @@ test("a bulk move over the threshold into an unarmed stage proceeds without conf
   if (!many.ok) throw new Error("setup failed");
 
   let dispatched = 0;
-  const ctx = { db, userId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId: u.id, actorId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request("http://x/api/workboards/cards/move-many", {
     method: "POST",
     body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture" }),
@@ -359,7 +359,7 @@ test("a single move through the API into an unarmed stage fires nothing", async 
   const card = added.value[0];
 
   let dispatched = 0;
-  const ctx = { db, userId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId: u.id, actorId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
     method: "POST", body: JSON.stringify({ toStage: "cold" }),
   });
@@ -380,7 +380,7 @@ test("a partial failure mid-bulk reports which card failed", async () => {
   if (!archived.ok) throw new Error(archived.errors.join(", "));
 
   let dispatched = 0;
-  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const ctx = { db, userId, actorId: userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
   const req = new Request("http://x/api/workboards/cards/move-many", {
     method: "POST",
     body: JSON.stringify({ cardIds: [okCard.id, card.id], toStage: "nurture" }),
