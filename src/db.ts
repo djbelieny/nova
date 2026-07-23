@@ -822,7 +822,7 @@ function mapPlaybook(r: any): Playbook {
 export type WorkboardScope = 'personal' | 'team';
 export type CardSourceKind = 'cards' | 'agent_tasks' | 'tickets';
 export type CardOrigin = 'agent' | 'user' | 'automation' | 'connector';
-export type WorkboardEventKind = 'created' | 'moved' | 'updated' | 'archived' | 'fired' | 'sync';
+export type WorkboardEventKind = 'created' | 'moved' | 'updated' | 'archived' | 'fired' | 'sync' | 'skipped' | 'failed' | 'deduped';
 
 export interface Workboard {
   id: string;

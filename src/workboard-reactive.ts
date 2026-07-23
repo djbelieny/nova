@@ -8,9 +8,18 @@
  */
 
 import { composePlaybookTask, renderTemplate, type DispatchAgentFn } from "./automation-engine.ts";
+import { looksLikeInjection } from "./learning-loop.ts";
 import { renderPlaybook } from "./playbooks.ts";
 import type { OnEnterAction } from "./workboards.ts";
 import type { DatabaseType, Playbook, Workboard, WorkboardCard } from "./db.ts";
+
+/**
+ * Claim TTL for the onEnter idempotency key. Guards against a rapid double-fire or a
+ * mid-run restart, not against a card genuinely leaving and re-entering the same stage
+ * later (a second outreach round, no field edit in between) — that repeat entry should
+ * dispatch again, not be swallowed by a claim held over from an hour ago.
+ */
+const ONENTER_CLAIM_TTL_SECONDS = 120;
 
 /** Template context for {{card.*}} tokens. */
 export function cardScope(card: WorkboardCard, extra: Record<string, unknown> = {}): Record<string, any> {
@@ -37,7 +46,9 @@ export function buildOnEnterDispatch(
 ): { agentSlug: string; taskDescription: string } | { skip: string } {
   const scope = cardScope(card);
   if ("agent" in action) {
-    return { agentSlug: action.agent, taskDescription: renderTemplate(action.task, scope) };
+    const taskDescription = renderTemplate(action.task, scope);
+    if (looksLikeInjection(taskDescription)) return { skip: "injection" };
+    return { agentSlug: action.agent, taskDescription };
   }
   const pb = resolvePlaybook(action.playbook);
   if (!pb) return { skip: `playbook-not-found: ${action.playbook}` };
@@ -46,7 +57,9 @@ export function buildOnEnterDispatch(
   const { plan, missing, errors } = renderPlaybook(pb, vars);
   if (errors.length) return { skip: `vars-rejected: ${errors.join(", ")}` };
   if (missing.length || !plan) return { skip: `missing-vars: ${missing.join(", ")}` };
-  return { agentSlug: "general", taskDescription: composePlaybookTask(pb, plan) };
+  const taskDescription = composePlaybookTask(pb, plan);
+  if (looksLikeInjection(taskDescription)) return { skip: "injection" };
+  return { agentSlug: "general", taskDescription };
 }
 
 export async function fireOnEnter(
@@ -60,13 +73,21 @@ export async function fireOnEnter(
   const built = buildOnEnterDispatch(action, card, (name) => db.findPlaybook(userId, name));
   if ("skip" in built) {
     db.insertWorkboardEvent(board.scope, userId, {
-      boardId: board.id, cardId: card.id, kind: "fired", toStage: card.stageKey,
+      boardId: board.id, cardId: card.id, kind: "skipped", toStage: card.stageKey,
       actor: "automation", detail: { skipped: built.skip },
     });
     return { fired: false, reason: built.skip };
   }
 
-  if (!db.claimIdempotencyKey(onEnterKey(card, card.stageKey), "workboard", 3600)) {
+  // Claimed before the dispatch attempt below: a process that dies mid-flight leaves the
+  // claim held with no task and no dead-letter record. Mirrors dispatchAutomation's existing
+  // behavior — accepted here for the same reason (exactly-once claiming can't also guarantee
+  // the dispatch it gates completes).
+  if (!db.claimIdempotencyKey(onEnterKey(card, card.stageKey), "workboard", ONENTER_CLAIM_TTL_SECONDS)) {
+    db.insertWorkboardEvent(board.scope, userId, {
+      boardId: board.id, cardId: card.id, kind: "deduped", toStage: card.stageKey,
+      actor: "automation", detail: { reason: "deduped" },
+    });
     return { fired: false, reason: "deduped" };
   }
 
@@ -88,7 +109,7 @@ export async function fireOnEnter(
       payload: JSON.stringify(cardScope(card)).slice(0, 4000), error: errMsg,
     });
     db.insertWorkboardEvent(board.scope, userId, {
-      boardId: board.id, cardId: card.id, kind: "fired", toStage: card.stageKey,
+      boardId: board.id, cardId: card.id, kind: "failed", toStage: card.stageKey,
       actor: "automation", detail: { error: errMsg },
     });
     return { fired: false, reason: "failed" };
