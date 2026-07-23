@@ -47,9 +47,20 @@ function findCardBoard(db: DatabaseType, userId: string, cardId: string): { boar
   return null;
 }
 
-async function body(req: Request): Promise<any> {
-  try { return await req.json(); } catch { return {}; }
+type BodyResult = { ok: true; value: any } | { ok: false };
+
+/** Distinguishes an absent body (legitimate no-op) from one the client sent but we couldn't parse. */
+async function body(req: Request): Promise<BodyResult> {
+  const text = await req.text();
+  if (!text) return { ok: true, value: {} };
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false };
+  }
 }
+
+const badJson = () => json({ errors: ["request body is not valid JSON"] }, 400);
 
 /** Returns null when `path` is not a workboard route, so dashboard.ts can fall through. */
 export async function handleWorkboardApi(path: string, req: Request, ctx: WorkboardApiCtx): Promise<Response | null> {
@@ -66,8 +77,9 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
   }
 
   if (path === "/api/workboards" && req.method === "POST") {
-    const input = await body(req);
-    const r = createBoard(db, userId, input);
+    const parsed = await body(req);
+    if (!parsed.ok) return badJson();
+    const r = createBoard(db, userId, parsed.value);
     return r.ok ? json({ board: r.value }) : json({ errors: r.errors }, 400);
   }
 
@@ -75,7 +87,9 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
   if (cardsMatch && req.method === "POST") {
     const board = findBoardById(db, userId, cardsMatch[1]);
     if (!board) return json({ errors: ["no such board"] }, 404);
-    const input = await body(req);
+    const parsed = await body(req);
+    if (!parsed.ok) return badJson();
+    const input = parsed.value;
     const records = Array.isArray(input.records) ? input.records : [{ title: input.title, fields: input.fields ?? {} }];
     const r = addCards(db, userId, board, input.stageKey, records, "user");
     return r.ok ? json({ cards: r.value }) : json({ errors: r.errors }, 400);
@@ -85,7 +99,9 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
   if (moveMatch && req.method === "POST") {
     const found = findCardBoard(db, userId, moveMatch[1]);
     if (!found) return json({ errors: ["no such card"] }, 404);
-    const input = await body(req);
+    const parsed = await body(req);
+    if (!parsed.ok) return badJson();
+    const input = parsed.value;
     const r = moveCard(db, userId, found.board, moveMatch[1], input.toStage, userId, {
       beforeId: input.beforeId, afterId: input.afterId,
     });
@@ -103,7 +119,9 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
       });
       return json({ ok: true });
     }
-    const input = await body(req);
+    const parsed = await body(req);
+    if (!parsed.ok) return badJson();
+    const input = parsed.value;
     const merged = { ...found.card.fields, ...(input.fields ?? {}) };
     const validated = validateCardFields(found.board.fields, merged);
     if (!validated.ok) return json({ errors: validated.errors }, 400);
@@ -128,8 +146,9 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     const board = findBoardById(db, userId, boardMatch[1]);
     if (!board) return json({ errors: ["no such board"] }, 404);
     if (board.system) return json({ errors: ["this board's schema and stages are locked"] }, 400);
-    const patch = await body(req);
-    const updated = db.updateWorkboard(board.scope, userId, board.id, patch);
+    const parsed = await body(req);
+    if (!parsed.ok) return badJson();
+    const updated = db.updateWorkboard(board.scope, userId, board.id, parsed.value);
     return json({ board: updated });
   }
 

@@ -86,3 +86,75 @@ test("moving to an unknown stage returns 400 and leaves the card put", async () 
   expect(res!.status).toBe(400);
   expect(db.getWorkboardCard("personal", userId, cardId)?.stageKey).toBe("new");
 });
+
+test("PATCH card with an unparsable body returns 400, leaves the card unchanged, and writes no event", async () => {
+  const { db, userId, board } = seed();
+  const add = new Request(`http://x/api/workboards/${board.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "Acme" } }),
+  });
+  const added = await (await handleWorkboardApi(`/api/workboards/${board.id}/cards`, add, ctxFor(db, userId)))!.json();
+  const cardId = added.cards[0].id;
+  const before = db.getWorkboardCard("personal", userId, cardId);
+  const eventsBefore = db.listWorkboardEvents("personal", userId, board.id).length;
+
+  const patch = new Request(`http://x/api/workboards/cards/${cardId}`, {
+    method: "PATCH", body: "{not json",
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${cardId}`, patch, ctxFor(db, userId));
+  expect(res!.status).toBe(400);
+  const body = await res!.json();
+  expect(body.errors.join(" ")).toContain("JSON");
+  expect(db.getWorkboardCard("personal", userId, cardId)).toEqual(before);
+  const eventsAfter = db.listWorkboardEvents("personal", userId, board.id);
+  expect(eventsAfter.length).toBe(eventsBefore);
+  expect(eventsAfter.some((e: any) => e.kind === "updated")).toBe(false);
+});
+
+function seedTwoUsers() {
+  const a = seed();
+  const b = seed();
+  const addA = new Request(`http://x/api/workboards/${a.board.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "A Co" } }),
+  });
+  const addB = new Request(`http://x/api/workboards/${b.board.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "B Co" } }),
+  });
+  return { a, b, addA, addB };
+}
+
+test("cross-user isolation: user A cannot see, read, write, move, or patch user B's board/cards", async () => {
+  const { a, b, addA, addB } = seedTwoUsers();
+  const cardA = await (await handleWorkboardApi(`/api/workboards/${a.board.id}/cards`, addA, ctxFor(a.db, a.userId)))!.json();
+  const cardB = await (await handleWorkboardApi(`/api/workboards/${b.board.id}/cards`, addB, ctxFor(a.db, b.userId)))!.json();
+  const cardIdB = cardB.cards[0].id;
+
+  const listRes = await handleWorkboardApi("/api/workboards", new Request("http://x/api/workboards"), ctxFor(a.db, a.userId));
+  const listBody = await listRes!.json();
+  expect(listBody.boards.some((bd: any) => bd.id === b.board.id)).toBe(false);
+
+  const getRes = await handleWorkboardApi(`/api/workboards/${b.board.id}`, new Request(`http://x/api/workboards/${b.board.id}`), ctxFor(a.db, a.userId));
+  expect(getRes!.status).toBe(404);
+
+  const cardCountBefore = a.db.listWorkboardCards("personal", b.userId, b.board.id).length;
+  const addToB = new Request(`http://x/api/workboards/${b.board.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "Intruder" } }),
+  });
+  const addToBRes = await handleWorkboardApi(`/api/workboards/${b.board.id}/cards`, addToB, ctxFor(a.db, a.userId));
+  expect(addToBRes!.status).toBe(404);
+  expect(a.db.listWorkboardCards("personal", b.userId, b.board.id).length).toBe(cardCountBefore);
+
+  const cardBBefore = a.db.getWorkboardCard("personal", b.userId, cardIdB);
+  const moveB = new Request(`http://x/api/workboards/cards/${cardIdB}/move`, {
+    method: "POST", body: JSON.stringify({ toStage: "won" }),
+  });
+  const moveBRes = await handleWorkboardApi(`/api/workboards/cards/${cardIdB}/move`, moveB, ctxFor(a.db, a.userId));
+  expect(moveBRes!.status).toBe(404);
+  expect(a.db.getWorkboardCard("personal", b.userId, cardIdB)?.stageKey).toBe(cardBBefore?.stageKey);
+
+  const patchB = new Request(`http://x/api/workboards/cards/${cardIdB}`, {
+    method: "PATCH", body: JSON.stringify({ fields: { company: "Hijacked" } }),
+  });
+  const patchBRes = await handleWorkboardApi(`/api/workboards/cards/${cardIdB}`, patchB, ctxFor(a.db, a.userId));
+  expect(patchBRes!.status).toBe(404);
+  expect(a.db.getWorkboardCard("personal", b.userId, cardIdB)).toEqual(cardBBefore);
+});
