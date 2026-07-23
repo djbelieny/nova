@@ -180,6 +180,7 @@ const SHELL_CSS = `
             display:flex;justify-content:space-between;margin-bottom:8px;color:var(--dim)}
   .card{margin-bottom:8px;cursor:grab}
   .card.dragging{opacity:.4}
+  .card.moving{opacity:.5;cursor:wait}
   .card .t{font-weight:600;margin-bottom:4px}
   .card .f{color:var(--dim);font-size:12px}
   .armed{color:var(--indigo)}
@@ -212,12 +213,25 @@ export function renderWorkboardIndex(db: DatabaseType, userId: string): string {
     <div class="grid">${tiles}</div>`);
 }
 
-const BOARD_SCRIPT = `
+/**
+ * Client script is templated per-board so the SSE handler can scope reloads to the board the
+ * page was actually rendered for. `boardId` is embedded as a JS string literal (not HTML-escaped
+ * — this lands inside an inline <script>, not an HTML attribute); "</" is neutered so a board id
+ * can never prematurely close the surrounding <script> tag.
+ */
+function boardScript(boardId: string): string {
+  const boardIdLiteral = JSON.stringify(boardId).replace(/<\//g, "<\\/");
+  return `
+  var BOARD_ID=${boardIdLiteral};
   function showErr(msg){var e=document.getElementById('err');e.textContent=msg;e.style.display='block';
     setTimeout(function(){e.style.display='none'},4000);}
   var dragged=null;
+  var ownMoves={}; // cardId -> timestamp of our own just-applied move, so the SSE handler doesn't re-reload it
   document.querySelectorAll('.card').forEach(function(c){
-    c.addEventListener('dragstart',function(){dragged=c;c.classList.add('dragging');});
+    c.addEventListener('dragstart',function(e){
+      if(c.dataset.moving){e.preventDefault();return;} // in-flight card: no second move until the first settles
+      dragged=c;c.classList.add('dragging');
+    });
     c.addEventListener('dragend',function(){c.classList.remove('dragging');});
   });
   document.querySelectorAll('.stage').forEach(function(col){
@@ -226,23 +240,47 @@ const BOARD_SCRIPT = `
     col.addEventListener('drop',function(e){
       e.preventDefault();col.classList.remove('over');
       if(!dragged)return;
-      var from=dragged.parentElement,card=dragged,to=col.dataset.stage;
+      var card=dragged;dragged=null;
+      if(card.dataset.moving)return; // belt-and-braces: ignore a drop of a card already in flight
+      var from=card.parentElement,to=col.dataset.stage;
+      if(from===col)return; // dropped back into its own stage — nothing to do
+      card.dataset.moving='1';card.setAttribute('draggable','false');card.classList.add('moving');
       col.appendChild(card);
       fetch('/api/workboards/cards/'+card.dataset.id+'/move',{method:'POST',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({toStage:to})})
        .then(function(r){return r.json().then(function(b){return {ok:r.ok,body:b};});})
        .then(function(res){
+         card.removeAttribute('data-moving');card.setAttribute('draggable','true');card.classList.remove('moving');
          if(!res.ok){from.appendChild(card);showErr((res.body.errors||['move failed']).join(', '));return;}
+         ownMoves[card.dataset.id]=Date.now();
          if(res.body.fires)showErr('Stage action running — check activity.');
        })
-       .catch(function(){from.appendChild(card);showErr('move failed');});
+       .catch(function(){
+         card.removeAttribute('data-moving');card.setAttribute('draggable','true');card.classList.remove('moving');
+         from.appendChild(card);showErr('move failed');
+       });
     });
   });
+  var lastReload=0;
   var es=new EventSource('/api/activity/stream');
   es.addEventListener('message',function(ev){
-    try{var d=JSON.parse(ev.data);if(d&&d.type&&d.type.indexOf('workboard.')===0)location.reload();}catch(e){}
+    try{
+      var d=JSON.parse(ev.data);
+      if(!d||!d.type||d.type.indexOf('workboard.')!==0)return;
+      var data=d.data||{};
+      if(!data.boardId||data.boardId!==BOARD_ID)return; // not this board (or board id not present — don't assume)
+      var cardId=data.cardId;
+      if(cardId&&ownMoves[cardId]&&(Date.now()-ownMoves[cardId])<5000){
+        delete ownMoves[cardId];return; // our own successful move, already applied optimistically
+      }
+      var now=Date.now();
+      if(now-lastReload<3000)return; // debounce a burst or replay so it can't loop the page
+      lastReload=now;
+      location.reload();
+    }catch(e){}
   });
 `;
+}
 
 export function renderWorkboard(db: DatabaseType, userId: string, boardId: string): string {
   const board = db.listWorkboardsVisible(userId).find((b) => b.id === boardId);
@@ -263,7 +301,7 @@ export function renderWorkboard(db: DatabaseType, userId: string, boardId: strin
       return `<div class="card" draggable="true" data-id="${esc(c.id)}">
         <div class="t">${esc(c.title)}</div><div class="f">${lines}</div></div>`;
     }).join("");
-    const totalHtml = total ? ` <span class="total">${total.toLocaleString("en-US")}</span>` : "";
+    const totalHtml = total !== null ? ` <span class="total">${total.toLocaleString("en-US")}</span>` : "";
     return `<div class="stage" data-stage="${esc(s.key)}">
       <h2><span>${esc(s.label)}${s.armed ? ' <span class="armed">⚡</span>' : ""}</span>
       <span>${s.count}${totalHtml}</span></h2>${cardHtml}</div>`;
@@ -271,5 +309,5 @@ export function renderWorkboard(db: DatabaseType, userId: string, boardId: strin
 
   return shell(board.name, `<h1>${esc(board.name)}</h1>
     <div class="sub">${esc(board.purpose ?? "")} · <a href="/workboards">all workboards</a></div>
-    <div class="stages">${columns}</div>`, BOARD_SCRIPT);
+    <div class="stages">${columns}</div>`, boardScript(board.id));
 }
