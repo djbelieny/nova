@@ -5789,6 +5789,18 @@ export class Database {
     return this.getWorkboardById(scope, userId, id);
   }
 
+  /** Remove a board and everything hanging off it. No route exposes this — a board is retired by
+   * hand or by a test cleaning up after itself; a team board left behind shadows its name for
+   * every user, since findWorkboard matches team boards by name alone. */
+  deleteWorkboard(scope: WorkboardScope, userId: string, id: string): void {
+    const h = this.wbHandle(scope, userId);
+    h.transaction(() => {
+      h.run(`DELETE FROM workboard_events WHERE board_id = ?`, [id]);
+      h.run(`DELETE FROM workboard_cards WHERE board_id = ?`, [id]);
+      h.run(`DELETE FROM workboards WHERE id = ?`, [id]);
+    })();
+  }
+
   insertWorkboardCard(scope: WorkboardScope, userId: string, input: CardInput): WorkboardCard {
     return this.insertWorkboardCards(scope, userId, [input])[0];
   }

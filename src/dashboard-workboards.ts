@@ -473,7 +473,7 @@ export function renderWorkboardIndex(db: DatabaseType, userId: string): string {
  * — this lands inside an inline <script>, not an HTML attribute); "</" is neutered so a board id
  * can never prematurely close the surrounding <script> tag.
  */
-function boardScript(boardId: string): string {
+export function boardScript(boardId: string): string {
   const boardIdLiteral = JSON.stringify(boardId).replace(/<\//g, "<\\/");
   return `
   var BOARD_ID=${boardIdLiteral};

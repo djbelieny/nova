@@ -98,15 +98,24 @@ test("two different users can each create a personal board named 'leads'", () =>
   expect(boardA.id).not.toBe(boardB.id);
 });
 
-test("two different users cannot both create a team board named 'leads'", () => {
+// A team board lives in shared.db and findWorkboard matches it by name alone, for every user —
+// so a fixed name left behind here would shadow that name for every later test and every real
+// user of a reused data directory. Unique per run, and removed once the assertion is made.
+test("two different users cannot both create a team board of the same name", () => {
   const { db, userId: userA } = newUser();
   const { userId: userB } = newUser();
-  db.insertWorkboard({
-    scope: "team", userId: userA, name: "leads", purpose: "Inbound leads",
+  const name = `team-dupe-${Date.now()}-${seq++}`;
+  const board = db.insertWorkboard({
+    scope: "team", userId: userA, name, purpose: "Inbound leads",
     source: "cards", fields: FIELDS, stages: STAGES, reactive: false,
   });
-  expect(() => db.insertWorkboard({
-    scope: "team", userId: userB, name: "leads", purpose: "Inbound leads",
-    source: "cards", fields: FIELDS, stages: STAGES, reactive: false,
-  })).toThrow();
+  try {
+    expect(() => db.insertWorkboard({
+      scope: "team", userId: userB, name, purpose: "Inbound leads",
+      source: "cards", fields: FIELDS, stages: STAGES, reactive: false,
+    })).toThrow();
+  } finally {
+    db.deleteWorkboard("team", userA, board.id);
+  }
+  expect(db.findWorkboard(userB, name)).toBe(null);
 });
