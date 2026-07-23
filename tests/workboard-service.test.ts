@@ -99,3 +99,48 @@ test("toDef maps a stored board onto the pure-logic shape", () => {
   expect(def.reactive).toBe(true);
   expect(def.stages.length).toBe(2);
 });
+
+test("moveCard with no beforeId/afterId appends the card to the end of its new stage", () => {
+  const { db, userId, board } = seed();
+  const existing = addCards(db, userId, board, "nurture", [
+    { fields: { company: "Existing A" } },
+    { fields: { company: "Existing B" } },
+  ], "agent");
+  if (!existing.ok) throw new Error("setup failed");
+
+  const moving = addCards(db, userId, board, "new", [{ fields: { company: "Moving In" } }], "agent");
+  if (!moving.ok) throw new Error("setup failed");
+
+  const r = moveCard(db, userId, board, moving.value[0].id, "nurture", userId);
+  expect(r.ok).toBe(true);
+
+  const cards = db.listWorkboardCards("personal", userId, board.id, { stageKey: "nurture" });
+  expect(cards.length).toBe(3);
+  expect(cards[cards.length - 1].id).toBe(moving.value[0].id);
+});
+
+test("moveCard with an explicit beforeId/afterId hint still slots between those neighbours", () => {
+  const { db, userId, board } = seed();
+  const existing = addCards(db, userId, board, "nurture", [
+    { fields: { company: "Existing A" } },
+    { fields: { company: "Existing B" } },
+  ], "agent");
+  if (!existing.ok) throw new Error("setup failed");
+  const [cardA, cardB] = existing.value;
+
+  const moving = addCards(db, userId, board, "new", [{ fields: { company: "Moving In" } }], "agent");
+  if (!moving.ok) throw new Error("setup failed");
+
+  const r = moveCard(db, userId, board, moving.value[0].id, "nurture", userId, {
+    beforeId: cardA.id, afterId: cardB.id,
+  });
+  expect(r.ok).toBe(true);
+
+  const cards = db.listWorkboardCards("personal", userId, board.id, { stageKey: "nurture" });
+  const ids = cards.map((c) => c.id);
+  const idxA = ids.indexOf(cardA.id);
+  const idxB = ids.indexOf(cardB.id);
+  const idxMoved = ids.indexOf(moving.value[0].id);
+  expect(idxMoved).toBeGreaterThan(idxA);
+  expect(idxMoved).toBeLessThan(idxB);
+});

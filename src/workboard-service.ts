@@ -1,6 +1,10 @@
 /**
  * Workboard service — joins the pure logic in workboards.ts to the Database facade.
  * The CLI and the dashboard API both call this, so validation and event logging happen once.
+ *
+ * Event writes are best-effort: each facade call carries its own transaction, so a mutation that
+ * succeeds is not rolled back if its audit event fails to write. The events feed the card history
+ * panel, not anything that must balance.
  */
 
 import { validateCardFields, planMove, positionBetween, type FieldDef, type StageDef, type OnEnterAction, type WorkboardDef } from "./workboards.ts";
@@ -94,6 +98,13 @@ export function addCards(
   return { ok: true, value: cards };
 }
 
+/** Highest position in the target stage plus one, or 1 when the stage is empty. */
+function appendPosition(db: DatabaseType, userId: string, board: Workboard, toStage: string): number {
+  const cards = db.listWorkboardCards(board.scope, userId, board.id, { stageKey: toStage });
+  if (!cards.length) return 1;
+  return Math.max(...cards.map((c) => c.position)) + 1;
+}
+
 export function moveCard(
   db: DatabaseType, userId: string, board: Workboard, cardId: string, toStage: string, actor: string,
   opts: { actorIsOnEnter?: boolean; beforeId?: string; afterId?: string } = {}
@@ -109,7 +120,13 @@ export function moveCard(
 
   const before = opts.beforeId ? db.getWorkboardCard(board.scope, userId, opts.beforeId)?.position ?? null : null;
   const after = opts.afterId ? db.getWorkboardCard(board.scope, userId, opts.afterId)?.position ?? null : null;
-  const position = before === null && after === null ? undefined : positionBetween(before, after);
+  // With a drop hint, slot between the neighbours. Without one, a card changing stage keeps a
+  // position that ranked it in its OLD stage, so append it to the end of the new one instead.
+  const position = before !== null || after !== null
+    ? positionBetween(before, after)
+    : decision.fromStage === toStage
+      ? undefined
+      : appendPosition(db, userId, board, toStage);
 
   const updated = db.updateWorkboardCard(board.scope, userId, cardId, {
     stageKey: toStage, ...(position === undefined ? {} : { position }),
