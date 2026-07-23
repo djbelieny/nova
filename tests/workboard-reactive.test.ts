@@ -1,7 +1,8 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { addCards, createBoard, moveCard } from "../src/workboard-service.ts";
-import { buildOnEnterDispatch, cardScope, fireOnEnter, onEnterKey } from "../src/workboard-reactive.ts";
+import { buildOnEnterDispatch, cardScope, fireOnEnter, needsBulkConfirm, onEnterKey } from "../src/workboard-reactive.ts";
+import { handleWorkboardApi } from "../src/dashboard-workboards.ts";
 
 let seq = 0;
 function seed(reactive = true) {
@@ -207,4 +208,53 @@ test("the three terminal outcomes write three distinct event kinds", async () =>
   const failedDispatch = async () => { throw new Error("provider down"); };
   await fireOnEnter(failed.db, failed.userId, failed.board, failed.card, { agent: "orion", task: "x" }, failedDispatch);
   expect(failed.db.listWorkboardEvents("personal", failed.userId, failed.board.id).some((e) => e.kind === "failed")).toBe(true);
+});
+
+test("needsBulkConfirm triggers above the limit only", () => {
+  expect(needsBulkConfirm(10)).toBe(false);
+  expect(needsBulkConfirm(11)).toBe(true);
+  expect(needsBulkConfirm(3, 2)).toBe(true);
+});
+
+test("moving a card via the API into an armed stage dispatches once", async () => {
+  const { db, userId, board, card } = seed();
+  let dispatched = 0;
+  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const req = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
+    method: "POST", body: JSON.stringify({ toStage: "nurture" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}/move`, req, ctx);
+  expect(res!.status).toBe(200);
+  expect(dispatched).toBe(1);
+});
+
+test("a bulk move over the limit returns needsConfirm and fires nothing", async () => {
+  const { db, userId, board } = seed();
+  const many = addCards(db, userId, board, "new",
+    Array.from({ length: 12 }, (_, i) => ({ fields: { company: `Co ${i}`, email: `c${i}@x.com` } })), "agent");
+  if (!many.ok) throw new Error("setup failed");
+  let dispatched = 0;
+  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const req = new Request("http://x/api/workboards/cards/move-many", {
+    method: "POST", body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture" }),
+  });
+  const res = await handleWorkboardApi("/api/workboards/cards/move-many", req, ctx);
+  const bodyJson = await res!.json();
+  expect(bodyJson.needsConfirm).toBe(true);
+  expect(dispatched).toBe(0);
+});
+
+test("a confirmed bulk move fires once per card", async () => {
+  const { db, userId, board } = seed();
+  const many = addCards(db, userId, board, "new",
+    Array.from({ length: 12 }, (_, i) => ({ fields: { company: `Co ${i}`, email: `c${i}@x.com` } })), "agent");
+  if (!many.ok) throw new Error("setup failed");
+  let dispatched = 0;
+  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const req = new Request("http://x/api/workboards/cards/move-many", {
+    method: "POST",
+    body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture", confirm: true }),
+  });
+  await handleWorkboardApi("/api/workboards/cards/move-many", req, ctx);
+  expect(dispatched).toBe(12);
 });

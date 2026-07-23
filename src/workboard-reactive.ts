@@ -121,3 +121,10 @@ export async function fireOnEnter(
   });
   return { fired: true, taskId };
 }
+
+/** Moving more than this many cards into an armed stage at once asks once for the batch. */
+export const BULK_CONFIRM_LIMIT = Number(process.env.WORKBOARD_BULK_CONFIRM || 10);
+
+export function needsBulkConfirm(count: number, limit = BULK_CONFIRM_LIMIT): boolean {
+  return count > limit;
+}

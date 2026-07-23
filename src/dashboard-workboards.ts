@@ -5,9 +5,11 @@
  */
 
 import { addCards, archiveCard, createBoard, moveCard, updateCard } from "./workboard-service.ts";
+import { fireOnEnter, needsBulkConfirm } from "./workboard-reactive.ts";
+import type { DispatchAgentFn } from "./automation-engine.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
-export interface WorkboardApiCtx { db: DatabaseType; userId: string; }
+export interface WorkboardApiCtx { db: DatabaseType; userId: string; dispatchAgent?: DispatchAgentFn; }
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -104,7 +106,42 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     const r = moveCard(db, userId, found.board, moveMatch[1], input.toStage, userId, {
       beforeId: input.beforeId, afterId: input.afterId,
     });
-    return r.ok ? json({ card: r.value.card, fires: !!r.value.fires }) : json({ errors: r.errors }, 400);
+    if (!r.ok) return json({ errors: r.errors }, 400);
+    let fired = false;
+    if (r.value.fires && ctx.dispatchAgent) {
+      const outcome = await fireOnEnter(db, userId, found.board, r.value.card, r.value.fires, ctx.dispatchAgent);
+      fired = outcome.fired;
+    }
+    return json({ card: r.value.card, fires: fired });
+  }
+
+  if (path === "/api/workboards/cards/move-many" && req.method === "POST") {
+    const parsed = await body(req);
+    if (!parsed.ok) return badJson();
+    const input = parsed.value;
+    const cardIds: string[] = Array.isArray(input.cardIds) ? input.cardIds : [];
+    if (!cardIds.length) return json({ errors: ["cardIds is required"] }, 400);
+
+    const first = findCardBoard(db, userId, cardIds[0]);
+    if (!first) return json({ errors: ["no such card"] }, 404);
+    const target = first.board.stages.find((s) => s.key === input.toStage);
+    const armed = first.board.reactive && !!target?.onEnter;
+
+    if (armed && !input.confirm && needsBulkConfirm(cardIds.length)) {
+      return json({ needsConfirm: true, count: cardIds.length, stage: input.toStage });
+    }
+
+    const moved: string[] = [];
+    const errors: string[] = [];
+    for (const id of cardIds) {
+      const r = moveCard(db, userId, first.board, id, input.toStage, userId);
+      if (!r.ok) { errors.push(...r.errors); continue; }
+      moved.push(id);
+      if (r.value.fires && ctx.dispatchAgent) {
+        await fireOnEnter(db, userId, first.board, r.value.card, r.value.fires, ctx.dispatchAgent);
+      }
+    }
+    return json({ moved: moved.length, errors });
   }
 
   const cardMatch = path.match(/^\/api\/workboards\/cards\/([\w-]+)$/);
