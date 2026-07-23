@@ -278,12 +278,20 @@ export interface WorkboardTagParse {
  * select with no options). Keeping this function permissive is the point of choosing a bracket
  * tag over JSON: one bad clause reports itself instead of killing the whole board.
  */
-// A segment that looks like a section header (an ALL-CAPS word followed by `:`, matching the
-// FIELDS:/STAGES: convention above) is never eligible to become `name` or `purpose` — even if
-// it isn't one of the two sections this parser understands. That keeps `FIELDS: ...` opening the
-// tag from being read as a literal board name, and reports a typo'd header (e.g. `COLUMNS:`
-// for `STAGES:`) instead of letting it vanish into an oddly-worded purpose.
+// A segment is only treated as an attempted (and rejected) section header when its leading word
+// is FIELDS/STAGES or a plausible near-miss of one — not any capitalized word followed by `:`.
+// A model writes ordinary prose that opens with an acronym-and-colon all the time (`ROI:`,
+// `KPI:`, `TODO:`, `NOTE:`), and that must still land as `name` or `purpose`. The near-miss list
+// is deliberately narrow and semantically tied to "column" or "stage" so it catches a genuine
+// typo (`COLUMNS:` for `STAGES:`) without absorbing unrelated capitalized words.
 const KNOWN_SECTIONS = ["FIELDS", "STAGES"];
+const NEAR_MISS_SECTIONS = new Set([
+  "COLUMN", "COLUMNS", "COL", "COLS",
+  "LANE", "LANES",
+  "STAGE", "STEP", "STEPS", "PHASE", "PHASES",
+  "FIELD", "PROP", "PROPS", "PROPERTY", "PROPERTIES", "SCHEMA",
+  "ATTR", "ATTRS", "ATTRIBUTE", "ATTRIBUTES",
+]);
 const SECTION_HEADER = /^([A-Z][A-Z_]*):/;
 
 export function parseWorkboardTag(raw: string): WorkboardTagParse {
@@ -296,7 +304,7 @@ export function parseWorkboardTag(raw: string): WorkboardTagParse {
   for (const part of top) {
     if (part === fieldsPart || part === stagesPart) continue;
     const header = part.match(SECTION_HEADER);
-    if (header && !KNOWN_SECTIONS.includes(header[1])) {
+    if (header && !KNOWN_SECTIONS.includes(header[1]) && NEAR_MISS_SECTIONS.has(header[1])) {
       errors.push(`unrecognised section "${header[1]}:" — expected FIELDS: or STAGES:, ignored`);
       continue;
     }

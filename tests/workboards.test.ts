@@ -268,3 +268,46 @@ test("an unrecognised section prefix is reported as an error and does not become
   expect(r.stages.map((s) => s.key)).toEqual(["a", "b"]);
   expect(r.errors.some((e) => e.includes("COLUMNS") && e.includes("unrecognised section"))).toBe(true);
 });
+
+test("a purpose opening with an acronym and colon reads as prose, not a section header", () => {
+  const r = parseWorkboardTag(
+    "sales | ROI: increase win rate | FIELDS: name:text* | STAGES: a > b"
+  );
+  expect(r.name).toBe("sales");
+  expect(r.purpose).toBe("ROI: increase win rate");
+  expect(r.errors).toEqual([]);
+});
+
+test("a name opening with an acronym and colon still creates a board with that name", () => {
+  const r = parseWorkboardTag("ROI: Q3 tracker | FIELDS: name:text* | STAGES: a > b");
+  expect(r.name).toBe("ROI: Q3 tracker");
+  expect(r.errors).toEqual([]);
+});
+
+test("other common acronym-and-colon openers (KPI, TODO, NOTE) also read as prose in both positions", () => {
+  const asName = parseWorkboardTag("TODO: launch plan | FIELDS: name:text* | STAGES: a > b");
+  expect(asName.name).toBe("TODO: launch plan");
+  expect(asName.errors).toEqual([]);
+
+  const asPurpose = parseWorkboardTag("board | KPI: track conversion | FIELDS: name:text* | STAGES: a > b");
+  expect(asPurpose.purpose).toBe("KPI: track conversion");
+  expect(asPurpose.errors).toEqual([]);
+
+  const noteAsPurpose = parseWorkboardTag("board | NOTE: internal only | FIELDS: name:text* | STAGES: a > b");
+  expect(noteAsPurpose.purpose).toBe("NOTE: internal only");
+  expect(noteAsPurpose.errors).toEqual([]);
+});
+
+test("an all-caps name with no colon still parses as the name, unaffected by the header heuristic", () => {
+  const r = parseWorkboardTag("URGENT | FIELDS: name:text* | STAGES: a > b");
+  expect(r.name).toBe("URGENT");
+  expect(r.errors).toEqual([]);
+});
+
+test("a colon mid-sentence in the purpose is not mistaken for a section header", () => {
+  const r = parseWorkboardTag(
+    "board | Track purchase orders: from vendor to payment | FIELDS: name:text* | STAGES: a > b"
+  );
+  expect(r.purpose).toBe("Track purchase orders: from vendor to payment");
+  expect(r.errors).toEqual([]);
+});
