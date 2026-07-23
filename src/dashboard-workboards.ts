@@ -17,6 +17,19 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
 
+// Mirrors db.ts's UUID_RE (not exported from there). Boards live in a per-user database keyed by
+// UUID, so any session identity that isn't one — e.g. the master bootstrap login — has no such
+// database. Checking here lets every route below return a clean 4xx instead of letting a getUserDb
+// call throw uncaught deep in db.ts.
+const UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+
+export function isValidUserId(userId: string): boolean {
+  return UUID_RE.test(userId);
+}
+
+const NO_PERSONAL_ACCOUNT_MSG =
+  "workboards need a personal account — the master admin login has no per-user database; sign in as a user";
+
 /** Everything a board page needs in one payload. */
 export function boardPayload(db: DatabaseType, userId: string, board: Workboard) {
   const source = getCardSource(board.source);
@@ -85,6 +98,7 @@ const badJson = () => json({ errors: ["request body is not valid JSON"] }, 400);
 export async function handleWorkboardApi(path: string, req: Request, ctx: WorkboardApiCtx): Promise<Response | null> {
   if (!path.startsWith("/api/workboards")) return null;
   const { db, userId } = ctx;
+  if (!isValidUserId(userId)) return json({ errors: [NO_PERSONAL_ACCOUNT_MSG] }, 400);
 
   if (path === "/api/workboards" && req.method === "GET") {
     const boards = db.listWorkboardsVisible(userId).map((b) => ({
@@ -106,6 +120,9 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
   if (cardsMatch && req.method === "POST") {
     const board = findBoardById(db, userId, cardsMatch[1]);
     if (!board) return json({ errors: ["no such board"] }, 404);
+    // System boards read through an adapter (see boardPayload) and never look at workboard_cards —
+    // a card written here would be stored but permanently invisible. Same guard as the PATCH branch below.
+    if (board.system) return json({ errors: ["this board's cards are read from another table — add the card there instead"] }, 400);
     const parsed = await body(req);
     if (!parsed.ok) return badJson();
     const input = parsed.value;
@@ -289,6 +306,14 @@ function shell(title: string, bodyHtml: string, script = ""): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nova — ${esc(title)}</title><style>${SHELL_CSS}</style></head>
 <body>${bodyHtml}<div class="err" id="err"></div><script>${script}</script></body></html>`;
+}
+
+/** Shown instead of /kanban, /tickets, /workboards, or /workboards/:id for a session with no
+ * per-user database (the master bootstrap login) — a clear stop, not a crash or a fake-empty board. */
+export function renderWorkboardsUnavailable(): string {
+  return shell("Workboards", `<h1>Workboards need a personal account</h1>
+    <div class="sub">The master admin login has no per-user database, so it can't own or view a workboard.
+    Sign in with a real user account to use Kanban, Tickets, or Workboards.</div>`);
 }
 
 export function renderWorkboardIndex(db: DatabaseType, userId: string): string {

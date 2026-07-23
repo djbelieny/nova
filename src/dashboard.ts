@@ -34,7 +34,7 @@ import { groupTicketsByColumn, TICKET_COLUMNS } from "./ticket-board.ts";
 import { handleTicketApproval } from "../services/ticket-worker.ts";
 import { sendTicketEmail } from "./resend-client.ts";
 import { verifyLogin } from "./web-auth.ts";
-import { handleWorkboardApi, renderWorkboard, renderWorkboardIndex } from "./dashboard-workboards.ts";
+import { handleWorkboardApi, isValidUserId, renderWorkboard, renderWorkboardIndex, renderWorkboardsUnavailable } from "./dashboard-workboards.ts";
 import { ensureSystemBoards } from "./workboard-service.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -8244,9 +8244,20 @@ const server = Bun.serve({
       });
     }
 
+    // The master bootstrap login (__master__) has no per-user database row, so it cannot own or
+    // view a workboard. Used by /kanban, /tickets, /workboards, and /workboards/:id — all four
+    // reach a per-user DB. Same __master__ hazard as the must_change_password gate above.
+    const workboardsUnavailableResponse = () => new Response(renderWorkboardsUnavailable(), {
+      headers: {
+        "Content-Type": "text/html",
+        "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
+      },
+    });
+
     // Kanban board page (admin only) — now a system workboard
     if (path === "/kanban") {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
       const boards = ensureSystemBoards(getDb(), me?.userId ?? "");
       return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/workboards/${boards.tasks.id}` } });
     }
@@ -8254,6 +8265,7 @@ const server = Bun.serve({
     // Workboards index page (admin only)
     if (path === "/workboards") {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
       return new Response(renderWorkboardIndex(getDb(), me?.userId ?? ""), {
         headers: {
           "Content-Type": "text/html",
@@ -8266,6 +8278,7 @@ const server = Bun.serve({
     const wbPage = path.match(/^\/workboards\/([\w-]+)$/);
     if (wbPage) {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
       return new Response(renderWorkboard(getDb(), me?.userId ?? "", wbPage[1]), {
         headers: {
           "Content-Type": "text/html",
@@ -8277,6 +8290,7 @@ const server = Bun.serve({
     // Support-ticket board page (admin only) — now a system workboard
     if (path === "/tickets") {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
       const boards = ensureSystemBoards(getDb(), me?.userId ?? "");
       return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/workboards/${boards.tickets.id}` } });
     }

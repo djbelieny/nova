@@ -318,3 +318,19 @@ test("a schema-edit attempt against a system board is refused", async () => {
   const body = await res!.json();
   expect(body.errors.join(" ")).toMatch(/locked/);
 });
+
+test("adding a card directly to a system board is refused and writes no workboard_cards row", async () => {
+  const { db, userId } = newAdmin();
+  const { tasks } = ensureSystemBoards(db, userId);
+
+  const req = new Request(`http://x/api/workboards/${tasks.id}/cards`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ stageKey: "pending", fields: { agent: "kai", description: "Sneak in" } }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${tasks.id}/cards`, req, { db, userId });
+  expect(res!.status).toBeGreaterThanOrEqual(400);
+  expect(res!.status).toBeLessThan(500);
+  const body = await res!.json();
+  expect(body.errors).toBeTruthy();
+  expect(db.listWorkboardCards(tasks.scope, userId, tasks.id).length).toBe(0);
+});

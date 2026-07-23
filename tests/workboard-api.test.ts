@@ -65,6 +65,16 @@ test("handleWorkboardApi returns null for unrelated paths", async () => {
   expect(res).toBe(null);
 });
 
+test("a non-UUID session identity (the master bootstrap login) gets a clean 4xx, not a throw", async () => {
+  const { db } = seed();
+  const res = await handleWorkboardApi("/api/workboards", new Request("http://x/api/workboards"), ctxFor(db, "__master__"));
+  expect(res).not.toBe(null);
+  expect(res!.status).toBeGreaterThanOrEqual(400);
+  expect(res!.status).toBeLessThan(500);
+  const body = await res!.json();
+  expect(body.errors).toBeTruthy();
+});
+
 test("GET /api/workboards lists visible boards", async () => {
   const { db, userId } = seed();
   const res = await handleWorkboardApi("/api/workboards", new Request("http://x/api/workboards"), ctxFor(db, userId));
