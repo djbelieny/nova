@@ -20,7 +20,11 @@ import { getDb, type DatabaseType, type Workboard, type WorkboardCard } from "./
 import { addCards, createBoard, moveCard, updateCard } from "./workboard-service.ts";
 import { buildStageRun } from "./workboard-reactive.ts";
 import { pullBoard } from "./workboard-sync.ts";
+import type { runConnectorAction } from "./connectors/registry.ts";
 import type { FieldDef, StageDef } from "./workboards.ts";
+
+/** Test seam: lets tests stub the connector read without touching real network/credentials. */
+export interface WorkboardCliOpts { runAction?: typeof runConnectorAction; }
 
 function adminId(db: DatabaseType): string {
   const admin = db.getUsersByRole("admin")[0];
@@ -225,14 +229,19 @@ function runStage(boardName: string, argv: string[]): number {
   return 0;
 }
 
-async function runSync(boardName: string): Promise<number> {
+async function runSync(boardName: string, opts: WorkboardCliOpts = {}): Promise<number> {
   const db = getDb();
   const userId = adminId(db);
   const board = db.findWorkboard(userId, boardName);
   if (!board) return fail([`No workboard named "${boardName}"`]);
-  const r = await pullBoard(db, userId, board);
-  if (r.errors.length) return fail(r.errors);
+  const r = await pullBoard(db, userId, board, opts);
+  if (!r.ok) return fail([r.error]);
   console.log(`  ✓ ${board.name}: ${r.created} created, ${r.updated} updated`);
+  if (r.warning) console.log(`  ! ${r.warning}`);
+  if (r.skipped.length) {
+    console.log(`  ${r.skipped.length} record${r.skipped.length === 1 ? "" : "s"} skipped:`);
+    for (const s of r.skipped) console.log(`    - ${s.externalId ?? "record"}: ${s.reason}`);
+  }
   return 0;
 }
 
@@ -246,7 +255,7 @@ function runQuery(boardName: string, argv: string[]): number {
   return 0;
 }
 
-export async function runWorkboardCli(argv: string[]): Promise<number> {
+export async function runWorkboardCli(argv: string[], opts: WorkboardCliOpts = {}): Promise<number> {
   const [sub, ...rest] = argv;
   const positional = positionalArgs(rest);
   switch (sub) {
@@ -255,7 +264,7 @@ export async function runWorkboardCli(argv: string[]): Promise<number> {
     case "create": return positional[0] ? runCreate(positional[0], rest) : fail(["Usage: nova workboard create <name> --fields '<json>' --stages '<json>'"]);
     case "query": return positional[0] ? runQuery(positional[0], rest) : fail(["Usage: nova workboard query <board> [--stage <key>]"]);
     case "run": return positional[0] ? runStage(positional[0], rest) : fail(["Usage: nova workboard run <board> --stage <key> --playbook <name>"]);
-    case "sync": return positional[0] ? await runSync(positional[0]) : fail(["Usage: nova workboard sync <board>"]);
+    case "sync": return positional[0] ? await runSync(positional[0], opts) : fail(["Usage: nova workboard sync <board>"]);
     case "card": {
       const [verb, ...cardRest] = rest;
       const cardPositional = positionalArgs(cardRest);
