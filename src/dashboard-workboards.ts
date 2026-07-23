@@ -488,6 +488,11 @@ export function renderWorkboardIndex(db: DatabaseType, userId: string): string {
 /** How often an open board asks whether another process changed it. */
 export const REV_POLL_MS = 10000;
 
+/** How long one of the viewer's own moves suppresses a reload. Two poll intervals, so a poll can
+ * never land inside the window between a drag and the revision that drag produced. A shorter
+ * window than the poll interval would let the very next poll reload the page under the viewer. */
+export const OWN_MOVE_WINDOW_MS = REV_POLL_MS * 2;
+
 /**
  * Client script is templated per-board so the SSE handler can scope reloads to the board the
  * page was actually rendered for. `boardId` and `rev` are embedded as JS string literals (not
@@ -503,7 +508,27 @@ export function boardScript(boardId: string, rev = ""): string {
   function showErr(msg){var e=document.getElementById('err');e.textContent=msg;e.style.display='block';
     setTimeout(function(){e.style.display='none'},4000);}
   var dragged=null;
-  var ownMoves={}; // cardId -> timestamp of our own just-applied move, so the SSE handler doesn't re-reload it
+  var OWN_MOVE_MS=${OWN_MOVE_WINDOW_MS};
+  var ownMoves={}; // cardId -> timestamp of our own just-applied move, so neither the SSE handler nor the poll re-reloads it
+  // Entries age out on their own. Nothing deletes one on arrival of an event: a cross-process move
+  // produces no SSE event here at all, so an arrival-driven delete would both leave those entries
+  // forever and cut the window short for the ones it does see.
+  function pruneOwnMoves(){
+    var now=Date.now();
+    for(var k in ownMoves){if(now-ownMoves[k]>=OWN_MOVE_MS)delete ownMoves[k];}
+  }
+  function movedRecently(){
+    var now=Date.now();
+    for(var k in ownMoves){if(now-ownMoves[k]<OWN_MOVE_MS)return true;}
+    return false;
+  }
+  // Adopt the marker our own write produced, so the next poll sees no change to react to.
+  function adoptRev(){
+    return fetch('/api/workboards/'+encodeURIComponent(BOARD_ID)+'/rev')
+     .then(function(r){return r.json();})
+     .then(function(b){if(b&&b.rev)REV=b.rev;})
+     .catch(function(){});
+  }
   document.querySelectorAll('.card').forEach(function(c){
     c.addEventListener('dragstart',function(e){
       if(c.dataset.moving){e.preventDefault();return;} // in-flight card: no second move until the first settles
@@ -530,6 +555,7 @@ export function boardScript(boardId: string, rev = ""): string {
          card.removeAttribute('data-moving');card.setAttribute('draggable','true');card.classList.remove('moving');
          if(!res.ok){from.appendChild(card);showErr((res.body.errors||['move failed']).join(', '));return;}
          ownMoves[card.dataset.id]=Date.now();
+         adoptRev();
          var notices=[];
          if(res.body.firing==='queued')notices.push('Stage action queued — the relay will run it shortly.');
          else if(res.body.firing==='dispatched')notices.push('Stage action running — check activity.');
@@ -544,16 +570,12 @@ export function boardScript(boardId: string, rev = ""): string {
     });
   });
   var lastReload=0;
-  function movedRecently(){
-    var now=Date.now();
-    for(var k in ownMoves){if(now-ownMoves[k]<5000)return true;}
-    return false;
-  }
   // SSE only carries events emitted in the dashboard's OWN process. A card an agent writes via the
   // CLI, or a stage the relay's drain touches, is invisible to it — so poll a cheap change marker
   // too. Adopting the new marker without reloading while our own write is settling keeps a drag
   // from bouncing the page.
   setInterval(function(){
+    pruneOwnMoves();
     fetch('/api/workboards/'+encodeURIComponent(BOARD_ID)+'/rev')
      .then(function(r){return r.json();})
      .then(function(b){
@@ -575,8 +597,8 @@ export function boardScript(boardId: string, rev = ""): string {
       var data=d.data||{};
       if(!data.boardId||data.boardId!==BOARD_ID)return; // not this board (or board id not present — don't assume)
       var cardId=data.cardId;
-      if(cardId&&ownMoves[cardId]&&(Date.now()-ownMoves[cardId])<5000){
-        delete ownMoves[cardId];return; // our own successful move, already applied optimistically
+      if(cardId&&ownMoves[cardId]&&(Date.now()-ownMoves[cardId])<OWN_MOVE_MS){
+        return; // our own successful move, already applied optimistically — the entry ages out
       }
       var now=Date.now();
       if(now-lastReload<3000)return; // debounce a burst or replay so it can't loop the page

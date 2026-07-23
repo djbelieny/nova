@@ -1446,7 +1446,10 @@ the activity SSE stream immediately. Changes made by another process — a card 
 `nova workboard card add`, a stage the relay's queue drainer fires — cannot: the event bus behind
 SSE is in-process. Those are picked up by a poll of a cheap per-board change marker
 (`GET /api/workboards/:id/rev`) every 10 seconds, so they appear within about that long rather
-than instantly. A change you made yourself is never reloaded on top of you.
+than instantly. A change you made yourself is never reloaded on top of you: a successful drag
+adopts the marker its own write produced, and the card is additionally exempt from a reload for
+two poll intervals, so a drag never costs you your scroll position, a toast, or a second drag
+already in flight.
 
 ### Connector-Bound Boards
 

@@ -1,7 +1,10 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { createBoard, addCards } from "../src/workboard-service.ts";
-import { boardPayload, renderWorkboard, renderWorkboardIndex, STAGE_CARD_LIMIT } from "../src/dashboard-workboards.ts";
+import {
+  boardPayload, boardScript, renderWorkboard, renderWorkboardIndex,
+  OWN_MOVE_WINDOW_MS, REV_POLL_MS, STAGE_CARD_LIMIT,
+} from "../src/dashboard-workboards.ts";
 
 let seq = 0;
 function seed() {
@@ -179,6 +182,92 @@ test("client script does not reload for the viewer's own just-applied move, and 
   expect(html).toContain("ownMoves[card.dataset.id]=Date.now()");
   expect(html).toContain("ownMoves[cardId]");
   expect(html).toContain("now-lastReload<3000");
+});
+
+/**
+ * Loads the emitted client script into a stubbed browser so its reload decisions can be exercised
+ * for real. Only the pieces the script touches at load are stubbed; the drag handlers need a live
+ * DOM and stay verified by inspection.
+ */
+function loadBoardScript(rev = "rev-1") {
+  const state = {
+    reloads: 0,
+    revBodies: [] as any[],
+    poll: (() => {}) as () => void,
+    sse: ((_ev: { data: string }) => {}) as (ev: { data: string }) => void,
+  };
+  const doc = {
+    querySelectorAll: () => [] as any[],
+    getElementById: () => ({ style: {}, textContent: "" }),
+  };
+  const fetchStub = () =>
+    Promise.resolve({ ok: true, json: () => Promise.resolve(state.revBodies.shift() ?? {}) });
+  const setIntervalStub = (fn: () => void) => { state.poll = fn; return 0; };
+  function EventSourceStub(this: any) {
+    this.addEventListener = (_type: string, handler: (ev: { data: string }) => void) => { state.sse = handler; };
+  }
+  const loc = { reload: () => { state.reloads += 1; } };
+  const factory = new Function(
+    "document", "fetch", "setInterval", "EventSource", "location", "setTimeout",
+    `${boardScript("board-1", rev)}
+     return { ownMoves: ownMoves, movedRecently: movedRecently, pruneOwnMoves: pruneOwnMoves,
+              OWN_MOVE_MS: OWN_MOVE_MS, getRev: function(){ return REV; } };`
+  );
+  const api = factory(doc, fetchStub, setIntervalStub, EventSourceStub, loc, setTimeout);
+  return { ...api, poll: () => state.poll(), sse: (ev: { data: string }) => state.sse(ev), state };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
+test("the own-move suppression window is at least as long as the change-marker poll interval", () => {
+  expect(OWN_MOVE_WINDOW_MS).toBeGreaterThanOrEqual(REV_POLL_MS);
+  expect(loadBoardScript().OWN_MOVE_MS).toBe(OWN_MOVE_WINDOW_MS);
+});
+
+test("a poll one interval after the viewer's own move adopts the new marker without reloading the page", async () => {
+  const wb = loadBoardScript("rev-1");
+  wb.ownMoves["card-1"] = Date.now() - (REV_POLL_MS - 500);
+  wb.state.revBodies.push({ rev: "rev-2" });
+  wb.poll();
+  await flush();
+  expect(wb.state.reloads).toBe(0);
+  expect(wb.getRev()).toBe("rev-2");
+});
+
+test("a poll with no recent own move still reloads on a changed marker", async () => {
+  const wb = loadBoardScript("rev-1");
+  wb.state.revBodies.push({ rev: "rev-2" });
+  wb.poll();
+  await flush();
+  expect(wb.state.reloads).toBe(1);
+});
+
+test("an SSE event for the viewer's own move leaves the own-move marker in place for the poll that follows", async () => {
+  const wb = loadBoardScript("rev-1");
+  wb.ownMoves["card-1"] = Date.now();
+  wb.sse({ data: JSON.stringify({ type: "workboard.card.moved", data: { boardId: "board-1", cardId: "card-1" } }) });
+  expect(wb.state.reloads).toBe(0);
+  expect(wb.ownMoves["card-1"]).toBeDefined();
+
+  wb.state.revBodies.push({ rev: "rev-2" });
+  wb.poll();
+  await flush();
+  expect(wb.state.reloads).toBe(0);
+});
+
+test("own-move markers are pruned on each poll, so a page left open does not grow one per drag", () => {
+  const wb = loadBoardScript();
+  wb.ownMoves["stale"] = Date.now() - OWN_MOVE_WINDOW_MS - 1000;
+  wb.ownMoves["fresh"] = Date.now();
+  wb.pruneOwnMoves();
+  expect(Object.keys(wb.ownMoves)).toEqual(["fresh"]);
+});
+
+test("a successful move adopts the revision it produced instead of waiting for the poll to notice it", () => {
+  const script = boardScript("board-1", "rev-1");
+  // NOTE: the drop handler needs a live DOM, so this asserts placement in the emitted string only.
+  expect(script).toMatch(/ownMoves\[card\.dataset\.id\]=Date\.now\(\);\s*adoptRev\(\);/);
+  expect(script).toContain("function adoptRev()");
 });
 
 test("a different board's id is not embedded in this board's script", () => {
