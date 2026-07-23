@@ -14,6 +14,7 @@ export const CAPABILITIES = [
   'connector.manage',
   'playbook.manage',
   'process.manage',
+  'workboard.manage',
   'access.manage',
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];

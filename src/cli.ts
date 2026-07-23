@@ -53,6 +53,7 @@ const COMMANDS: Record<string, Omit<RunSpec, "kind" | "args"> & { aliases?: stri
   access:    { file: "src/cli-access.ts", description: "Manage capability grants (RBAC): grant/revoke/list" },
   ooo:       { file: "src/cli-ooo.ts", description: "Out-of-office: delegate your work while you're away" },
   data:      { file: "src/cli-data.ts", description: "Connected data sources (http/sqlite/connector) for reports" },
+  workboard: { file: "src/cli-workboard.ts", description: "Workboards: boards of cards agents can create and move" },
   voice:     { file: "src/voice-server.ts", description: "Start the voice-call server" },
   backup:    { file: "scripts/backup.ts", description: "Back up data, config, and .env" },
 };

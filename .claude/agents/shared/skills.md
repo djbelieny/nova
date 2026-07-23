@@ -63,3 +63,28 @@ Generate complete SaaS platforms from YAML configuration. Use the `/platform-mak
 ## NotebookLM
 
 Query Google NotebookLM notebooks for source-grounded, citation-backed answers. Use the `/notebooklm` skill command.
+
+## Workboards
+
+Boards of typed cards you can create, fill, and move through stages. Use them when a task produces
+a set of like things to track (leads, POs, applicants, content ideas) rather than one answer.
+
+```bash
+nova workboard list                                  # what boards exist
+nova workboard describe <board>                      # its fields and stages — read this before writing
+nova workboard create <name> --purpose '<text>' \
+  --fields '[{"key":"company","label":"Company","type":"text","primary":true}]' \
+  --stages '[{"key":"new","label":"New","order":0}]'
+nova workboard card add <board> --stage <key> --fields '{…}'
+nova workboard card add-many <board> --stage <key> --file cards.json
+nova workboard card move <card-id> --to <stage>
+nova workboard card update <card-id> --fields '{…}'
+nova workboard query <board> [--stage <key>] [--limit <n>]   # read the cards back as JSON
+```
+
+Field types: `text`, `longtext`, `number`, `money`, `date`, `email`, `url`, `select` (needs
+`options`), `checkbox`, `agent`, `link`. Mark one field `"primary": true` — it supplies card titles.
+
+Always `describe` a board before writing to it; a field the board doesn't declare is rejected.
+Creating a board and writing cards are local and reversible, so do them directly. Moving a card
+into a stage that carries an action queues that action for the relay — say so when you report back.

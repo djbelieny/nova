@@ -90,6 +90,7 @@ import { startDevTaskDispatcher } from "../services/dev-task-dispatcher.ts";
 import { startKbWatcher } from "../services/kb-watch.ts";
 import { startAutomationPoller } from "../services/automation-poller.ts";
 import { startRoiDigest } from "../services/roi-digest.ts";
+import { drainWorkboardQueueLocked } from "./workboard-reactive.ts";
 import { checkCliAuth } from "./cli-auth.ts";
 import { startCsRouter } from './cs-router.ts';
 
@@ -3128,6 +3129,14 @@ function buildPrompt(
   );
 
   sysParts.push(
+    "\nWORKBOARDS: [WORKBOARD: name | purpose | FIELDS: field-list | STAGES: stage-list] — create a board of cards in chat." +
+      "\nField: key:type, add * if required, e.g. vendor:text*. A select carries its options in parens, pipe-separated: status:select(draft|sent|paid)." +
+      "\nStages: keys separated by >, e.g. draft > sent > paid. Override the auto title-cased label with key=Label." +
+      "\nExample: [WORKBOARD: purchasing | Track purchase orders | FIELDS: vendor:text*, amount:money, status:select(draft|sent|paid) | STAGES: draft > sent > paid]" +
+      "\nField types: text, longtext, number, money, date, email, url, select, checkbox, agent, link. The first field becomes the card title."
+  );
+
+  sysParts.push(
     "\nSCHEDULING:" +
       "\n[SCHEDULE: title | datetime | instructions] [SCHEDULE: ... | RECUR: rule] [SCHEDULE: ... | RECUR: rule | IF: condition]" +
       "\n[SCHEDULE_CANCEL: title] — delete. [SCHEDULE_PAUSE: title] — pause (keeps it). [SCHEDULE_RESUME: title] — reactivate a paused task." +
@@ -4434,6 +4443,18 @@ console.log(`[webhook] Ingestion server on port ${WEBHOOK_PORT}`);
 // Automation poller — drives non-push automation sources (metric probes today)
 startAutomationPoller(supabase, async (userId, agentSlug, taskDescription) =>
   dispatchAutonomousTask(userId, agentSlug, taskDescription, "automation"));
+
+// Workboard stage-action queue drainer — the dashboard process has no dispatcher, so it enqueues
+// stage actions instead of firing them; drain them here with the real dispatcher. Advisory-locked
+// so an overlapping tick or a second relay instance can't re-read rows the first pass is still on.
+const WORKBOARD_QUEUE_DRAIN_MS = Math.max(30_000, Number(process.env.NOVA_WORKBOARD_QUEUE_MS) || 45_000);
+const dispatchWorkboardAction = async (userId: string, agentSlug: string, taskDescription: string) =>
+  dispatchAutonomousTask(userId, agentSlug, taskDescription, "workboard");
+setInterval(() => {
+  drainWorkboardQueueLocked(supabase, dispatchWorkboardAction).catch((err) => {
+    emit({ type: "error", level: "warn", data: { message: `Workboard queue drain failed: ${err}`, module: "workboard-reactive" } });
+  });
+}, WORKBOARD_QUEUE_DRAIN_MS);
 
 // Weekly ROI digest — DMs each user the value delivered
 startRoiDigest(supabase, async (userId, message) => {

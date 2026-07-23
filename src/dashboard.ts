@@ -34,6 +34,8 @@ import { groupTicketsByColumn, TICKET_COLUMNS } from "./ticket-board.ts";
 import { handleTicketApproval } from "../services/ticket-worker.ts";
 import { sendTicketEmail } from "./resend-client.ts";
 import { verifyLogin } from "./web-auth.ts";
+import { handleWorkboardApi, isValidUserId, renderWorkboard, renderWorkboardIndex, renderWorkboardsUnavailable } from "./dashboard-workboards.ts";
+import { ensureSystemBoards } from "./workboard-service.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = dirname(dirname(__filename));
@@ -1772,8 +1774,11 @@ async function getActiveDelegations(): Promise<unknown> {
 }
 
 // ============================================================
-// SUPPORT TICKET KANBAN
+// SUPPORT TICKET APPROVAL API
 // ============================================================
+// The board page (renderTicketBoard) was removed once /tickets became a system workboard —
+// these stay: they drive the approve/reject side effects (email, dry-run deploy) that a plain
+// stage move on the workboard does not replicate.
 
 function ticketOperatorId(): string {
   return process.env.TICKET_OPERATOR_USER_ID || "";
@@ -1807,158 +1812,6 @@ async function actOnTicket(id: string, action: "approve" | "reject"): Promise<un
     logError(e, "dashboard:ticket-approval");
     return { success: false, error: e.message };
   }
-}
-
-export function renderTicketBoard(): string {
-  return `<!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nova — Support Tickets</title>
-<style>
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  :root{--bg:#06060b;--glass:rgba(255,255,255,.05);--border:rgba(255,255,255,.10);--text:rgba(255,255,255,.92);--dim:rgba(255,255,255,.55);--indigo:#6366f1;--amber:#f59e0b;--green:#22c55e;--red:#ef4444;--slate:#6b7280}
-  body{font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--text);padding:18px;min-height:100vh}
-  header{display:flex;align-items:center;gap:14px;margin-bottom:16px}
-  header h1{font-size:18px;font-weight:700}
-  a.back{color:var(--dim);text-decoration:none;font-size:13px}
-  .pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border)}
-  .pill.dry{background:rgba(245,158,11,.15);color:var(--amber);border-color:rgba(245,158,11,.3)}
-  .pill.live{background:rgba(34,197,94,.15);color:var(--green);border-color:rgba(34,197,94,.3)}
-  .board{display:grid;grid-template-columns:repeat(5,minmax(220px,1fr));gap:12px;align-items:start}
-  .col{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:10px;min-height:120px}
-  .col h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin-bottom:10px;display:flex;justify-content:space-between}
-  .col h2 .cnt{color:var(--text)}
-  .card{background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:9px;padding:10px;margin-bottom:9px;cursor:pointer;transition:border-color .15s}
-  .card:hover{border-color:rgba(255,255,255,.22)}
-  .card .subj{font-size:13px;font-weight:600;line-height:1.3;margin-bottom:5px}
-  .card .meta{font-size:11px;color:var(--dim);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-  .badge{font-size:10px;padding:1px 6px;border-radius:6px;border:1px solid var(--border)}
-  .badge.sev-high,.badge.sev-urgent{color:var(--red);border-color:rgba(239,68,68,.4)}
-  .badge.sev-normal{color:var(--dim)}
-  .detail{margin-top:9px;padding-top:9px;border-top:1px solid var(--border);font-size:11px;color:var(--dim);display:none}
-  .detail.open{display:block}
-  .detail pre{background:#000;border:1px solid var(--border);border-radius:6px;padding:7px;margin:5px 0;font-family:'JetBrains Mono',monospace;font-size:10.5px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto}
-  .detail .err{color:var(--red)}
-  .actions{display:flex;gap:7px;margin-top:9px}
-  .btn{flex:1;font-size:12px;font-weight:600;padding:7px;border-radius:7px;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--text)}
-  .btn.approve{background:rgba(34,197,94,.15);color:var(--green);border-color:rgba(34,197,94,.35)}
-  .btn.reject{background:rgba(239,68,68,.12);color:var(--red);border-color:rgba(239,68,68,.3)}
-  .btn:disabled{opacity:.5;cursor:default}
-  .empty{color:var(--text);opacity:.25;font-size:12px;text-align:center;padding:14px 0}
-  .note{font-size:12px;color:var(--dim);margin-bottom:14px;max-width:760px;line-height:1.5}
-</style></head><body>
-<header>
-  <a class="back" href="/">← Dashboard</a>
-  <h1>Support Tickets</h1>
-  <span class="pill" id="modePill">…</span>
-  <span class="pill" id="cntPill"></span>
-  <span style="margin-left:auto;font-size:11px;color:var(--dim)" id="updated"></span>
-</header>
-<div class="note" id="opNote" style="display:none">No <code>TICKET_OPERATOR_USER_ID</code> configured — set it in the server <code>.env</code> for the ticket worker and this board to show tickets.</div>
-<div class="board" id="board"></div>
-<script>
-  var COLS = [];
-  function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
-  function rel(ts){if(!ts)return '';var t=new Date(ts.replace(' ','T')+(ts.indexOf('Z')<0&&ts.indexOf('+')<0?'Z':''));var s=Math.floor((Date.now()-t.getTime())/1000);if(isNaN(s))return esc(ts);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago';}
-  function card(t, isApproval){
-    var sev = (t.severity||'normal').toLowerCase();
-    var det = '';
-    if(t.branch_name) det += '<div>branch: <code>'+esc(t.branch_name)+'</code></div>';
-    if(t.diff_summary) det += '<div>diff:</div><pre>'+esc(t.diff_summary)+'</pre>';
-    if(t.test_results) det += '<div>tests:</div><pre>'+esc(String(t.test_results).slice(-1200))+'</pre>';
-    if(t.deploy_result) det += '<div>deploy:</div><pre>'+esc(String(t.deploy_result).slice(-1200))+'</pre>';
-    if(t.last_error) det += '<div class="err">error: '+esc(t.last_error)+'</div>';
-    if(t.body_raw) det += '<div style="margin-top:6px">message:</div><pre>'+esc(String(t.body_raw).slice(0,800))+'</pre>';
-    var actions = isApproval ? '<div class="actions"><button class="btn approve" onclick="act(event,\\''+esc(t.id)+'\\',\\'approve\\')">Approve</button><button class="btn reject" onclick="act(event,\\''+esc(t.id)+'\\',\\'reject\\')">Reject</button></div>' : '';
-    return '<div class="card" onclick="this.querySelector(&quot;.detail&quot;).classList.toggle(&quot;open&quot;)">'
-      +'<div class="subj">'+esc(t.subject||'(no subject)')+'</div>'
-      +'<div class="meta"><span>'+esc(t.client_name||t.client_email)+'</span>'
-      +(t.classification?'<span class="badge">'+esc(t.classification)+'</span>':'')
-      +'<span class="badge sev-'+esc(sev)+'">'+esc(sev)+'</span>'
-      +'<span style="margin-left:auto">'+rel(t.updated_at||t.created_at)+'</span></div>'
-      +'<div class="detail">'+det+actions+'</div></div>';
-  }
-  function act(ev, id, action){
-    ev.stopPropagation();
-    var btns = ev.target.parentNode.querySelectorAll('button'); btns.forEach(function(b){b.disabled=true;});
-    ev.target.textContent = '…';
-    fetch('/api/tickets/'+encodeURIComponent(id)+'/'+action,{method:'POST'}).then(function(r){return r.json();}).then(function(j){
-      if(!j.success){alert('Failed: '+(j.error||'unknown')); btns.forEach(function(b){b.disabled=false;});}
-      load();
-    }).catch(function(){btns.forEach(function(b){b.disabled=false;});});
-  }
-  function load(){
-    fetch('/api/tickets').then(function(r){return r.json();}).then(function(d){
-      document.getElementById('opNote').style.display = d.operator ? 'none' : 'block';
-      var mp=document.getElementById('modePill'); mp.textContent = d.dryRun?'DRY-RUN':'LIVE DEPLOY'; mp.className='pill '+(d.dryRun?'dry':'live');
-      document.getElementById('cntPill').textContent = (d.count||0)+' tickets';
-      document.getElementById('updated').textContent = 'updated '+new Date().toLocaleTimeString();
-      COLS = d.columnMeta||[];
-      var board=document.getElementById('board'); board.innerHTML='';
-      COLS.forEach(function(c){
-        var items = (d.columns&&d.columns[c.key])||[];
-        var isApproval = c.key==='awaiting_approval';
-        var html='<div class="col"><h2>'+esc(c.label)+'<span class="cnt">'+items.length+'</span></h2>';
-        html += items.length ? items.map(function(t){return card(t,isApproval);}).join('') : '<div class="empty">—</div>';
-        html+='</div>'; board.insertAdjacentHTML('beforeend',html);
-      });
-    }).catch(function(e){console.error(e);});
-  }
-  load(); setInterval(load, 5000);
-</script></body></html>`;
-}
-
-async function getKanbanData(userId?: string): Promise<unknown> {
-  const columns: Record<string, any[]> = {
-    pending: [],
-    in_progress: [],
-    completed: [],
-    blocked: [],
-  };
-  try {
-    const tasksResult = await getAgentTasks(userId) as any;
-    for (const t of tasksResult.tasks || []) {
-      let col = t.status || "pending";
-      if (col === "done") col = "completed";
-      if (col === "cancelled" || col === "failed") col = "blocked";
-      if (!columns[col]) col = "pending";
-      columns[col].push({
-        id: t.id,
-        source: "task",
-        agent: t.agent || "general",
-        description: t.description || "",
-        status: t.status || "pending",
-        result: t.result || null,
-        created_at: t.created_at,
-        updated_at: t.updated_at,
-      });
-    }
-  } catch { /* ignore */ }
-
-  try {
-    const delegResult = await getActiveDelegations() as any;
-    for (const row of delegResult.delegations || []) {
-      let meta: any = {};
-      try { meta = typeof row.metadata === "string" ? JSON.parse(row.metadata) : (row.metadata || {}); } catch { /**/ }
-      const rawStatus: string = meta.status || "pending";
-      let col = rawStatus;
-      if (col === "done") col = "completed";
-      if (col === "failed" || col === "cancelled") col = "blocked";
-      if (!columns[col]) col = "pending";
-      columns[col].push({
-        id: row.id,
-        source: "delegation",
-        agent: meta.agentSlug || meta.assigned_agent || "exec",
-        description: meta.message || meta.task_description || row.message || "",
-        status: rawStatus,
-        result: meta.result || null,
-        created_at: row.created_at,
-        updated_at: row.created_at,
-      });
-    }
-  } catch { /* ignore */ }
-
-  return { columns };
 }
 
 // ============================================================
@@ -5977,473 +5830,6 @@ export function renderApprovalsPage(): string {
 }
 
 // ============================================================
-// KANBAN PAGE
-// ============================================================
-
-export function renderKanban(): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Nova — Kanban Board</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #06060b;
-    --surface: rgba(255,255,255,0.04);
-    --glass: rgba(255,255,255,0.055);
-    --glass-border: rgba(255,255,255,0.10);
-    --glass-hover: rgba(255,255,255,0.08);
-    --indigo: #6366f1;
-    --violet: #8b5cf6;
-    --teal: #06b6d4;
-    --success: #22c55e;
-    --warning: #f59e0b;
-    --error: #ef4444;
-    --text: rgba(255,255,255,0.92);
-    --text-secondary: rgba(255,255,255,0.6);
-    --text-dim: rgba(255,255,255,0.3);
-    --col-pending: #6b7280;
-    --col-inprogress: #6366f1;
-    --col-completed: #22c55e;
-    --col-blocked: #ef4444;
-  }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    font-size: 13px;
-    line-height: 1.5;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
-
-  @keyframes pulse-dot { 0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); } 50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); } }
-  @keyframes fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
-  @keyframes card-move { from { opacity: 0; transform: scale(0.96) translateY(-4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
-
-  /* HEADER */
-  .kb-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 20px;
-    border-bottom: 1px solid var(--glass-border);
-    background: var(--glass);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    flex-shrink: 0;
-    z-index: 100;
-  }
-  .kb-logo {
-    display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--text);
-  }
-  .kb-logo-badge {
-    width: 28px; height: 28px;
-    background: linear-gradient(135deg, var(--indigo), var(--violet));
-    border-radius: 7px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 0.8rem; font-weight: 700; color: #fff;
-  }
-  .kb-title { font-size: 1rem; font-weight: 700; }
-  .kb-subtitle { font-size: 0.6rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 2px; }
-  .kb-back {
-    text-decoration: none; color: var(--text-dim); font-size: 11px;
-    padding: 5px 10px; border: 1px solid var(--glass-border); border-radius: 6px;
-    transition: color 0.2s, border-color 0.2s;
-    white-space: nowrap;
-  }
-  .kb-back:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
-  .kb-header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; }
-  .kb-live { display: flex; align-items: center; gap: 5px; color: var(--text-dim); font-size: 11px; }
-  .live-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--success); animation: pulse-dot 2s infinite; }
-  .kb-refresh {
-    background: none; border: 1px solid var(--glass-border); color: var(--text-dim);
-    cursor: pointer; font-size: 14px; padding: 4px 8px; border-radius: 6px;
-    transition: color 0.2s, border-color 0.2s; line-height: 1;
-  }
-  .kb-refresh:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
-
-  /* BOARD */
-  .kb-board {
-    flex: 1;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    padding: 16px;
-    overflow-y: auto;
-    align-items: start;
-  }
-
-  /* COLUMN */
-  .kb-col {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    min-width: 0;
-  }
-  .kb-col-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: 10px;
-    background: var(--surface);
-    border: 1px solid var(--glass-border);
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-  }
-  .kb-col-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .kb-col-name { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; flex: 1; }
-  .kb-col-count {
-    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
-    background: rgba(255,255,255,0.07); color: var(--text-secondary);
-  }
-  .kb-col-cards { display: flex; flex-direction: column; gap: 8px; }
-  .kb-empty {
-    padding: 20px 12px;
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 11px;
-    border: 1px dashed rgba(255,255,255,0.07);
-    border-radius: 10px;
-  }
-
-  /* CARD */
-  .kb-card {
-    background: var(--glass);
-    border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    padding: 12px;
-    cursor: default;
-    transition: border-color 0.2s, background 0.2s, transform 0.15s;
-    animation: card-move 0.25s ease;
-  }
-  .kb-card:hover {
-    background: var(--glass-hover);
-    border-color: rgba(255,255,255,0.18);
-    transform: translateY(-1px);
-  }
-  .kb-card-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-  .kb-agent-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-  .kb-agent-name { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; }
-  .kb-source-pill {
-    margin-left: auto; font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
-    padding: 2px 6px; border-radius: 4px; text-transform: uppercase;
-    background: rgba(255,255,255,0.06); color: var(--text-dim);
-  }
-  .kb-card-desc {
-    font-size: 12px; line-height: 1.5; color: var(--text);
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-    overflow: hidden;
-    word-break: break-word;
-  }
-  .kb-card-desc.expanded { -webkit-line-clamp: unset; }
-  .kb-card-result {
-    margin-top: 6px;
-    font-size: 11px; color: var(--text-dim); line-height: 1.4;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    overflow: hidden;
-    font-style: italic;
-  }
-  .kb-card-footer { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
-  .kb-status-pill {
-    font-size: 9px; font-weight: 700; letter-spacing: 0.5px;
-    padding: 2px 8px; border-radius: 10px; text-transform: uppercase;
-  }
-  .kb-time { margin-left: auto; font-size: 10px; color: var(--text-dim); white-space: nowrap; }
-
-  /* status colors for pills */
-  .status-pending    { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.2); }
-  .status-in_progress{ background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.25); }
-  .status-completed  { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.2); }
-  .status-done       { background: rgba(34,197,94,0.12); color: #4ade80; border: 1px solid rgba(34,197,94,0.2); }
-  .status-blocked    { background: rgba(239,68,68,0.12); color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
-  .status-failed     { background: rgba(239,68,68,0.12); color: #f87171; border: 1px solid rgba(239,68,68,0.2); }
-  .status-cancelled  { background: rgba(107,114,128,0.1); color: #6b7280; border: 1px solid rgba(107,114,128,0.15); }
-
-  /* MOBILE: horizontal scroll */
-  @media (max-width: 767px) {
-    .kb-board {
-      display: flex;
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      overflow-y: hidden;
-      scroll-snap-type: x mandatory;
-      -webkit-overflow-scrolling: touch;
-      gap: 10px;
-      padding: 12px;
-      height: calc(100vh - 52px);
-      align-items: stretch;
-    }
-    .kb-col {
-      min-width: 85vw;
-      max-width: 85vw;
-      scroll-snap-align: start;
-      flex-shrink: 0;
-      overflow-y: auto;
-      height: 100%;
-    }
-    .kb-col-header { position: sticky; top: 0; z-index: 5; }
-    .kb-col-cards { padding-bottom: 24px; }
-    .kb-board::-webkit-scrollbar { display: none; }
-  }
-  @media (min-width: 768px) and (max-width: 1199px) {
-    .kb-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  }
-
-  /* Loading state */
-  .kb-loading { display: flex; align-items: center; justify-content: center; flex: 1; color: var(--text-dim); font-size: 12px; gap: 8px; }
-  .kb-spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.1); border-top-color: var(--indigo); border-radius: 50%; animation: spin 0.7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
-  /* Scroll hint on mobile */
-  .kb-scroll-hint {
-    display: none;
-    text-align: center;
-    color: var(--text-dim);
-    font-size: 10px;
-    padding: 4px 0 8px;
-    letter-spacing: 0.5px;
-  }
-  @media (max-width: 767px) { .kb-scroll-hint { display: block; } }
-
-  /* Toast notifications */
-  .toast-container {
-    position: fixed; bottom: 20px; right: 20px; z-index: 9999;
-    display: flex; flex-direction: column; gap: 8px; pointer-events: none;
-  }
-  .toast {
-    padding: 12px 16px; border-radius: 8px; font-size: 13px; color: #fff;
-    max-width: 320px; opacity: 0; transform: translateY(20px);
-    transition: opacity 0.3s, transform 0.3s;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-  }
-  .toast.show { opacity: 1; transform: translateY(0); }
-  .toast.success { background: #10b981; }
-  .toast.error { background: #ef4444; }
-  .toast.info { background: #3b82f6; }
-</style>
-</head>
-<body>
-
-<div id="toast-container" class="toast-container"></div>
-
-<div class="kb-header">
-  <a class="kb-logo" href="${DASHBOARD_BASE}/">
-    <div class="kb-logo-badge">N</div>
-    <div><div class="kb-title">Nova</div><div class="kb-subtitle">Kanban</div></div>
-  </a>
-  <a class="kb-back" href="${DASHBOARD_BASE}/">← Dashboard</a>
-  <div class="kb-header-right">
-    <div class="kb-live"><span class="live-dot" id="kb-sse-dot" style="background:var(--col-blocked)"></span><span id="kb-sse-label">Connecting…</span></div>
-    <button class="kb-refresh" id="kb-refresh-btn" title="Refresh">↻</button>
-  </div>
-</div>
-
-<div class="kb-scroll-hint">← swipe between columns →</div>
-
-<div id="kb-board" class="kb-board">
-  <div class="kb-loading"><div class="kb-spinner"></div> Loading…</div>
-</div>
-
-<script>
-(function() {
-  const BASE = '${DASHBOARD_BASE}';
-
-  function showToast(message, type, durationMs) {
-    const container = document.getElementById('toast-container');
-    if (!container) return;
-    durationMs = durationMs || 3000;
-    const el = document.createElement('div');
-    el.className = 'toast ' + (type || 'info');
-    el.textContent = message;
-    container.appendChild(el);
-    requestAnimationFrame(function() { requestAnimationFrame(function() { el.classList.add('show'); }); });
-    setTimeout(function() {
-      el.classList.remove('show');
-      setTimeout(function() { el.remove(); }, 300);
-    }, durationMs);
-  }
-
-  const COLS = [
-    { key: 'pending',    label: 'Pending',     color: '#6b7280' },
-    { key: 'in_progress',label: 'In Progress', color: '#6366f1' },
-    { key: 'completed',  label: 'Completed',   color: '#22c55e' },
-    { key: 'blocked',    label: 'Blocked',     color: '#ef4444' },
-  ];
-
-  const AGENT_COLORS = {
-    ceo:'#f59e0b', cfo:'#22c55e', cmo:'#ec4899', cto:'#06b6d4',
-    coo:'#8b5cf6', research:'#3b82f6', critic:'#ef4444',
-    helios:'#f59e0b', pixel:'#ec4899', kai:'#3b82f6', orion:'#22c55e',
-    morpheus:'#8b5cf6', architect:'#06b6d4', athena:'#f59e0b',
-    digit:'#3b82f6', echo:'#22c55e', flux:'#6366f1', quill:'#a78bfa',
-    lex:'#64748b', helia:'#ec4899', bridge:'#06b6d4', oracle:'#f59e0b',
-    cipher:'#8b5cf6', rift:'#ef4444', joule:'#22c55e', nexus:'#3b82f6',
-    aura:'#ec4899', zen:'#4ade80', tesseract:'#06b6d4', magnus:'#f59e0b',
-    cyra:'#6366f1',
-  };
-
-  function agentColor(slug) {
-    return AGENT_COLORS[slug && slug.toLowerCase()] || '#6b7280';
-  }
-
-  function relativeTime(ts) {
-    if (!ts) return '';
-    const diff = Date.now() - new Date(ts).getTime();
-    const s = Math.floor(diff / 1000);
-    if (s < 60) return s + 's ago';
-    if (s < 3600) return Math.floor(s/60) + 'm ago';
-    if (s < 86400) return Math.floor(s/3600) + 'h ago';
-    return Math.floor(s/86400) + 'd ago';
-  }
-
-  function escHtml(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-
-  function renderCard(card) {
-    const ac = agentColor(card.agent);
-    const statusClass = 'status-' + (card.status || 'pending').replace(/[^a-z_]/g, '_');
-    const hasResult = card.result && card.result.trim();
-    return \`<div class="kb-card" data-id="\${escHtml(card.id)}" data-source="\${escHtml(card.source)}">
-      <div class="kb-card-top">
-        <span class="kb-agent-dot" style="background:\${ac}"></span>
-        <span class="kb-agent-name" style="color:\${ac}">\${escHtml(card.agent)}</span>
-        <span class="kb-source-pill">\${escHtml(card.source)}</span>
-      </div>
-      <div class="kb-card-desc">\${escHtml(card.description)}</div>
-      \${hasResult ? \`<div class="kb-card-result">\${escHtml(card.result.slice(0, 200))}\${card.result.length > 200 ? '…' : ''}</div>\` : ''}
-      <div class="kb-card-footer">
-        <span class="kb-status-pill \${statusClass}">\${escHtml(card.status || 'pending')}</span>
-        <span class="kb-time">\${relativeTime(card.updated_at || card.created_at)}</span>
-      </div>
-    </div>\`;
-  }
-
-  function renderBoard(data) {
-    const board = document.getElementById('kb-board');
-    if (!data || !data.columns) {
-      board.innerHTML = '<div class="kb-loading">No data</div>';
-      return;
-    }
-    board.innerHTML = COLS.map(col => {
-      const cards = data.columns[col.key] || [];
-      const cardHtml = cards.length
-        ? cards.map(renderCard).join('')
-        : '<div class="kb-empty">No tasks</div>';
-      return \`<div class="kb-col" id="col-\${col.key}">
-        <div class="kb-col-header">
-          <span class="kb-col-dot" style="background:\${col.color}"></span>
-          <span class="kb-col-name">\${col.label}</span>
-          <span class="kb-col-count">\${cards.length}</span>
-        </div>
-        <div class="kb-col-cards" id="cards-\${col.key}">\${cardHtml}</div>
-      </div>\`;
-    }).join('');
-  }
-
-  function updateColumn(key, cards) {
-    const el = document.getElementById('cards-' + key);
-    if (!el) return;
-    const count = document.querySelector('#col-' + key + ' .kb-col-count');
-    if (count) count.textContent = cards.length;
-    el.innerHTML = cards.length
-      ? cards.map(renderCard).join('')
-      : '<div class="kb-empty">No tasks</div>';
-  }
-
-  let _lastData = null;
-
-  async function loadKanban() {
-    try {
-      const res = await fetch(BASE + '/api/kanban');
-      const data = await res.json();
-      _lastData = data;
-      renderBoard(data);
-    } catch(e) {
-      document.getElementById('kb-board').innerHTML = '<div class="kb-loading">Failed to load — ' + e.message + '</div>';
-    }
-  }
-
-  async function refreshFromApi() {
-    try {
-      const res = await fetch(BASE + '/api/kanban');
-      const data = await res.json();
-      if (!data.columns) return;
-      _lastData = data;
-      // Diff-update each column
-      for (const col of ['pending','in_progress','completed','blocked']) {
-        updateColumn(col, data.columns[col] || []);
-      }
-    } catch { /* ignore */ }
-  }
-
-  // SSE for live updates
-  const RELOAD_EVENTS = new Set(['agent.dispatched','agent.completed','agent.progress','task.created','task.status','task.completed','exec.delegation']);
-  let sseReloadTimer = null;
-  function scheduleReload() {
-    if (sseReloadTimer) clearTimeout(sseReloadTimer);
-    sseReloadTimer = setTimeout(refreshFromApi, 800);
-  }
-
-  function connectSSE() {
-    const dot = document.getElementById('kb-sse-dot');
-    const label = document.getElementById('kb-sse-label');
-    const es = new EventSource(BASE + '/api/activity/stream');
-    let sseErrorShown = false;
-    es.onopen = () => {
-      sseErrorShown = false;
-      dot.style.background = 'var(--col-completed)';
-      label.textContent = 'Live';
-    };
-    es.onerror = () => {
-      dot.style.background = 'var(--col-blocked)';
-      label.textContent = 'Disconnected';
-      if (!sseErrorShown) {
-        sseErrorShown = true;
-        showToast('Live connection lost. Reconnecting in 5s…', 'error', 5000);
-      }
-      es.close();
-      setTimeout(() => { sseErrorShown = false; connectSSE(); }, 5000);
-    };
-    es.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data);
-        if (RELOAD_EVENTS.has(event.type)) scheduleReload();
-      } catch { /* ignore */ }
-    };
-  }
-
-  // Expand/collapse card description on tap
-  document.addEventListener('click', function(e) {
-    const card = e.target.closest('.kb-card');
-    if (!card) return;
-    const desc = card.querySelector('.kb-card-desc');
-    if (desc) desc.classList.toggle('expanded');
-  });
-
-  document.getElementById('kb-refresh-btn').addEventListener('click', refreshFromApi);
-
-  // Periodic fallback refresh every 30s
-  setInterval(refreshFromApi, 30000);
-
-  loadKanban();
-  connectSSE();
-})();
-</script>
-</body>
-</html>`;
-}
-
-// ============================================================
 // HTML DASHBOARD
 // ============================================================
 
@@ -7008,6 +6394,7 @@ export function renderDashboard(): string {
       <select class="user-select" id="user-selector"><option value="">All Users</option></select>
       <a href="/governance" class="topbar-action">Governance</a>
       <a href="/kanban" class="topbar-action">Kanban</a>
+<a href="/workboards" class="topbar-action">Workboards</a>
       <a href="/tickets" class="topbar-action">Tickets</a>
       <a href="/integrations" class="topbar-action">Integrations</a>
       <a href="/shared-credentials" class="topbar-action">Shared Creds</a>
@@ -8857,10 +8244,29 @@ const server = Bun.serve({
       });
     }
 
-    // Kanban board page (admin only)
+    // The master bootstrap login (__master__) has no per-user database row, so it cannot own or
+    // view a workboard. Used by /kanban, /tickets, /workboards, and /workboards/:id — all four
+    // reach a per-user DB. Same __master__ hazard as the must_change_password gate above.
+    const workboardsUnavailableResponse = () => new Response(renderWorkboardsUnavailable(), {
+      headers: {
+        "Content-Type": "text/html",
+        "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
+      },
+    });
+
+    // Kanban board page (admin only) — now a system workboard
     if (path === "/kanban") {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
-      return new Response(renderKanban(), {
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
+      const boards = ensureSystemBoards(getDb(), me?.userId ?? "");
+      return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/workboards/${boards.tasks.id}` } });
+    }
+
+    // Workboards index page (admin only)
+    if (path === "/workboards") {
+      if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
+      return new Response(renderWorkboardIndex(getDb(), me?.userId ?? ""), {
         headers: {
           "Content-Type": "text/html",
           "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
@@ -8868,15 +8274,25 @@ const server = Bun.serve({
       });
     }
 
-    // Support-ticket Kanban page (admin only)
-    if (path === "/tickets") {
+    // Workboard detail page (admin only)
+    const wbPage = path.match(/^\/workboards\/([\w-]+)$/);
+    if (wbPage) {
       if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
-      return new Response(renderTicketBoard(), {
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
+      return new Response(renderWorkboard(getDb(), me?.userId ?? "", wbPage[1]), {
         headers: {
           "Content-Type": "text/html",
-          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+          "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self'",
         },
       });
+    }
+
+    // Support-ticket board page (admin only) — now a system workboard
+    if (path === "/tickets") {
+      if (!isAdmin) return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/account` } });
+      if (!isValidUserId(me?.userId ?? "")) return workboardsUnavailableResponse();
+      const boards = ensureSystemBoards(getDb(), me?.userId ?? "");
+      return new Response(null, { status: 302, headers: { Location: `${DASHBOARD_BASE}/workboards/${boards.tickets.id}` } });
     }
 
     // Integrations page
@@ -9104,6 +8520,14 @@ const server = Bun.serve({
     const userId = isAdmin ? (url.searchParams.get("user_id") || undefined) : me?.userId;
     // Guard for system-wide / cross-user endpoints: returns 403 for non-admins, null for admins
     const adminApi = (): Response | null => { if (!isAdmin) return jsonResponse({ error: "Admin only" }, 403); return null; };
+
+    if (path.startsWith("/api/workboards")) {
+      if (!me) return jsonResponse({ error: "unauthenticated" }, 401);
+      const handled = await handleWorkboardApi(path, req, {
+        db: getDb(), userId: userId || me.userId, actorId: me.userId,
+      });
+      if (handled) return handled;
+    }
 
     if (path === "/api/users" && req.method === "GET") {
       const me = getSessionUser(req);
@@ -9783,7 +9207,6 @@ const server = Bun.serve({
 
     if (path === "/api/usage-by-user") { const g = adminApi(); if (g) return g; return jsonResponse(await getUsageByUser()); }
     if (path === "/api/agent-tasks") return jsonResponse(await getAgentTasks(userId));
-    if (path === "/api/kanban") return jsonResponse(await getKanbanData(userId));
 
     // Support tickets
     if (path === "/api/tickets") return jsonResponse(await getTicketBoardData());

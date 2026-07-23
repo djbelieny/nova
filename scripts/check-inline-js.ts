@@ -10,12 +10,16 @@
 // so we can render each page and parse its inline scripts. `new Function(body)`
 // parses without executing — it throws SyntaxError on invalid JS.
 
-import { renderDashboard, renderKanban, renderTicketBoard, renderIntegrationsPage, renderSharedCredsPage, renderAccountPage, renderProfilePage, renderSchedulesPage, renderSkillsPage, renderHistoryPage, renderWhatsappPage, renderApprovalsPage } from "../src/dashboard.ts";
+import { renderDashboard, renderIntegrationsPage, renderSharedCredsPage, renderAccountPage, renderProfilePage, renderSchedulesPage, renderSkillsPage, renderHistoryPage, renderWhatsappPage, renderApprovalsPage } from "../src/dashboard.ts";
+import { boardScript } from "../src/dashboard-workboards.ts";
 
+// /kanban and /tickets now 302 to a system workboard (src/dashboard-workboards.ts) instead of
+// rendering their own page, so renderKanban/renderTicketBoard no longer exist to check here.
+// The workboard page's script is the largest block of inline browser JS in the app; renderWorkboard
+// needs a database, but boardScript is a pure string → string, so it is checked on its own.
 const PAGES: Array<[string, () => string]> = [
+  ["workboard", () => `<script>${boardScript("board-id")}</script>`],
   ["dashboard", renderDashboard],
-  ["kanban", renderKanban],
-  ["tickets", renderTicketBoard],
   ["integrations", renderIntegrationsPage],
   ["shared-credentials", renderSharedCredsPage],
   ["account", renderAccountPage],

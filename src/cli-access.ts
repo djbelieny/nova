@@ -7,7 +7,7 @@
  *   nova access list <@user>
  *
  * Admins can do everything by default; grants let a member manage a governed area
- * (automations, policies, connectors, playbooks, processes, access).
+ * (automations, policies, connectors, playbooks, processes, workboards, access).
  */
 
 import { getDb, type DatabaseType } from "./db.ts";

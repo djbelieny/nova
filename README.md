@@ -66,6 +66,7 @@ message ──▶ channel ──▶ relay ──▶ orchestrator ──▶ plann
 - Persistent memory (facts, goals, tasks) with local semantic recall
 - **Knowledge base (RAG)** — feed it PDFs, docs, and URLs; retrieved across agents with citations, on personal / team / per-agent scopes
 - Multi-channel: Telegram (primary), Slack, Discord, terminal (`nova chat` / `nova connect`); WhatsApp per-user
+- **Workboards** — boards of typed cards with stages you define: create one with `nova workboard create` or ask a specialist agent to put a set of results on a board ("put these leads on a board"); agents fill and move cards, you drag them across stages in the dashboard, and a stage can optionally queue a playbook or agent task when a card enters it, behind the same approval gate
 
 **Business automation**
 - **Playbooks** — reusable, versioned, parameterized SOPs

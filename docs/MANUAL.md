@@ -37,6 +37,7 @@
 24. [Usage & Cost Tracking](#24-usage--cost-tracking)
 25. [Executive Board](#25-executive-board)
 26. [Command Reference](#26-command-reference)
+27. [Workboards](#27-workboards)
 
 ---
 
@@ -1362,6 +1363,138 @@ These can be included in messages and Nova will parse and act on them:
 | `[SCHEDULE: title \| datetime \| instructions \| RECUR: rule]` | Recurring schedule |
 | `[SCHEDULE_CANCEL: search text]` | Cancel a schedule |
 | `[DEVTASK: projectName \| description]` | Queue a background dev task |
+
+---
+
+## 27. Workboards
+
+A workboard is a board of structured cards that Nova's agents can fill and move through **stages** —
+columns you define, not a fixed workflow. Create one with `nova workboard create`, or ask a
+specialist agent to put a set of results on a board ("put these leads on a board") — agents have
+the create/add/move/query verbs and use them mid-task. Chat itself has no board-creation handling:
+asking Nova in a plain conversation to design a schema and make you a board will not create one.
+Open a board in the web dashboard to see it as a drag-and-drop board.
+
+Every board declares its own fields — two boards can look completely different. A stage is inert
+by default; a board can optionally be made **reactive**, and a reactive stage can carry an action
+that runs automatically when a card enters it.
+
+Reading a board through the dashboard API needs only a signed-in session. Creating a board,
+writing or moving a card, and editing a schema need the `workboard.manage` capability — the same
+shape of gate playbooks and automations use, because an armed stage can dispatch an agent. Admins
+have it implicitly; grant it to a member with `nova access grant <@user> workboard.manage`.
+
+### Field Types
+
+| Type | Notes |
+|------|-------|
+| `text` | Single-line string |
+| `longtext` | Multi-line string |
+| `number` | Coerced from numeric-looking input |
+| `money` | Same coercion as `number`, strips `$` and `,` |
+| `date` | Stored as given |
+| `email` | Stored as given |
+| `url` | Stored as given |
+| `select` | Must declare `options`; value must be one of them |
+| `checkbox` | Coerced from booleans or `true/false/yes/no/1/0` |
+| `agent` | An agent slug |
+| `link` | Stored as given |
+
+A field definition is `{ key, label, type, required?, options?, primary? }`. The `primary` field
+(or the first field, if none is marked) supplies a card's title when one isn't given explicitly.
+
+### The `nova workboard` CLI
+
+Agents drive workboards through this CLI mid-task via the shell — see `.claude/agents/shared/skills.md`
+and `src/agent-tools.ts` for what agents are told. Card writes (add, move, update) are local and
+reversible, so they're prepare-phase safe and don't need the approval gate. Neither does a
+connector sync: `sync` only pulls and upserts, and a stage change on a bound board *describes* the
+write back rather than performing it (see Connector-Bound Boards below) — nothing there goes
+through the approval gate. Running a stage's action is the consequential one, and it goes to the
+relay's durable queue rather than running inline.
+
+| Command | Flags | Description |
+|---------|-------|--------------|
+| `nova workboard list` | — | List boards visible to the admin user with stage/card counts |
+| `nova workboard describe <board>` | — | Show a board's fields and stages |
+| `nova workboard create <name>` | `--purpose '<text>'` `--fields '<json array>'` `--stages '<json array>'` `--reactive` | Create a board. `--fields` and `--stages` are JSON arrays of field/stage definitions; `--reactive` (no value) opts the board into stage actions. Boards created this way are always personal-scope — there's no `--scope` flag |
+| `nova workboard card add <board>` | `--stage <key>` `--fields '{…}'` `--title <text>` | Add one card. `--stage` defaults to the board's first stage if omitted. Fails on a system board — those read cards from another table |
+| `nova workboard card add-many <board>` | `--stage <key>` `--file <path>` | Add many cards from a JSON file (an array of `{ title?, fields }`). `--file` is required |
+| `nova workboard card move <card-id>` | `--to <stage>` | Move a card to another stage. `--to` is required. If the move enters an armed stage, the action is queued for the relay to dispatch — the CLI has no dispatcher of its own |
+| `nova workboard card update <card-id>` | `--fields '{…}'` `--title <text>` | Patch a card's fields and/or title |
+| `nova workboard query <board>` | `--stage <key>` `--limit <n>` | Print the board's cards as JSON, optionally filtered to one stage. Reads the whole board by default (10,000 cards), not the 200 a dashboard stage shows; `--limit` narrows it |
+| `nova workboard run <board>` | `--stage <key>` `--playbook <name>` `[key=value ...]` | Queue every card currently in `--stage` to run the named playbook. This queues the run for the relay to dispatch shortly — it does not run inline |
+| `nova workboard sync <board>` | — | Pull records from the board's bound connector and upsert them onto cards. Fails if the board has no connector binding |
+
+### Reactive Stages
+
+A stage's `onEnter` action is either `{ playbook, vars? }` or `{ agent, task }`. It only fires if
+the board is reactive **and** the move isn't itself the result of another `onEnter` firing (so a
+board can't loop on itself). Before it can become an agent instruction, the card content behind it
+is scanned for prompt injection; a match is skipped, not fired.
+
+Firing is exactly-once within a short claim window, so a rapid double-move or a mid-run restart
+can't double-fire the same card into the same stage. A dispatch that can't get a task started is
+retried a few times, then dead-lettered rather than silently dropped. Dragging many cards into an
+armed stage at once (more than `WORKBOARD_BULK_CONFIRM`, default 10) asks for one confirmation
+covering the whole batch instead of firing per card.
+
+The dashboard is a separate process from the relay and has no dispatcher of its own, so a stage
+action triggered from the dashboard is written to a durable queue; the relay drains that queue on
+an interval (`NOVA_WORKBOARD_QUEUE_MS`), not instantly. `nova workboard run` queues the same way.
+
+### Live Updates on an Open Board
+
+An open board page refreshes itself two ways. Changes made from the dashboard itself arrive over
+the activity SSE stream immediately. Changes made by another process — a card an agent writes with
+`nova workboard card add`, a stage the relay's queue drainer fires — cannot: the event bus behind
+SSE is in-process. Those are picked up by a poll of a cheap per-board change marker
+(`GET /api/workboards/:id/rev`) every 10 seconds, so they appear within about that long rather
+than instantly. A change you made yourself is never reloaded on top of you: a successful drag
+adopts the marker its own write produced, and the card is additionally exempt from a reload for
+two poll intervals, so a drag never costs you your scroll position, a toast, or a second drag
+already in flight.
+
+### Connector-Bound Boards
+
+A board can be bound to a configured connector: `sync` pulls records from the connector's read
+action and upserts them onto cards, matched by external id. Pull never deletes — a record the
+remote stops returning is left on the board rather than removed, so a bad or partial pull can't
+wipe a board. On a bound board, moving a card to a stage that maps to a remote value **describes**
+the write back to that system (connector, action, and input) rather than performing it. Nothing
+performs it for you: the description is recorded in the board's event history (a `sync` event
+carrying `pendingPush`) and returned to the page, and you run it yourself — `nova connector run
+<id> <action> --input '{…}'` — when you want it applied. There is no queue behind it and no
+approval prompt in chat.
+
+### Editing a Board's Schema
+
+Adding a field to an existing board backfills every existing card with a `null` value for it.
+An edit is destructive when it can leave an existing card holding a value the new schema rejects:
+removing a field, retyping one, dropping an option from a `select` (or giving a `select` options
+where it had none), or marking a field `required`. A destructive edit needs an explicit
+confirmation; when confirmed, the card values as they stood before the edit are preserved in the
+board's event history rather than discarded, and every card is rewritten to fit the new schema so
+none is left permanently failing validation on its next edit.
+
+### System Boards
+
+`/kanban` (agent tasks) and `/tickets` (support tickets) are workboards rendered by the same
+engine, backed by their existing tables rather than the generic card store. Their schema and
+stages are locked — you can drag their cards between stages, but you cannot edit their fields or
+stage layout, and `nova workboard card add`/`add-many` refuse to write to them directly.
+
+A system board shows the 200 most recently updated rows of its table, but its stage counts come
+from a `COUNT(*)` over the whole table — so a stage showing fewer rows than it holds says so.
+`nova workboard query` cannot show the rest of one: it reads the generic card store, which a
+system board has no rows in.
+
+### Environment Variables
+
+| Variable | Default | Controls |
+|----------|---------|----------|
+| `WORKBOARD_BULK_CONFIRM` | `10` | Cards moved into an armed reactive stage at once above this count trigger one bulk confirmation instead of firing individually |
+| `NOVA_WORKBOARD_QUEUE_MS` | `45000` (floored at `30000`) | How often the relay drains the durable stage-action queue the dashboard writes to, in milliseconds |
 
 ---
 
