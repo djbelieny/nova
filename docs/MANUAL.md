@@ -1477,6 +1477,11 @@ engine, backed by their existing tables rather than the generic card store. Thei
 stages are locked — you can drag their cards between stages, but you cannot edit their fields or
 stage layout, and `nova workboard card add`/`add-many` refuse to write to them directly.
 
+A system board shows the 200 most recently updated rows of its table, but its stage counts come
+from a `COUNT(*)` over the whole table — so a stage showing fewer rows than it holds says so.
+`nova workboard query` cannot show the rest of one: it reads the generic card store, which a
+system board has no rows in.
+
 ### Environment Variables
 
 | Variable | Default | Controls |

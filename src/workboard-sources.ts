@@ -5,13 +5,31 @@
  */
 
 import type { StageDef } from "./workboards.ts";
-import type { CardSourceKind, DatabaseType, WorkboardCard } from "./db.ts";
+import type { CardSourceKind, DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 import { TICKET_COLUMNS, columnForStatus } from "./ticket-board.ts";
 
 export interface CardSource {
   readCards(db: DatabaseType, userId: string, boardId: string): WorkboardCard[];
+  /** Per-stage card count from a COUNT(*) over the whole underlying table. Kept separate from
+   * readCards because that read is capped: counting its result would make every stage report
+   * exactly what it happened to show, and a truncated board would look complete. */
+  countByStage(db: DatabaseType, userId: string): Record<string, number>;
   applyMove(db: DatabaseType, userId: string, cardId: string, toStage: string): boolean;
   stages(): StageDef[];
+}
+
+/** How many rows an adapter reads for the board view. Deliberately wider than the old /kanban
+ * page's default of 30 — a four-column board showing only 30 tasks would look empty. */
+export const ADAPTER_CARD_LIMIT = 200;
+
+/** Fold a table's raw statuses into stage counts using that adapter's status→stage mapping. */
+function foldCounts(byStatus: Record<string, number>, toStage: (status: string) => string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [status, n] of Object.entries(byStatus)) {
+    const key = toStage(status);
+    out[key] = (out[key] ?? 0) + n;
+  }
+  return out;
 }
 
 export const TASK_STAGES: StageDef[] = [
@@ -56,9 +74,10 @@ export function taskToCard(task: any, boardId: string): WorkboardCard {
 const AGENT_TASK_SOURCE: CardSource = {
   stages: () => TASK_STAGES,
   readCards(db, userId, boardId) {
-    // Deliberately wider than the old /kanban page's default of 30 — a four-column board
-    // showing only 30 tasks would look empty. Not an accident.
-    return db.getAgentTasksRecent({ userId, limit: 200 }).map((t: any) => taskToCard(t, boardId));
+    return db.getAgentTasksRecent({ userId, limit: ADAPTER_CARD_LIMIT }).map((t: any) => taskToCard(t, boardId));
+  },
+  countByStage(db, userId) {
+    return foldCounts(db.countAgentTasksByStatus(userId), stageForTaskStatus);
   },
   applyMove(db, userId, cardId, toStage) {
     const task = db.getTaskById(cardId, userId);
@@ -115,7 +134,10 @@ export function ticketToCard(ticket: any, boardId: string): WorkboardCard {
 const TICKET_SOURCE: CardSource = {
   stages: () => TICKET_STAGES,
   readCards(db, userId, boardId) {
-    return db.getRecentSupportTickets(userId, 200).map((t: any) => ticketToCard(t, boardId));
+    return db.getRecentSupportTickets(userId, ADAPTER_CARD_LIMIT).map((t: any) => ticketToCard(t, boardId));
+  },
+  countByStage(db, userId) {
+    return foldCounts(db.countSupportTicketsByStatus(userId), stageForTicketStatus);
   },
   applyMove(db, userId, cardId, toStage) {
     const ticket = db.getSupportTicket(userId, cardId);
@@ -130,4 +152,12 @@ export function getCardSource(kind: CardSourceKind): CardSource | null {
   if (kind === "agent_tasks") return AGENT_TASK_SOURCE;
   if (kind === "tickets") return TICKET_SOURCE;
   return null;
+}
+
+/** True card count for a board, whatever its cards are read from. Adapter-backed boards count the
+ * underlying table rather than the capped read, so a cap can never pass for the whole board. */
+export function boardCardCount(db: DatabaseType, userId: string, board: Workboard): number {
+  const source = getCardSource(board.source);
+  if (!source) return db.countWorkboardCards(board.scope, userId, board.id);
+  return Object.values(source.countByStage(db, userId)).reduce((sum, n) => sum + n, 0);
 }

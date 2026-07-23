@@ -4108,6 +4108,15 @@ export class Database {
     return all.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, limit);
   }
 
+  /** Task counts keyed by raw status, from COUNT(*). The agent-tasks workboard adapter folds these
+   * into stage counts; its own read is capped, so counting that read would undercount silently. */
+  countAgentTasksByStatus(userId: string): Record<string, number> {
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(`SELECT status, COUNT(*) AS n FROM agent_tasks WHERE user_id = ? GROUP BY status`)
+      .all(userId) as any[];
+    return Object.fromEntries(rows.map((r) => [r.status ?? "pending", r.n as number]));
+  }
+
   // ============================================================
   // Approvals (→ user DB)
   // ============================================================
@@ -5430,6 +5439,14 @@ export class Database {
     const udb = this.getUserDb(userId);
     const n = Math.max(1, Math.min(1000, Math.floor(limit)));
     return udb.db.query(`SELECT * FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC, created_at DESC LIMIT ?`).all(userId, n) as SupportTicket[];
+  }
+
+  /** Ticket counts keyed by raw status, from COUNT(*) — same reasoning as countAgentTasksByStatus. */
+  countSupportTicketsByStatus(userId: string): Record<string, number> {
+    const udb = this.getUserDb(userId);
+    const rows = udb.db.query(`SELECT status, COUNT(*) AS n FROM support_tickets WHERE user_id = ? GROUP BY status`)
+      .all(userId) as any[];
+    return Object.fromEntries(rows.map((r) => [r.status ?? "new", r.n as number]));
   }
 
   updateSupportTicket(userId: string, id: string, updates: Record<string, any>): void {

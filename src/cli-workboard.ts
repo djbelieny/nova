@@ -20,6 +20,7 @@ import { getDb, type DatabaseType, type Workboard, type WorkboardCard } from "./
 import { addCards, createBoard, moveCard, updateCard } from "./workboard-service.ts";
 import { buildStageRun } from "./workboard-reactive.ts";
 import { pullBoard } from "./workboard-sync.ts";
+import { boardCardCount } from "./workboard-sources.ts";
 import type { runConnectorAction } from "./connectors/registry.ts";
 import type { FieldDef, StageDef } from "./workboards.ts";
 
@@ -95,7 +96,9 @@ function runList(): number {
   const boards = db.listWorkboardsVisible(adminId(db));
   if (!boards.length) { console.log("  No workboards yet. Create one with `nova workboard create <name> --fields '<json>' --stages '<json>'`."); return 0; }
   for (const b of boards) {
-    const cards = db.countWorkboardCards(b.scope, b.userId, b.id);
+    // Adapter-aware: a system board has no rows in workboard_cards, so the card-table count
+    // would report 0 here while the dashboard showed a full board.
+    const cards = boardCardCount(db, b.userId, b);
     console.log(`  ${b.name} (${b.scope}) — ${b.stages.length} stages, ${cards} cards${b.reactive ? ", reactive" : ""}`);
   }
   return 0;

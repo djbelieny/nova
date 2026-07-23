@@ -10,9 +10,11 @@ import {
   taskToCard,
   ticketToCard,
   getCardSource,
+  boardCardCount,
+  ADAPTER_CARD_LIMIT,
 } from "../src/workboard-sources.ts";
 import { ensureSystemBoards } from "../src/workboard-service.ts";
-import { boardPayload, handleWorkboardApi } from "../src/dashboard-workboards.ts";
+import { boardPayload, handleWorkboardApi, renderWorkboard } from "../src/dashboard-workboards.ts";
 
 let seq = 0;
 function newUser() {
@@ -265,6 +267,42 @@ test("a ported board's payload uses the adapter's stages", () => {
   expect(payload.stages.map((s: any) => s.key)).toEqual(["pending", "in_progress", "completed", "blocked"]);
 });
 
+test("an adapter counts its own table per stage, so a stage past the read cap can say what it is hiding", () => {
+  const { db, userId } = newAdmin();
+  const { tasks } = ensureSystemBoards(db, userId);
+  const total = ADAPTER_CARD_LIMIT + 3;
+  for (let i = 0; i < total; i++) {
+    db.insertTask({ agent: "kai", description: `Task ${i}`, status: "pending", user_id: userId });
+  }
+
+  const payload = boardPayload(db, userId, tasks);
+  const pending = payload.stages.find((s: any) => s.key === "pending")!;
+  expect(pending.count).toBe(total);
+  expect(pending.shown).toBe(ADAPTER_CARD_LIMIT);
+  expect(boardCardCount(db, userId, tasks)).toBe(total);
+
+  const html = renderWorkboard(db, userId, tasks.id);
+  expect(html).toContain(`Showing ${ADAPTER_CARD_LIMIT} of ${total}`);
+  // `nova workboard query` reads workboard_cards, so it cannot show the rest of this board.
+  expect(html).not.toContain("nova workboard query");
+});
+
+test("a ticket adapter's stage counts fold raw statuses the same way its cards do", () => {
+  const { db, userId } = newAdmin();
+  const { tickets } = ensureSystemBoards(db, userId);
+  for (const status of ["new", "triaged", "resolving", "deployed"]) {
+    const id = db.insertSupportTicket({
+      user_id: userId, source: "resend", client_email: "a@client.com", subject: `S ${status}`, body_raw: "x",
+    });
+    db.updateSupportTicket(userId, id, { status });
+  }
+  const counts = getCardSource("tickets")!.countByStage(db, userId);
+  expect(counts.intake).toBe(2); // new + triaged both fold into intake
+  expect(counts.in_progress).toBe(1);
+  expect(counts.done).toBe(1);
+  expect(boardCardCount(db, userId, tickets)).toBe(4);
+});
+
 test("moving a system board card through the API writes to the task's status column, not a workboard card", async () => {
   const { db, userId } = newAdmin();
   const { tasks } = ensureSystemBoards(db, userId);
@@ -274,7 +312,7 @@ test("moving a system board card through the API writes to the task's status col
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ toStage: "completed" }),
   });
-  const res = await handleWorkboardApi(`/api/workboards/cards/${taskId}/move`, req, { db, userId });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${taskId}/move`, req, { db, userId, actorId: userId });
   expect(res!.status).toBe(200);
   const body = await res!.json();
   expect(body.card.stageKey).toBe("completed");
@@ -295,7 +333,7 @@ test("moving a system board card through the API writes to the ticket's status c
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ toStage: "done" }),
   });
-  const res = await handleWorkboardApi(`/api/workboards/cards/${ticketId}/move`, req, { db, userId });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${ticketId}/move`, req, { db, userId, actorId: userId });
   expect(res!.status).toBe(200);
   const body = await res!.json();
   expect(body.card.stageKey).toBe("done");
@@ -317,7 +355,7 @@ test("moving a system board card to a stage the board does not have is refused, 
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ toStage: "resolved" }),
   });
-  const res = await handleWorkboardApi(`/api/workboards/cards/${ticketId}/move`, req, { db, userId });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${ticketId}/move`, req, { db, userId, actorId: userId });
   expect(res!.status).toBe(400);
   const body = await res!.json();
   expect(body.errors.join(" ")).toContain('unknown stage "resolved"');
@@ -333,7 +371,7 @@ test("moving an agent-task card to a stage the board does not have is refused, l
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ toStage: "archived" }),
   });
-  const res = await handleWorkboardApi(`/api/workboards/cards/${taskId}/move`, req, { db, userId });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${taskId}/move`, req, { db, userId, actorId: userId });
   expect(res!.status).toBe(400);
   expect(db.getTaskById(taskId, userId)!.status).toBe("done");
 });
@@ -346,7 +384,7 @@ test("a schema-edit attempt against a system board is refused", async () => {
     method: "PATCH", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: "renamed-board" }),
   });
-  const res = await handleWorkboardApi(`/api/workboards/${tasks.id}`, req, { db, userId });
+  const res = await handleWorkboardApi(`/api/workboards/${tasks.id}`, req, { db, userId, actorId: userId });
   expect(res!.status).toBe(400);
   const body = await res!.json();
   expect(body.errors.join(" ")).toMatch(/locked/);
@@ -360,7 +398,7 @@ test("adding a card directly to a system board is refused and writes no workboar
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ stageKey: "pending", fields: { agent: "kai", description: "Sneak in" } }),
   });
-  const res = await handleWorkboardApi(`/api/workboards/${tasks.id}/cards`, req, { db, userId });
+  const res = await handleWorkboardApi(`/api/workboards/${tasks.id}/cards`, req, { db, userId, actorId: userId });
   expect(res!.status).toBeGreaterThanOrEqual(400);
   expect(res!.status).toBeLessThan(500);
   const body = await res!.json();

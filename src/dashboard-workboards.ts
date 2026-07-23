@@ -7,7 +7,7 @@
 import { addCards, archiveCard, createBoard, moveCard, updateCard, validateDefinition } from "./workboard-service.ts";
 import { fireOnEnter, needsBulkConfirm } from "./workboard-reactive.ts";
 import { buildPush, type ConnectorBinding } from "./workboard-sync.ts";
-import { getCardSource } from "./workboard-sources.ts";
+import { boardCardCount, getCardSource } from "./workboard-sources.ts";
 import { hasCapability } from "./permissions.ts";
 import { conformCardFields, diffSchema } from "./workboards.ts";
 import type { DispatchAgentFn } from "./automation-engine.ts";
@@ -53,12 +53,7 @@ export function boardRevision(db: DatabaseType, userId: string, board: Workboard
   return `${cards.length}:${Bun.hash(shape).toString(36)}`;
 }
 
-/** True card count for a board, whatever its cards are read from. */
-export function boardCardCount(db: DatabaseType, userId: string, board: Workboard): number {
-  const source = getCardSource(board.source);
-  if (source) return source.readCards(db, userId, board.id).length;
-  return db.countWorkboardCards(board.scope, userId, board.id);
-}
+export { boardCardCount };
 
 /** Everything a board page needs in one payload. Counts and totals come from COUNT(*)/SUM() over
  * the whole board; only the card lists are capped, and each stage reports how much it is showing
@@ -73,9 +68,13 @@ export function boardPayload(db: DatabaseType, userId: string, board: Workboard)
   let totals: Record<string, number> = {};
   if (source) {
     for (const c of source.readCards(db, userId, board.id)) (byStage[c.stageKey] ??= []).push(c);
-    for (const [key, cards] of Object.entries(byStage)) {
-      counts[key] = cards.length;
-      if (money) totals[key] = cards.reduce((sum, c) => sum + (Number(c.fields[money.key]) || 0), 0);
+    // Counts come from the underlying table, never from the capped read above — otherwise
+    // `shown === count` by construction and a truncated stage could never say so.
+    counts = source.countByStage(db, userId);
+    if (money) {
+      for (const [key, cards] of Object.entries(byStage)) {
+        totals[key] = cards.reduce((sum, c) => sum + (Number(c.fields[money.key]) || 0), 0);
+      }
     }
   } else {
     counts = db.countWorkboardCardsByStage(board.scope, userId, board.id);
@@ -616,6 +615,11 @@ export function renderWorkboard(db: DatabaseType, userId: string, boardId: strin
 
   const payload = boardPayload(db, userId, board);
   const primaries = board.fields.filter((f) => f.primary).slice(0, 3);
+  // `nova workboard query` reads workboard_cards, so it can't show the rest of an adapter-backed
+  // board — pointing a viewer at it there would be the same empty promise the marker just fixed.
+  const seeTheRest = getCardSource(board.source)
+    ? "this board reads from another table and shows only its most recently updated rows"
+    : "open the board's stage in the CLI (<code>nova workboard query</code>) to see the rest";
 
   const columns = payload.stages.map((s) => {
     const cards = payload.cards[s.key] ?? [];
@@ -626,7 +630,7 @@ export function renderWorkboard(db: DatabaseType, userId: string, boardId: strin
     }).join("");
     const totalHtml = s.total !== null ? ` <span class="total">${s.total.toLocaleString("en-US")}</span>` : "";
     const moreHtml = s.shown < s.count
-      ? `<div class="f more">Showing ${s.shown} of ${s.count} — open the board's stage in the CLI (<code>nova workboard query</code>) to see the rest</div>`
+      ? `<div class="f more">Showing ${s.shown} of ${s.count} — ${seeTheRest}</div>`
       : "";
     return `<div class="stage" data-stage="${esc(s.key)}">
       <h2><span>${esc(s.label)}${s.armed ? ' <span class="armed">⚡</span>' : ""}</span>
