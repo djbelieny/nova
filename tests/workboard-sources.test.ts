@@ -11,6 +11,8 @@ import {
   ticketToCard,
   getCardSource,
 } from "../src/workboard-sources.ts";
+import { ensureSystemBoards } from "../src/workboard-service.ts";
+import { boardPayload, handleWorkboardApi } from "../src/dashboard-workboards.ts";
 
 let seq = 0;
 function newUser() {
@@ -238,4 +240,81 @@ test("agent_tasks adapter applyMove falls back to pending status for an unrecogn
   expect(ok).toBe(true);
   const task = db.getTaskById(taskId, userId)!;
   expect(task.status).toBe("pending");
+});
+
+function newAdmin() {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wbp-${Date.now()}-${seq++}`, name: "P User", role: "admin" });
+  return { db, userId: u.id };
+}
+
+test("ensureSystemBoards creates both boards and is idempotent", () => {
+  const { db, userId } = newAdmin();
+  const first = ensureSystemBoards(db, userId);
+  const second = ensureSystemBoards(db, userId);
+  expect(second.tasks.id).toBe(first.tasks.id);
+  expect(second.tickets.id).toBe(first.tickets.id);
+  expect(first.tasks.system).toBe(true);
+  expect(first.tickets.system).toBe(true);
+});
+
+test("a ported board's payload uses the adapter's stages", () => {
+  const { db, userId } = newAdmin();
+  const { tasks } = ensureSystemBoards(db, userId);
+  const payload = boardPayload(db, userId, tasks);
+  expect(payload.stages.map((s: any) => s.key)).toEqual(["pending", "in_progress", "completed", "blocked"]);
+});
+
+test("moving a system board card through the API writes to the task's status column, not a workboard card", async () => {
+  const { db, userId } = newAdmin();
+  const { tasks } = ensureSystemBoards(db, userId);
+  const taskId = db.insertTask({ agent: "kai", description: "Ship it", status: "pending", user_id: userId });
+
+  const req = new Request(`http://x/api/workboards/cards/${taskId}/move`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ toStage: "completed" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${taskId}/move`, req, { db, userId });
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.card.stageKey).toBe("completed");
+
+  const task = db.getTaskById(taskId, userId)!;
+  expect(task.status).toBe("done");
+  expect(db.listWorkboardCards(tasks.scope, userId, tasks.id).length).toBe(0);
+});
+
+test("moving a system board card through the API writes to the ticket's status column, not a workboard card", async () => {
+  const { db, userId } = newAdmin();
+  const { tickets } = ensureSystemBoards(db, userId);
+  const ticketId = db.insertSupportTicket({
+    user_id: userId, source: "resend", client_email: "a@client.com", subject: "Help me", body_raw: "It is broken",
+  });
+
+  const req = new Request(`http://x/api/workboards/cards/${ticketId}/move`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ toStage: "done" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${ticketId}/move`, req, { db, userId });
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.card.stageKey).toBe("done");
+
+  const ticket = db.getSupportTicket(userId, ticketId)!;
+  expect(ticket.status).toBe("deployed");
+  expect(db.listWorkboardCards(tickets.scope, userId, tickets.id).length).toBe(0);
+});
+
+test("a schema-edit attempt against a system board is refused", async () => {
+  const { db, userId } = newAdmin();
+  const { tasks } = ensureSystemBoards(db, userId);
+
+  const req = new Request(`http://x/api/workboards/${tasks.id}`, {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "renamed-board" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${tasks.id}`, req, { db, userId });
+  expect(res!.status).toBe(400);
+  const body = await res!.json();
+  expect(body.errors.join(" ")).toMatch(/locked/);
 });

@@ -10,6 +10,7 @@
 import { validateCardFields, planMove, positionBetween, type FieldDef, type StageDef, type OnEnterAction, type WorkboardDef } from "./workboards.ts";
 import type { CardOrigin, DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 import { emit } from "./events.ts";
+import { TASK_STAGES, TICKET_STAGES } from "./workboard-sources.ts";
 
 export type ServiceResult<T> =
   | { ok: true; value: T; errors?: never }
@@ -190,4 +191,34 @@ export function archiveCard(
     data: { boardId: board.id, cardId, archived: true },
   });
   return { ok: true, value: updated };
+}
+
+// Field keys must match what workboard-sources.ts's taskToCard/ticketToCard actually put in
+// card.fields — renderWorkboard reads primary fields straight off the card by key.
+const TASK_FIELDS: FieldDef[] = [
+  { key: "agent", label: "Agent", type: "agent", primary: true },
+  { key: "description", label: "Description", type: "longtext" },
+  { key: "result", label: "Result", type: "longtext" },
+];
+
+const TICKET_FIELDS: FieldDef[] = [
+  { key: "requester", label: "Requester", type: "text", primary: true },
+  { key: "email", label: "Email", type: "email" },
+  { key: "classification", label: "Classification", type: "text" },
+  { key: "severity", label: "Severity", type: "text" },
+];
+
+/** Create the two system boards if absent. Safe to call on every dashboard request. */
+export function ensureSystemBoards(db: DatabaseType, userId: string): { tasks: Workboard; tickets: Workboard } {
+  const make = (name: string, purpose: string, source: 'agent_tasks' | 'tickets', fields: FieldDef[], stages: StageDef[]) => {
+    const existing = db.findWorkboard(userId, name);
+    if (existing) return existing;
+    return db.insertWorkboard({
+      scope: "personal", userId, name, purpose, source, fields, stages, reactive: false, system: true,
+    });
+  };
+  return {
+    tasks: make("agent-tasks", "What every agent is working on", "agent_tasks", TASK_FIELDS, TASK_STAGES),
+    tickets: make("support-tickets", "Support tickets across channels", "tickets", TICKET_FIELDS, TICKET_STAGES),
+  };
 }

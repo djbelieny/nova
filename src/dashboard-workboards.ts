@@ -7,6 +7,7 @@
 import { addCards, archiveCard, createBoard, moveCard, updateCard } from "./workboard-service.ts";
 import { fireOnEnter, needsBulkConfirm } from "./workboard-reactive.ts";
 import { buildPush, type ConnectorBinding } from "./workboard-sync.ts";
+import { getCardSource } from "./workboard-sources.ts";
 import type { DispatchAgentFn } from "./automation-engine.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
@@ -18,7 +19,10 @@ function json(data: unknown, status = 200): Response {
 
 /** Everything a board page needs in one payload. */
 export function boardPayload(db: DatabaseType, userId: string, board: Workboard) {
-  const cards = db.listWorkboardCards(board.scope, userId, board.id);
+  const source = getCardSource(board.source);
+  const cards = source
+    ? source.readCards(db, userId, board.id)
+    : db.listWorkboardCards(board.scope, userId, board.id);
   const byStage: Record<string, WorkboardCard[]> = {};
   for (const s of board.stages) byStage[s.key] = [];
   for (const c of cards) (byStage[c.stageKey] ??= []).push(c);
@@ -45,6 +49,19 @@ function findCardBoard(db: DatabaseType, userId: string, cardId: string): { boar
   for (const board of db.listWorkboardsVisible(userId)) {
     const card = db.getWorkboardCard(board.scope, userId, cardId);
     if (card && card.boardId === board.id) return { board, card };
+  }
+  return null;
+}
+
+/** Same lookup for boards whose cards are adapted from another table (source !== 'cards') —
+ * those rows never exist in workboard_cards, so findCardBoard alone can't see them. Used only
+ * by the move route: adding/patching/archiving system-board cards is not part of this surface. */
+function findAdapterCardBoard(db: DatabaseType, userId: string, cardId: string): { board: Workboard; card: WorkboardCard } | null {
+  for (const board of db.listWorkboardsVisible(userId)) {
+    const source = getCardSource(board.source);
+    if (!source) continue;
+    const card = source.readCards(db, userId, board.id).find((c) => c.id === cardId);
+    if (card) return { board, card };
   }
   return null;
 }
@@ -99,11 +116,22 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
 
   const moveMatch = path.match(/^\/api\/workboards\/cards\/([\w-]+)\/move$/);
   if (moveMatch && req.method === "POST") {
-    const found = findCardBoard(db, userId, moveMatch[1]);
+    const found = findCardBoard(db, userId, moveMatch[1]) ?? findAdapterCardBoard(db, userId, moveMatch[1]);
     if (!found) return json({ errors: ["no such card"] }, 404);
     const parsed = await body(req);
     if (!parsed.ok) return badJson();
     const input = parsed.value;
+
+    // System boards (source !== 'cards') are neither reactive nor connector-bound — route the
+    // move straight through the adapter and skip fireOnEnter/enqueue/connector-push entirely.
+    const src = getCardSource(found.board.source);
+    if (src) {
+      const ok = src.applyMove(db, userId, moveMatch[1], input.toStage);
+      return ok
+        ? json({ card: { ...found.card, stageKey: input.toStage }, fires: false, pendingPush: null })
+        : json({ errors: ["could not move this card"] }, 400);
+    }
+
     const r = moveCard(db, userId, found.board, moveMatch[1], input.toStage, userId, {
       beforeId: input.beforeId, afterId: input.afterId,
     });
