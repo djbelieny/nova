@@ -1378,6 +1378,11 @@ Every board declares its own fields — two boards can look completely different
 by default; a board can optionally be made **reactive**, and a reactive stage can carry an action
 that runs automatically when a card enters it.
 
+Reading a board through the dashboard API needs only a signed-in session. Creating a board,
+writing or moving a card, and editing a schema need the `workboard.manage` capability — the same
+shape of gate playbooks and automations use, because an armed stage can dispatch an agent. Admins
+have it implicitly; grant it to a member with `nova access grant <@user> workboard.manage`.
+
 ### Field Types
 
 | Type | Notes |

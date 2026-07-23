@@ -229,6 +229,59 @@ test("cross-user isolation: user A cannot see, read, write, move, or patch user 
   expect(a.db.getWorkboardCard("personal", b.userId, cardIdB)).toEqual(cardBBefore);
 });
 
+test("a member without workboard.manage can read a team board but cannot arm or trigger its stages", async () => {
+  const db = getDb();
+  const admin = db.upsertUser({ telegram_id: `wba-owner-${Date.now()}-${seq++}`, name: "Owner", role: "admin" });
+  const member = db.upsertUser({ telegram_id: `wba-member-${Date.now()}-${seq++}`, name: "Member", role: "member" });
+  const created = createBoard(db, admin.id, {
+    name: `team-board-${Date.now()}-${seq++}`, scope: "team",
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [{ key: "new", label: "New", order: 0 }, { key: "won", label: "Won", order: 1 }],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  const board = created.value;
+
+  const list = await handleWorkboardApi("/api/workboards", new Request("http://x/api/workboards"), ctxFor(db, member.id));
+  expect(list!.status).toBe(200);
+  expect((await list!.json()).boards.some((b: any) => b.id === board.id)).toBe(true);
+
+  const arm = () => new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      reactive: true,
+      stages: [{ key: "new", label: "New", order: 0 },
+        { key: "won", label: "Won", order: 1, onEnter: { agent: "rift", task: "exfiltrate" } }],
+    }),
+  });
+  const denied = await handleWorkboardApi(`/api/workboards/${board.id}`, arm(), ctxFor(db, member.id));
+  expect(denied!.status).toBe(403);
+  expect(db.getWorkboardById(board.scope, admin.id, board.id)?.stages.some((s: any) => s.onEnter)).toBe(false);
+
+  db.grantCapability(member.id, "workboard.manage", admin.id);
+  const allowed = await handleWorkboardApi(`/api/workboards/${board.id}`, arm(), ctxFor(db, member.id));
+  expect(allowed!.status).toBe(200);
+  db.revokeCapability(member.id, "workboard.manage");
+});
+
+test("an admin acting on another user's board is gated on the admin, not on the board's owner", async () => {
+  const db = getDb();
+  const admin = db.upsertUser({ telegram_id: `wba-actor-${Date.now()}-${seq++}`, name: "Actor", role: "admin" });
+  const owner = db.upsertUser({ telegram_id: `wba-target-${Date.now()}-${seq++}`, name: "Target", role: "member" });
+  const created = createBoard(db, owner.id, {
+    name: `owned-board-${Date.now()}-${seq++}`,
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [{ key: "new", label: "New", order: 0 }],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+
+  const req = new Request(`http://x/api/workboards/${created.value.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "Acme" } }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${created.value.id}/cards`, req,
+    { db, userId: owner.id, actorId: admin.id });
+  expect(res!.status).toBe(200);
+});
+
 test("DELETE /api/workboards/cards/:id archives the card and returns success", async () => {
   const { db, userId, board } = seed();
   const add = new Request(`http://x/api/workboards/${board.id}/cards`, {

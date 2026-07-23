@@ -8,11 +8,14 @@ import { addCards, archiveCard, createBoard, moveCard, updateCard, validateDefin
 import { fireOnEnter, needsBulkConfirm } from "./workboard-reactive.ts";
 import { buildPush, type ConnectorBinding } from "./workboard-sync.ts";
 import { getCardSource } from "./workboard-sources.ts";
+import { hasCapability } from "./permissions.ts";
 import { conformCardFields, diffSchema } from "./workboards.ts";
 import type { DispatchAgentFn } from "./automation-engine.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
-export interface WorkboardApiCtx { db: DatabaseType; userId: string; dispatchAgent?: DispatchAgentFn; }
+/** `userId` owns the data being read or written; `actorId` is who is asking (an admin may act on
+ * another user's boards via ?user_id=). Capability checks use the actor, never the owner. */
+export interface WorkboardApiCtx { db: DatabaseType; userId: string; actorId?: string; dispatchAgent?: DispatchAgentFn; }
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
@@ -95,6 +98,8 @@ async function body(req: Request): Promise<BodyResult> {
 
 const badJson = () => json({ errors: ["request body is not valid JSON"] }, 400);
 
+const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
 /** Page size for walking every card on a board during a schema edit (snapshot + backfill).
  * Small on purpose: tests exercise paging against it directly instead of seeding thousands
  * of cards to hit a production-sized page. */
@@ -122,6 +127,14 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
   if (!path.startsWith("/api/workboards")) return null;
   const { db, userId } = ctx;
   if (!isValidUserId(userId)) return json({ errors: [NO_PERSONAL_ACCOUNT_MSG] }, 400);
+
+  // Every team board is visible to every user (db.listWorkboardsVisible), and an armed reactive
+  // stage is functionally an automation — so a write here can arm and trigger an autonomous agent
+  // dispatch. Gate writes the way /api/automations and /api/playbooks gate theirs; reads stay open
+  // to any authenticated session, like their GETs.
+  if (MUTATING_METHODS.has(req.method) && !hasCapability(db, ctx.actorId ?? userId, "workboard.manage")) {
+    return json({ errors: ["permission denied — workboard.manage is required to change a board"] }, 403);
+  }
 
   if (path === "/api/workboards" && req.method === "GET") {
     const boards = db.listWorkboardsVisible(userId).map((b) => ({

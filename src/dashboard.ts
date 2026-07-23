@@ -8524,7 +8524,7 @@ const server = Bun.serve({
     if (path.startsWith("/api/workboards")) {
       const wbUserId = userId || me?.userId;
       if (!wbUserId) return jsonResponse({ error: "user_id required" }, 400);
-      const handled = await handleWorkboardApi(path, req, { db: getDb(), userId: wbUserId });
+      const handled = await handleWorkboardApi(path, req, { db: getDb(), userId: wbUserId, actorId: me?.userId });
       if (handled) return handled;
     }
 
