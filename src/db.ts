@@ -5855,6 +5855,21 @@ export class Database {
     return rows.map(mapWorkboardCard);
   }
 
+  /**
+   * A cheap change marker for a board: card count, newest card write, and the board's own
+   * updated_at. The event bus behind SSE is in-process, so a card an agent writes through the CLI
+   * or a stage the relay's drain touches never reaches an open board page. Polling this marker is
+   * how a dashboard client notices a write made by another process. Archived cards are counted so
+   * an archive registers as a change.
+   */
+  workboardRevision(scope: WorkboardScope, userId: string, boardId: string): string {
+    const h = this.wbHandle(scope, userId);
+    const cards = h.query(`SELECT COUNT(*) AS n, MAX(updated_at) AS m FROM workboard_cards WHERE board_id = ?`)
+      .get(boardId) as any;
+    const board = h.query(`SELECT updated_at FROM workboards WHERE id = ?`).get(boardId) as any;
+    return `${cards?.n ?? 0}:${cards?.m ?? ""}:${board?.updated_at ?? ""}`;
+  }
+
   /** Live card count for a board. From COUNT(*), so it stays right on a board bigger than any
    * page a caller reads — a `.length` on a capped read would silently undercount. */
   countWorkboardCards(scope: WorkboardScope, userId: string, boardId: string): number {

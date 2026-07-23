@@ -43,6 +43,16 @@ function totalsField(board: Workboard) {
   return board.fields.find((f) => f.type === "money" || f.type === "number") ?? null;
 }
 
+/** Change marker for a board, whatever its cards are read from. Adapter boards have no rows in
+ * workboard_cards, so theirs is derived from the cards the adapter currently returns. */
+export function boardRevision(db: DatabaseType, userId: string, board: Workboard): string {
+  const source = getCardSource(board.source);
+  if (!source) return db.workboardRevision(board.scope, userId, board.id);
+  const cards = source.readCards(db, userId, board.id);
+  const shape = cards.map((c) => `${c.id}${c.stageKey}${c.updatedAt ?? ""}`).join(",");
+  return `${cards.length}:${Bun.hash(shape).toString(36)}`;
+}
+
 /** True card count for a board, whatever its cards are read from. */
 export function boardCardCount(db: DatabaseType, userId: string, board: Workboard): number {
   const source = getCardSource(board.source);
@@ -329,6 +339,13 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     return json({ card: r.value });
   }
 
+  const revMatch = path.match(/^\/api\/workboards\/([\w-]+)\/rev$/);
+  if (revMatch && req.method === "GET") {
+    const board = findBoardById(db, userId, revMatch[1]);
+    if (!board) return json({ errors: ["no such board"] }, 404);
+    return json({ rev: boardRevision(db, userId, board) });
+  }
+
   const boardMatch = path.match(/^\/api\/workboards\/([\w-]+)$/);
   if (boardMatch && req.method === "GET") {
     const board = findBoardById(db, userId, boardMatch[1]);
@@ -467,16 +484,21 @@ export function renderWorkboardIndex(db: DatabaseType, userId: string): string {
     <div class="grid">${tiles}</div>`);
 }
 
+/** How often an open board asks whether another process changed it. */
+export const REV_POLL_MS = 10000;
+
 /**
  * Client script is templated per-board so the SSE handler can scope reloads to the board the
- * page was actually rendered for. `boardId` is embedded as a JS string literal (not HTML-escaped
- * — this lands inside an inline <script>, not an HTML attribute); "</" is neutered so a board id
- * can never prematurely close the surrounding <script> tag.
+ * page was actually rendered for. `boardId` and `rev` are embedded as JS string literals (not
+ * HTML-escaped — this lands inside an inline <script>, not an HTML attribute); "</" is neutered
+ * so neither can prematurely close the surrounding <script> tag.
  */
-export function boardScript(boardId: string): string {
-  const boardIdLiteral = JSON.stringify(boardId).replace(/<\//g, "<\\/");
+export function boardScript(boardId: string, rev = ""): string {
+  const literal = (s: string) => JSON.stringify(s).replace(/<\//g, "<\\/");
+  const boardIdLiteral = literal(boardId);
   return `
   var BOARD_ID=${boardIdLiteral};
+  var REV=${literal(rev)};
   function showErr(msg){var e=document.getElementById('err');e.textContent=msg;e.style.display='block';
     setTimeout(function(){e.style.display='none'},4000);}
   var dragged=null;
@@ -521,6 +543,29 @@ export function boardScript(boardId: string): string {
     });
   });
   var lastReload=0;
+  function movedRecently(){
+    var now=Date.now();
+    for(var k in ownMoves){if(now-ownMoves[k]<5000)return true;}
+    return false;
+  }
+  // SSE only carries events emitted in the dashboard's OWN process. A card an agent writes via the
+  // CLI, or a stage the relay's drain touches, is invisible to it — so poll a cheap change marker
+  // too. Adopting the new marker without reloading while our own write is settling keeps a drag
+  // from bouncing the page.
+  setInterval(function(){
+    fetch('/api/workboards/'+encodeURIComponent(BOARD_ID)+'/rev')
+     .then(function(r){return r.json();})
+     .then(function(b){
+       if(!b||!b.rev||b.rev===REV)return;
+       REV=b.rev;
+       if(movedRecently())return;
+       var now=Date.now();
+       if(now-lastReload<3000)return;
+       lastReload=now;
+       location.reload();
+     })
+     .catch(function(){});
+  },${REV_POLL_MS});
   var es=new EventSource('/api/activity/stream');
   es.addEventListener('message',function(ev){
     try{
@@ -567,5 +612,5 @@ export function renderWorkboard(db: DatabaseType, userId: string, boardId: strin
 
   return shell(board.name, `<h1>${esc(board.name)}</h1>
     <div class="sub">${esc(board.purpose ?? "")} · <a href="/workboards">all workboards</a></div>
-    <div class="stages">${columns}</div>`, boardScript(board.id));
+    <div class="stages">${columns}</div>`, boardScript(board.id, boardRevision(db, userId, board)));
 }

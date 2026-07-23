@@ -1439,14 +1439,26 @@ The dashboard is a separate process from the relay and has no dispatcher of its 
 action triggered from the dashboard is written to a durable queue; the relay drains that queue on
 an interval (`NOVA_WORKBOARD_QUEUE_MS`), not instantly. `nova workboard run` queues the same way.
 
+### Live Updates on an Open Board
+
+An open board page refreshes itself two ways. Changes made from the dashboard itself arrive over
+the activity SSE stream immediately. Changes made by another process — a card an agent writes with
+`nova workboard card add`, a stage the relay's queue drainer fires — cannot: the event bus behind
+SSE is in-process. Those are picked up by a poll of a cheap per-board change marker
+(`GET /api/workboards/:id/rev`) every 10 seconds, so they appear within about that long rather
+than instantly. A change you made yourself is never reloaded on top of you.
+
 ### Connector-Bound Boards
 
 A board can be bound to a configured connector: `sync` pulls records from the connector's read
 action and upserts them onto cards, matched by external id. Pull never deletes — a record the
 remote stops returning is left on the board rather than removed, so a bad or partial pull can't
 wipe a board. On a bound board, moving a card to a stage that maps to a remote value **describes**
-the write back to that system (connector, action, and input) rather than performing it; that
-description goes through the normal approval gate like any other consequential action.
+the write back to that system (connector, action, and input) rather than performing it. Nothing
+performs it for you: the description is recorded in the board's event history (a `sync` event
+carrying `pendingPush`) and returned to the page, and you run it yourself — `nova connector run
+<id> <action> --input '{…}'` — when you want it applied. There is no queue behind it and no
+approval prompt in chat.
 
 ### Editing a Board's Schema
 

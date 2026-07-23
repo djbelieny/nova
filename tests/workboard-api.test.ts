@@ -282,6 +282,30 @@ test("an admin acting on another user's board is gated on the admin, not on the 
   expect(res!.status).toBe(200);
 });
 
+test("GET /api/workboards/:id/rev changes when another process writes a card, so an open board can notice", async () => {
+  const { db, userId, board } = seed();
+  const revReq = () => new Request(`http://x/api/workboards/${board.id}/rev`);
+  const first = await (await handleWorkboardApi(`/api/workboards/${board.id}/rev`, revReq(), ctxFor(db, userId)))!.json();
+  expect(typeof first.rev).toBe("string");
+
+  const unchanged = await (await handleWorkboardApi(`/api/workboards/${board.id}/rev`, revReq(), ctxFor(db, userId)))!.json();
+  expect(unchanged.rev).toBe(first.rev);
+
+  // Written straight through the facade — what `nova workboard card add` does from its own process.
+  db.insertWorkboardCards(board.scope, userId, [{
+    boardId: board.id, stageKey: "new", title: "From the CLI", fields: { company: "CLI Co" }, origin: "agent" as const,
+  }]);
+  const after = await (await handleWorkboardApi(`/api/workboards/${board.id}/rev`, revReq(), ctxFor(db, userId)))!.json();
+  expect(after.rev).not.toBe(first.rev);
+});
+
+test("GET /api/workboards/:id/rev for a board this user cannot see is a 404", async () => {
+  const { a, b } = seedTwoUsers();
+  const res = await handleWorkboardApi(`/api/workboards/${b.board.id}/rev`,
+    new Request(`http://x/api/workboards/${b.board.id}/rev`), ctxFor(a.db, a.userId));
+  expect(res!.status).toBe(404);
+});
+
 test("DELETE /api/workboards/cards/:id archives the card and returns success", async () => {
   const { db, userId, board } = seed();
   const add = new Request(`http://x/api/workboards/${board.id}/cards`, {
