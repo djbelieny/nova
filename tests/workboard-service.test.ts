@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
-import { createBoard, addCards, moveCard, toDef } from "../src/workboard-service.ts";
+import { createBoard, addCards, moveCard, updateCard, toDef } from "../src/workboard-service.ts";
+import { addListener, removeListener, type NovaEvent } from "../src/events.ts";
 
 let seq = 0;
 function newUser() {
@@ -143,4 +144,77 @@ test("moveCard with an explicit beforeId/afterId hint still slots between those 
   const idxMoved = ids.indexOf(moving.value[0].id);
   expect(idxMoved).toBeGreaterThan(idxA);
   expect(idxMoved).toBeLessThan(idxB);
+});
+
+test("addCards emits one workboard.cards.created event per batch, not one per card", () => {
+  const { db, userId, board } = seed();
+  const events: NovaEvent[] = [];
+  const listener = (e: NovaEvent) => events.push(e);
+  addListener(listener);
+  try {
+    const r = addCards(db, userId, board, "new", [
+      { fields: { company: "Acme" } },
+      { fields: { company: "Globex" } },
+      { fields: { company: "Initech" } },
+    ], "agent");
+    expect(r.ok).toBe(true);
+    const created = events.filter((e) => e.type === "workboard.cards.created");
+    expect(created.length).toBe(1);
+    expect(created[0].data.boardId).toBe(board.id);
+    expect(created[0].data.count).toBe(3);
+    expect(created[0].level).toBe("info");
+    expect(created[0].userId).toBe(userId);
+  } finally {
+    removeListener(listener);
+  }
+});
+
+test("moveCard emits a workboard.card.moved event with boardId and cardId", () => {
+  const { db, userId, board } = seed();
+  const added = addCards(db, userId, board, "new", [{ fields: { company: "Acme" } }], "agent");
+  if (!added.ok) throw new Error("setup failed");
+
+  const events: NovaEvent[] = [];
+  const listener = (e: NovaEvent) => events.push(e);
+  addListener(listener);
+  try {
+    const r = moveCard(db, userId, board, added.value[0].id, "nurture", userId);
+    expect(r.ok).toBe(true);
+    const moved = events.filter((e) => e.type === "workboard.card.moved");
+    expect(moved.length).toBe(1);
+    expect(moved[0].data.boardId).toBe(board.id);
+    expect(moved[0].data.cardId).toBe(added.value[0].id);
+    expect(moved[0].level).toBe("info");
+    expect(moved[0].userId).toBe(userId);
+  } finally {
+    removeListener(listener);
+  }
+});
+
+test("updateCard persists the fields, logs an updated event, and emits workboard.card.updated", () => {
+  const { db, userId, board } = seed();
+  const added = addCards(db, userId, board, "new", [{ fields: { company: "Acme", score: 10 } }], "agent");
+  if (!added.ok) throw new Error("setup failed");
+  const card = added.value[0];
+
+  const events: NovaEvent[] = [];
+  const listener = (e: NovaEvent) => events.push(e);
+  addListener(listener);
+  try {
+    const r = updateCard(db, userId, board, card, { fields: { score: 90 } }, userId);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.fields.score).toBe(90);
+
+    const dbEvents = db.listWorkboardEvents("personal", userId, board.id);
+    expect(dbEvents.some((e) => e.kind === "updated")).toBe(true);
+
+    const updated = events.filter((e) => e.type === "workboard.card.updated");
+    expect(updated.length).toBe(1);
+    expect(updated[0].data.boardId).toBe(board.id);
+    expect(updated[0].data.cardId).toBe(card.id);
+    expect(updated[0].level).toBe("info");
+    expect(updated[0].userId).toBe(userId);
+  } finally {
+    removeListener(listener);
+  }
 });

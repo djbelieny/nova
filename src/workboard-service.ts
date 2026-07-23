@@ -9,6 +9,7 @@
 
 import { validateCardFields, planMove, positionBetween, type FieldDef, type StageDef, type OnEnterAction, type WorkboardDef } from "./workboards.ts";
 import type { CardOrigin, DatabaseType, Workboard, WorkboardCard } from "./db.ts";
+import { emit } from "./events.ts";
 
 export type ServiceResult<T> =
   | { ok: true; value: T; errors?: never }
@@ -95,6 +96,10 @@ export function addCards(
       boardId: board.id, cardId: c.id, kind: "created", toStage: stageKey, actor: origin === "user" ? userId : origin,
     });
   }
+  emit({
+    type: "workboard.cards.created", level: "info", userId,
+    data: { boardId: board.id, stageKey, count: cards.length, cardIds: cards.map((c) => c.id) },
+  });
   return { ok: true, value: cards };
 }
 
@@ -136,5 +141,51 @@ export function moveCard(
   db.insertWorkboardEvent(board.scope, userId, {
     boardId: board.id, cardId, kind: "moved", fromStage: decision.fromStage, toStage, actor,
   });
+  emit({
+    type: "workboard.card.moved", level: "info", userId,
+    data: { boardId: board.id, cardId, fromStage: decision.fromStage, toStage },
+  });
   return { ok: true, value: { card: updated, fires: decision.fires } };
+}
+
+export interface UpdateCardInput { fields?: Record<string, unknown>; title?: string; }
+
+/** Validates and applies a field/title edit. Card writes and their history/notification always
+ * accompany each other, so callers should not build their own version of this. */
+export function updateCard(
+  db: DatabaseType, userId: string, board: Workboard, card: WorkboardCard,
+  input: UpdateCardInput, actor: string
+): ServiceResult<WorkboardCard> {
+  const merged = { ...card.fields, ...(input.fields ?? {}) };
+  const result = validateCardFields(board.fields, merged);
+  if (!result.ok) return { ok: false, errors: result.errors };
+
+  const updated = db.updateWorkboardCard(board.scope, userId, card.id, {
+    fields: result.values,
+    title: deriveTitle(board.fields, result.values, input.title),
+  });
+  if (!updated) return { ok: false, errors: [`failed to update card ${card.id}`] };
+
+  db.insertWorkboardEvent(board.scope, userId, {
+    boardId: board.id, cardId: card.id, kind: "updated", actor, detail: { before: card.fields },
+  });
+  emit({
+    type: "workboard.card.updated", level: "info", userId,
+    data: { boardId: board.id, cardId: card.id, title: updated.title },
+  });
+  return { ok: true, value: updated };
+}
+
+/** Soft-deletes a card. Distinct from updateCard: no field validation, and the audit kind stays
+ * "archived" so the card history panel can tell the two apart. */
+export function archiveCard(
+  db: DatabaseType, userId: string, board: Workboard, cardId: string, actor: string
+): WorkboardCard | null {
+  const updated = db.updateWorkboardCard(board.scope, userId, cardId, { archived: true });
+  db.insertWorkboardEvent(board.scope, userId, { boardId: board.id, cardId, kind: "archived", actor });
+  emit({
+    type: "workboard.card.updated", level: "info", userId,
+    data: { boardId: board.id, cardId, archived: true },
+  });
+  return updated;
 }

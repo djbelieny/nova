@@ -43,6 +43,9 @@ export type NovaEventType =
   | "board.convened"
   | "board.contribution"
   | "board.decision"
+  | "workboard.cards.created"
+  | "workboard.card.moved"
+  | "workboard.card.updated"
   | "cost.tracked"
   | "agent.message"
   | "budget.spend"
@@ -179,6 +182,9 @@ const EVENT_TO_MODULE: Record<string, string> = {
   "board.convened": "board",
   "board.contribution": "board",
   "board.decision": "board",
+  "workboard.cards.created": "workboard",
+  "workboard.card.moved": "workboard",
+  "workboard.card.updated": "workboard",
   "cost.tracked": "cost",
   "agent.message": "agent-inbox",
   "budget.spend": "budget",

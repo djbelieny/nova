@@ -15,8 +15,8 @@
  */
 
 import { getDb, type DatabaseType, type Workboard, type WorkboardCard } from "./db.ts";
-import { addCards, createBoard, deriveTitle, moveCard } from "./workboard-service.ts";
-import { validateCardFields, type FieldDef, type StageDef } from "./workboards.ts";
+import { addCards, createBoard, moveCard, updateCard } from "./workboard-service.ts";
+import type { FieldDef, StageDef } from "./workboards.ts";
 
 function adminId(db: DatabaseType): string {
   const admin = db.getUsersByRole("admin")[0];
@@ -179,14 +179,8 @@ function runCardUpdate(cardId: string, argv: string[]): number {
   const { board, card } = found;
   const { fields, errors } = parseCardArgs(argv);
   if (errors.length) return fail(errors);
-  const merged = { ...card.fields, ...fields };
-  const result = validateCardFields(board.fields, merged);
-  if (!result.ok) return fail(result.errors);
-  db.updateWorkboardCard(board.scope, userId, cardId, {
-    fields: result.values,
-    title: deriveTitle(board.fields, result.values, flag(argv, "title")),
-  });
-  db.insertWorkboardEvent(board.scope, userId, { boardId: board.id, cardId, kind: "updated", actor: "cli", detail: { before: card.fields } });
+  const r = updateCard(db, userId, board, card, { fields, title: flag(argv, "title") }, "cli");
+  if (!r.ok) return fail(r.errors);
   console.log(`  ✓ Updated card ${cardId}`);
   return 0;
 }

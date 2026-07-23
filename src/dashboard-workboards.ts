@@ -4,8 +4,7 @@
  * Lives outside dashboard.ts (already >10k lines): dashboard.ts delegates here and stays a router.
  */
 
-import { addCards, createBoard, deriveTitle, moveCard } from "./workboard-service.ts";
-import { validateCardFields } from "./workboards.ts";
+import { addCards, archiveCard, createBoard, moveCard, updateCard } from "./workboard-service.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
 export interface WorkboardApiCtx { db: DatabaseType; userId: string; }
@@ -113,26 +112,15 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     const found = findCardBoard(db, userId, cardMatch[1]);
     if (!found) return json({ errors: ["no such card"] }, 404);
     if (req.method === "DELETE") {
-      db.updateWorkboardCard(found.board.scope, userId, cardMatch[1], { archived: true });
-      db.insertWorkboardEvent(found.board.scope, userId, {
-        boardId: found.board.id, cardId: cardMatch[1], kind: "archived", actor: userId,
-      });
+      archiveCard(db, userId, found.board, cardMatch[1], userId);
       return json({ ok: true });
     }
     const parsed = await body(req);
     if (!parsed.ok) return badJson();
     const input = parsed.value;
-    const merged = { ...found.card.fields, ...(input.fields ?? {}) };
-    const validated = validateCardFields(found.board.fields, merged);
-    if (!validated.ok) return json({ errors: validated.errors }, 400);
-    const updated = db.updateWorkboardCard(found.board.scope, userId, cardMatch[1], {
-      fields: validated.values,
-      title: deriveTitle(found.board.fields, validated.values, input.title),
-    });
-    db.insertWorkboardEvent(found.board.scope, userId, {
-      boardId: found.board.id, cardId: cardMatch[1], kind: "updated", actor: userId, detail: { before: found.card.fields },
-    });
-    return json({ card: updated });
+    const r = updateCard(db, userId, found.board, found.card, { fields: input.fields, title: input.title }, userId);
+    if (!r.ok) return json({ errors: r.errors }, 400);
+    return json({ card: r.value });
   }
 
   const boardMatch = path.match(/^\/api\/workboards\/([\w-]+)$/);
