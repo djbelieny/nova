@@ -6,6 +6,7 @@
 
 import { addCards, archiveCard, createBoard, moveCard, updateCard } from "./workboard-service.ts";
 import { fireOnEnter, needsBulkConfirm } from "./workboard-reactive.ts";
+import { buildPush, type ConnectorBinding } from "./workboard-sync.ts";
 import type { DispatchAgentFn } from "./automation-engine.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
@@ -119,7 +120,19 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
         });
       }
     }
-    return json({ card: r.value.card, fires: fired });
+    const binding = found.board.connectorBinding as ConnectorBinding | null;
+    let pendingPush: { connector: string; action: string; input: Record<string, any> } | null = null;
+    if (binding) {
+      const push = buildPush(binding, r.value.card, input.toStage);
+      if (!("skip" in push)) {
+        pendingPush = push;
+        db.insertWorkboardEvent(found.board.scope, userId, {
+          boardId: found.board.id, cardId: r.value.card.id, kind: "sync", toStage: input.toStage,
+          actor: userId, detail: { pendingPush: push },
+        });
+      }
+    }
+    return json({ card: r.value.card, fires: fired, pendingPush });
   }
 
   if (path === "/api/workboards/cards/move-many" && req.method === "POST") {
@@ -307,6 +320,8 @@ function boardScript(boardId: string): string {
          if(!res.ok){from.appendChild(card);showErr((res.body.errors||['move failed']).join(', '));return;}
          ownMoves[card.dataset.id]=Date.now();
          if(res.body.fires)showErr('Stage action running — check activity.');
+         if(res.body.pendingPush){showErr('Stage synced locally. The '+res.body.pendingPush.connector+
+           ' write needs approval in chat.');}
        })
        .catch(function(){
          card.removeAttribute('data-moving');card.setAttribute('draggable','true');card.classList.remove('moving');

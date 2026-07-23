@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { addCards, createBoard } from "../src/workboard-service.ts";
-import { mapRemoteRecord, planUpsert, pullBoard, type ConnectorBinding } from "../src/workboard-sync.ts";
+import { buildPush, mapRemoteRecord, planUpsert, pullBoard, type ConnectorBinding } from "../src/workboard-sync.ts";
 import { runWorkboardCli } from "../src/cli-workboard.ts";
 
 let seq = 0;
@@ -298,4 +298,40 @@ test("a pull that updates mapped fields leaves an unmapped local field untouched
   expect(cards[0].fields.company).toBe("Acme Corp");
   expect(cards[0].fields.email).toBe("new@acme.com");
   expect(cards[0].fields.notes).toBe("call back Tuesday");
+});
+
+const PUSH_BINDING: ConnectorBinding = {
+  ...BINDING,
+  writeAction: "update_contact",
+  stageField: "properties.lifecycle",
+  stageMap: { new: "lead", won: "customer" },
+};
+
+test("buildPush maps the target stage onto the remote field", () => {
+  const card = { id: "c1", externalId: "42", fields: { company: "Acme" } } as any;
+  const p = buildPush(PUSH_BINDING, card, "won");
+  expect("skip" in p).toBe(false);
+  if (!("skip" in p)) {
+    expect(p.connector).toBe("hubspot");
+    expect(p.action).toBe("update_contact");
+    expect(p.input.id).toBe("42");
+    expect(p.input["properties.lifecycle"]).toBe("customer");
+  }
+});
+
+test("buildPush skips a card with no external id", () => {
+  const card = { id: "c1", externalId: null, fields: {} } as any;
+  expect("skip" in buildPush(PUSH_BINDING, card, "won")).toBe(true);
+});
+
+test("buildPush skips when the binding is pull-only", () => {
+  const card = { id: "c1", externalId: "42", fields: {} } as any;
+  const p = buildPush(BINDING, card, "won");
+  expect("skip" in p).toBe(true);
+  if ("skip" in p) expect(p.skip).toContain("pull-only");
+});
+
+test("buildPush skips a stage with no remote equivalent", () => {
+  const card = { id: "c1", externalId: "42", fields: {} } as any;
+  expect("skip" in buildPush(PUSH_BINDING, card, "nurture")).toBe(true);
 });

@@ -1,7 +1,9 @@
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { createBoard } from "../src/workboard-service.ts";
 import { handleWorkboardApi } from "../src/dashboard-workboards.ts";
+import type { ConnectorBinding } from "../src/workboard-sync.ts";
+import * as connectorRegistry from "../src/connectors/registry.ts";
 
 let seq = 0;
 function seed() {
@@ -17,6 +19,45 @@ function seed() {
 }
 
 const ctxFor = (db: any, userId: string) => ({ db, userId });
+
+const PUSH_BINDING: ConnectorBinding = {
+  connector: "hubspot",
+  readAction: "list_contacts",
+  writeAction: "update_contact",
+  externalIdPath: "id",
+  fieldMap: { company: "properties.company" },
+  stageField: "properties.lifecycle",
+  stageMap: { new: "lead", won: "customer" },
+};
+
+function seedBound() {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wba-bound-${Date.now()}-${seq++}`, name: "API User", role: "admin" });
+  const created = createBoard(db, u.id, {
+    name: `crm-api-${Date.now()}-${seq++}`,
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [{ key: "new", label: "New", order: 0 }, { key: "won", label: "Won", order: 1 }],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  const board = db.updateWorkboard("personal", u.id, created.value.id, { connectorBinding: PUSH_BINDING })!;
+  const [card] = db.insertWorkboardCards(board.scope, u.id, [{
+    boardId: board.id, stageKey: "new", title: "Acme", fields: { company: "Acme" },
+    origin: "user", externalId: "42",
+  }]);
+  return { db, userId: u.id, board, card };
+}
+
+function seedUnbound() {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wba-unbound-${Date.now()}-${seq++}`, name: "API User", role: "admin" });
+  const created = createBoard(db, u.id, {
+    name: `crm-unbound-${Date.now()}-${seq++}`,
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [{ key: "new", label: "New", order: 0 }, { key: "won", label: "Won", order: 1 }],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  return { db, userId: u.id, board: created.value };
+}
 
 test("handleWorkboardApi returns null for unrelated paths", async () => {
   const { db, userId } = seed();
@@ -178,4 +219,62 @@ test("DELETE /api/workboards/cards/:id archives the card and returns success", a
 
   const cardsAfter = db.listWorkboardCards("personal", userId, board.id);
   expect(cardsAfter.some((c: any) => c.id === cardId)).toBe(false);
+});
+
+test("moving a card on a connector-bound board returns a pending push and records it in history", async () => {
+  const { db, userId, board, card } = seedBound();
+  const move = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
+    method: "POST", body: JSON.stringify({ toStage: "won" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}/move`, move, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.pendingPush).toEqual({
+    connector: "hubspot", action: "update_contact",
+    input: { id: "42", "properties.lifecycle": "customer" },
+  });
+
+  const events = db.listWorkboardEvents(board.scope, userId, board.id, 10);
+  const pushEvent = events.find((e: any) => e.kind === "sync" && e.cardId === card.id);
+  expect(pushEvent).toBeTruthy();
+  expect(pushEvent?.detail?.pendingPush).toEqual(body.pendingPush);
+});
+
+test("moving a card on an unbound board returns no pending push and adds no such history record", async () => {
+  const { db, userId, board } = seedUnbound();
+  const add = new Request(`http://x/api/workboards/${board.id}/cards`, {
+    method: "POST", body: JSON.stringify({ stageKey: "new", fields: { company: "Acme" } }),
+  });
+  const added = await (await handleWorkboardApi(`/api/workboards/${board.id}/cards`, add, ctxFor(db, userId)))!.json();
+  const cardId = added.cards[0].id;
+
+  const move = new Request(`http://x/api/workboards/cards/${cardId}/move`, {
+    method: "POST", body: JSON.stringify({ toStage: "won" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${cardId}/move`, move, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.pendingPush).toBe(null);
+
+  const events = db.listWorkboardEvents(board.scope, userId, board.id, 10);
+  expect(events.some((e: any) => e.kind === "sync")).toBe(false);
+});
+
+test("a card move never performs a connector call, even on a bound board — the connector would fail loudly if invoked", async () => {
+  const spy = spyOn(connectorRegistry, "runConnectorAction").mockImplementation(async () => {
+    throw new Error("a card move must never call a connector directly");
+  });
+  try {
+    const { db, userId, card } = seedBound();
+    const move = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
+      method: "POST", body: JSON.stringify({ toStage: "won" }),
+    });
+    const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}/move`, move, ctxFor(db, userId));
+    expect(res!.status).toBe(200);
+    const body = await res!.json();
+    expect(body.pendingPush).toBeTruthy();
+    expect(spy).not.toHaveBeenCalled();
+  } finally {
+    spy.mockRestore();
+  }
 });

@@ -162,3 +162,24 @@ export async function pullBoard(
   });
   return { ok: true, created: creatable.length, updated, skipped, truncated, warning };
 }
+
+/**
+ * Describe the connector write a stage change implies. Nothing here performs it — a write to a
+ * real external system is consequential, so the caller routes it through the approval gate.
+ */
+export function buildPush(
+  binding: ConnectorBinding,
+  card: WorkboardCard,
+  toStage: string
+): { connector: string; action: string; input: Record<string, any> } | { skip: string } {
+  if (!binding.writeAction) return { skip: "binding is pull-only (no writeAction)" };
+  if (!card.externalId) return { skip: `card ${card.id} has no external id to write back to` };
+  if (!binding.stageField) return { skip: "binding declares no stageField" };
+  const remoteValue = binding.stageMap?.[toStage];
+  if (remoteValue === undefined) return { skip: `stage "${toStage}" has no remote equivalent in stageMap` };
+  return {
+    connector: binding.connector,
+    action: binding.writeAction,
+    input: { id: card.externalId, [binding.stageField]: remoteValue },
+  };
+}
