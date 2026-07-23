@@ -9,7 +9,7 @@
  *   nova workboard card move <card-id> --to <stage>
  *   nova workboard card update <card-id> --fields '{…}'
  *   nova workboard query <board> [--stage <key>]
- *   nova workboard run <board> --stage <key> --playbook <name>
+ *   nova workboard run <board> --stage <key> --playbook <name> [key=value ...]
  *
  * Agents call these mid-task via the bash tool. Card writes are local and reversible, so they
  * are prepare-phase safe; consequential work stays behind the approval gate.
@@ -34,6 +34,18 @@ function flag(argv: string[], name: string): string | undefined {
 /** Positional args: everything that isn't a `--flag` or a flag's value. */
 function positionalArgs(argv: string[]): string[] {
   return argv.filter((a, i) => !a.startsWith("--") && !argv[i - 1]?.startsWith("--"));
+}
+
+/** Parse trailing `key=value` positionals into a vars map — same shape parsePlaybookInvocation uses. */
+function parseVarArgs(args: string[]): Record<string, string> {
+  const vars: Record<string, string> = {};
+  const kvRe = /^([\w.-]+)=("([^"]*)"|'([^']*)'|(.*))$/;
+  for (const a of args) {
+    const m = a.match(kvRe);
+    if (!m) continue;
+    vars[m[1]] = m[3] ?? m[4] ?? m[5] ?? "";
+  }
+  return vars;
 }
 
 /** Names the shape of a parsed JSON value for error messages ("an object", "a number", …). */
@@ -194,15 +206,20 @@ function runStage(boardName: string, argv: string[]): number {
   if (!board) return fail([`No workboard named "${boardName}"`]);
   const playbook = flag(argv, "playbook");
   const stage = flag(argv, "stage");
-  if (!playbook || !stage) return fail(["Usage: nova workboard run <board> --stage <key> --playbook <name>"]);
+  if (!playbook || !stage) return fail(["Usage: nova workboard run <board> --stage <key> --playbook <name> [key=value ...]"]);
+  const vars = parseVarArgs(positionalArgs(argv).slice(1));
   const cards = db.listWorkboardCards(board.scope, userId, board.id, { stageKey: stage });
   if (!cards.length) { console.log(`  No cards in ${board.name}/${stage}.`); return 0; }
-  const runs = buildStageRun(playbook, cards, (n) => db.findPlaybook(userId, n));
+  const runs = buildStageRun(playbook, cards, (n) => db.findPlaybook(userId, n), vars);
   const skips = runs.filter((r) => "skip" in r);
   if (skips.length) return fail(skips.map((s) => `card ${(s as any).cardId}: ${(s as any).skip}`));
-  console.log(`  ${runs.length} card${runs.length === 1 ? "" : "s"} ready to run "${playbook}".`);
-  console.log("  Run it in a conversation so each step passes the approval gate:");
-  console.log(`    /playbook run ${playbook} --board ${board.name} --stage ${stage}`);
+  for (const card of cards) {
+    db.enqueueWorkboardAction({
+      userId, boardScope: board.scope, boardId: board.id,
+      cardId: card.id, stageKey: card.stageKey, action: { playbook, vars },
+    });
+  }
+  console.log(`  ✓ Queued ${cards.length} card${cards.length === 1 ? "" : "s"} to run "${playbook}" in ${board.name}/${stage} — the relay will dispatch them shortly.`);
   return 0;
 }
 
