@@ -3274,6 +3274,16 @@ export class Database {
     this.runOnAllUserDbs(db => db.run(sql, values));
   }
 
+  /** Narrow, ownership-checked status write — used by the workboard agent_tasks card source. */
+  updateAgentTaskStatus(userId: string, taskId: string, status: string): boolean {
+    const udb = this.getUserDb(userId);
+    const result = udb.db.run(
+      `UPDATE agent_tasks SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?`,
+      [status, taskId, userId]
+    );
+    return (result.changes ?? 0) > 0;
+  }
+
   findTaskByDescription(userId: string, statuses: string[], searchText: string): any | null {
     const udb = this.getUserDb(userId);
     const placeholders = statuses.map(() => "?").join(",");
