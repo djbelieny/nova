@@ -248,6 +248,7 @@ test("archiveCard fails when the card does not exist and writes no event", () =>
 
 test("[WORKBOARD: …] creates the board, strips the tag, and confirms name/fields/stages/path", async () => {
   const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
   const tag =
     "[WORKBOARD: wbtag-purchasing | Track purchase orders | " +
     "FIELDS: vendor:text*, po_number:text, amount:money, due_date:date, status:select(draft|sent|paid) | " +
@@ -275,6 +276,7 @@ test("[WORKBOARD: …] creates the board, strips the tag, and confirms name/fiel
 
 test("[WORKBOARD: …] with a select field whose options contain pipes still creates a clean board", async () => {
   const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
   const tag = "[WORKBOARD: wbtag-orders | Order tracker | FIELDS: name:text*, status:select(a|b|c|d) | STAGES: new > done]";
 
   const clean = await processMemoryIntents(db, tag, userId);
@@ -288,6 +290,7 @@ test("[WORKBOARD: …] with a select field whose options contain pipes still cre
 
 test("[WORKBOARD: …] with an unknown field type still creates the board from the good fields, and reports the bad one", async () => {
   const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
   const tag = "[WORKBOARD: wbtag-unknowntype | desc | FIELDS: name:text*, weird:frobnicate | STAGES: a > b]";
 
   const clean = await processMemoryIntents(db, tag, userId);
@@ -301,6 +304,7 @@ test("[WORKBOARD: …] with an unknown field type still creates the board from t
 
 test("[WORKBOARD: …] with a malformed field spec still creates the board from the surviving fields", async () => {
   const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
   const tag = "[WORKBOARD: wbtag-malformed | desc | FIELDS: name:text*, ///not-a-field///, amount:money | STAGES: a > b]";
 
   const clean = await processMemoryIntents(db, tag, userId);
@@ -314,6 +318,7 @@ test("[WORKBOARD: …] with a malformed field spec still creates the board from 
 
 test("[WORKBOARD: …] for a name that already exists surfaces the createBoard rejection to the user", async () => {
   const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
   const tag = "[WORKBOARD: wbtag-dup | desc | FIELDS: name:text* | STAGES: a > b]";
 
   const first = await processMemoryIntents(db, tag, userId);
@@ -323,4 +328,87 @@ test("[WORKBOARD: …] for a name that already exists surfaces the createBoard r
   const second = await processMemoryIntents(db, tag, userId);
   expect(second).toContain("Couldn't create");
   expect(second).toContain("already exists");
+});
+
+// ── [WORKBOARD: …] capability gate ──
+
+test("[WORKBOARD: …] from a member without workboard.manage creates no board and tells them why", async () => {
+  const { db, userId } = newUser();
+  const tag = "[WORKBOARD: wbtag-nocap | desc | FIELDS: name:text* | STAGES: a > b]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  expect(clean).not.toContain("[WORKBOARD:");
+  expect(clean).toContain("Couldn't create");
+  expect(clean).toContain("workboard.manage");
+  expect(db.findWorkboard(userId, "wbtag-nocap")).toBeNull();
+});
+
+test("[WORKBOARD: …] from a member granted workboard.manage still succeeds", async () => {
+  const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
+  const tag = "[WORKBOARD: wbtag-withcap | desc | FIELDS: name:text* | STAGES: a > b]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  expect(clean).toContain("wbtag-withcap");
+  expect(clean).not.toContain("Couldn't create");
+  expect(db.findWorkboard(userId, "wbtag-withcap")).not.toBeNull();
+});
+
+test("[WORKBOARD: …] from an admin succeeds with no explicit grant — hasCapability passes admins implicitly", async () => {
+  const db = getDb();
+  const admin = db.upsertUser({ telegram_id: `wbs-admin-${Date.now()}-${seq++}`, name: "WBS Admin", role: "admin" });
+  const tag = "[WORKBOARD: wbtag-admincap | desc | FIELDS: name:text* | STAGES: a > b]";
+
+  const clean = await processMemoryIntents(db, tag, admin.id);
+
+  expect(clean).toContain("wbtag-admincap");
+  expect(clean).not.toContain("Couldn't create");
+  expect(db.findWorkboard(admin.id, "wbtag-admincap")).not.toBeNull();
+});
+
+// ── [WORKBOARD: …] name/purpose extraction ──
+
+test("[WORKBOARD: …] with purpose omitted parses name and fields/stages instead of swallowing them into purpose", async () => {
+  const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
+  const tag = "[WORKBOARD: purchasing | FIELDS: vendor:text*, amount:money | STAGES: draft > sent > paid]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  const board = db.findWorkboard(userId, "purchasing");
+  expect(board).not.toBeNull();
+  if (!board) throw new Error("board not created");
+  expect(board.purpose).toBe(null);
+  expect(board.fields.map((f) => f.key)).toEqual(["vendor", "amount"]);
+  expect(board.stages.map((s) => s.key)).toEqual(["draft", "sent", "paid"]);
+  expect(clean).not.toContain("Couldn't create");
+});
+
+test("[WORKBOARD: …] opening directly with FIELDS: is a reported error and creates no board", async () => {
+  const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
+  const tag = "[WORKBOARD: FIELDS: vendor:text*, amount:money | STAGES: draft > sent > paid]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  expect(clean).toContain("Couldn't create");
+  expect(clean).toContain("board name is required");
+  expect(clean).not.toContain("Created the");
+});
+
+test("[WORKBOARD: …] with an unrecognised section prefix reports it instead of silently dropping it", async () => {
+  const { db, userId } = newUser();
+  db.grantCapability(userId, "workboard.manage");
+  const tag = "[WORKBOARD: wbtag-badsection | desc | FIELDS: name:text* | STAGES: a > b | COLUMNS: extra > stuff]";
+
+  const clean = await processMemoryIntents(db, tag, userId);
+
+  const board = db.findWorkboard(userId, "wbtag-badsection");
+  expect(board).not.toBeNull();
+  if (!board) throw new Error("board not created");
+  expect(board.stages.map((s) => s.key)).toEqual(["a", "b"]);
+  expect(clean).toContain("unrecognised section");
+  expect(clean).toContain("COLUMNS");
 });

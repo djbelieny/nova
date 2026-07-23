@@ -278,13 +278,32 @@ export interface WorkboardTagParse {
  * select with no options). Keeping this function permissive is the point of choosing a bracket
  * tag over JSON: one bad clause reports itself instead of killing the whole board.
  */
+// A segment that looks like a section header (an ALL-CAPS word followed by `:`, matching the
+// FIELDS:/STAGES: convention above) is never eligible to become `name` or `purpose` — even if
+// it isn't one of the two sections this parser understands. That keeps `FIELDS: ...` opening the
+// tag from being read as a literal board name, and reports a typo'd header (e.g. `COLUMNS:`
+// for `STAGES:`) instead of letting it vanish into an oddly-worded purpose.
+const KNOWN_SECTIONS = ["FIELDS", "STAGES"];
+const SECTION_HEADER = /^([A-Z][A-Z_]*):/;
+
 export function parseWorkboardTag(raw: string): WorkboardTagParse {
   const errors: string[] = [];
   const top = splitOutsideParens(raw, "|").map((p) => p.trim());
-  const name = top[0] ?? "";
-  const purpose = top[1] ?? "";
   const fieldsPart = top.find((p) => /^FIELDS:/i.test(p));
   const stagesPart = top.find((p) => /^STAGES:/i.test(p));
+
+  const nameCandidates: string[] = [];
+  for (const part of top) {
+    if (part === fieldsPart || part === stagesPart) continue;
+    const header = part.match(SECTION_HEADER);
+    if (header && !KNOWN_SECTIONS.includes(header[1])) {
+      errors.push(`unrecognised section "${header[1]}:" — expected FIELDS: or STAGES:, ignored`);
+      continue;
+    }
+    nameCandidates.push(part);
+  }
+  const name = nameCandidates[0] ?? "";
+  const purpose = nameCandidates[1] ?? "";
 
   if (!name) errors.push("board name is required");
   if (!fieldsPart) errors.push("missing FIELDS: section");

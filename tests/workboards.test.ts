@@ -236,3 +236,35 @@ test("a select field with no options is passed through — validateDefinition re
   expect(r.errors).toEqual([]);
   expect(r.fields[1].options).toBeUndefined();
 });
+
+test("a name-only tag (purpose omitted) parses name as the plain segment, not the FIELDS: section", () => {
+  const r = parseWorkboardTag(
+    "purchasing | FIELDS: vendor:text*, amount:money | STAGES: draft > sent > paid"
+  );
+  expect(r.errors).toEqual([]);
+  expect(r.name).toBe("purchasing");
+  expect(r.purpose).toBe("");
+  expect(r.fields.map((f) => f.key)).toEqual(["vendor", "amount"]);
+  expect(r.stages.map((s) => s.key)).toEqual(["draft", "sent", "paid"]);
+});
+
+test("a tag opening directly with FIELDS: has no usable name and is reported as an error", () => {
+  const r = parseWorkboardTag("FIELDS: vendor:text*, amount:money | STAGES: draft > sent > paid");
+  expect(r.name).toBe("");
+  expect(r.errors).toContain("board name is required");
+  expect(r.fields.map((f) => f.key)).toEqual(["vendor", "amount"]);
+});
+
+test("a section header can never be mistaken for the purpose either", () => {
+  const r = parseWorkboardTag("board | FIELDS: name:text* | STAGES: a > b");
+  expect(r.name).toBe("board");
+  expect(r.purpose).toBe("");
+});
+
+test("an unrecognised section prefix is reported as an error and does not become part of the board", () => {
+  const r = parseWorkboardTag("board | desc | FIELDS: name:text* | STAGES: a > b | COLUMNS: x > y");
+  expect(r.name).toBe("board");
+  expect(r.purpose).toBe("desc");
+  expect(r.stages.map((s) => s.key)).toEqual(["a", "b"]);
+  expect(r.errors.some((e) => e.includes("COLUMNS") && e.includes("unrecognised section"))).toBe(true);
+});
