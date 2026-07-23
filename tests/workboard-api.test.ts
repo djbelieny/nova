@@ -1,7 +1,7 @@
 import { test, expect, spyOn } from "bun:test";
 import { getDb } from "../src/db.ts";
 import { createBoard } from "../src/workboard-service.ts";
-import { handleWorkboardApi } from "../src/dashboard-workboards.ts";
+import { handleWorkboardApi, SCHEMA_EDIT_PAGE_SIZE } from "../src/dashboard-workboards.ts";
 import type { ConnectorBinding } from "../src/workboard-sync.ts";
 import * as connectorRegistry from "../src/connectors/registry.ts";
 
@@ -387,4 +387,71 @@ test("PATCH board with an invalid definition (empty field set) is refused with 4
   expect(body.errors.join(" ")).toContain("at least one field");
   const boardAfter = db.getWorkboardById(board.scope, userId, board.id);
   expect(boardAfter?.fields).toEqual(board.fields);
+});
+
+test("PATCH board schema edit reaches archived cards too: additive backfill and destructive snapshot both include them", async () => {
+  const { db, userId, board, card } = seedForSchemaEdit();
+  const archived = db.updateWorkboardCard(board.scope, userId, card.id, { archived: true });
+  expect(archived?.archived).toBe(true);
+
+  const newFields = [...board.fields, { key: "owner", label: "Owner", type: "text" as const }];
+  const addReq = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: newFields }),
+  });
+  const addRes = await handleWorkboardApi(`/api/workboards/${board.id}`, addReq, ctxFor(db, userId));
+  expect(addRes!.status).toBe(200);
+  const afterAdd = db.listWorkboardCards(board.scope, userId, board.id, { includeArchived: true })
+    .find((c) => c.id === card.id);
+  expect(afterAdd?.archived).toBe(true);
+  expect(afterAdd?.fields.owner).toBe(null);
+  expect(afterAdd?.fields.amount).toBe(100);
+
+  const destructiveFields = newFields.filter((f) => f.key !== "amount");
+  const delReq = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: destructiveFields, confirm: true }),
+  });
+  const delRes = await handleWorkboardApi(`/api/workboards/${board.id}`, delReq, ctxFor(db, userId));
+  expect(delRes!.status).toBe(200);
+
+  const events = db.listWorkboardEvents(board.scope, userId, board.id, 10);
+  const schemaEvent = events.find((e: any) => e.kind === "updated" && e.detail?.diff?.removed?.includes("amount"));
+  expect(schemaEvent).toBeTruthy();
+  const preserved = schemaEvent?.detail?.preserved.find((p: any) => p.id === card.id);
+  expect(preserved?.fields.amount).toBe(100);
+  expect(preserved?.fields.company).toBe("Acme");
+});
+
+test("PATCH board schema edit pages through a board with more cards than a single page: every card is backfilled and every card is preserved", async () => {
+  const { db, userId, board, card } = seedForSchemaEdit();
+  const extraCount = SCHEMA_EDIT_PAGE_SIZE + 5;
+  const inputs = Array.from({ length: extraCount }, (_, i) => ({
+    boardId: board.id, stageKey: "new", title: `Card ${i}`,
+    fields: { company: `Co ${i}`, amount: i }, origin: "user" as const,
+  }));
+  db.insertWorkboardCards(board.scope, userId, inputs);
+  const totalCount = extraCount + 1; // +1 for seedForSchemaEdit's own card
+
+  const newFields = [...board.fields, { key: "owner", label: "Owner", type: "text" as const }];
+  const addReq = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: newFields }),
+  });
+  const addRes = await handleWorkboardApi(`/api/workboards/${board.id}`, addReq, ctxFor(db, userId));
+  expect(addRes!.status).toBe(200);
+  const allCards = db.listWorkboardCards(board.scope, userId, board.id, { limit: totalCount + 10 });
+  expect(allCards.length).toBe(totalCount);
+  expect(allCards.every((c) => c.fields.owner === null)).toBe(true);
+
+  const destructiveFields = newFields.filter((f) => f.key !== "amount");
+  const delReq = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: destructiveFields, confirm: true }),
+  });
+  const delRes = await handleWorkboardApi(`/api/workboards/${board.id}`, delReq, ctxFor(db, userId));
+  expect(delRes!.status).toBe(200);
+
+  const events = db.listWorkboardEvents(board.scope, userId, board.id, 10);
+  const schemaEvent = events.find((e: any) => e.kind === "updated" && e.detail?.diff?.removed?.includes("amount"));
+  expect(schemaEvent).toBeTruthy();
+  expect(schemaEvent?.detail?.preserved.length).toBe(totalCount);
+  const originalCardPreserved = schemaEvent?.detail?.preserved.find((p: any) => p.id === card.id);
+  expect(originalCardPreserved?.fields.amount).toBe(100);
 });

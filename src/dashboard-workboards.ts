@@ -95,6 +95,28 @@ async function body(req: Request): Promise<BodyResult> {
 
 const badJson = () => json({ errors: ["request body is not valid JSON"] }, 400);
 
+/** Page size for walking every card on a board during a schema edit (snapshot + backfill).
+ * Small on purpose: tests exercise paging against it directly instead of seeding thousands
+ * of cards to hit a production-sized page. */
+export const SCHEMA_EDIT_PAGE_SIZE = 200;
+
+/** Every card on the board, archived included — a schema edit must reach cards a normal
+ * board view never shows, since archived cards still hold field values that need the same
+ * backfill/snapshot treatment as live ones. Pages rather than taking one capped read so a
+ * board of any size is fully covered without holding it all in memory at once. */
+function* allCardsForSchemaEdit(db: DatabaseType, board: Workboard, userId: string): Generator<WorkboardCard[]> {
+  let offset = 0;
+  for (;;) {
+    const page = db.listWorkboardCards(board.scope, userId, board.id, {
+      limit: SCHEMA_EDIT_PAGE_SIZE, offset, includeArchived: true,
+    });
+    if (!page.length) return;
+    yield page;
+    if (page.length < SCHEMA_EDIT_PAGE_SIZE) return;
+    offset += SCHEMA_EDIT_PAGE_SIZE;
+  }
+}
+
 /** Returns null when `path` is not a workboard route, so dashboard.ts can fall through. */
 export async function handleWorkboardApi(path: string, req: Request, ctx: WorkboardApiCtx): Promise<Response | null> {
   if (!path.startsWith("/api/workboards")) return null;
@@ -276,20 +298,31 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
       if (diff.destructive && !patch.confirm) {
         return json({ needsConfirm: true, diff }, 200);
       }
-      const cards = db.listWorkboardCards(board.scope, userId, board.id, { limit: 5000 });
-      if (diff.destructive) {
-        db.insertWorkboardEvent(board.scope, userId, {
-          boardId: board.id, kind: "updated", actor: userId,
-          detail: { diff, preserved: cards.map((c) => ({ id: c.id, fields: c.fields })) },
-        });
-      }
-      if (diff.added.length) {
-        for (const card of cards) {
-          const backfilled = { ...card.fields };
-          for (const key of diff.added) backfilled[key] = null;
-          db.updateWorkboardCard(board.scope, userId, card.id, { fields: backfilled });
+      // Snapshot before mutating, backfill after, schema persisted last — wrapped in one
+      // transaction so a crash mid-edit leaves the board untouched rather than half-migrated.
+      const updated = db.withWorkboardTransaction(board.scope, userId, () => {
+        if (diff.destructive) {
+          const preserved: { id: string; fields: Record<string, unknown> }[] = [];
+          for (const page of allCardsForSchemaEdit(db, board, userId)) {
+            for (const card of page) preserved.push({ id: card.id, fields: card.fields });
+          }
+          db.insertWorkboardEvent(board.scope, userId, {
+            boardId: board.id, kind: "updated", actor: userId,
+            detail: { diff, preserved },
+          });
         }
-      }
+        if (diff.added.length) {
+          for (const page of allCardsForSchemaEdit(db, board, userId)) {
+            for (const card of page) {
+              const backfilled = { ...card.fields };
+              for (const key of diff.added) backfilled[key] = null;
+              db.updateWorkboardCard(board.scope, userId, card.id, { fields: backfilled });
+            }
+          }
+        }
+        return db.updateWorkboard(board.scope, userId, board.id, patch);
+      });
+      return json({ board: updated });
     }
 
     const updated = db.updateWorkboard(board.scope, userId, board.id, patch);

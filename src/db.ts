@@ -5793,6 +5793,13 @@ export class Database {
     return this.insertWorkboardCards(scope, userId, [input])[0];
   }
 
+  /** Runs `fn` (a sequence of other DatabaseManager calls against this same board) as one
+   * transaction, so a schema edit's snapshot, backfill, and schema persist either all land or
+   * none do. Mirrors insertWorkboardCards's use of `h.transaction`. */
+  withWorkboardTransaction<T>(scope: WorkboardScope, userId: string, fn: () => T): T {
+    return this.wbHandle(scope, userId).transaction(fn)();
+  }
+
   /** Bulk insert in one transaction — the lead-generation path writes 50 cards in one call. */
   insertWorkboardCards(scope: WorkboardScope, userId: string, inputs: CardInput[]): WorkboardCard[] {
     const h = this.wbHandle(scope, userId);
@@ -5822,9 +5829,10 @@ export class Database {
 
   listWorkboardCards(
     scope: WorkboardScope, userId: string, boardId: string,
-    opts: { stageKey?: string; limit?: number; offset?: number } = {}
+    opts: { stageKey?: string; limit?: number; offset?: number; includeArchived?: boolean } = {}
   ): WorkboardCard[] {
-    const where = ['board_id = ?', 'archived = 0'];
+    const where = ['board_id = ?'];
+    if (!opts.includeArchived) where.push('archived = 0');
     const args: any[] = [boardId];
     if (opts.stageKey) { where.push('stage_key = ?'); args.push(opts.stageKey); }
     const limit = opts.limit ?? 200;
