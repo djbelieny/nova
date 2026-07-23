@@ -47,6 +47,25 @@ function seedBound() {
   return { db, userId: u.id, board, card };
 }
 
+function seedForSchemaEdit() {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wba-schema-${Date.now()}-${seq++}`, name: "API User", role: "admin" });
+  const created = createBoard(db, u.id, {
+    name: `schema-edit-${Date.now()}-${seq++}`,
+    fields: [
+      { key: "company", label: "Company", type: "text", required: true, primary: true },
+      { key: "amount", label: "Amount", type: "money" },
+    ],
+    stages: [{ key: "new", label: "New", order: 0 }, { key: "won", label: "Won", order: 1 }],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  const [card] = db.insertWorkboardCards(created.value.scope, u.id, [{
+    boardId: created.value.id, stageKey: "new", title: "Acme",
+    fields: { company: "Acme", amount: 100 }, origin: "user",
+  }]);
+  return { db, userId: u.id, board: created.value, card };
+}
+
 function seedUnbound() {
   const db = getDb();
   const u = db.upsertUser({ telegram_id: `wba-unbound-${Date.now()}-${seq++}`, name: "API User", role: "admin" });
@@ -287,4 +306,85 @@ test("a card move never performs a connector call, even on a bound board — the
   } finally {
     spy.mockRestore();
   }
+});
+
+test("PATCH board with an additive field change backfills the new field as null on existing cards and leaves other values untouched", async () => {
+  const { db, userId, board, card } = seedForSchemaEdit();
+  const newFields = [...board.fields, { key: "owner", label: "Owner", type: "text" as const }];
+  const req = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: newFields }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${board.id}`, req, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.board.fields.map((f: any) => f.key)).toEqual(["company", "amount", "owner"]);
+
+  const updatedCard = db.getWorkboardCard(board.scope, userId, card.id);
+  expect(updatedCard?.fields.owner).toBe(null);
+  expect(updatedCard?.fields.company).toBe("Acme");
+  expect(updatedCard?.fields.amount).toBe(100);
+});
+
+test("PATCH board with a destructive field change and no confirm writes nothing at all", async () => {
+  const { db, userId, board, card } = seedForSchemaEdit();
+  const destructiveFields = board.fields.filter((f) => f.key !== "amount");
+  const req = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: destructiveFields }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${board.id}`, req, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.needsConfirm).toBe(true);
+  expect(body.diff.removed).toEqual(["amount"]);
+
+  const boardAfter = db.getWorkboardById(board.scope, userId, board.id);
+  expect(boardAfter?.fields).toEqual(board.fields);
+  const cardAfter = db.getWorkboardCard(board.scope, userId, card.id);
+  expect(cardAfter?.fields).toEqual(card.fields);
+});
+
+test("PATCH board with a destructive field change and confirm proceeds, and the previous values are recoverable from the event log", async () => {
+  const { db, userId, board, card } = seedForSchemaEdit();
+  const destructiveFields = board.fields.filter((f) => f.key !== "amount");
+  const req = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: destructiveFields, confirm: true }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${board.id}`, req, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.board.fields.map((f: any) => f.key)).toEqual(["company"]);
+
+  const events = db.listWorkboardEvents(board.scope, userId, board.id, 10);
+  const schemaEvent = events.find((e: any) => e.kind === "updated" && e.detail?.diff?.removed?.includes("amount"));
+  expect(schemaEvent).toBeTruthy();
+  const preserved = schemaEvent?.detail?.preserved.find((p: any) => p.id === card.id);
+  expect(preserved?.fields.amount).toBe(100);
+  expect(preserved?.fields.company).toBe("Acme");
+});
+
+test("PATCH board with an invalid definition (duplicate stage keys) is refused with 400 and leaves the board unchanged", async () => {
+  const { db, userId, board } = seedForSchemaEdit();
+  const req = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ stages: [{ key: "new", label: "New", order: 0 }, { key: "new", label: "Also New", order: 1 }] }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${board.id}`, req, ctxFor(db, userId));
+  expect(res!.status).toBe(400);
+  const body = await res!.json();
+  expect(body.errors.join(" ")).toContain("duplicate stage key");
+  const boardAfter = db.getWorkboardById(board.scope, userId, board.id);
+  expect(boardAfter?.stages).toEqual(board.stages);
+});
+
+test("PATCH board with an invalid definition (empty field set) is refused with 400 and leaves the board unchanged", async () => {
+  const { db, userId, board } = seedForSchemaEdit();
+  const req = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: [] }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${board.id}`, req, ctxFor(db, userId));
+  expect(res!.status).toBe(400);
+  const body = await res!.json();
+  expect(body.errors.join(" ")).toContain("at least one field");
+  const boardAfter = db.getWorkboardById(board.scope, userId, board.id);
+  expect(boardAfter?.fields).toEqual(board.fields);
 });

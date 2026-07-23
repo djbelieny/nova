@@ -148,6 +148,7 @@ function runCardAdd(boardName: string, argv: string[]): number {
   const userId = adminId(db);
   const board = db.findWorkboard(userId, boardName);
   if (!board) return fail([`No workboard named "${boardName}"`]);
+  if (board.system) return fail([`"${boardName}" is a system board — its cards are read from another table, add the card there instead`]);
   const stage = flag(argv, "stage") ?? board.stages[0]?.key;
   const { fields, errors } = parseCardArgs(argv);
   if (errors.length) return fail(errors);
@@ -162,6 +163,7 @@ async function runCardAddMany(boardName: string, argv: string[]): Promise<number
   const userId = adminId(db);
   const board = db.findWorkboard(userId, boardName);
   if (!board) return fail([`No workboard named "${boardName}"`]);
+  if (board.system) return fail([`"${boardName}" is a system board — its cards are read from another table, add the card there instead`]);
   const file = flag(argv, "file");
   if (!file) return fail(["--file <path> is required (a JSON array of { title?, fields })"]);
   let records: any[] = [];

@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { parseCardArgs, runWorkboardCli } from "../src/cli-workboard.ts";
 import { getDb } from "../src/db.ts";
+import { ensureSystemBoards } from "../src/workboard-service.ts";
 
 const db = getDb();
 
@@ -91,6 +92,26 @@ test("card add against a nonexistent board fails", async () => {
   const r = await runCli(["card", "add", "no-such-board-xyz", "--fields", "{}"]);
   expect(r.code).toBe(1);
   expect(r.errors.join(" ")).toContain("no-such-board-xyz");
+});
+
+test("card add against a system board is refused, and no card is written where it would be invisible", async () => {
+  const { tasks } = ensureSystemBoards(db, adminUserId);
+  const before = db.listWorkboardCards(tasks.scope, adminUserId, tasks.id).length;
+  const r = await runCli(["card", "add", tasks.name, "--stage", tasks.stages[0].key, "--fields", "{}"]);
+  expect(r.code).toBe(1);
+  expect(r.errors.join(" ")).toContain("system board");
+  expect(db.listWorkboardCards(tasks.scope, adminUserId, tasks.id).length).toBe(before);
+});
+
+test("card add-many against a system board is refused, and no card is written where it would be invisible", async () => {
+  const { tickets } = ensureSystemBoards(db, adminUserId);
+  const before = db.listWorkboardCards(tickets.scope, adminUserId, tickets.id).length;
+  const file = `/private/tmp/claude-501/-Users-djbelieny-Projects-nova/4219db8c-edca-4b61-9fd0-7ab09bb51cee/scratchpad/wb-cli-system-add-many.json`;
+  await Bun.write(file, JSON.stringify([{ fields: {} }]));
+  const r = await runCli(["card", "add-many", tickets.name, "--stage", tickets.stages[0].key, "--file", file]);
+  expect(r.code).toBe(1);
+  expect(r.errors.join(" ")).toContain("system board");
+  expect(db.listWorkboardCards(tickets.scope, adminUserId, tickets.id).length).toBe(before);
 });
 
 test("create -> card add -> card update round-trips through the db facade", async () => {

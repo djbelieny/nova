@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { validateCardFields, planMove, positionBetween, resolveStage, type FieldDef, type StageDef, type WorkboardDef } from "../src/workboards.ts";
+import { validateCardFields, planMove, positionBetween, resolveStage, diffSchema, type FieldDef, type StageDef, type WorkboardDef } from "../src/workboards.ts";
 
 const FIELDS: FieldDef[] = [
   { key: "vendor", label: "Vendor", type: "text", required: true, primary: true },
@@ -108,4 +108,24 @@ test("positionBetween produces a value strictly between its neighbours", () => {
   expect(positionBetween(null, 1)).toBeLessThan(1);
   expect(positionBetween(5, null)).toBeGreaterThan(5);
   expect(positionBetween(null, null)).toBe(1);
+});
+
+test("diffSchema reports a pure addition as non-destructive", () => {
+  const after = [...FIELDS, { key: "owner", label: "Owner", type: "text" as const }];
+  const d = diffSchema(FIELDS, after);
+  expect(d.added).toEqual(["owner"]);
+  expect(d.destructive).toBe(false);
+});
+
+test("diffSchema flags a removed field as destructive", () => {
+  const d = diffSchema(FIELDS, FIELDS.filter((f) => f.key !== "amount"));
+  expect(d.removed).toEqual(["amount"]);
+  expect(d.destructive).toBe(true);
+});
+
+test("diffSchema flags a retyped field as destructive", () => {
+  const after = FIELDS.map((f) => (f.key === "amount" ? { ...f, type: "text" as const } : f));
+  const d = diffSchema(FIELDS, after);
+  expect(d.retyped).toEqual(["amount"]);
+  expect(d.destructive).toBe(true);
 });

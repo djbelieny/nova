@@ -32,7 +32,7 @@ export function toDef(board: Workboard): WorkboardDef {
   return { id: board.id, name: board.name, fields: board.fields, stages: board.stages, reactive: board.reactive };
 }
 
-function validateDefinition(input: CreateBoardInput): string[] {
+export function validateDefinition(input: CreateBoardInput): string[] {
   const errors: string[] = [];
   if (!input.name?.trim()) errors.push("board name is required");
   if (!input.fields?.length) errors.push("a board needs at least one field");

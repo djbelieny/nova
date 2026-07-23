@@ -123,6 +123,18 @@ export function planMove(input: MoveInput, actorIsOnEnter = false): MoveDecision
   return { ok: true, fromStage: card.stageKey, toStage, fires };
 }
 
+/** Compare two field schemas. Additions are safe; removals and retypes can invalidate cards. */
+export function diffSchema(before: FieldDef[], after: FieldDef[]) {
+  const beforeByKey = new Map(before.map((f) => [f.key, f]));
+  const afterByKey = new Map(after.map((f) => [f.key, f]));
+  const added = after.filter((f) => !beforeByKey.has(f.key)).map((f) => f.key);
+  const removed = before.filter((f) => !afterByKey.has(f.key)).map((f) => f.key);
+  const retyped = before
+    .filter((f) => afterByKey.has(f.key) && afterByKey.get(f.key)!.type !== f.type)
+    .map((f) => f.key);
+  return { added, removed, retyped, destructive: removed.length > 0 || retyped.length > 0 };
+}
+
 /** Fractional ordering: a position strictly between two neighbours (or outside a single one). */
 export function positionBetween(before: number | null, after: number | null): number {
   if (before === null && after === null) return 1;

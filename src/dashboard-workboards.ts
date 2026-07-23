@@ -4,10 +4,11 @@
  * Lives outside dashboard.ts (already >10k lines): dashboard.ts delegates here and stays a router.
  */
 
-import { addCards, archiveCard, createBoard, moveCard, updateCard } from "./workboard-service.ts";
+import { addCards, archiveCard, createBoard, moveCard, updateCard, validateDefinition } from "./workboard-service.ts";
 import { fireOnEnter, needsBulkConfirm } from "./workboard-reactive.ts";
 import { buildPush, type ConnectorBinding } from "./workboard-sync.ts";
 import { getCardSource } from "./workboard-sources.ts";
+import { diffSchema } from "./workboards.ts";
 import type { DispatchAgentFn } from "./automation-engine.ts";
 import type { DatabaseType, Workboard, WorkboardCard } from "./db.ts";
 
@@ -259,7 +260,39 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     if (board.system) return json({ errors: ["this board's schema and stages are locked"] }, 400);
     const parsed = await body(req);
     if (!parsed.ok) return badJson();
-    const updated = db.updateWorkboard(board.scope, userId, board.id, parsed.value);
+    const patch = parsed.value;
+
+    if (patch.fields || patch.stages) {
+      const defErrors = validateDefinition({
+        name: patch.name ?? board.name,
+        fields: patch.fields ?? board.fields,
+        stages: patch.stages ?? board.stages,
+      });
+      if (defErrors.length) return json({ errors: defErrors }, 400);
+    }
+
+    if (patch.fields) {
+      const diff = diffSchema(board.fields, patch.fields);
+      if (diff.destructive && !patch.confirm) {
+        return json({ needsConfirm: true, diff }, 200);
+      }
+      const cards = db.listWorkboardCards(board.scope, userId, board.id, { limit: 5000 });
+      if (diff.destructive) {
+        db.insertWorkboardEvent(board.scope, userId, {
+          boardId: board.id, kind: "updated", actor: userId,
+          detail: { diff, preserved: cards.map((c) => ({ id: c.id, fields: c.fields })) },
+        });
+      }
+      if (diff.added.length) {
+        for (const card of cards) {
+          const backfilled = { ...card.fields };
+          for (const key of diff.added) backfilled[key] = null;
+          db.updateWorkboardCard(board.scope, userId, card.id, { fields: backfilled });
+        }
+      }
+    }
+
+    const updated = db.updateWorkboard(board.scope, userId, board.id, patch);
     return json({ board: updated });
   }
 
