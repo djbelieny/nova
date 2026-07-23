@@ -56,9 +56,14 @@ export function taskToCard(task: any, boardId: string): WorkboardCard {
 const AGENT_TASK_SOURCE: CardSource = {
   stages: () => TASK_STAGES,
   readCards(db, userId, boardId) {
+    // Deliberately wider than the old /kanban page's default of 30 — a four-column board
+    // showing only 30 tasks would look empty. Not an accident.
     return db.getAgentTasksRecent({ userId, limit: 200 }).map((t: any) => taskToCard(t, boardId));
   },
   applyMove(db, userId, cardId, toStage) {
+    const task = db.getTaskById(cardId, userId);
+    if (!task) return false;
+    if (stageForTaskStatus(task.status ?? "pending") === toStage) return true;
     return db.updateAgentTaskStatus(userId, cardId, statusForTaskStage(toStage));
   },
 };
@@ -115,6 +120,7 @@ const TICKET_SOURCE: CardSource = {
   applyMove(db, userId, cardId, toStage) {
     const ticket = db.getSupportTicket(userId, cardId);
     if (!ticket) return false;
+    if (columnForStatus(ticket.status) === toStage) return true;
     db.updateSupportTicket(userId, cardId, { status: statusForTicketStage(toStage) });
     return true;
   },

@@ -139,3 +139,103 @@ test("tickets adapter applyMove writes through to the status column and round-tr
   const card = source.readCards(db, userId, "board-y").find((c) => c.id === id)!;
   expect(card.stageKey).toBe("done");
 });
+
+test("tickets adapter applyMove returns false and writes nothing for a ticket that does not exist", () => {
+  const { db, userId } = newUser();
+  const source = getCardSource("tickets")!;
+  expect(source.applyMove(db, userId, "nonexistent-ticket-id", "done")).toBe(false);
+});
+
+test("tickets adapter applyMove returns false and writes nothing for a ticket owned by another user", () => {
+  const { db, userId } = newUser();
+  const { userId: otherUserId } = newUser();
+  const id = db.insertSupportTicket({
+    user_id: userId, source: "resend", client_email: "a@client.com", subject: "Mine only", body_raw: "private",
+  });
+  const source = getCardSource("tickets")!;
+  expect(source.applyMove(db, otherUserId, id, "done")).toBe(false);
+  const ticket = db.getSupportTicket(userId, id)!;
+  expect(ticket.status).toBe("new");
+});
+
+test("tickets adapter keeps a non-canonical in-progress status when moved into the stage it already occupies", () => {
+  const { db, userId } = newUser();
+  const id = db.insertSupportTicket({
+    user_id: userId, source: "resend", client_email: "a@client.com", subject: "Broken again", body_raw: "still broken",
+  });
+  db.updateSupportTicket(userId, id, { status: "fixing" });
+  const source = getCardSource("tickets")!;
+  const ok = source.applyMove(db, userId, id, "in_progress");
+  expect(ok).toBe(true);
+  const ticket = db.getSupportTicket(userId, id)!;
+  expect(ticket.status).toBe("fixing");
+});
+
+test("tickets adapter keeps a non-canonical needs_attention status when reordered within the same stage", () => {
+  const { db, userId } = newUser();
+  const id = db.insertSupportTicket({
+    user_id: userId, source: "resend", client_email: "a@client.com", subject: "On fire", body_raw: "urgent",
+  });
+  db.updateSupportTicket(userId, id, { status: "failed" });
+  const source = getCardSource("tickets")!;
+  const ok = source.applyMove(db, userId, id, "needs_attention");
+  expect(ok).toBe(true);
+  const ticket = db.getSupportTicket(userId, id)!;
+  expect(ticket.status).toBe("failed");
+});
+
+test("tickets adapter overwrites status with the column's canonical value on a genuine stage change", () => {
+  const { db, userId } = newUser();
+  const id = db.insertSupportTicket({
+    user_id: userId, source: "resend", client_email: "a@client.com", subject: "Broken again", body_raw: "still broken",
+  });
+  db.updateSupportTicket(userId, id, { status: "fixing" });
+  const source = getCardSource("tickets")!;
+  const ok = source.applyMove(db, userId, id, "done");
+  expect(ok).toBe(true);
+  const ticket = db.getSupportTicket(userId, id)!;
+  expect(ticket.status).toBe("deployed");
+});
+
+test("tickets adapter applyMove falls back to the first column's status for an unrecognized target stage (pinned behavior)", () => {
+  const { db, userId } = newUser();
+  const id = db.insertSupportTicket({
+    user_id: userId, source: "resend", client_email: "a@client.com", subject: "Help me", body_raw: "It is broken",
+  });
+  db.updateSupportTicket(userId, id, { status: "resolving" });
+  const source = getCardSource("tickets")!;
+  const ok = source.applyMove(db, userId, id, "not-a-real-stage");
+  expect(ok).toBe(true);
+  const ticket = db.getSupportTicket(userId, id)!;
+  expect(ticket.status).toBe("new");
+});
+
+test("agent_tasks adapter keeps a non-canonical blocked status when reordered within the same stage", () => {
+  const { db, userId } = newUser();
+  const taskId = db.insertTask({ agent: "kai", description: "Retry the deploy", status: "cancelled", user_id: userId });
+  const source = getCardSource("agent_tasks")!;
+  const ok = source.applyMove(db, userId, taskId, "blocked");
+  expect(ok).toBe(true);
+  const task = db.getTaskById(taskId, userId)!;
+  expect(task.status).toBe("cancelled");
+});
+
+test("agent_tasks adapter overwrites status with the column's canonical value on a genuine stage change", () => {
+  const { db, userId } = newUser();
+  const taskId = db.insertTask({ agent: "kai", description: "Retry the deploy", status: "cancelled", user_id: userId });
+  const source = getCardSource("agent_tasks")!;
+  const ok = source.applyMove(db, userId, taskId, "completed");
+  expect(ok).toBe(true);
+  const task = db.getTaskById(taskId, userId)!;
+  expect(task.status).toBe("done");
+});
+
+test("agent_tasks adapter applyMove falls back to pending status for an unrecognized target stage (pinned behavior)", () => {
+  const { db, userId } = newUser();
+  const taskId = db.insertTask({ agent: "kai", description: "Ship it", status: "in_progress", user_id: userId });
+  const source = getCardSource("agent_tasks")!;
+  const ok = source.applyMove(db, userId, taskId, "not-a-real-stage");
+  expect(ok).toBe(true);
+  const task = db.getTaskById(taskId, userId)!;
+  expect(task.status).toBe("pending");
+});
