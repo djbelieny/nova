@@ -129,3 +129,38 @@ test("diffSchema flags a retyped field as destructive", () => {
   expect(d.retyped).toEqual(["amount"]);
   expect(d.destructive).toBe(true);
 });
+
+test("diffSchema flags a select that drops an option as destructive — cards holding it stop validating", () => {
+  const after = FIELDS.map((f) => (f.key === "status" ? { ...f, options: ["draft", "sent"] } : f));
+  const d = diffSchema(FIELDS, after);
+  expect(d.narrowed).toEqual(["status"]);
+  expect(d.destructive).toBe(true);
+});
+
+test("diffSchema treats a select that only gains an option as safe", () => {
+  const after = FIELDS.map((f) => (f.key === "status" ? { ...f, options: ["draft", "sent", "paid", "void"] } : f));
+  const d = diffSchema(FIELDS, after);
+  expect(d.narrowed).toEqual([]);
+  expect(d.destructive).toBe(false);
+});
+
+test("diffSchema flags a field that becomes required as destructive", () => {
+  const after = FIELDS.map((f) => (f.key === "amount" ? { ...f, required: true } : f));
+  const d = diffSchema(FIELDS, after);
+  expect(d.narrowed).toEqual(["amount"]);
+  expect(d.destructive).toBe(true);
+});
+
+test("diffSchema treats dropping a required flag as safe", () => {
+  const after = FIELDS.map((f) => (f.key === "vendor" ? { ...f, required: false } : f));
+  const d = diffSchema(FIELDS, after);
+  expect(d.narrowed).toEqual([]);
+  expect(d.destructive).toBe(false);
+});
+
+test("diffSchema flags a select that gains options where it had none as destructive", () => {
+  const before: FieldDef[] = [{ key: "tier", label: "Tier", type: "select" }];
+  const d = diffSchema(before, [{ key: "tier", label: "Tier", type: "select", options: ["gold"] }]);
+  expect(d.narrowed).toEqual(["tier"]);
+  expect(d.destructive).toBe(true);
+});

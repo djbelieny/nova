@@ -1466,9 +1466,12 @@ approval prompt in chat.
 ### Editing a Board's Schema
 
 Adding a field to an existing board backfills every existing card with a `null` value for it.
-Removing or retyping a field is destructive to existing card data and needs an explicit
+An edit is destructive when it can leave an existing card holding a value the new schema rejects:
+removing a field, retyping one, dropping an option from a `select` (or giving a `select` options
+where it had none), or marking a field `required`. A destructive edit needs an explicit
 confirmation; when confirmed, the card values as they stood before the edit are preserved in the
-board's event history rather than discarded.
+board's event history rather than discarded, and every card is rewritten to fit the new schema so
+none is left permanently failing validation on its next edit.
 
 ### System Boards
 

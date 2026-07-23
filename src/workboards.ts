@@ -138,7 +138,22 @@ export function planMove(input: MoveInput, actorIsOnEnter = false): MoveDecision
   return { ok: true, fromStage: card.stageKey, toStage, fires };
 }
 
-/** Compare two field schemas. Additions are safe; removals and retypes can invalidate cards. */
+/**
+ * True when a field keeps its key and type but stops accepting values it used to accept: a select
+ * whose options shrank (or gained options where it had none), or a field that became required.
+ * Cards already holding a now-rejected value fail validateCardFields on every later edit, so this
+ * is as destructive as a removal — just through a narrower door.
+ */
+function narrows(before: FieldDef, after: FieldDef): boolean {
+  if (after.type !== before.type) return false;
+  if (!before.required && after.required) return true;
+  if (after.type !== "select" || !after.options) return false;
+  if (!before.options) return true;
+  return before.options.some((o) => !after.options!.includes(o));
+}
+
+/** Compare two field schemas. Additions are safe; removals, retypes, and narrowed fields can
+ * invalidate cards. */
 export function diffSchema(before: FieldDef[], after: FieldDef[]) {
   const beforeByKey = new Map(before.map((f) => [f.key, f]));
   const afterByKey = new Map(after.map((f) => [f.key, f]));
@@ -147,7 +162,13 @@ export function diffSchema(before: FieldDef[], after: FieldDef[]) {
   const retyped = before
     .filter((f) => afterByKey.has(f.key) && afterByKey.get(f.key)!.type !== f.type)
     .map((f) => f.key);
-  return { added, removed, retyped, destructive: removed.length > 0 || retyped.length > 0 };
+  const narrowed = before
+    .filter((f) => afterByKey.has(f.key) && narrows(f, afterByKey.get(f.key)!))
+    .map((f) => f.key);
+  return {
+    added, removed, retyped, narrowed,
+    destructive: removed.length > 0 || retyped.length > 0 || narrowed.length > 0,
+  };
 }
 
 /** Fractional ordering: a position strictly between two neighbours (or outside a single one). */

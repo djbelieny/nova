@@ -514,6 +514,63 @@ test("a retyped field whose stored value cannot coerce is nulled, not left poiso
   expect(db.getWorkboardCard(board.scope, userId, card.id)?.fields.amount).toBe(50);
 });
 
+function seedWithSelect() {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wba-select-${Date.now()}-${seq++}`, name: "API User", role: "admin" });
+  const created = createBoard(db, u.id, {
+    name: `select-edit-${Date.now()}-${seq++}`,
+    fields: [
+      { key: "company", label: "Company", type: "text", required: true, primary: true },
+      { key: "tier", label: "Tier", type: "select", options: ["gold", "silver", "bronze"] },
+    ],
+    stages: [{ key: "new", label: "New", order: 0 }],
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  const [card] = db.insertWorkboardCards(created.value.scope, u.id, [{
+    boardId: created.value.id, stageKey: "new", title: "Acme",
+    fields: { company: "Acme", tier: "bronze" }, origin: "user" as const,
+  }]);
+  return { db, userId: u.id, board: created.value, card };
+}
+
+test("narrowing a select's options asks for confirmation and writes nothing without it", async () => {
+  const { db, userId, board, card } = seedWithSelect();
+  const narrowed = board.fields.map((f) => (f.key === "tier" ? { ...f, options: ["gold", "silver"] } : f));
+  const req = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: narrowed }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/${board.id}`, req, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  const body = await res!.json();
+  expect(body.needsConfirm).toBe(true);
+  expect(body.diff.narrowed).toEqual(["tier"]);
+  expect(db.getWorkboardById(board.scope, userId, board.id)?.fields).toEqual(board.fields);
+  expect(db.getWorkboardCard(board.scope, userId, card.id)?.fields).toEqual(card.fields);
+});
+
+test("a card holding a dropped select option stays editable after the narrowing is confirmed", async () => {
+  const { db, userId, board, card } = seedWithSelect();
+  const narrowed = board.fields.map((f) => (f.key === "tier" ? { ...f, options: ["gold", "silver"] } : f));
+  const req = new Request(`http://x/api/workboards/${board.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: narrowed, confirm: true }),
+  });
+  expect((await handleWorkboardApi(`/api/workboards/${board.id}`, req, ctxFor(db, userId)))!.status).toBe(200);
+
+  // The now-unrepresentable value is conformed away rather than left to fail every later edit.
+  expect(db.getWorkboardCard(board.scope, userId, card.id)?.fields.tier).toBe(null);
+
+  const patch = new Request(`http://x/api/workboards/cards/${card.id}`, {
+    method: "PATCH", body: JSON.stringify({ fields: { company: "Acme Two", tier: "gold" } }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}`, patch, ctxFor(db, userId));
+  expect(res!.status).toBe(200);
+  expect(db.getWorkboardCard(board.scope, userId, card.id)?.fields.tier).toBe("gold");
+
+  const events = db.listWorkboardEvents(board.scope, userId, board.id, 10);
+  const schemaEvent = events.find((e: any) => e.kind === "updated" && e.detail?.diff?.narrowed?.includes("tier"));
+  expect(schemaEvent?.detail?.preserved.find((p: any) => p.id === card.id)?.fields.tier).toBe("bronze");
+});
+
 test("PATCH board with an invalid definition (duplicate stage keys) is refused with 400 and leaves the board unchanged", async () => {
   const { db, userId, board } = seedForSchemaEdit();
   const req = new Request(`http://x/api/workboards/${board.id}`, {
