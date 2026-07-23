@@ -124,6 +124,19 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
 
     const first = findCardBoard(db, userId, cardIds[0]);
     if (!first) return json({ errors: ["no such card"] }, 404);
+
+    // Every card must resolve to the SAME board as cardIds[0] before anything is moved or
+    // fired — otherwise a mixed request would move a foreign card under the wrong board's
+    // stage definitions and (if armed) fire an automation its real board never configured.
+    const foreignIds: string[] = [];
+    for (const id of cardIds.slice(1)) {
+      const found = findCardBoard(db, userId, id);
+      if (!found || found.board.id !== first.board.id) foreignIds.push(id);
+    }
+    if (foreignIds.length) {
+      return json({ errors: [`cards not on board "${first.board.name}": ${foreignIds.join(", ")}`] }, 400);
+    }
+
     const target = first.board.stages.find((s) => s.key === input.toStage);
     const armed = first.board.reactive && !!target?.onEnter;
 
@@ -135,7 +148,7 @@ export async function handleWorkboardApi(path: string, req: Request, ctx: Workbo
     const errors: string[] = [];
     for (const id of cardIds) {
       const r = moveCard(db, userId, first.board, id, input.toStage, userId);
-      if (!r.ok) { errors.push(...r.errors); continue; }
+      if (!r.ok) { errors.push(...r.errors.map((e) => `card ${id}: ${e}`)); continue; }
       moved.push(id);
       if (r.value.fires && ctx.dispatchAgent) {
         await fireOnEnter(db, userId, first.board, r.value.card, r.value.fires, ctx.dispatchAgent);

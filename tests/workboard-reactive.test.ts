@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { getDb } from "../src/db.ts";
-import { addCards, createBoard, moveCard } from "../src/workboard-service.ts";
+import { addCards, archiveCard, createBoard, moveCard } from "../src/workboard-service.ts";
 import { buildOnEnterDispatch, cardScope, fireOnEnter, needsBulkConfirm, onEnterKey } from "../src/workboard-reactive.ts";
 import { handleWorkboardApi } from "../src/dashboard-workboards.ts";
 
@@ -257,4 +257,140 @@ test("a confirmed bulk move fires once per card", async () => {
   });
   await handleWorkboardApi("/api/workboards/cards/move-many", req, ctx);
   expect(dispatched).toBe(12);
+});
+
+test("a mixed-board bulk request returns 400, moves nothing, and dispatches nothing", async () => {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wbf-mixed-${Date.now()}-${seq++}`, name: "F User", role: "admin" });
+
+  const boardA = createBoard(db, u.id, {
+    name: "prospects-a",
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [
+      { key: "new", label: "New", order: 0 },
+      { key: "nurture", label: "Nurture", order: 1, onEnter: { agent: "orion", task: "Email {{card.company}}" } },
+    ],
+    reactive: true,
+  });
+  if (!boardA.ok) throw new Error(boardA.errors.join(", "));
+
+  const boardB = createBoard(db, u.id, {
+    name: "prospects-b",
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [{ key: "new", label: "New", order: 0 }, { key: "nurture", label: "Nurture", order: 1 }],
+    reactive: true,
+  });
+  if (!boardB.ok) throw new Error(boardB.errors.join(", "));
+
+  const cardA = addCards(db, u.id, boardA.value, "new", [{ fields: { company: "Acme" } }], "agent");
+  const cardB = addCards(db, u.id, boardB.value, "new", [{ fields: { company: "Globex" } }], "agent");
+  if (!cardA.ok || !cardB.ok) throw new Error("setup failed");
+
+  let dispatched = 0;
+  const ctx = { db, userId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const req = new Request("http://x/api/workboards/cards/move-many", {
+    method: "POST",
+    body: JSON.stringify({ cardIds: [cardA.value[0].id, cardB.value[0].id], toStage: "nurture" }),
+  });
+  const res = await handleWorkboardApi("/api/workboards/cards/move-many", req, ctx);
+  const bodyJson = await res!.json();
+
+  expect(res!.status).toBe(400);
+  expect(bodyJson.errors.join(" ")).toContain(cardB.value[0].id);
+  expect(dispatched).toBe(0);
+
+  const stillA = db.getWorkboardCard(boardA.value.scope, u.id, cardA.value[0].id)!;
+  const stillB = db.getWorkboardCard(boardB.value.scope, u.id, cardB.value[0].id)!;
+  expect(stillA.stageKey).toBe("new");
+  expect(stillB.stageKey).toBe("new");
+});
+
+test("a bulk move over the threshold into an unarmed stage proceeds without confirmation or dispatch", async () => {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wbf-unarmed-${Date.now()}-${seq++}`, name: "F User", role: "admin" });
+
+  // reactive:false means the "nurture" stage's onEnter is never armed, even though it's defined —
+  // this exercises the "genuinely armed" half of the confirm gate, not just the count threshold.
+  const created = createBoard(db, u.id, {
+    name: "prospects-nonreactive",
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [
+      { key: "new", label: "New", order: 0 },
+      { key: "nurture", label: "Nurture", order: 1, onEnter: { agent: "orion", task: "Email {{card.company}}" } },
+    ],
+    reactive: false,
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+
+  const many = addCards(db, u.id, created.value, "new",
+    Array.from({ length: 12 }, (_, i) => ({ fields: { company: `Co ${i}` } })), "agent");
+  if (!many.ok) throw new Error("setup failed");
+
+  let dispatched = 0;
+  const ctx = { db, userId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const req = new Request("http://x/api/workboards/cards/move-many", {
+    method: "POST",
+    body: JSON.stringify({ cardIds: many.value.map((c) => c.id), toStage: "nurture" }),
+  });
+  const res = await handleWorkboardApi("/api/workboards/cards/move-many", req, ctx);
+  const bodyJson = await res!.json();
+
+  expect(res!.status).toBe(200);
+  expect(bodyJson.needsConfirm).toBeUndefined();
+  expect(bodyJson.moved).toBe(12);
+  expect(dispatched).toBe(0);
+});
+
+test("a single move through the API into an unarmed stage fires nothing", async () => {
+  const db = getDb();
+  const u = db.upsertUser({ telegram_id: `wbf-single-unarmed-${Date.now()}-${seq++}`, name: "F User", role: "admin" });
+  const created = createBoard(db, u.id, {
+    name: "prospects-single-unarmed",
+    fields: [{ key: "company", label: "Company", type: "text", required: true, primary: true }],
+    stages: [
+      { key: "new", label: "New", order: 0 },
+      { key: "cold", label: "Cold", order: 1 },
+    ],
+    reactive: true,
+  });
+  if (!created.ok) throw new Error(created.errors.join(", "));
+  const added = addCards(db, u.id, created.value, "new", [{ fields: { company: "Acme" } }], "agent");
+  if (!added.ok) throw new Error(added.errors.join(", "));
+  const card = added.value[0];
+
+  let dispatched = 0;
+  const ctx = { db, userId: u.id, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const req = new Request(`http://x/api/workboards/cards/${card.id}/move`, {
+    method: "POST", body: JSON.stringify({ toStage: "cold" }),
+  });
+  const res = await handleWorkboardApi(`/api/workboards/cards/${card.id}/move`, req, ctx);
+  const bodyJson = await res!.json();
+
+  expect(res!.status).toBe(200);
+  expect(bodyJson.fires).toBe(false);
+  expect(dispatched).toBe(0);
+});
+
+test("a partial failure mid-bulk reports which card failed", async () => {
+  const { db, userId, board, card } = seed();
+  const added = addCards(db, userId, board, "new", [{ fields: { company: "Beta", email: "b@beta.com" } }], "agent");
+  if (!added.ok) throw new Error(added.errors.join(", "));
+  const okCard = added.value[0];
+  const archived = archiveCard(db, userId, board, card.id, userId);
+  if (!archived.ok) throw new Error(archived.errors.join(", "));
+
+  let dispatched = 0;
+  const ctx = { db, userId, dispatchAgent: async () => { dispatched++; return "t1"; } };
+  const req = new Request("http://x/api/workboards/cards/move-many", {
+    method: "POST",
+    body: JSON.stringify({ cardIds: [okCard.id, card.id], toStage: "nurture" }),
+  });
+  const res = await handleWorkboardApi("/api/workboards/cards/move-many", req, ctx);
+  const bodyJson = await res!.json();
+
+  expect(res!.status).toBe(200);
+  expect(bodyJson.moved).toBe(1);
+  expect(bodyJson.errors.length).toBe(1);
+  expect(bodyJson.errors[0]).toContain(card.id);
+  expect(dispatched).toBe(1);
 });
